@@ -34,3 +34,10 @@
 - **根因**：新版本 lucide-static 已无 `trash-2`（只有 `trash`、`trash-off`）；图标数据是构建期快照（scripts/gen-icons.mjs 产物）。
 - **规避/解决**：选择器数据与页面引用同源（都来自 data.json），页面写图标名前可在 `src/ui/icons/data.json` 里确认存在；未命中时 YdMorphIcon 显示占位并带 title，开发期肉眼可查。
 - **来源**：2026-10-06，views/icons/index.vue。
+
+### fa 的 simple-git-hooks 会装到仓库根导致 pre-commit 必然失败
+
+- **现象**：`git commit` 报 `No package.json found in <仓库根>` 且自动触发 `pnpm install`。
+- **根因**：fa 基座 `pnpm install` 时 postinstall 运行 simple-git-hooks，钩子装到 git 仓库根的 `.git/hooks/pre-commit`（根目录不是 node 工程，无 package.json，钩子必挂）。
+- **规避/解决**：删除根 `.git/hooks/pre-commit`（及同类钩子）；后续在 web/ 内做提交前检查，或等 monorepo 顶层具备 node 工程后再统一配钩子。
+- **来源**：2026-10-06，首次 git 提交。
