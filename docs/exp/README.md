@@ -27,4 +27,6 @@
 
 ## 条目
 
-（暂无，第一条由第一个踩坑的人写下）
+- [go-backend.md](./go-backend.md) — moby 模块拆分、internal 跨模块限制、GOPROXY 镜像
+- [frontend.md](./frontend.md) — fa 基座对接真实后端、vue-tsc 假性 TS6133、MSYS 路径转换、xterm 排障、lucide 图标名漂移
+- [deploy.md](./deploy.md) — Text file busy、纯 Go SQLite 交叉编译、敏感信息解析、systemd 排障

@@ -24,3 +24,14 @@ runtime/
 bin/
 data/
 *.log
+
+# go:embed 占位需入库：只豁免 index.html，其余构建产物忽略
+!core/internal/web/dist/
+core/internal/web/dist/**
+!core/internal/web/dist/index.html
+
+# 本地测试数据
+data-test/
+*.db
+*.db-shm
+*.db-wal
