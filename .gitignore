@@ -1,0 +1,26 @@
+# 参考项目源码（仅本地对照阅读，不提交；注意各自协议传染性，见 docs/YPanel-feature-list.md 第二节）
+reference/
+
+# 文档只提交开发规范与经验库，其余（功能清单、计划、敏感信息）均不提交
+docs/*
+!docs/dev/
+!docs/exp/
+
+# 环境与密钥
+.env*
+*.pem
+*.key
+
+# 系统与编辑器
+.DS_Store
+.idea/
+.vscode/
+*.code-workspace
+
+# 构建产物与运行时
+node_modules/
+dist/
+runtime/
+bin/
+data/
+*.log
