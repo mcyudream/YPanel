@@ -19,7 +19,7 @@ const routes: RouteRecordRaw = {
       name: 'alertIndex',
       component: () => import('@/views/alert/index.vue'),
       meta: {
-        title: 'alert',
+        title: '告警通知',
       },
     },
   ],

@@ -18,7 +18,7 @@ const routes: RouteRecordRaw = {
       name: 'marketIndex',
       component: () => import('@/views/market/index.vue'),
       meta: {
-        title: 'market',
+        title: '应用市场',
       },
     },
   ],

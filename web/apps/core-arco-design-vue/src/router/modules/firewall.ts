@@ -19,7 +19,7 @@ const routes: RouteRecordRaw = {
       name: 'firewallIndex',
       component: () => import('@/views/firewall/index.vue'),
       meta: {
-        title: 'firewall',
+        title: '防火墙',
       },
     },
   ],
