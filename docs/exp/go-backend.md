@@ -20,3 +20,17 @@
 - **根因**：网络环境无法访问官方模块代理。
 - **规避/解决**：`export GOPROXY=https://goproxy.cn,direct`（会话级环境变量，符合 package-management.md "代理配置只写环境变量或 docs/local.md"）；前端 pnpm 无需额外配置。
 - **来源**：2026-10-06，全仓首次依赖解析。
+
+### MySQL DDL 不支持占位符：IDENTIFIED BY ? 报 1064
+
+- **现象**：`CREATE USER ... IDENTIFIED BY ?` 参数化执行报 `Error 1064 syntax near '?'`。
+- **根因**：MySQL 服务端预处理器不接受 DDL 密码位置的占位符（mysqldump 时代的限制仍在）。
+- **规避/解决**：密码先过严格白名单正则（`^[A-Za-z0-9_-]{8,64}$`，天然排除引号/反斜杠/`$`），再以单引号字面量拼接进 DDL；数据值仍全部参数化。这套"白名单前置 + 字面量拼接"是标识符/密码类 DDL 的通用安全范式。
+- **来源**：2026-10-06，M4 数据库用户管理。
+
+### gin 通配符路由 `*file` 后不能再接子路径，且 Param 值带前导斜杠
+
+- **现象**：注册 `POST /x/*file/restore` 启动 panic `catch-all routes are only allowed at the end`；`DELETE /x/*file` 匹配后 `Param("file")` 值为 `/name.sql`（带前导斜杠），`strings.Contains(file,"/")` 误判拒绝。
+- **根因**：gin httprouter 限制 catch-all 必须在路径末尾；catch-all 捕获值包含前导分隔符。
+- **规避/解决**：带通配的资源操作一律改 query 传参（`DELETE /x?file=`, `POST /x/restore?file=`）；或手动 TrimPrefix 后再校验。
+- **来源**：2026-10-06，M4 备份接口。

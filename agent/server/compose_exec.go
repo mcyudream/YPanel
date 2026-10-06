@@ -1,6 +1,7 @@
 package server
 
 import (
+	"log/slog"
 	"net/http"
 
 	"github.com/ypanel/agent/internal/execx"
@@ -123,9 +124,11 @@ func (s *Server) handleComposeLogs(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleExec(w http.ResponseWriter, r *http.Request) {
 	req, err := decodeBody[dto.ExecReq](r)
 	if err != nil {
+		slog.Error("agent exec decode failed", "err", err)
 		writeErr(w, err)
 		return
 	}
+	slog.Info("agent exec", "cmdPrefix", req.Command[:min(60, len(req.Command))], "timeout", req.TimeoutSecs)
 	out, err := execx.Run(r.Context(), req.Command, req.TimeoutSecs)
 	if err != nil {
 		writeErr(w, err)

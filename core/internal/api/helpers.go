@@ -2,6 +2,7 @@
 package api
 
 import (
+	"log/slog"
 	"net/http"
 
 	"github.com/gin-gonic/gin"
@@ -14,9 +15,12 @@ func respOK[T any](c *gin.Context, data T) {
 	c.JSON(http.StatusOK, errs.RespOK(data))
 }
 
-// respErr 业务错误响应（HTTP 恒 200，业务码区分）。
+// respErr 业务错误响应（HTTP 恒 200，业务码区分）；非业务错误记日志。
 func respErr(c *gin.Context, err error) {
 	be := errs.From(err)
+	if be.Code == errs.CodeInternal && err.Error() != be.Message {
+		slog.Error("api internal error", "err", err.Error(), "path", c.Request.URL.Path)
+	}
 	c.JSON(http.StatusOK, errs.RespErr(be))
 }
 

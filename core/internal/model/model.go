@@ -49,6 +49,19 @@ type CronTask struct {
 	UpdatedAt   time.Time  `json:"updatedAt"`
 }
 
+// DatabaseInstance 数据库实例元数据（密码 AES-GCM 加密存储）。
+type DatabaseInstance struct {
+	ID             uint      `gorm:"primaryKey" json:"id"`
+	Name           string    `gorm:"uniqueIndex;size:32;not null" json:"name"`
+	Type           string    `gorm:"size:16;not null" json:"type"` // mysql / postgres / redis / mongo
+	Port           int       `gorm:"not null" json:"port"`
+	RootUser       string    `gorm:"size:32" json:"rootUser"`
+	PasswordEnc    string    `gorm:"type:text;not null" json:"-"`
+	ComposeProject string    `gorm:"size:64;not null" json:"composeProject"`
+	CreatedAt      time.Time `json:"createdAt"`
+	UpdatedAt      time.Time `json:"updatedAt"`
+}
+
 // CronTaskLog 计划任务执行记录。
 type CronTaskLog struct {
 	ID         uint       `gorm:"primaryKey" json:"id"`

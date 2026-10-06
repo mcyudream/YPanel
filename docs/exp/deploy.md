@@ -26,3 +26,9 @@
 - **现象**：首次部署即 systemd 常驻，健康检查用远端 curl 而非开发机直连（面板只对本机 0.0.0.0:8880 暴露，内网可达）。
 - **规避/解决**：`journalctl -u ypanel -n 30 --no-pager` 是排障第一入口；agent 日志与 core 同进程同 stdout（合并部署），JSON 行格式统一 grep。
 - **来源**：2026-10-06，测试机部署验收。
+
+### 服务器 docker.io 直连不可达：配置 registry-mirrors
+
+- **现象**：容器化安装数据库时 `failed to resolve reference docker.io/...: connection refused`。
+- **规避/解决**：`/etc/docker/daemon.json` 配置 `registry-mirrors`（daocloud/1ms/1panel 等公共镜像），`systemctl restart docker`；YPanel 测试机已配置，更换测试机时需重做。
+- **来源**：2026-10-06，M4 部署。

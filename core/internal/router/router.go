@@ -19,6 +19,7 @@ type Deps struct {
 	Nodes    *service.NodeService
 	Settings *service.SettingService
 	Cron     *service.Cron
+	DBS      *service.DatabaseService
 	Version  string
 }
 
@@ -39,6 +40,7 @@ func Setup(d *Deps) (*gin.Engine, error) {
 	setAPI := &api.SettingsAPI{Settings: d.Settings}
 	composeAPI := &api.ComposeAPI{Nodes: d.Nodes}
 	cronAPI := &api.CronAPI{DB: d.CronDB(), Cron: d.Cron}
+	dbAPI := &api.DatabaseAPI{DBS: d.DBS}
 
 	r.GET("/health", func(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{"status": "ok", "version": d.Version})
@@ -89,6 +91,24 @@ func Setup(d *Deps) (*gin.Engine, error) {
 			authed.DELETE("/cron/tasks/:id", cronAPI.Delete)
 			authed.POST("/cron/tasks/:id/run", cronAPI.Run)
 			authed.GET("/cron/logs", cronAPI.Logs)
+
+			authed.GET("/database/instances", dbAPI.List)
+			authed.POST("/database/instances", dbAPI.Create)
+			authed.DELETE("/database/instances/:id", dbAPI.Delete)
+			authed.POST("/database/instances/:id/start", dbAPI.StartStop(true))
+			authed.POST("/database/instances/:id/stop", dbAPI.StartStop(false))
+			authed.GET("/database/instances/:id/reveal", dbAPI.Reveal)
+			authed.GET("/database/instances/:id/databases", dbAPI.Databases)
+			authed.POST("/database/instances/:id/databases", dbAPI.CreateDatabase)
+			authed.DELETE("/database/instances/:id/databases/:name", dbAPI.DropDatabase)
+			authed.GET("/database/instances/:id/users", dbAPI.Users)
+			authed.POST("/database/instances/:id/users", dbAPI.CreateUser)
+			authed.DELETE("/database/instances/:id/users/:name", dbAPI.DropUser)
+			authed.PUT("/database/instances/:id/users/:name/password", dbAPI.ChangeUserPassword)
+			authed.GET("/database/instances/:id/backups", dbAPI.Backups)
+			authed.POST("/database/instances/:id/backups", dbAPI.CreateBackup)
+			authed.DELETE("/database/instances/:id/backups", dbAPI.DeleteBackup)
+			authed.POST("/database/instances/:id/backups/restore", dbAPI.RestoreBackup)
 
 			admin := authed.Group("", middleware.Admin())
 			{
