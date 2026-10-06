@@ -99,6 +99,19 @@ type DatabaseInstance struct {
 	UpdatedAt      time.Time `json:"updatedAt"`
 }
 
+// AlertRule 告警规则。
+type AlertRule struct {
+	ID          uint      `gorm:"primaryKey" json:"id"`
+	Name        string    `gorm:"size:64;not null" json:"name"`
+	Metric      string    `gorm:"size:16;not null" json:"metric"` // cpu / memory / disk
+	Threshold   int       `gorm:"not null" json:"threshold"`
+	WebhookURL  string    `gorm:"size:512;not null" json:"webhookUrl"`
+	WebhookType string    `gorm:"size:16;not null;default:generic" json:"webhookType"`
+	Enabled     bool      `gorm:"not null;default:true" json:"enabled"`
+	CreatedAt   time.Time `json:"createdAt"`
+	UpdatedAt   time.Time `json:"updatedAt"`
+}
+
 // CronTaskLog 计划任务执行记录。
 type CronTaskLog struct {
 	ID         uint       `gorm:"primaryKey" json:"id"`

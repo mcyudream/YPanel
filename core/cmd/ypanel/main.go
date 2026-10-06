@@ -77,12 +77,17 @@ func run(ctx context.Context, cfg *config.Config) error {
 	// 数据库实例管理（凭据加密密钥由 JWT 密钥派生）
 	dbSvc := service.NewDatabaseService(gdb, nodes, string(auth.Secret()))
 	siteSvc := service.NewSiteService(gdb, nodes)
+	marketSvc := service.NewMarketService(gdb, nodes)
+	fwSvc := service.NewFirewallService(nodes, cfg.Port)
+	alertSvc := service.NewAlertService(gdb, nodes)
+	alertSvc.Start(ctx)
 
 	if os.Getenv("GIN_MODE") == "" {
 		gin.SetMode(gin.ReleaseMode)
 	}
 	r, err := router.Setup(&router.Deps{
-		Auth: auth, Nodes: nodes, Settings: settings, Cron: cronSvc, DBS: dbSvc, Sites: siteSvc, Version: version,
+		Auth: auth, Nodes: nodes, Settings: settings, Cron: cronSvc, DBS: dbSvc, Sites: siteSvc,
+		Market: marketSvc, FW: fwSvc, Alerts: alertSvc, Version: version,
 	})
 	if err != nil {
 		return err

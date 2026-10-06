@@ -21,6 +21,9 @@ type Deps struct {
 	Cron     *service.Cron
 	DBS      *service.DatabaseService
 	Sites    *service.SiteService
+	Market   *service.MarketService
+	FW       *service.FirewallService
+	Alerts   *service.AlertService
 	Version  string
 }
 
@@ -44,6 +47,9 @@ func Setup(d *Deps) (*gin.Engine, error) {
 	dbAPI := &api.DatabaseAPI{DBS: d.DBS}
 	siteAPI := &api.SiteAPI{Sites: d.Sites}
 	nodeAPI := &api.NodeAPI{Nodes: d.Nodes}
+	marketAPI := &api.MarketAPI{Market: d.Market}
+	fwAPI := &api.FirewallAPI{FW: d.FW}
+	alertAPI := &api.AlertAPI{Alerts: d.Alerts}
 
 	r.GET("/health", func(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{"status": "ok", "version": d.Version})
@@ -131,6 +137,21 @@ func Setup(d *Deps) (*gin.Engine, error) {
 				admin.GET("/nodes", nodeAPI.List)
 				admin.POST("/nodes/pairing-code", nodeAPI.PairingCode)
 				admin.DELETE("/nodes/:id", nodeAPI.Delete)
+
+			admin.GET("/market/apps", marketAPI.List)
+			admin.GET("/market/installed", marketAPI.Installed)
+			admin.POST("/market/install", marketAPI.Install)
+
+			authed.GET("/firewall/status", fwAPI.Status)
+			authed.POST("/firewall/allow", fwAPI.Allow)
+			authed.DELETE("/firewall/rules/:number", fwAPI.DeleteRule)
+			authed.POST("/firewall/enable", fwAPI.SetEnabled(true))
+			authed.POST("/firewall/disable", fwAPI.SetEnabled(false))
+
+			admin.GET("/alert/rules", alertAPI.ListRules)
+			admin.POST("/alert/rules", alertAPI.CreateRule)
+			admin.PUT("/alert/rules/:id", alertAPI.UpdateRule)
+			admin.DELETE("/alert/rules/:id", alertAPI.DeleteRule)
 				admin.GET("/users", userAPI.List)
 				admin.POST("/users", userAPI.Create)
 				admin.PUT("/users/:id", userAPI.Update)

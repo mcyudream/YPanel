@@ -34,3 +34,10 @@
 - **根因**：gin httprouter 限制 catch-all 必须在路径末尾；catch-all 捕获值包含前导分隔符。
 - **规避/解决**：带通配的资源操作一律改 query 传参（`DELETE /x?file=`, `POST /x/restore?file=`）；或手动 TrimPrefix 后再校验。
 - **来源**：2026-10-06，M4 备份接口。
+
+### gopsutil Percent(0) 全局态并发调用会互相吞差值
+
+- **现象**：告警服务每 30s 评估时 CPU 恒为 0，而面板 overview（3s 轮询）正常显示。
+- **根因**：`cpu.Percent(0, false)` 非阻塞模式依赖包内全局"上次调用时刻"，采样器（2s 周期）与 API 并发调用会互相消费差值窗口——紧跟着调用的那一方拿到 ~0。
+- **规避/解决**：单一采样器独占 Percent 调用，其余消费方读采样环形缓冲的最新值（agent sysinfo.Overview 的 CPU 字段改取 Latest()）。
+- **来源**：2026-10-06，M7 告警服务。

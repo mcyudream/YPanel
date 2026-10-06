@@ -75,11 +75,17 @@ func (c *Collector) Overview() (*dto.SystemOverview, error) {
 	}
 	logical, _ := gopscpu.Counts(true)
 	physical, _ := gopscpu.Counts(false)
-	cpuPercent, err := gopscpu.Percent(0, false)
-	if err != nil {
-		return nil, err
-	}
 	perCore, _ := gopscpu.Percent(0, true)
+	// CPU 使用率优先取采样器最新值：Percent(0) 的全局态与采样器并发调用会互相吞差值
+	cpuPercent := []float64{}
+	if latest := c.Latest(); latest != nil {
+		cpuPercent = []float64{latest.CPUPercent}
+	} else {
+		cpuPercent, err = gopscpu.Percent(0, false)
+		if err != nil {
+			return nil, err
+		}
+	}
 
 	vm, err := mem.VirtualMemory()
 	if err != nil {

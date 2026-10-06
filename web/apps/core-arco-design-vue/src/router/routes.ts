@@ -9,6 +9,9 @@ import FileRoutes from './modules/file'
 import IconsRoutes from './modules/icons'
 import ManageRoutes from './modules/manage'
 import NodesRoutes from './modules/nodes'
+import MarketRoutes from './modules/market'
+import FirewallRoutes from './modules/firewall'
+import AlertRoutes from './modules/alert'
 import TerminalRoutes from './modules/terminal'
 
 // 固定路由（默认路由）
@@ -107,6 +110,9 @@ const asyncRoutes: RouteRecordMainRaw[] = [
     children: [
       ManageRoutes,
       NodesRoutes,
+      MarketRoutes,
+      FirewallRoutes,
+      AlertRoutes,
     ],
   },
 ]
