@@ -62,3 +62,10 @@
 - **根因**：`mux.HandleFunc` 同一 pattern 注册两次（编辑时粘贴重复），ServeMux 在运行时注册阶段 panic。
 - **规避/解决**：路由表集中定义（循环注册或常量表）可从根上避免重复；启动崩溃先 grep 路由注册段的重复行。
 - **来源**：2026-10-06，M19 容器管理路由（agent/server/server.go）。
+
+### apr1（Apache MD5 crypt）手写实现是坑：字节重排与清零语义错一个全盘错
+
+- **现象**：手写 apr1 生成的哈希格式完全合法（$apr1$salt$22字符），但 nginx auth_basic 校验永远 401；与 openssl passwd -apr1 对照哈希不同，且两次"修复"（weird 循环字节、输出重排）均不对。
+- **根因**：md5-crypt 有三处极易错的细节：① 输出编码前 16 字节要按 (12,6,0)(13,7,1)(14,8,2)(15,9,3)(5,10,4)(11) 重排（passlib _transpose_map）；② "weird 循环"里 final 变量指向的是**当时**的摘要（MD5(pw+salt+pw)），且部分实现 memset 时机不同导致首字节是 0 还是 db[0] 各版本歧义；③ 1000 轮 update 顺序按 i%2/3/7 组合。手写对照记忆写，三处全对才算对。
+- **规避/解决**：**不要手写**。htpasswd 生成走容器内 `openssl passwd -apr1 -salt <salt> -stdin`（密码经 base64 中转防 shell 引号注入），与 nginx 天然兼容；openssl 已因自签证书存在于 nginx 容器，零新增依赖。注意 `openssl passwd` 不加 `-stdin` 时不读管道（打印 Password: 提示）。
+- **来源**：2026-10-06，S20 Basic 认证（三轮错误实现后改为 openssl 通道，一次通过）。
