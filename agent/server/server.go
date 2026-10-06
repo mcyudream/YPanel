@@ -13,6 +13,7 @@ import (
 	"net"
 	"net/http"
 
+	"github.com/ypanel/agent/internal/compose"
 	"github.com/ypanel/agent/internal/dockerx"
 	"github.com/ypanel/agent/internal/files"
 	"github.com/ypanel/agent/internal/sysinfo"
@@ -23,25 +24,34 @@ import (
 type Config struct {
 	Token      string // PSK，Authorization: Bearer 校验；空则拒绝启动
 	ListenAddr string // 监听地址；空 = 127.0.0.1:0（合并部署 loopback 随机端口）
+	ComposeDir string // compose 托管目录；空 = /opt/ypanel/compose
 }
 
 // Server agent HTTP 服务。
 type Server struct {
-	cfg   Config
-	sys   *sysinfo.Collector
-	files *files.Manager
-	dock  *dockerx.Manager
-	srv   *http.Server
+	cfg     Config
+	sys     *sysinfo.Collector
+	files   *files.Manager
+	dock    *dockerx.Manager
+	compose *compose.Manager
+	srv     *http.Server
 }
 
 // New 创建服务并启动采样器。
 func New(cfg Config) *Server {
-	return &Server{
+	composeDir := cfg.ComposeDir
+	if composeDir == "" {
+		composeDir = "/opt/ypanel/compose"
+	}
+	m := &Server{
 		cfg:   cfg,
 		sys:   sysinfo.New(2, 1800), // 2s 采样，保留 1 小时
 		files: files.New(nil),        // 根为 "/"，全盘管理
 		dock:  dockerx.New(),
 	}
+	// 目录创建失败时 compose 为 nil，接口层降级为能力不可用
+	m.compose, _ = compose.New(composeDir, m.dock)
+	return m
 }
 
 // Start 启动服务，立即返回实际监听地址（http://addr）；wait 阻塞至服务退出。
@@ -67,6 +77,13 @@ func (s *Server) Start(ctx context.Context) (base string, wait func(), err error
 	mux.HandleFunc("POST /agent/v1/docker/containers/{id}/{action}", s.auth(s.handleDockerAction))
 	mux.HandleFunc("GET /agent/v1/docker/containers/{id}/logs", s.auth(s.handleDockerLogs))
 	mux.HandleFunc("GET /agent/v1/terminal", s.auth(s.handleTerminal))
+	mux.HandleFunc("GET /agent/v1/compose/projects", s.auth(s.handleComposeList))
+	mux.HandleFunc("GET /agent/v1/compose/config", s.auth(s.handleComposeConfig))
+	mux.HandleFunc("POST /agent/v1/compose/config", s.auth(s.handleComposeWrite))
+	mux.HandleFunc("POST /agent/v1/compose/up", s.auth(s.handleComposeUp))
+	mux.HandleFunc("POST /agent/v1/compose/down", s.auth(s.handleComposeDown))
+	mux.HandleFunc("GET /agent/v1/compose/logs", s.auth(s.handleComposeLogs))
+	mux.HandleFunc("POST /agent/v1/exec", s.auth(s.handleExec))
 
 	ln, err := net.Listen("tcp", s.listenAddr())
 	if err != nil {
@@ -140,4 +157,10 @@ func writeErr(w http.ResponseWriter, err error) {
 	slog.Error("agent internal error", "err", err)
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	_ = json.NewEncoder(w).Encode(errs.RespErr(errs.ErrInternal))
+}
+
+func slogWarn(msg string, err error) {
+	if err != nil {
+		slog.Warn(msg, "err", err)
+	}
 }

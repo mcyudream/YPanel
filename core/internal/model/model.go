@@ -34,3 +34,30 @@ type Setting struct {
 	Value     string    `gorm:"type:text" json:"value"`
 	UpdatedAt time.Time `json:"updatedAt"`
 }
+
+// CronTask 计划任务（shell 类型）。
+type CronTask struct {
+	ID          uint       `gorm:"primaryKey" json:"id"`
+	Name        string     `gorm:"size:64;not null" json:"name"`
+	Cron        string     `gorm:"size:32;not null" json:"cron"`
+	Command     string     `gorm:"type:text;not null" json:"command"`
+	Enabled     bool       `gorm:"not null;default:true" json:"enabled"`
+	TimeoutSecs int        `gorm:"not null;default:300" json:"timeoutSecs"`
+	LastRunAt   *time.Time `json:"lastRunAt"`
+	LastSuccess *bool      `json:"lastSuccess"`
+	CreatedAt   time.Time  `json:"createdAt"`
+	UpdatedAt   time.Time  `json:"updatedAt"`
+}
+
+// CronTaskLog 计划任务执行记录。
+type CronTaskLog struct {
+	ID         uint       `gorm:"primaryKey" json:"id"`
+	TaskID     uint       `gorm:"index;not null" json:"taskId"`
+	TaskName   string     `gorm:"size:64" json:"taskName"`
+	Trigger    string     `gorm:"size:8;not null" json:"trigger"` // cron / manual
+	StartAt    time.Time  `json:"startAt"`
+	EndAt      *time.Time `json:"endAt"`
+	DurationMs int64      `json:"durationMs"`
+	Success    bool       `json:"success"`
+	Output     string     `gorm:"type:text" json:"output"`
+}

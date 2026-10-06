@@ -1,6 +1,8 @@
 import type { RouteRecordMainRaw } from '@fantastic-admin/types'
 import type { RouteRecordRaw } from 'vue-router'
+import ComposeRoutes from './modules/compose'
 import ContainerRoutes from './modules/container'
+import CronRoutes from './modules/cron'
 import FileRoutes from './modules/file'
 import IconsRoutes from './modules/icons'
 import ManageRoutes from './modules/manage'
@@ -66,9 +68,11 @@ const asyncRoutes: RouteRecordMainRaw[] = [
       icon: 'yd:layers',
     },
     children: [
+      ComposeRoutes,
       FileRoutes,
       ContainerRoutes,
       TerminalRoutes,
+      CronRoutes,
     ],
   },
   {

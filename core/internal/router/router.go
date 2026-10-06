@@ -5,6 +5,7 @@ import (
 	"net/http"
 
 	"github.com/gin-gonic/gin"
+	"gorm.io/gorm"
 
 	"github.com/ypanel/core/internal/api"
 	"github.com/ypanel/core/internal/middleware"
@@ -17,8 +18,12 @@ type Deps struct {
 	Auth     *service.Auth
 	Nodes    *service.NodeService
 	Settings *service.SettingService
+	Cron     *service.Cron
 	Version  string
 }
+
+// CronDB 计划任务审计库句柄。
+func (d *Deps) CronDB() *gorm.DB { return d.Auth.DB() }
 
 // Setup 装配全部路由。
 func Setup(d *Deps) (*gin.Engine, error) {
@@ -32,6 +37,8 @@ func Setup(d *Deps) (*gin.Engine, error) {
 	dockerAPI := &api.DockerAPI{Nodes: d.Nodes}
 	termAPI := &api.TerminalAPI{Nodes: d.Nodes}
 	setAPI := &api.SettingsAPI{Settings: d.Settings}
+	composeAPI := &api.ComposeAPI{Nodes: d.Nodes}
+	cronAPI := &api.CronAPI{DB: d.CronDB(), Cron: d.Cron}
 
 	r.GET("/health", func(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{"status": "ok", "version": d.Version})
@@ -68,6 +75,20 @@ func Setup(d *Deps) (*gin.Engine, error) {
 
 			authed.GET("/settings", setAPI.Get)
 			authed.PUT("/settings", setAPI.Put)
+
+			authed.GET("/compose/projects", composeAPI.List)
+			authed.GET("/compose/config", composeAPI.Config)
+			authed.POST("/compose/config", composeAPI.Write)
+			authed.POST("/compose/up", composeAPI.Action("up"))
+			authed.POST("/compose/down", composeAPI.Action("down"))
+			authed.GET("/compose/logs", composeAPI.Logs)
+
+			authed.GET("/cron/tasks", cronAPI.List)
+			authed.POST("/cron/tasks", cronAPI.Create)
+			authed.PUT("/cron/tasks/:id", cronAPI.Update)
+			authed.DELETE("/cron/tasks/:id", cronAPI.Delete)
+			authed.POST("/cron/tasks/:id/run", cronAPI.Run)
+			authed.GET("/cron/logs", cronAPI.Logs)
 
 			admin := authed.Group("", middleware.Admin())
 			{

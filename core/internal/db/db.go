@@ -25,7 +25,7 @@ func Open(dataDir string) (*gorm.DB, error) {
 	if err != nil {
 		return nil, fmt.Errorf("打开 SQLite 失败: %w", err)
 	}
-	if err := gdb.AutoMigrate(&model.User{}, &model.LoginLog{}, &model.Setting{}); err != nil {
+	if err := gdb.AutoMigrate(&model.User{}, &model.LoginLog{}, &model.Setting{}, &model.CronTask{}, &model.CronTaskLog{}); err != nil {
 		return nil, fmt.Errorf("数据库迁移失败: %w", err)
 	}
 	return gdb, nil

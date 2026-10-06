@@ -67,11 +67,18 @@ func run(ctx context.Context, cfg *config.Config) error {
 		return fmt.Errorf("启动内嵌 agent 失败: %w", err)
 	}
 
+	// 计划任务调度器
+	cronSvc := service.NewCron(gdb, nodes)
+	if err := cronSvc.Start(); err != nil {
+		return fmt.Errorf("启动计划任务调度失败: %w", err)
+	}
+	defer cronSvc.Stop()
+
 	if os.Getenv("GIN_MODE") == "" {
 		gin.SetMode(gin.ReleaseMode)
 	}
 	r, err := router.Setup(&router.Deps{
-		Auth: auth, Nodes: nodes, Settings: settings, Version: version,
+		Auth: auth, Nodes: nodes, Settings: settings, Cron: cronSvc, Version: version,
 	})
 	if err != nil {
 		return err
