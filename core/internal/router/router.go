@@ -29,6 +29,7 @@ type Deps struct {
 	Hist     *service.HistoryRecorder
 	F2B      *service.Fail2banService
 	DBAdmin  *service.DBAdminService
+	SU       *service.SelfUpdateService
 	Version  string
 }
 
@@ -57,6 +58,7 @@ func Setup(d *Deps) (*gin.Engine, error) {
 	alertAPI := &api.AlertAPI{Alerts: d.Alerts}
 	f2bAPI := &api.Fail2banAPI{F2B: d.F2B}
 	dbAdminAPI := &api.DBAdminAPI{Admin: d.DBAdmin}
+	suAPI := &api.SelfUpdateAPI{SU: d.SU}
 	notifAPI := &api.NotificationAPI{Notif: d.Notif}
 	procExecAPI := &api.NodeExecAPI{Nodes: d.Nodes}
 	procProxy := &api.ProcProxy{Nodes: d.Nodes}
@@ -167,6 +169,9 @@ func Setup(d *Deps) (*gin.Engine, error) {
 			admin.GET("/fail2ban/status", f2bAPI.Status)
 			admin.POST("/fail2ban/unban", f2bAPI.Unban)
 			admin.POST("/fail2ban/ban", f2bAPI.Ban)
+
+			admin.GET("/system/update/status", suAPI.Status)
+			admin.POST("/system/update/apply", suAPI.Apply)
 
 			dbAdmin := authed.Group("/plugin/db-admin")
 			{

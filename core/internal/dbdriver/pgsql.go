@@ -3,6 +3,7 @@ package dbdriver
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -98,6 +99,10 @@ func (d *pgDriver) ListUsers(ctx context.Context) ([]UserInfo, error) {
 func (d *pgDriver) CreateUser(ctx context.Context, name, host, password string) error {
 	if err := ValidateIdent(name); err != nil {
 		return err
+	}
+	// PG16+ 保留 pg_ 前缀角色名（SQLSTATE 42939）
+	if strings.HasPrefix(strings.ToLower(name), "pg_") {
+		return errs.Wrap(errs.ErrBadRequest, "PostgreSQL 角色名不允许以 pg_ 开头（系统保留）")
 	}
 	// PG 无 host 概念，忽略入参
 	// 密码已过白名单（无引号），单引号字面量拼接安全

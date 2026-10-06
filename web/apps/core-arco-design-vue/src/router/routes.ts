@@ -15,6 +15,7 @@ import AlertRoutes from './modules/alert'
 import NotificationRoutes from './modules/notifications'
 import ProcessesRoutes from './modules/processes'
 import DbAdminRoutes from './modules/dbadmin'
+import SelfUpdateRoutes from './modules/selfupdate'
 import TerminalRoutes from './modules/terminal'
 
 // 固定路由（默认路由）
@@ -119,6 +120,7 @@ const asyncRoutes: RouteRecordMainRaw[] = [
       NotificationRoutes,
       ProcessesRoutes,
       DbAdminRoutes,
+      SelfUpdateRoutes,
     ],
   },
 ]

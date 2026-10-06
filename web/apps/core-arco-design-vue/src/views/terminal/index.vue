@@ -20,6 +20,10 @@ interface TermTab {
 const appAccountStore = useAppAccountStore()
 const appSettingsStore = useAppSettingsStore()
 
+// 同步输入：开启后键入广播到全部打开终端
+const syncInput = ref(false)
+const terminals = ref<{ onData: (d: string) => void }[]>([])
+
 let uid = 0
 const tabs = ref<TermTab[]>([])
 const activeId = ref<number>(0)
@@ -51,6 +55,11 @@ function createTab() {
 
   ws.onopen = () => {
     term.onData((data) => {
+      if (syncInput.value) {
+        // 广播到全部终端
+        terminals.value.forEach((t) => { try { t.onData(data) } catch {} })
+        return
+      }
       ws.send(JSON.stringify({ type: 'input', data }))
     })
     // 首次自适应尺寸
@@ -71,6 +80,10 @@ function createTab() {
   ws.onerror = () => {
     term.write('\r\n\x1b[31m[连接错误]\x1b[0m\r\n')
   }
+
+  // 注册广播通道（同步输入用）
+  const broadcast: { onData: (d: string) => void } = { onData: (d: string) => ws.send(JSON.stringify({ type: 'input', data: d })) }
+  terminals.value.push(broadcast)
 
   const tab: TermTab = {
     id,
@@ -111,6 +124,7 @@ function closeTab(id: number) {
   if (idx === -1) {
     return
   }
+  terminals.value.splice(idx, 1)
   const tab = tabs.value[idx]
   tab.resizeObserver?.disconnect()
   tab.ws.close()
@@ -160,9 +174,15 @@ onBeforeUnmount(() => {
       <template #description>
         <span>服务器交互式终端（WebSocket + PTY）</span>
       </template>
-      <FaButton size="sm" @click="createTab">
-        <FaIcon name="i-lucide:plus" class="mr-1" /> 新建终端
-      </FaButton>
+      <div class="flex items-center gap-2">
+        <label class="flex cursor-pointer items-center gap-1.5 rounded-md border px-2 py-1 text-sm transition-colors hover:bg-accent/50">
+          <input v-model="syncInput" type="checkbox">
+          同步输入{{ syncInput && tabs.length > 1 ? `（×${tabs.length}）` : '' }}
+        </label>
+        <FaButton size="sm" @click="createTab">
+          <FaIcon name="i-lucide:plus" class="mr-1" /> 新建终端
+        </FaButton>
+      </div>
     </FaPageHeader>
 
     <FaPageMain>

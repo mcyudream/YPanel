@@ -42,6 +42,34 @@ const dragState = ref<{
   originY: number
 } | null>(null)
 
+// 边缘 resize（右/下/右下）
+const resizeState = ref<{
+  id: number
+  startX: number
+  startY: number
+  originW: number
+  originH: number
+  dir: 'e' | 's' | 'se'
+} | null>(null)
+
+function onResizeMousedown(e: MouseEvent, id: number, dir: 'e' | 's' | 'se') {
+  const w = wb.windows.find(i => i.id === id)
+  if (!w || w.maximized) {
+    return
+  }
+  wb.focus(id)
+  resizeState.value = {
+    id,
+    startX: e.clientX,
+    startY: e.clientY,
+    originW: w.width,
+    originH: w.height,
+    dir,
+  }
+  e.preventDefault()
+  e.stopPropagation()
+}
+
 function onTitlebarMousedown(e: MouseEvent, id: number) {
   const w = wb.windows.find(i => i.id === id)
   if (!w || w.maximized) {
@@ -72,12 +100,33 @@ function onMousemove(e: MouseEvent) {
   wb.move(d.id, Math.max(-w.width + 120, Math.min(window.innerWidth - 120, nx)), Math.max(0, Math.min(window.innerHeight - 80, ny)))
 }
 
+function onMousemoveResize(e: MouseEvent) {
+  const r = resizeState.value
+  if (!r) {
+    return
+  }
+  const w = wb.windows.find(i => i.id === r.id)
+  if (!w) {
+    return
+  }
+  const dw = e.clientX - r.startX
+  const dh = e.clientY - r.startY
+  if (r.dir === 'e' || r.dir === 'se') {
+    w.width = Math.max(420, r.originW + dw)
+  }
+  if (r.dir === 's' || r.dir === 'se') {
+    w.height = Math.max(280, r.originH + dh)
+  }
+}
+
 function onMouseup() {
   dragState.value = null
+  resizeState.value = null
 }
 
 onMounted(() => {
   window.addEventListener('mousemove', onMousemove)
+  window.addEventListener('mousemove', onMousemoveResize)
   window.addEventListener('mouseup', onMouseup)
   // 默认打开主机概览
   if (!wb.windows.length) {
@@ -87,6 +136,7 @@ onMounted(() => {
 
 onBeforeUnmount(() => {
   window.removeEventListener('mousemove', onMousemove)
+  window.removeEventListener('mousemove', onMousemoveResize)
   window.removeEventListener('mouseup', onMouseup)
 })
 
@@ -179,6 +229,21 @@ function backToClassic() {
         <div class="min-h-0 flex-1 overflow-auto bg-background">
           <component :is="compOf(w.key)" />
         </div>
+        <!-- resize 把手 -->
+        <template v-if="!w.maximized">
+          <div
+            class="absolute inset-y-0 right-0 z-10 w-1.5 cursor-ew-resize"
+            @mousedown="onResizeMousedown($event, w.id, 'e')"
+          />
+          <div
+            class="absolute inset-x-0 bottom-0 z-10 h-1.5 cursor-ns-resize"
+            @mousedown="onResizeMousedown($event, w.id, 's')"
+          />
+          <div
+            class="absolute bottom-0 right-0 z-10 size-3.5 cursor-nwse-resize"
+            @mousedown="onResizeMousedown($event, w.id, 'se')"
+          />
+        </template>
       </div>
     </template>
 
