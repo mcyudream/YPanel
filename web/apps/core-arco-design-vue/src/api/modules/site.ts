@@ -98,7 +98,7 @@ export default {
     const res = await api.get(`api/v1/sites/${id}/logs?type=${type}&tail=${tail}`, { silent: true })
     return (res.data as { content: string }).content
   },
-  create: (data: { name: string, type: string, domain: string, extraDomains?: string[], port?: number, proxyRules?: ProxyRule[], proxyPass?: string, indexFiles?: string }) =>
+  create: (data: { name: string, type: string, domain: string, extraDomains?: string[], port?: number, proxyRules?: ProxyRule[], proxyPass?: string, indexFiles?: string, runtimeId?: number }) =>
     api.post('api/v1/sites', data),
   remove: (id: number, purge: boolean) => api.delete(`api/v1/sites/${id}?purge=${purge}`),
   enable: (id: number) => api.post(`api/v1/sites/${id}/enable`),

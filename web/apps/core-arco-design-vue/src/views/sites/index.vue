@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import type { SiteItem, DiscoveredSite } from '@/api/modules/site'
 import apiSite, { siteDiscoveryApi, wafApi, extApi } from '@/api/modules/site'
+import apiRuntime from '@/api/modules/runtime'
 import type { SiteWaf, SiteExtConfig, RewriteTemplate } from '@/api/modules/site'
 
 defineOptions({
@@ -43,14 +44,21 @@ async function install() {
 
 // 创建
 const createVisible = ref(false)
-const form = ref({ name: '', type: 'static', domain: '', extraDomains: '', port: 80, proxyPass: '', indexFiles: 'index.html' })
+const form = ref({ name: '', type: 'static', domain: '', extraDomains: '', port: 80, proxyPass: '', indexFiles: 'index.html', runtimeId: 0 })
 const proxyRules = ref<{ prefix: string, target: string, ws?: boolean }[]>([{ prefix: '/api', target: '' }])
 const creating = ref(false)
+const runtimes = ref<{ id: number, name: string, version: string, running: boolean }[]>([])
 
 function openCreate() {
-  form.value = { name: '', type: 'static', domain: '', extraDomains: '', port: 80, proxyPass: '', indexFiles: 'index.html' }
+  form.value = { name: '', type: 'static', domain: '', extraDomains: '', port: 80, proxyPass: '', indexFiles: 'index.html', runtimeId: 0 }
   proxyRules.value = [{ prefix: '/api', target: '' }]
   createVisible.value = true
+  apiRuntime.list().then((list) => {
+    runtimes.value = list
+    if (list.length && !form.value.runtimeId) {
+      form.value.runtimeId = list[0].id
+    }
+  }).catch(() => {})
 }
 
 async function doCreate() {
@@ -69,6 +77,7 @@ async function doCreate() {
       proxyPass: form.value.proxyPass,
       proxyRules: form.value.type === 'proxy' ? rules : undefined,
       indexFiles: form.value.indexFiles,
+      runtimeId: form.value.type === 'php' ? form.value.runtimeId : undefined,
     })
     useFaToast().success('站点已创建')
     createVisible.value = false
@@ -403,8 +412,8 @@ onMounted(load)
                 <a v-if="s.enabled" :href="`http://${s.domain}`" target="_blank" rel="noopener" class="ml-1 text-primary opacity-60" title="访问">↗</a>
               </td>
               <td class="px-3 py-2">
-                <span class="rounded-full px-2 py-0.5 text-xs" :class="s.type === 'static' ? 'bg-blue-500/10 text-blue-600' : 'bg-purple-500/10 text-purple-600'">
-                  {{ s.type === 'static' ? '静态' : '反代' }}
+                <span class="rounded-full px-2 py-0.5 text-xs" :class="{ static: 'bg-blue-500/10 text-blue-600', proxy: 'bg-purple-500/10 text-purple-600', php: 'bg-emerald-500/10 text-emerald-600' }[s.type] || 'bg-muted text-muted-foreground'">
+                  {{ { static: '静态', proxy: '反代', php: 'PHP' }[s.type] || s.type }}
                 </span>
               </td>
               <td class="hidden max-w-56 truncate px-3 py-2 font-mono text-xs text-muted-foreground lg:table-cell">
@@ -472,7 +481,7 @@ onMounted(load)
           <span class="w-20 shrink-0 text-sm text-muted-foreground">类型</span>
           <div class="flex flex-1 gap-1.5">
             <button
-              v-for="t in [{ v: 'static', l: '静态站' }, { v: 'proxy', l: '反向代理' }]"
+              v-for="t in [{ v: 'static', l: '静态站' }, { v: 'proxy', l: '反向代理' }, { v: 'php', l: 'PHP 站点' }]"
               :key="t.v"
               type="button"
               class="flex-1 cursor-pointer rounded-md border px-2 py-1.5 text-sm transition-colors"
@@ -495,6 +504,16 @@ onMounted(load)
           <span class="w-20 shrink-0 text-sm text-muted-foreground">附加域名</span>
           <textarea v-model="form.extraDomains" class="h-14 flex-1 rounded-md border border-input bg-background p-2 font-mono text-xs outline-none focus:ring-1 focus:ring-primary" placeholder="每行一个，可选，如&#10;www.demo.example.com&#10;demo2.example.com" />
         </div>
+        <div v-if="form.type === 'php'" class="rounded-md border p-3">
+          <div class="mb-2 text-sm font-medium">PHP 运行环境</div>
+          <select v-model.number="form.runtimeId" class="h-9 w-full rounded-md border bg-background px-2 text-sm outline-none focus:border-primary">
+            <option v-if="!runtimes.length" :value="0" disabled>暂无运行环境，请先到「运行环境」创建 php-fpm 实例</option>
+            <option v-for="r in runtimes" :key="r.id" :value="r.id">
+              php-{{ r.name }}（{{ r.version }}）{{ r.running ? '· 运行中' : '· 已停止' }}
+            </option>
+          </select>
+          <div class="mt-1 text-xs text-muted-foreground">站点根目录 /var/www/sites/站点名，PHP 文件经 fastcgi 转发到所选 php-fpm 容器</div>
+        </div>
         <div v-if="form.type === 'proxy'" class="rounded-md border p-3">
           <div class="mb-2 flex items-center justify-between">
             <span class="text-sm font-medium">反向代理规则</span>
@@ -515,9 +534,9 @@ onMounted(load)
           </div>
           <div class="text-xs text-muted-foreground">规则自动启用 WebSocket 支持（Upgrade/Connection 头）</div>
         </div>
-        <div v-if="form.type === 'static'" class="flex items-center gap-3">
+        <div v-if="form.type === 'static' || form.type === 'php'" class="flex items-center gap-3">
           <span class="w-20 shrink-0 text-sm text-muted-foreground">默认文档</span>
-          <FaInput v-model="form.indexFiles" placeholder="index.html" class="flex-1" />
+          <FaInput v-model="form.indexFiles" :placeholder="form.type === 'php' ? 'index.php' : 'index.html'" class="flex-1" />
         </div>
         <div class="text-xs text-muted-foreground">
           静态站根目录 /var/www/sites/&lt;站点名&gt;（自动生成欢迎页）；域名解析到服务器 IP 后即可访问

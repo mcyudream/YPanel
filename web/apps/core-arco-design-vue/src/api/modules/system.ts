@@ -25,6 +25,15 @@ export interface MetricSample {
   load1: number
 }
 
+export interface MetricRecord {
+  at: string
+  cpu: number
+  mem: number
+  rxSpeed: number
+  txSpeed: number
+  load1: number
+}
+
 export default {
   overview: async () => {
     const res = await api.get('api/v1/system/overview')
@@ -33,5 +42,10 @@ export default {
   history: async (seconds = 600) => {
     const res = await api.get(`api/v1/system/history?seconds=${seconds}`)
     return res.data as MetricSample[]
+  },
+  // 历史监控持久化查询（30 天，60s 粒度）
+  historyPersisted: async (seconds = 3600) => {
+    const res = await api.get(`api/v1/system/history/persisted?seconds=${seconds}`, { silent: true })
+    return res.data as MetricRecord[]
   },
 }
