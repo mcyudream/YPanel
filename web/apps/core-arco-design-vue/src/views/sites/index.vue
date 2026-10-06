@@ -43,18 +43,33 @@ async function install() {
 
 // 创建
 const createVisible = ref(false)
-const form = ref({ name: '', type: 'static', domain: '', port: 80, proxyPass: '' })
+const form = ref({ name: '', type: 'static', domain: '', extraDomains: '', port: 80, proxyPass: '', indexFiles: 'index.html' })
+const proxyRules = ref<{ prefix: string, target: string, ws?: boolean }[]>([{ prefix: '/api', target: '' }])
 const creating = ref(false)
 
 function openCreate() {
-  form.value = { name: '', type: 'static', domain: '', port: 80, proxyPass: '' }
+  form.value = { name: '', type: 'static', domain: '', extraDomains: '', port: 80, proxyPass: '', indexFiles: 'index.html' }
+  proxyRules.value = [{ prefix: '/api', target: '' }]
   createVisible.value = true
 }
 
 async function doCreate() {
   creating.value = true
   try {
-    await apiSite.create(form.value)
+    const extraDomains = form.value.extraDomains.split(/[\n,]/).map(x => x.trim()).filter(Boolean)
+    const rules = proxyRules.value
+      .map(r => ({ prefix: r.prefix || '/', target: r.target.trim(), ws: true }))
+      .filter(r => r.target)
+    await apiSite.create({
+      name: form.value.name,
+      type: form.value.type,
+      domain: form.value.domain,
+      extraDomains,
+      port: form.value.port,
+      proxyPass: form.value.proxyPass,
+      proxyRules: form.value.type === 'proxy' ? rules : undefined,
+      indexFiles: form.value.indexFiles,
+    })
     useFaToast().success('站点已创建')
     createVisible.value = false
     await load()
@@ -81,6 +96,37 @@ async function toggle(s: SiteItem) {
   }
   catch (e: any) {
     useFaToast().error('操作失败', { description: e?.message })
+  }
+}
+
+// ---- 站点日志 ----
+const logsVisible = ref(false)
+const logsTarget = ref<SiteItem | null>(null)
+const logsType = ref<'access' | 'error'>('access')
+const logsContent = ref('')
+const logsLoading = ref(false)
+
+async function openLogs(s: SiteItem) {
+  logsTarget.value = s
+  logsType.value = 'access'
+  logsContent.value = ''
+  logsVisible.value = true
+  await loadLogs()
+}
+
+async function loadLogs() {
+  if (!logsTarget.value) {
+    return
+  }
+  logsLoading.value = true
+  try {
+    logsContent.value = await apiSite.siteLogs(logsTarget.value.id, logsType.value, 200)
+  }
+  catch (e: any) {
+    logsContent.value = '读取失败：' + (e?.message || '')
+  }
+  finally {
+    logsLoading.value = false
   }
 }
 
@@ -297,6 +343,7 @@ onMounted(load)
               <td class="px-3 py-2 font-medium">{{ s.name }}</td>
               <td class="px-3 py-2 font-mono text-[13px]">
                 {{ s.domain }}
+                <span v-if="s.domains?.length" class="text-muted-foreground"> +{{ s.domains.length }}</span>
                 <a v-if="s.enabled" :href="`http://${s.domain}`" target="_blank" rel="noopener" class="ml-1 text-primary opacity-60" title="访问">↗</a>
               </td>
               <td class="px-3 py-2">
@@ -319,6 +366,7 @@ onMounted(load)
               <td class="px-3 py-2">
                 <div class="flex items-center justify-end gap-1">
                   <FaButton variant="ghost" size="sm" @click="openEditor(s)">配置</FaButton>
+                  <FaButton variant="ghost" size="sm" @click="openLogs(s)">日志</FaButton>
                   <FaButton variant="ghost" size="sm" @click="openWaf(s)">WAF</FaButton>
                   <FaButton v-if="!s.certDomain" variant="ghost" size="sm" @click="issueCert(s)">证书</FaButton>
                   <FaButton variant="outline" size="sm" @click="toggle(s)">{{ s.enabled ? '禁用' : '启用' }}</FaButton>
@@ -383,12 +431,36 @@ onMounted(load)
           <FaInput v-model="form.name" placeholder="小写字母/数字/中划线" class="flex-1" />
         </div>
         <div class="flex items-center gap-3">
-          <span class="w-20 shrink-0 text-sm text-muted-foreground">域名</span>
+          <span class="w-20 shrink-0 text-sm text-muted-foreground">主域名</span>
           <FaInput v-model="form.domain" placeholder="如 demo.example.com（本地测试可配 hosts）" class="flex-1" />
         </div>
-        <div v-if="form.type === 'proxy'" class="flex items-center gap-3">
-          <span class="w-20 shrink-0 text-sm text-muted-foreground">反代目标</span>
-          <FaInput v-model="form.proxyPass" placeholder="http://172.17.0.1:3000" class="flex-1" />
+        <div class="flex items-start gap-3">
+          <span class="w-20 shrink-0 text-sm text-muted-foreground">附加域名</span>
+          <textarea v-model="form.extraDomains" class="h-14 flex-1 rounded-md border border-input bg-background p-2 font-mono text-xs outline-none focus:ring-1 focus:ring-primary" placeholder="每行一个，可选，如&#10;www.demo.example.com&#10;demo2.example.com" />
+        </div>
+        <div v-if="form.type === 'proxy'" class="rounded-md border p-3">
+          <div class="mb-2 flex items-center justify-between">
+            <span class="text-sm font-medium">反向代理规则</span>
+            <FaButton variant="outline" size="sm" @click="proxyRules.push({ prefix: '/api', target: '' })">
+              <FaIcon name="i-lucide:plus" class="mr-1" /> 加规则
+            </FaButton>
+          </div>
+          <div v-for="(r, idx) in proxyRules" :key="idx" class="mb-2 flex items-center gap-2">
+            <FaInput v-model="r.prefix" placeholder="前缀 /api" class="w-32" />
+            <span class="text-muted-foreground">→</span>
+            <FaInput v-model="r.target" placeholder="http://172.17.0.1:3000" class="flex-1" />
+            <label class="flex shrink-0 cursor-pointer items-center gap-1 text-xs">
+              <input v-model="r.ws" type="checkbox"> WS
+            </label>
+            <FaButton v-if="proxyRules.length > 1" variant="ghost" size="icon-sm" @click="proxyRules.splice(idx, 1)">
+              <FaIcon name="i-lucide:trash" class="text-sm" />
+            </FaButton>
+          </div>
+          <div class="text-xs text-muted-foreground">规则自动启用 WebSocket 支持（Upgrade/Connection 头）</div>
+        </div>
+        <div v-if="form.type === 'static'" class="flex items-center gap-3">
+          <span class="w-20 shrink-0 text-sm text-muted-foreground">默认文档</span>
+          <FaInput v-model="form.indexFiles" placeholder="index.html" class="flex-1" />
         </div>
         <div class="text-xs text-muted-foreground">
           静态站根目录 /var/www/sites/&lt;站点名&gt;（自动生成欢迎页）；域名解析到服务器 IP 后即可访问
@@ -432,6 +504,25 @@ onMounted(load)
       <template #footer>
         <FaButton variant="outline" @click="wafVisible = false">取消</FaButton>
         <FaButton :loading="wafSaving" @click="saveWaf">保存并重载</FaButton>
+      </template>
+    </FaModal>
+
+    <!-- 站点日志 -->
+    <FaModal v-model="logsVisible" :title="`日志：${logsTarget?.name || ''}`" class="max-w-4xl!" :destroy-on-close="true">
+      <div class="mb-2 flex items-center gap-2">
+        <FaTabs
+          v-model="logsType" :list="[
+            { label: '访问日志', value: 'access' },
+            { label: '错误日志', value: 'error' },
+          ]" @change="loadLogs"
+        />
+        <FaButton variant="outline" size="sm" class="ml-auto" @click="loadLogs">
+          <FaIcon name="i-lucide:refresh-cw" class="mr-1" :class="logsLoading ? 'animate-spin' : ''" /> 刷新
+        </FaButton>
+      </div>
+      <pre class="h-96 overflow-auto rounded-md bg-muted/60 p-3 font-mono text-xs leading-relaxed">{{ logsContent || '暂无日志' }}</pre>
+      <template #footer>
+        <FaButton variant="outline" @click="logsVisible = false">关闭</FaButton>
       </template>
     </FaModal>
 

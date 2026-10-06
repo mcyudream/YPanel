@@ -43,21 +43,45 @@ func (a *SiteAPI) List(c *gin.Context) {
 // Create POST /api/v1/sites
 func (a *SiteAPI) Create(c *gin.Context) {
 	req, ok := bind[struct {
-		Name      string `json:"name" binding:"required"`
-		Type      string `json:"type" binding:"required,oneof=static proxy"`
-		Domain    string `json:"domain" binding:"required"`
-		Port      int    `json:"port"`
-		ProxyPass string `json:"proxyPass"`
+		Name         string                  `json:"name" binding:"required"`
+		Type         string                  `json:"type" binding:"required,oneof=static proxy"`
+		Domain       string                  `json:"domain" binding:"required"`
+		ExtraDomains []string                `json:"extraDomains"`
+		Port         int                     `json:"port"`
+		ProxyRules   []service.ProxyRule     `json:"proxyRules"`
+		ProxyPass    string                  `json:"proxyPass"`
+		IndexFiles   string                  `json:"indexFiles"`
 	}](c)
 	if !ok {
 		return
 	}
-	site, err := a.Sites.Create(c.Request.Context(), req.Name, req.Type, req.Domain, req.Port, req.ProxyPass)
+	if len(req.ProxyRules) == 0 && req.ProxyPass != "" {
+		req.ProxyRules = []service.ProxyRule{{Prefix: "/", Target: req.ProxyPass}}
+	}
+	site, err := a.Sites.Create(c.Request.Context(), service.SiteCreateInput{
+		Name: req.Name, Type: req.Type, Domain: req.Domain, ExtraDomains: req.ExtraDomains,
+		Port: req.Port, ProxyPass: req.ProxyPass, ProxyRules: req.ProxyRules, IndexFiles: req.IndexFiles,
+	})
 	if err != nil {
 		respErr(c, err)
 		return
 	}
 	respOK(c, site)
+}
+
+// SiteLogs GET /api/v1/sites/:id/logs?type=access|error&tail=N（M13 站点日志）
+func (a *SiteAPI) SiteLogs(c *gin.Context) {
+	id, err := idParam(c)
+	if err != nil {
+		respErr(c, err)
+		return
+	}
+	out, err := a.Sites.SiteLogs(c.Request.Context(), id, c.DefaultQuery("type", "access"), c.DefaultQuery("tail", "200"))
+	if err != nil {
+		respErr(c, err)
+		return
+	}
+	respOK(c, gin.H{"content": out})
 }
 
 // Delete DELETE /api/v1/sites/:id?purge=

@@ -1,12 +1,21 @@
 import api from '../index'
 
+export interface ProxyRule {
+  prefix: string
+  target: string
+  ws?: boolean
+}
+
 export interface SiteItem {
   id: number
   name: string
   type: 'static' | 'proxy'
   domain: string
+  domains: string[]
   port: number
   proxyPass: string
+  indexFiles: string
+  logsEnabled: boolean
   certDomain: string
   enabled: boolean
   onDisk: boolean
@@ -59,7 +68,11 @@ export default {
     const res = await api.get('api/v1/sites', { silent: true })
     return res.data as SiteItem[]
   },
-  create: (data: { name: string, type: string, domain: string, port?: number, proxyPass?: string }) =>
+  siteLogs: async (id: number, type = 'access', tail = 200) => {
+    const res = await api.get(`api/v1/sites/${id}/logs?type=${type}&tail=${tail}`, { silent: true })
+    return (res.data as { content: string }).content
+  },
+  create: (data: { name: string, type: string, domain: string, extraDomains?: string[], port?: number, proxyRules?: ProxyRule[], proxyPass?: string, indexFiles?: string }) =>
     api.post('api/v1/sites', data),
   remove: (id: number, purge: boolean) => api.delete(`api/v1/sites/${id}?purge=${purge}`),
   enable: (id: number) => api.post(`api/v1/sites/${id}/enable`),

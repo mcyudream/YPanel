@@ -62,6 +62,7 @@ func nginxComposeTemplate() string {
       - /opt/ypanel/nginx/conf.d:/etc/nginx/conf.d
       - /opt/ypanel/nginx/certs:/etc/nginx/certs
       - /opt/ypanel/nginx/www:/var/www
+      - /opt/ypanel/nginx/logs:/var/log/nginx
     restart: unless-stopped
 `
 }
@@ -138,6 +139,65 @@ func (s *SiteService) Status(ctx context.Context) (map[string]any, error) {
 // Install 安装 nginx。
 func (s *SiteService) Install(ctx context.Context) error {
 	return s.ensureNginx(ctx)
+}
+
+// ProxyRule 反代规则（location 前缀 → 后端）。
+type ProxyRule struct {
+	Prefix   string `json:"prefix"` // 如 /api（空 = "/"）
+	Target   string `json:"target"` // http(s)://host:port
+	WebSocket bool  `json:"ws"`
+}
+
+// siteMeta 站点生成期元数据（多域名/规则/日志）。
+type siteMeta struct {
+	ExtraDomains []string     `json:"extraDomains,omitempty"`
+	ProxyRules   []ProxyRule  `json:"proxyRules,omitempty"`
+	IndexFiles   string       `json:"indexFiles,omitempty"`
+	LogsEnabled  bool         `json:"logsEnabled"`
+}
+
+// parseSiteMeta 解析站点附加元数据（兼容旧数据：仅主域名 + 默认规则）。
+func parseSiteMeta(site *model.Site) siteMeta {
+	m := siteMeta{IndexFiles: "index.html", LogsEnabled: true}
+	if site.IndexFiles != "" {
+		m.IndexFiles = site.IndexFiles
+	}
+	m.LogsEnabled = site.LogsEnabled
+	if site.Domains != "" {
+		_ = json.Unmarshal([]byte(site.Domains), &m.ExtraDomains)
+	}
+	if site.ProxyRules != "" {
+		_ = json.Unmarshal([]byte(site.ProxyRules), &m.ProxyRules)
+	}
+	// 兼容：旧数据默认规则 = 主域名 "/" -> ProxyPass
+	if len(m.ProxyRules) == 0 && site.ProxyPass != "" && site.Type == "proxy" {
+		m.ProxyRules = []ProxyRule{{Prefix: "/", Target: site.ProxyPass}}
+	}
+	return m
+}
+
+// validateDomains 校验域名列表（去重、合法）。
+func validateDomains(domains []string) ([]string, error) {
+	out := []string{}
+	seen := map[string]bool{}
+	for _, d := range domains {
+		d = strings.ToLower(strings.TrimSpace(d))
+		if d == "" {
+			continue
+		}
+		if !domainPattern.MatchString(d) {
+			return nil, errs.Wrap(errs.ErrBadRequest, "域名不合法: "+d)
+		}
+		if seen[d] {
+			continue
+		}
+		seen[d] = true
+		out = append(out, d)
+	}
+	if len(out) == 0 {
+		return nil, errs.Wrap(errs.ErrBadRequest, "至少需要一个域名")
+	}
+	return out, nil
 }
 
 // SiteWaf 站点 WAF 配置。
@@ -235,129 +295,66 @@ func wafSection(site *model.Site, w SiteWaf) (zoneTop, serverPart string) {
 
 // confTemplate 生成站点配置。
 func confTemplate(site *model.Site, ssl bool, waf SiteWaf) string {
-	zoneTop, wafServer := wafSection(site, waf)
+	meta := parseSiteMeta(site)
+	wafCfg := parseWaf(site)
+	zoneTop, wafServer := wafSection(site, wafCfg)
 	var b strings.Builder
 	b.WriteString(zoneTop)
-	if !ssl {
-		if site.CertDomain != "" {
-			// 有证书：80 跳 443
-			fmt.Fprintf(&b, "# ypanel-site:%d\nserver {\n    listen 80;\n    server_name %s;\n    return 301 https://$host$request_uri;\n}\n\n", site.ID, site.Domain)
-		}
-		b.WriteString(fmt.Sprintf("# ypanel-site:%d\nserver {\n    listen %d", site.ID, map[bool]int{true: 443, false: 80}[ssl]))
-		if ssl {
-			b.WriteString(" ssl")
-		}
-		fmt.Fprintf(&b, ";\n    server_name %s;\n", site.Domain)
-		if ssl {
-			fmt.Fprintf(&b, "    ssl_certificate     /etc/nginx/certs/%s.crt;\n    ssl_certificate_key /etc/nginx/certs/%s.key;\n", site.CertDomain, site.CertDomain)
-		}
-	} else {
-		b.WriteString(fmt.Sprintf("# ypanel-site:%d\nserver {\n    listen 443 ssl;\n    server_name %s;\n", site.ID, site.Domain))
-		fmt.Fprintf(&b, "    ssl_certificate     /etc/nginx/certs/%s.crt;\n    ssl_certificate_key /etc/nginx/certs/%s.key;\n", site.CertDomain, site.CertDomain)
+
+	// 日志（站点级落盘，logs 卷）
+	if meta.LogsEnabled {
+		fmt.Fprintf(&b, "access_log /var/log/nginx/%s.access.log;\n", site.Name)
+		fmt.Fprintf(&b, "error_log  /var/log/nginx/%s.error.log;\n", site.Name)
 	}
+
+	names := append([]string{site.Domain}, meta.ExtraDomains...)
+	serverNames := strings.Join(names, " ")
+
+	// 有证书：80 跳 443 + 443 主段
+	if site.CertDomain != "" {
+		fmt.Fprintf(&b, "# ypanel-site:%d\nserver {\n    listen 80;\n    server_name %s;\n    return 301 https://$host$request_uri;\n}\n\n", site.ID, serverNames)
+		b.WriteString(fmt.Sprintf("# ypanel-site:%d\nserver {\n    listen 443 ssl;\n    server_name %s;\n", site.ID, serverNames))
+		fmt.Fprintf(&b, "    ssl_certificate     /etc/nginx/certs/%s.crt;\n    ssl_certificate_key /etc/nginx/certs/%s.key;\n", site.CertDomain, site.CertDomain)
+	} else {
+		listenSSL := ""
+		if ssl {
+			listenSSL = " ssl"
+		}
+		b.WriteString(fmt.Sprintf("# ypanel-site:%d\nserver {\n    listen %d%s;\n    server_name %s;\n", site.ID, site.Port, listenSSL, serverNames))
+	}
+
 	b.WriteString(wafServer)
 	switch site.Type {
 	case "static":
-		fmt.Fprintf(&b, "    root /var/www/sites/%s;\n    index index.html;\n    location / { try_files $uri $uri/ =404; }\n", site.Name)
+		index := meta.IndexFiles
+		if index == "" {
+			index = "index.html"
+		}
+		fmt.Fprintf(&b, "    root /var/www/sites/%s;\n    index %s;\n", site.Name, index)
+		b.WriteString("    location / { try_files $uri $uri/ =404; }\n")
 	case "proxy":
-		fmt.Fprintf(&b, "    location / {\n        proxy_pass %s;\n        proxy_set_header Host $host;\n        proxy_set_header X-Real-IP $remote_addr;\n        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;\n        proxy_set_header X-Forwarded-Proto $scheme;\n    }\n", site.ProxyPass)
+		for _, r := range meta.ProxyRules {
+			prefix := r.Prefix
+			if prefix == "" {
+				prefix = "/"
+			}
+			fmt.Fprintf(&b, "    location %s {\n", prefix)
+			fmt.Fprintf(&b, "        proxy_pass %s;\n", r.Target)
+			b.WriteString("        proxy_set_header Host $host;\n")
+			b.WriteString("        proxy_set_header X-Real-IP $remote_addr;\n")
+			b.WriteString("        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;\n")
+			b.WriteString("        proxy_set_header X-Forwarded-Proto $scheme;\n")
+			if r.WebSocket {
+				b.WriteString("        proxy_http_version 1.1;\n")
+				b.WriteString("        proxy_set_header Upgrade $http_upgrade;\n")
+				b.WriteString("        proxy_set_header Connection \"upgrade\";\n")
+				b.WriteString("        proxy_read_timeout 300s;\n")
+			}
+			b.WriteString("    }\n")
+		}
 	}
 	b.WriteString("}\n")
 	return b.String()
-}
-
-// List 站点列表（元数据 + conf 对账）。
-func (s *SiteService) List(ctx context.Context) ([]map[string]any, error) {
-	var rows []model.Site
-	if err := s.db.Order("id").Find(&rows).Error; err != nil {
-		return nil, err
-	}
-	ac, err := s.client()
-	if err != nil {
-		return nil, err
-	}
-	projects, _ := agentclient.GetJSON[[]dto.ComposeProject](ac, ctx, "/agent/v1/compose/projects")
-	nginxRunning := false
-	for _, p := range projectsSafe(projects) {
-		if p.Name == nginxProject {
-			nginxRunning = p.Running > 0
-		}
-	}
-	out := make([]map[string]any, 0, len(rows))
-	for _, r := range rows {
-		confPath := path.Join(nginxConfDir, r.Name+".conf")
-		onDisk := false
-		if _, err := agentclient.GetJSON[dto.FileReadResp](ac, ctx, "/agent/v1/files/read?path="+escapeURL(confPath)); err == nil {
-			onDisk = true
-		}
-		out = append(out, map[string]any{
-			"id": r.ID, "name": r.Name, "type": r.Type, "domain": r.Domain,
-			"port": r.Port, "proxyPass": r.ProxyPass, "certDomain": r.CertDomain,
-			"enabled": r.Enabled, "onDisk": onDisk, "nginxRunning": nginxRunning,
-			"createdAt": r.CreatedAt,
-		})
-	}
-	return out, nil
-}
-
-// Create 创建站点。
-func (s *SiteService) Create(ctx context.Context, name, typ, domain string, port int, proxyPass string) (*model.Site, error) {
-	if !siteNamePattern.MatchString(name) {
-		return nil, errs.Wrap(errs.ErrBadRequest, "站点名不合法（小写字母/数字/中划线）")
-	}
-	if typ != "static" && typ != "proxy" {
-		return nil, errs.Wrap(errs.ErrBadRequest, "类型仅支持 static/proxy")
-	}
-	if !domainPattern.MatchString(strings.ToLower(domain)) {
-		return nil, errs.Wrap(errs.ErrBadRequest, "域名不合法: "+domain)
-	}
-	domain = strings.ToLower(domain)
-	if typ == "proxy" && !proxyTargetPattern.MatchString(proxyPass) {
-		return nil, errs.Wrap(errs.ErrBadRequest, "反代目标不合法（http(s)://host:port）")
-	}
-	if port <= 0 {
-		port = 80
-	}
-	var count int64
-	_ = s.db.Model(&model.Site{}).Where("name = ? OR domain = ?", name, domain).Count(&count).Error
-	if count > 0 {
-		return nil, errs.New(errs.CodeConflict, "error.siteExists", "站点名或域名已存在")
-	}
-
-	if err := s.ensureNginx(ctx); err != nil {
-		return nil, err
-	}
-	site := &model.Site{Name: name, Type: typ, Domain: domain, Port: port, ProxyPass: proxyPass, Enabled: true}
-	if err := s.db.Create(site).Error; err != nil {
-		return nil, err
-	}
-	if err := s.writeConf(ctx, site, confTemplate(site, false, parseWaf(site))); err != nil {
-		return nil, err
-	}
-	if typ == "static" {
-		if err := s.writeStaticIndex(ctx, site); err != nil {
-			return nil, err
-		}
-	}
-	return site, nil
-}
-
-// writeStaticIndex 生成静态站欢迎页。
-func (s *SiteService) writeStaticIndex(ctx context.Context, site *model.Site) error {
-	ac, err := s.client()
-	if err != nil {
-		return err
-	}
-	dir := path.Join(nginxWwwDir, "sites", site.Name)
-	if _, err := agentclient.DoJSON[dto.FileMkdirReq, struct{}](ac, ctx, "POST", "/agent/v1/files/mkdir", &dto.FileMkdirReq{Path: dir}); err != nil {
-		return err
-	}
-	html := fmt.Sprintf(`<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><title>%s</title></head>
-<body style="font-family:system-ui;display:flex;align-items:center;justify-content:center;height:100vh;margin:0">
-<div style="text-align:center"><h1>%s</h1><p>由 YPanel 创建的静态站点</p></div></body></html>`, site.Domain, site.Domain)
-	_, err = agentclient.DoJSON[dto.FileWriteReq, struct{}](ac, ctx, "POST", "/agent/v1/files/write",
-		&dto.FileWriteReq{Path: path.Join(dir, "index.html"), Content: html})
-	return err
 }
 
 // writeConf 写配置 + 校验 + 重载（失败回滚）。
@@ -572,10 +569,167 @@ func (s *SiteService) siteByID(id uint) (*model.Site, error) {
 	return &site, nil
 }
 
-func escapeURL(s string) string { return urlQueryEscape(s) }
-
-func urlQueryEscape(s string) string {
-	// 与 api.escape 一致的简化实现（% 与 & 之外的常规字符足够）
-	r := strings.NewReplacer(" ", "%20", "?", "%3F", "#", "%23", "&", "%26", "+", "%2B", "%", "%25")
+// escapeURL query 转义（% 与 & 之外的常规字符足够）。
+func escapeURL(s string) string {
+	r := strings.NewReplacer("%", "%25", " ", "%20", "?", "%3F", "#", "%23", "&", "%26", "+", "%2B")
 	return r.Replace(s)
+}
+
+// List 站点列表（元数据 + conf 对账）。
+func (s *SiteService) List(ctx context.Context) ([]map[string]any, error) {
+	var rows []model.Site
+	if err := s.db.Order("id").Find(&rows).Error; err != nil {
+		return nil, err
+	}
+	ac, err := s.client()
+	if err != nil {
+		return nil, err
+	}
+	projects, _ := agentclient.GetJSON[[]dto.ComposeProject](ac, ctx, "/agent/v1/compose/projects")
+	nginxRunning := false
+	for _, p := range projectsSafe(projects) {
+		if p.Name == nginxProject {
+			nginxRunning = p.Running > 0
+		}
+	}
+	out := make([]map[string]any, 0, len(rows))
+	for _, r := range rows {
+		confPath := path.Join(nginxConfDir, r.Name+".conf")
+		onDisk := false
+		if _, err := agentclient.GetJSON[dto.FileReadResp](ac, ctx, "/agent/v1/files/read?path="+escapeURL(confPath)); err == nil {
+			onDisk = true
+		}
+		extra := []string{}
+		if r.Domains != "" {
+			_ = json.Unmarshal([]byte(r.Domains), &extra)
+		}
+		out = append(out, map[string]any{
+			"id": r.ID, "name": r.Name, "type": r.Type,
+			"domain": r.Domain, "domains": extra,
+			"port": r.Port, "proxyPass": r.ProxyPass, "certDomain": r.CertDomain,
+			"indexFiles": r.IndexFiles, "logsEnabled": r.LogsEnabled,
+			"enabled": r.Enabled, "onDisk": onDisk, "nginxRunning": nginxRunning,
+			"createdAt": r.CreatedAt,
+		})
+	}
+	return out, nil
+}
+
+// Create 创建站点（M13：多域名/反代规则/默认文档/日志）。
+func (s *SiteService) Create(ctx context.Context, req SiteCreateInput) (*model.Site, error) {
+	if !siteNamePattern.MatchString(req.Name) {
+		return nil, errs.Wrap(errs.ErrBadRequest, "站点名不合法（小写字母/数字/中划线）")
+	}
+	if req.Type != "static" && req.Type != "proxy" {
+		return nil, errs.Wrap(errs.ErrBadRequest, "类型仅支持 static/proxy")
+	}
+	domains, err := validateDomains(append([]string{req.Domain}, req.ExtraDomains...))
+	if err != nil {
+		return nil, err
+	}
+	domain := domains[0]
+	extraJSON := ""
+	if len(domains) > 1 {
+		b, _ := json.Marshal(domains[1:])
+		extraJSON = string(b)
+	}
+	if req.Type == "proxy" {
+		if len(req.ProxyRules) == 0 && req.ProxyPass == "" {
+			return nil, errs.Wrap(errs.ErrBadRequest, "反代站点需要至少一条规则")
+		}
+		for _, r := range req.ProxyRules {
+			if !proxyTargetPattern.MatchString(r.Target) {
+				return nil, errs.Wrap(errs.ErrBadRequest, "反代目标不合法: "+r.Target)
+			}
+		}
+	}
+	var count int64
+	_ = s.db.Model(&model.Site{}).Where("name = ? OR domain = ?", req.Name, domain).Count(&count).Error
+	if count > 0 {
+		return nil, errs.New(errs.CodeConflict, "error.siteExists", "站点名或域名已存在")
+	}
+	if err := s.ensureNginx(ctx); err != nil {
+		return nil, err
+	}
+	rulesJSON := ""
+	if len(req.ProxyRules) > 0 {
+		b, _ := json.Marshal(req.ProxyRules)
+		rulesJSON = string(b)
+	}
+	indexFiles := req.IndexFiles
+	if indexFiles == "" {
+		indexFiles = "index.html"
+	}
+	site := &model.Site{
+		Name: req.Name, Type: req.Type, Domain: domain, Domains: extraJSON,
+		Port: req.Port, ProxyPass: req.ProxyPass, ProxyRules: rulesJSON,
+		IndexFiles: indexFiles, LogsEnabled: true, Enabled: true,
+	}
+	if err := s.db.Create(site).Error; err != nil {
+		return nil, err
+	}
+	if err := s.writeConf(ctx, site, confTemplate(site, false, parseWaf(site))); err != nil {
+		return nil, err
+	}
+	if req.Type == "static" {
+		if err := s.writeStaticIndex(ctx, site); err != nil {
+			return nil, err
+		}
+	}
+	return site, nil
+}
+
+// writeStaticIndex 生成静态站欢迎页。
+func (s *SiteService) writeStaticIndex(ctx context.Context, site *model.Site) error {
+	ac, err := s.client()
+	if err != nil {
+		return err
+	}
+	dir := path.Join(nginxWwwDir, "sites", site.Name)
+	if _, err := agentclient.DoJSON[dto.FileMkdirReq, struct{}](ac, ctx, "POST", "/agent/v1/files/mkdir", &dto.FileMkdirReq{Path: dir}); err != nil {
+		return err
+	}
+	html := fmt.Sprintf(`<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><title>%s</title></head>
+<body style="font-family:system-ui;display:flex;align-items:center;justify-content:center;height:100vh;margin:0">
+<div style="text-align:center"><h1>%s</h1><p>由 YPanel 创建的静态站点</p></div></body></html>`, site.Domain, site.Domain)
+	_, err = agentclient.DoJSON[dto.FileWriteReq, struct{}](ac, ctx, "POST", "/agent/v1/files/write",
+		&dto.FileWriteReq{Path: path.Join(dir, "index.html"), Content: html})
+	return err
+}
+
+// SiteCreateInput 创建站点输入。
+type SiteCreateInput struct {
+	Name         string      `json:"name"`
+	Type         string      `json:"type"`
+	Domain       string      `json:"domain"`
+	ExtraDomains []string    `json:"extraDomains"`
+	Port         int         `json:"port"`
+	ProxyPass    string      `json:"proxyPass"`
+	ProxyRules   []ProxyRule `json:"proxyRules"`
+	IndexFiles   string      `json:"indexFiles"`
+}
+
+// SiteLogs 读取站点日志（logs 卷内站点级文件，tail 通道）。
+func (s *SiteService) SiteLogs(ctx context.Context, id uint, logType, tail string) (string, error) {
+	site, err := s.siteByID(id)
+	if err != nil {
+		return "", err
+	}
+	if logType != "access" && logType != "error" {
+		logType = "access"
+	}
+	if tail == "" {
+		tail = "200"
+	}
+	ac, err := s.client()
+	if err != nil {
+		return "", err
+	}
+	cmd := fmt.Sprintf("tail -n %s /opt/ypanel/nginx/logs/%s.%s.log 2>/dev/null", tail, site.Name, logType)
+	out, err := agentclient.DoJSON[dto.ExecReq, dto.ExecResp](ac, ctx, "POST", "/agent/v1/exec",
+		&dto.ExecReq{Command: cmd, TimeoutSecs: 30})
+	if err != nil {
+		return "", err
+	}
+	return out.Output, nil
 }

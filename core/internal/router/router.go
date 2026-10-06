@@ -145,6 +145,7 @@ func Setup(d *Deps) (*gin.Engine, error) {
 			authed.POST("/sites/:id/enable", siteAPI.SetEnabled(true))
 			authed.POST("/sites/:id/disable", siteAPI.SetEnabled(false))
 			authed.GET("/sites/:id/config", siteAPI.Config)
+			authed.GET("/sites/:id/logs", siteAPI.SiteLogs)
 			authed.PUT("/sites/:id/config", siteAPI.UpdateConfig)
 			authed.GET("/sites/:id/waf", siteAPI.GetWaf)
 			authed.PUT("/sites/:id/waf", siteAPI.UpdateWaf)

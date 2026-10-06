@@ -93,18 +93,22 @@ type PairingCode struct {
 
 // Site 站点（容器化 nginx vhost）。
 type Site struct {
-	ID         uint      `gorm:"primaryKey" json:"id"`
-	Name       string    `gorm:"uniqueIndex;size:32;not null" json:"name"`
-	Type       string    `gorm:"size:8;not null" json:"type"` // static / proxy
-	Domain     string    `gorm:"uniqueIndex;size:255;not null" json:"domain"`
-	Port       int       `gorm:"not null;default:80" json:"port"`
-	ProxyPass  string    `gorm:"size:255" json:"proxyPass"`
-	CertDomain string    `gorm:"size:255" json:"certDomain"` // 非空 = 已启用 SSL
-	OriginFile string    `gorm:"size:255" json:"originFile"` // 接管来源 conf（站点识别）
-	WafJSON    string    `gorm:"type:text" json:"wafJson"`   // WAF 配置（service.SiteWaf 序列化）
-	Enabled    bool      `gorm:"not null;default:true" json:"enabled"`
-	CreatedAt  time.Time `json:"createdAt"`
-	UpdatedAt  time.Time `json:"updatedAt"`
+	ID          uint      `gorm:"primaryKey" json:"id"`
+	Name        string    `gorm:"uniqueIndex;size:32;not null" json:"name"`
+	Type        string    `gorm:"size:8;not null" json:"type"` // static / proxy
+	Domain      string    `gorm:"uniqueIndex;size:255;not null" json:"domain"`
+	Domains     string    `gorm:"type:text" json:"domains"`   // 附加域名 JSON 数组（M13 多域名）
+	Port        int       `gorm:"not null;default:80" json:"port"`
+	ProxyPass   string    `gorm:"size:255" json:"proxyPass"`  // 默认反代规则（"/"）
+	ProxyRules  string    `gorm:"type:text" json:"proxyRules"` // 反代规则 JSON 数组 [{prefix,target,ws}]
+	IndexFiles  string    `gorm:"size:255" json:"indexFiles"`  // 默认文档
+	LogsEnabled bool      `gorm:"not null;default:true" json:"logsEnabled"`
+	CertDomain  string    `gorm:"size:255" json:"certDomain"` // 非空 = 已启用 SSL
+	OriginFile  string    `gorm:"size:255" json:"originFile"` // 接管来源 conf（站点识别）
+	WafJSON     string    `gorm:"type:text" json:"wafJson"`   // WAF 配置（service.SiteWaf 序列化）
+	Enabled     bool      `gorm:"not null;default:true" json:"enabled"`
+	CreatedAt   time.Time `json:"createdAt"`
+	UpdatedAt   time.Time `json:"updatedAt"`
 }
 
 // CronTask 计划任务（shell 类型）。
