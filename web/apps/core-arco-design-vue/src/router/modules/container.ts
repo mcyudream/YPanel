@@ -19,6 +19,7 @@ const routes: RouteRecordRaw = {
       component: () => import('@/views/container/index.vue'),
       meta: {
         title: '容器管理',
+        menu: false,
       },
     },
   ],

@@ -19,6 +19,7 @@ const routes: RouteRecordRaw = {
       component: () => import('@/views/terminal/index.vue'),
       meta: {
         title: '终端',
+        menu: false,
       },
     },
   ],

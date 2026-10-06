@@ -19,6 +19,7 @@ const routes: RouteRecordRaw = {
       component: () => import('@/views/dbadmin/index.vue'),
       meta: {
         title: '数据库管理台',
+        menu: false,
       },
     },
   ],

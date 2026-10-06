@@ -19,6 +19,7 @@ const routes: RouteRecordRaw = {
       component: () => import('@/views/processes/index.vue'),
       meta: {
         title: '进程与服务',
+        menu: false,
       },
     },
   ],

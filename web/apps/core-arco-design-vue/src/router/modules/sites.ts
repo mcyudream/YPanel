@@ -19,6 +19,7 @@ const routes: RouteRecordRaw = {
       component: () => import('@/views/sites/index.vue'),
       meta: {
         title: '网站',
+        menu: false,
       },
     },
     {

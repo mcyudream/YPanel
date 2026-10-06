@@ -19,6 +19,7 @@ const routes: RouteRecordRaw = {
       component: () => import('@/views/file_management/index.vue'),
       meta: {
         title: '文件管理',
+        menu: false,
       },
     },
   ],

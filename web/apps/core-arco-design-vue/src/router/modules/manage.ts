@@ -44,15 +44,6 @@ const routes: RouteRecordRaw = {
       },
     },
     {
-      path: 'monitor',
-      name: 'manageMonitor',
-      component: () => import('@/views/manage/monitor.vue'),
-      meta: {
-        title: '历史监控',
-        icon: 'yd:activity',
-      },
-    },
-    {
       path: 'backups',
       name: 'manageBackups',
       component: () => import('@/views/manage/backups.vue'),

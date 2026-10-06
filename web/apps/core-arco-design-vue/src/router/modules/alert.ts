@@ -20,6 +20,7 @@ const routes: RouteRecordRaw = {
       component: () => import('@/views/alert/index.vue'),
       meta: {
         title: '告警通知',
+        menu: false,
       },
     },
   ],

@@ -19,6 +19,7 @@ const routes: RouteRecordRaw = {
       component: () => import('@/views/database/index.vue'),
       meta: {
         title: '数据库',
+        menu: false,
       },
     },
   ],

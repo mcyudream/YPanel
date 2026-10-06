@@ -20,6 +20,7 @@ const routes: RouteRecordRaw = {
       component: () => import('@/views/selfupdate/index.vue'),
       meta: {
         title: '面板更新',
+        menu: false,
       },
     },
   ],

@@ -19,6 +19,7 @@ const routes: RouteRecordRaw = {
       component: () => import('@/views/notifications/index.vue'),
       meta: {
         title: '通知中心',
+        menu: false,
       },
     },
   ],

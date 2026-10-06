@@ -19,6 +19,7 @@ const routes: RouteRecordRaw = {
       component: () => import('@/views/runtimes/index.vue'),
       meta: {
         title: '运行环境',
+        menu: false,
       },
     },
   ],

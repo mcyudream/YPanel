@@ -19,6 +19,7 @@ const routes: RouteRecordRaw = {
       component: () => import('@/views/store/index.vue'),
       meta: {
         title: '应用商店',
+        menu: false,
       },
     },
   ],

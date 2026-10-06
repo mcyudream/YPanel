@@ -20,6 +20,7 @@ const routes: RouteRecordRaw = {
       component: () => import('@/views/nodes/index.vue'),
       meta: {
         title: '节点管理',
+        menu: false,
       },
     },
   ],

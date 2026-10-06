@@ -19,6 +19,7 @@ const routes: RouteRecordRaw = {
       component: () => import('@/views/cron/index.vue'),
       meta: {
         title: '计划任务',
+        menu: false,
       },
     },
   ],

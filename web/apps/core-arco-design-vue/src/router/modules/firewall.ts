@@ -20,6 +20,7 @@ const routes: RouteRecordRaw = {
       component: () => import('@/views/firewall/index.vue'),
       meta: {
         title: '防火墙',
+        menu: false,
       },
     },
   ],

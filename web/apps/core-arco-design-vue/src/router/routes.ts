@@ -6,7 +6,7 @@ import SitesRoutes from './modules/sites'
 import ContainerRoutes from './modules/container'
 import CronRoutes from './modules/cron'
 import FileRoutes from './modules/file'
-import IconsRoutes from './modules/icons'
+import MonitorsRoutes from './modules/monitors'
 import ManageRoutes from './modules/manage'
 import NodesRoutes from './modules/nodes'
 import MarketRoutes from './modules/market'
@@ -83,49 +83,74 @@ const systemRoutes: RouteRecordRaw[] = [
 ]
 
 // 动态路由（异步路由、导航菜单路由）
+// 服务器运维面板分类：高频功能用"同名分组 + 子页 menu:false"，
+// 配合 mainMenuClickMode=smart 实现主导航点击直达；强关联功能按域分组。
+const single = (title: string, icon: string, mod: RouteRecordRaw) => ({
+  meta: { title, icon },
+  children: [mod],
+})
+
 const asyncRoutes: RouteRecordMainRaw[] = [
+  // ---- 一级直达（同名分组 + smart 跳转） ----
+  single('网站', 'yd:globe', SitesRoutes),
+  single('终端', 'yd:square-terminal', TerminalRoutes),
+  single('文件管理', 'yd:folder-open', FileRoutes),
+  single('容器管理', 'yd:container', ContainerRoutes),
+  single('Compose 编排', 'yd:layers', ComposeRoutes),
+  single('计划任务', 'yd:calendar-clock', CronRoutes),
+  single('防火墙', 'yd:shield', FirewallRoutes),
+  single('节点管理', 'yd:network', NodesRoutes),
+  single('进程与服务', 'yd:cpu', ProcessesRoutes),
+  // ---- 分组 ----
   {
     meta: {
-      title: '资源管理',
-      icon: 'yd:layers',
+      title: '数据库',
+      icon: 'yd:database',
     },
     children: [
-      SitesRoutes,
       DatabaseRoutes,
-      ComposeRoutes,
-      FileRoutes,
-      ContainerRoutes,
-      TerminalRoutes,
-      CronRoutes,
+      DbAdminRoutes,
     ],
   },
   {
     meta: {
-      title: '外观与扩展',
-      icon: 'yd:shapes',
+      title: '容器进阶',
+      icon: 'i-lucide:docker',
     },
     children: [
-      IconsRoutes,
+      DockerRoutes,
+      RuntimesRoutes,
     ],
   },
   {
     meta: {
-      title: '系统管理',
+      title: '应用',
+      icon: 'yd:package',
+    },
+    children: [
+      MarketRoutes,
+      StoreRoutes,
+    ],
+  },
+  {
+    meta: {
+      title: '监控告警',
+      icon: 'yd:bell',
+    },
+    children: [
+      AlertRoutes,
+      MonitorsRoutes,
+      NotificationRoutes,
+    ],
+  },
+  {
+    meta: {
+      title: '系统',
       icon: 'yd:shield-check',
       auth: ['admin'],
     },
     children: [
       ManageRoutes,
-      NodesRoutes,
-      MarketRoutes,
-      FirewallRoutes,
-      AlertRoutes,
-      NotificationRoutes,
-      ProcessesRoutes,
-      DbAdminRoutes,
-      StoreRoutes,
-      RuntimesRoutes,
-      DockerRoutes,
       SelfUpdateRoutes,
     ],
   },

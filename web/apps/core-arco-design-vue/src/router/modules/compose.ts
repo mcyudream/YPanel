@@ -19,6 +19,7 @@ const routes: RouteRecordRaw = {
       component: () => import('@/views/compose/index.vue'),
       meta: {
         title: 'Compose 编排',
+        menu: false,
       },
     },
   ],

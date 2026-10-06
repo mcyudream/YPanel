@@ -5,20 +5,20 @@ function Layout() {
 }
 
 const routes: RouteRecordRaw = {
-  path: '/docker',
+  path: '/monitor',
   component: Layout,
-  name: 'docker',
+  name: 'monitor',
   meta: {
-    title: 'Docker 管理',
-    icon: 'yd:container',
+    title: '历史监控',
+    icon: 'yd:activity',
   },
   children: [
     {
       path: '',
-      name: 'dockerIndex',
-      component: () => import('@/views/docker/index.vue'),
+      name: 'monitorIndex',
+      component: () => import('@/views/manage/monitor.vue'),
       meta: {
-        title: 'Docker 管理',
+        title: '历史监控',
         menu: false,
       },
     },
