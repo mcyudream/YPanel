@@ -74,7 +74,7 @@ onMounted(load)
       <template #title>
         <div class="flex items-center gap-2">
           <YdMorphIcon name="refresh-cw" :size="24" />
-          <span>面板自更新</span>
+          <span>面板设置</span>
         </div>
       </template>
       <template #description>

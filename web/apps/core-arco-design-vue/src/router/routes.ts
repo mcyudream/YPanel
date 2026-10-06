@@ -83,25 +83,15 @@ const systemRoutes: RouteRecordRaw[] = [
 ]
 
 // 动态路由（异步路由、导航菜单路由）
-// 服务器运维面板分类：高频功能用"同名分组 + 子页 menu:false"，
-// 配合 mainMenuClickMode=smart 实现主导航点击直达；强关联功能按域分组。
+// 一级大菜单统一 2 字命名；单页功能用"同名分组 + 子页 menu:false"配合
+// mainMenuClickMode=smart 实现主导航点击直达；强关联功能按域分组。
 const single = (title: string, icon: string, mod: RouteRecordRaw) => ({
   meta: { title, icon },
   children: [mod],
 })
 
 const asyncRoutes: RouteRecordMainRaw[] = [
-  // ---- 一级直达（同名分组 + smart 跳转） ----
   single('网站', 'yd:globe', SitesRoutes),
-  single('终端', 'yd:square-terminal', TerminalRoutes),
-  single('文件管理', 'yd:folder-open', FileRoutes),
-  single('容器管理', 'yd:container', ContainerRoutes),
-  single('Compose 编排', 'yd:layers', ComposeRoutes),
-  single('计划任务', 'yd:calendar-clock', CronRoutes),
-  single('防火墙', 'yd:shield', FirewallRoutes),
-  single('节点管理', 'yd:network', NodesRoutes),
-  single('进程与服务', 'yd:cpu', ProcessesRoutes),
-  // ---- 分组 ----
   {
     meta: {
       title: '数据库',
@@ -114,12 +104,13 @@ const asyncRoutes: RouteRecordMainRaw[] = [
   },
   {
     meta: {
-      title: '容器进阶',
-      icon: 'i-lucide:docker',
+      title: '容器',
+      icon: 'yd:container',
     },
     children: [
+      ContainerRoutes,
+      ComposeRoutes,
       DockerRoutes,
-      RuntimesRoutes,
     ],
   },
   {
@@ -128,13 +119,23 @@ const asyncRoutes: RouteRecordMainRaw[] = [
       icon: 'yd:package',
     },
     children: [
-      MarketRoutes,
       StoreRoutes,
+      MarketRoutes,
     ],
   },
   {
     meta: {
-      title: '监控告警',
+      title: '工具',
+      icon: 'i-lucide:wrench',
+    },
+    children: [
+      CronRoutes,
+      RuntimesRoutes,
+    ],
+  },
+  {
+    meta: {
+      title: '监控',
       icon: 'yd:bell',
     },
     children: [
@@ -150,6 +151,11 @@ const asyncRoutes: RouteRecordMainRaw[] = [
       auth: ['admin'],
     },
     children: [
+      FileRoutes,
+      TerminalRoutes,
+      FirewallRoutes,
+      ProcessesRoutes,
+      NodesRoutes,
       ManageRoutes,
       SelfUpdateRoutes,
     ],

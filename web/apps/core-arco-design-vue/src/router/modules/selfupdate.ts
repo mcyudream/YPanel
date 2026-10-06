@@ -9,7 +9,7 @@ const routes: RouteRecordRaw = {
   component: Layout,
   name: 'selfupdate',
   meta: {
-    title: '面板更新',
+    title: '面板设置',
     icon: 'yd:refresh-cw',
     auth: ['admin'],
   },
@@ -19,7 +19,7 @@ const routes: RouteRecordRaw = {
       name: 'selfupdateIndex',
       component: () => import('@/views/selfupdate/index.vue'),
       meta: {
-        title: '面板更新',
+        title: '面板设置',
         menu: false,
       },
     },
