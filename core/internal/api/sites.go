@@ -32,6 +32,31 @@ func (a *SiteAPI) Install(c *gin.Context) {
 	respOK(c, struct{}{})
 }
 
+// AdoptHost POST /api/v1/nginx/adopt-host（接管本机 nginx）
+func (a *SiteAPI) AdoptHost(c *gin.Context) {
+	out, err := a.Sites.AdoptHostNginx(c.Request.Context())
+	if err != nil {
+		respErr(c, err)
+		return
+	}
+	respOK(c, out)
+}
+
+// SetMode PUT /api/v1/nginx/mode {mode: container|host}
+func (a *SiteAPI) SetMode(c *gin.Context) {
+	req, ok := bind[struct {
+		Mode string `json:"mode" binding:"required"`
+	}](c)
+	if !ok {
+		return
+	}
+	if err := a.Sites.SetNginxMode(req.Mode); err != nil {
+		respErr(c, err)
+		return
+	}
+	respOK(c, struct{}{})
+}
+
 // IssueACME POST /api/v1/sites/:id/cert/acme {domain?}（B1：DNS API 挑战签发）
 func (a *SiteAPI) IssueACME(c *gin.Context) {
 	id, err := strconv.ParseUint(c.Param("id"), 10, 64)

@@ -5,20 +5,21 @@ function Layout() {
 }
 
 const routes: RouteRecordRaw = {
-  path: '/market',
+  path: '/nat',
   component: Layout,
-  name: 'market',
+  name: 'nat',
   meta: {
-    title: '应用市场',
-    icon: 'yd:package',
+    title: 'NAT 转发',
+    icon: 'yd:network',
+    auth: ['admin'],
   },
   children: [
     {
       path: '',
-      name: 'marketIndex',
-      component: () => import('@/views/market/index.vue'),
+      name: 'natIndex',
+      component: () => import('@/views/nat/index.vue'),
       meta: {
-        title: '应用市场',
+        title: 'NAT 转发',
         menu: false,
       },
     },

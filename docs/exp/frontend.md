@@ -158,3 +158,17 @@
 - **根因**：长时间运行的 Vite dev 会话在源码多次变更后，已加载页面的旧 chunk 再去懒加载新 hash 的异步组件时会失败（或模块图失效），叠加 fa 多标签 keep-alive 后表现为整页级错乱。
 - **规避/解决**：验证类操作前先硬刷新一次；出现"不可能的空白"先怀疑 dev 会话陈旧而非代码缺陷，用生产构建（部署产物）做最终判定。
 - **来源**：2026-10-07，M21/M22 浏览器验证过程中的多次误判。
+
+### UnoCSS presetIcons 的 i- 前缀图标是构建期按需内联：动态拼接的 class 不会被扫描生成
+
+- **现象**：镜像名 → 品牌 logo 的映射如果写成 `` `i-logos:${kw}` `` 拼接，生产环境图标全部空白（dev 也一样）；而源码里静态写死的 `i-logos:docker-icon` 正常显示。
+- **根因**：fa 基座的 UnoCSS `presetIcons`（collectionsNodeResolvePath 指向 @iconify/json）在**构建期**扫描源码 token、按需把图标 SVG 内联成 CSS。运行时拼出来的 class 没有对应 CSS 规则。另注意 FaIcon 的双通道：`i-xxx:yyy` 走 unocss（构建期内联，零 CDN），`xxx:yyy`（不带 i-）走 @iconify/vue 运行时（需 addCollection 预载或在线 API，本项目 isOfflineUse=false 时后者不可用）。
+- **规避/解决**：映射表里存**完整 class 字面量**（`['redis', 'i-logos:redis']`），字面量出现在源码中即被扫描提取；品牌图标用 `i-logos:*`（@iconify/json 的 logos 集合，彩色品牌 logo），验证某图标存在先查 `web/node_modules/.pnpm/@iconify+json@*/node_modules/@iconify/json/json/logos.json` 的 icons 键。
+- **来源**：2026-10-07，M23 YdAppIcon 品牌图标组件。
+
+### 并行会话共用工作区：构建被对方活跃文件的半成品阻塞时的处置
+
+- **现象**：本会话构建（vue-tsc/vite build）报 `src/views/ai/index.vue` 模板未闭合——该文件并非本会话改动，而是用户另一个并行会话正在编辑的半成品；同时 store.ts 的 API 签名也被对方改掉（新增 sourceId/分页），本会话调用点类型报错。
+- **根因**：多个会话在同一 git 工作区并行开发，构建是全仓级的，任何人保留未完成的编辑都会挡住所有人的产物构建。
+- **规避/解决**：① 类型检查用 `vue-tsc -b | grep -v <对方文件>` 隔离自己的范围，先保证**自己改动零错误**；② 不代改对方活跃文件（保存即冲突），等对方合流提交（git log 出现合流 commit）后重试构建；③ 自己的调用点主动适配对方已落地的新签名（如 store 分页返回 `.items`），比要求对方兼容旧签名更稳。
+- **来源**：2026-10-07，M23 容器套件与商店多源/AI v2 会话并行期间。

@@ -43,13 +43,37 @@ type ChatMessage struct {
 
 // AIService AI 助手。
 type AIService struct {
-	db    *gorm.DB
-	nodes *NodeService
+	db       *gorm.DB
+	nodes    *NodeService
+	dbSvc    *DatabaseService
+	adminSvc *DBAdminService
+	settings *SettingService
+	skills   *SkillsManager
+}
+
+// ListSkills 转发技能列表。
+func (s *AIService) ListSkills(ctx context.Context) ([]AISkill, error) {
+	return s.skills.List(ctx)
+}
+
+// SaveSkill 转发技能保存。
+func (s *AIService) SaveSkill(ctx context.Context, name, description, body string) error {
+	return s.skills.Save(ctx, name, description, body)
+}
+
+// SetSkillEnabled 转发技能启停。
+func (s *AIService) SetSkillEnabled(name string, enabled bool) error {
+	return s.skills.SetEnabled(name, enabled)
+}
+
+// RemoveSkill 转发技能删除。
+func (s *AIService) RemoveSkill(ctx context.Context, name string) error {
+	return s.skills.Remove(ctx, name)
 }
 
 // NewAIService 创建。
-func NewAIService(db *gorm.DB, nodes *NodeService) *AIService {
-	return &AIService{db: db, nodes: nodes}
+func NewAIService(db *gorm.DB, nodes *NodeService, dbSvc *DatabaseService, adminSvc *DBAdminService, settings *SettingService, skills *SkillsManager) *AIService {
+	return &AIService{db: db, nodes: nodes, dbSvc: dbSvc, adminSvc: adminSvc, settings: settings, skills: skills}
 }
 
 // ---- 供应商 CRUD ----
@@ -401,6 +425,42 @@ func (s *AIService) toolsFor(ctx context.Context) []tools.Tool {
 					return "", fmt.Errorf("命令为空")
 				}
 				return run(fmt.Sprintf("mkdir -p '%s' && cd '%s' && %s", workspaceDir, workspaceDir, command))
+			},
+		},
+		&aiTool{
+			name:        "list_database_instances",
+			description: "列出面板管理的全部数据库实例（id/类型/端口）。无参数，input 传空。",
+			fn: func(_ context.Context, _ string) (string, error) {
+				return s.listDatabaseInstances(ctx)
+			},
+		},
+		&aiTool{
+			name:        "query_database",
+			description: "对数据库实例执行只读 SQL（仅 SELECT/SHOW/DESC/EXPLAIN，最多 40 行）。input 为 JSON：{\"instanceId\":1,\"database\":\"库名\",\"sql\":\"SELECT ...\"}。先调 list_database_instances 获取实例 ID。",
+			fn: func(_ context.Context, input string) (string, error) {
+				var p struct {
+					InstanceID uint   `json:"instanceId"`
+					Database   string `json:"database"`
+					SQL        string `json:"sql"`
+				}
+				if err := json.Unmarshal([]byte(input), &p); err != nil {
+					return "", err
+				}
+				return s.aiQueryDatabase(ctx, p.InstanceID, p.Database, p.SQL)
+			},
+		},
+		&aiTool{
+			name:        "save_memory",
+			description: "把本次对话中值得长期记住的运维经验/用户偏好/服务器特性沉淀为记忆（下次对话自动可用）。input 为一句话记忆内容。",
+			fn: func(_ context.Context, input string) (string, error) {
+				content := strings.TrimSpace(input)
+				if content == "" {
+					return "", fmt.Errorf("记忆内容为空")
+				}
+				if err := s.db.Create(&model.AIMemory{Content: content}).Error; err != nil {
+					return "", err
+				}
+				return "已记住", nil
 			},
 		},
 	}

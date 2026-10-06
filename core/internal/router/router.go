@@ -28,8 +28,9 @@ type Deps struct {
 	Sites    *service.SiteService
 	Certs    *service.CertificateService
 	Groups   *service.SiteGroupService
-	Market   *service.MarketService
+	Store    *service.StoreService
 	FW       *service.FirewallService
+	NatF     *service.NatForwardService
 	Alerts   *service.AlertService
 	Notif    *service.NotificationService
 	PanelBP  *service.PanelBackupService
@@ -37,7 +38,6 @@ type Deps struct {
 	F2B      *service.Fail2banService
 	DBAdmin  *service.DBAdminService
 	SU       *service.SelfUpdateService
-	MarketStore *service.MarketStoreService
 	RT       *service.RuntimeService
 	DockerExt *service.DockerExtService
 	Rev       *service.RevisionService
@@ -71,14 +71,14 @@ func Setup(d *Deps) (*gin.Engine, error) {
 	siteConfAPI := &api.SiteConfAPI{Sites: d.Sites}
 	certAPI := &api.CertAPI{Certs: d.Certs, Groups: d.Groups}
 	nodeAPI := &api.NodeAPI{Nodes: d.Nodes}
-	marketAPI := &api.MarketAPI{Market: d.Market}
+	storeAPI := &api.StoreAPI{Store: d.Store}
 	fwAPI := &api.FirewallAPI{FW: d.FW}
+	natAPI := &api.NatForwardAPI{NF: d.NatF}
 	alertAPI := &api.AlertAPI{Alerts: d.Alerts}
 	f2bAPI := &api.Fail2banAPI{F2B: d.F2B}
 	rtAPI := &api.RuntimeAPI{RT: d.RT}
 	dbAdminAPI := &api.DBAdminAPI{Admin: d.DBAdmin}
 	suAPI := &api.SelfUpdateAPI{SU: d.SU}
-	storeAPI := &api.MarketStoreAPI{Store: d.MarketStore}
 	notifAPI := &api.NotificationAPI{Notif: d.Notif}
 	procExecAPI := &api.NodeExecAPI{Nodes: d.Nodes}
 	procProxy := &api.ProcProxy{Nodes: d.Nodes}
@@ -151,6 +151,20 @@ func Setup(d *Deps) (*gin.Engine, error) {
 			authed.POST("/ai/providers", aiAPI.SaveProvider)
 			authed.DELETE("/ai/providers/:id", aiAPI.DeleteProvider)
 			authed.POST("/ai/chat", aiAPI.Chat)
+			authed.GET("/ai/conversations", aiAPI.ListConversations)
+			authed.GET("/ai/conversations/:id", aiAPI.GetConversation)
+			authed.POST("/ai/conversations", aiAPI.SaveConversation)
+			authed.DELETE("/ai/conversations/:id", aiAPI.DeleteConversation)
+			authed.GET("/ai/memories", aiAPI.ListMemories)
+			authed.DELETE("/ai/memories", aiAPI.ClearMemories)
+			authed.GET("/ai/skills", aiAPI.ListSkills)
+			authed.POST("/ai/skills", aiAPI.SaveSkill)
+			authed.POST("/ai/skills/:name/enable", aiAPI.SetSkillEnabled)
+			authed.DELETE("/ai/skills/:name", aiAPI.RemoveSkill)
+			authed.GET("/ai/mcp/servers", aiAPI.ListMCPServers)
+			authed.PUT("/ai/mcp/servers", aiAPI.SaveMCPServers)
+			authed.POST("/ai/mcp/test", aiAPI.TestMCP)
+			authed.DELETE("/ai/mcp/:name", aiAPI.CloseMCP)
 			authed.GET("/ai/knowledge", aiAPI.ListKnowledge)
 			authed.POST("/ai/knowledge", aiAPI.SaveKnowledge)
 			authed.DELETE("/ai/knowledge/:id", aiAPI.DeleteKnowledge)
@@ -169,6 +183,7 @@ func Setup(d *Deps) (*gin.Engine, error) {
 
 			authed.GET("/database/instances", dbAPI.List)
 			authed.POST("/database/instances", dbAPI.Create)
+			authed.POST("/database/instances/external", dbAPI.CreateExternal)
 			authed.DELETE("/database/instances/:id", dbAPI.Delete)
 			authed.POST("/database/instances/:id/start", dbAPI.StartStop(true))
 			authed.POST("/database/instances/:id/stop", dbAPI.StartStop(false))
@@ -188,6 +203,8 @@ func Setup(d *Deps) (*gin.Engine, error) {
 
 			authed.GET("/nginx/status", siteAPI.Status)
 			authed.POST("/nginx/install", siteAPI.Install)
+			authed.POST("/nginx/adopt-host", siteAPI.AdoptHost)
+			authed.PUT("/nginx/mode", siteAPI.SetMode)
 			authed.GET("/sites", siteAPI.List)
 			authed.GET("/sites/scan", siteAPI.Scan)
 			authed.GET("/sites/rewrite-templates", siteAPI.RewriteTemplates)
@@ -270,16 +287,21 @@ func Setup(d *Deps) (*gin.Engine, error) {
 			admin.GET("/security/settings", securityAPI.Get)
 			admin.PUT("/security/settings", securityAPI.Update)
 
-			authed.GET("/store/apps", storeAPI.List)
-			authed.GET("/store/apps/:key", storeAPI.Get)
+			authed.GET("/store/sources", storeAPI.ListSources)
+			authed.POST("/store/sources", storeAPI.CreateSource)
+			authed.PUT("/store/sources/:id", storeAPI.UpdateSource)
+			authed.POST("/store/sources/:id/enable", storeAPI.SetSourceEnabled(true))
+			authed.POST("/store/sources/:id/disable", storeAPI.SetSourceEnabled(false))
+			authed.DELETE("/store/sources/:id", storeAPI.DeleteSource)
+			authed.POST("/store/sources/:id/sync", storeAPI.SyncSource)
 			authed.POST("/store/sync", storeAPI.Sync)
+			authed.GET("/store/apps", storeAPI.Apps)
+			authed.GET("/store/tags", storeAPI.Tags)
+			authed.GET("/store/apps/:sourceId/:key", storeAPI.Get)
+			authed.GET("/store/apps/:sourceId/:key/icon", storeAPI.Icon)
 			authed.GET("/store/installed", storeAPI.Installed)
 			authed.POST("/store/install", storeAPI.Install)
 			authed.DELETE("/store/install/:project", storeAPI.Uninstall)
-
-			admin.GET("/market/apps", marketAPI.List)
-			admin.GET("/market/installed", marketAPI.Installed)
-			admin.POST("/market/install", marketAPI.Install)
 
 			authed.GET("/firewall/status", fwAPI.Status)
 			authed.POST("/firewall/allow", fwAPI.Allow)
@@ -290,6 +312,16 @@ func Setup(d *Deps) (*gin.Engine, error) {
 			admin.GET("/fail2ban/status", f2bAPI.Status)
 			admin.POST("/fail2ban/unban", f2bAPI.Unban)
 			admin.POST("/fail2ban/ban", f2bAPI.Ban)
+
+			// M24 NAT 端口转发（iptables DNAT）
+			admin.GET("/nat/forwards", natAPI.List)
+			admin.POST("/nat/forwards", natAPI.Save)
+			admin.DELETE("/nat/forwards/:id", natAPI.Delete)
+			admin.POST("/nat/forwards/:id/enable", natAPI.SetEnabled(true))
+			admin.POST("/nat/forwards/:id/disable", natAPI.SetEnabled(false))
+			admin.GET("/nat/interfaces", natAPI.Interfaces)
+			admin.POST("/nat/check-port", natAPI.CheckPort)
+			admin.POST("/nat/apply", natAPI.Apply)
 
 			admin.GET("/system/update/status", suAPI.Status)
 			admin.POST("/system/update/apply", suAPI.Apply)
@@ -314,6 +346,7 @@ func Setup(d *Deps) (*gin.Engine, error) {
 
 			authed.GET("/runtimes", rtAPI.List)
 			authed.POST("/runtimes", rtAPI.Create)
+			authed.POST("/runtimes/external", rtAPI.AttachExternal)
 			authed.DELETE("/runtimes/:id", rtAPI.Delete)
 			authed.POST("/runtimes/:id/start", rtAPI.SetEnabled(true))
 			authed.POST("/runtimes/:id/stop", rtAPI.SetEnabled(false))

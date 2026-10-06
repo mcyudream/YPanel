@@ -68,26 +68,54 @@ type MetricRecord struct {
 	Load1     float64   `json:"load1"`
 }
 
-// Runtime PHP 运行环境（php-fpm 容器化）。
+// Runtime PHP 运行环境（容器化 php-fpm 或接管本机 fastcgi）。
 type Runtime struct {
 	ID             uint      `gorm:"primaryKey" json:"id"`
 	Name           string    `gorm:"uniqueIndex;size:32;not null" json:"name"`
-	Version        string    `gorm:"size:16;not null" json:"version"` // 8.2 / 8.3
+	Version        string    `gorm:"size:16;not null" json:"version"`                  // 8.2 / 8.3
+	Origin         string    `gorm:"size:16;not null;default:container" json:"origin"` // container / external
+	FCGIAddr       string    `gorm:"size:128" json:"fcgiAddr"`                         // external: host:port 或 unix:/path/s.sock
+	Remark         string    `gorm:"size:255" json:"remark"`
 	ComposeProject string    `gorm:"size:64;not null" json:"composeProject"`
 	CreatedAt      time.Time `json:"createdAt"`
 }
 
-// AppStoreApp 应用商店应用（1Panel 默认源同步）。
+// AppStoreSource 应用源（onepanel zip / yp-url index.json / yp-git 仓库）。
+type AppStoreSource struct {
+	ID         uint       `gorm:"primaryKey" json:"id"`
+	Name       string     `gorm:"uniqueIndex;size:64;not null" json:"name"`
+	Type       string     `gorm:"size:16;not null" json:"type"` // onepanel / yp-url / yp-git
+	URL        string     `gorm:"size:512;not null" json:"url"` // onepanel: 1panel.json.zip 完整地址；yp-url: index.json 地址；yp-git: 仓库地址
+	Branch     string     `gorm:"size:64" json:"branch"`        // yp-git 分支（空=远端默认）
+	AuthToken  string     `gorm:"size:512" json:"-"`            // git 访问 token（可选）
+	Enabled    bool       `gorm:"not null;default:true" json:"enabled"`
+	Builtin    bool       `gorm:"not null;default:false" json:"builtin"`
+	Remark     string     `gorm:"size:255" json:"remark"`
+	Status     string     `gorm:"size:16;not null;default:pending" json:"status"` // pending / ok / error
+	Message    string     `gorm:"size:512" json:"message"`
+	AppCount   int        `json:"appCount"`
+	LastSyncAt *time.Time `json:"lastSyncAt"`
+	CreatedAt  time.Time  `json:"createdAt"`
+	UpdatedAt  time.Time  `json:"updatedAt"`
+}
+
+// AppStoreApp 应用商店应用（多源同步；(source_id,key) 唯一）。
 type AppStoreApp struct {
 	ID           uint      `gorm:"primaryKey" json:"id"`
-	Key          string    `gorm:"uniqueIndex;size:64;not null" json:"key"`
+	SourceID     uint      `gorm:"uniqueIndex:idx_app_source_key,priority:1;not null;default:0" json:"sourceId"`
+	Key          string    `gorm:"uniqueIndex:idx_app_source_key,priority:2;size:64;not null" json:"key"`
 	Name         string    `gorm:"size:128;not null" json:"name"`
 	Title        string    `gorm:"size:255" json:"title"`
 	Description  string    `gorm:"type:text" json:"description"`
 	ReadMe       string    `gorm:"type:text" json:"readMe"`
 	IconURL      string    `gorm:"size:512" json:"iconUrl"`
 	Tags         string    `gorm:"size:255" json:"tags"`
+	Kind         string    `gorm:"size:16;not null;default:app" json:"kind"` // app / service / middleware
+	Author       string    `gorm:"size:128" json:"author"`
+	Arch         string    `gorm:"size:64" json:"arch"` // 逗号分隔 amd64,arm64
 	VersionsJSON string    `gorm:"type:text" json:"versionsJson"`
+	ReverseProxy string    `gorm:"size:255" json:"reverseProxy"` // 一键反代声明的端口 env key（空=不支持）
+	LatestVersion string   `gorm:"size:64" json:"latestVersion"` // 最新版本号（同步时冗余，升级判定用）
 	LastModified int64     `json:"lastModified"`
 	SyncedAt     time.Time `json:"syncedAt"`
 }
@@ -95,10 +123,12 @@ type AppStoreApp struct {
 // AppStoreInstall 已安装的商店应用。
 type AppStoreInstall struct {
 	ID             uint      `gorm:"primaryKey" json:"id"`
-	Key            string    `gorm:"size:64;not null" json:"key"`
+	SourceID       uint      `gorm:"index;not null;default:0" json:"sourceId"`
+	Key            string    `gorm:"index;size:64;not null" json:"key"`
 	Name           string    `gorm:"size:64;not null" json:"name"`
-	Version        string    `gorm:"size:32;not null" json:"version"`
+	Version        string    `gorm:"size:64;not null" json:"version"`
 	ComposeProject string    `gorm:"size:64;not null;uniqueIndex" json:"composeProject"`
+	Remark         string    `gorm:"size:255" json:"remark"`
 	CreatedAt      time.Time `json:"createdAt"`
 }
 
@@ -227,9 +257,12 @@ type DatabaseInstance struct {
 	ID             uint      `gorm:"primaryKey" json:"id"`
 	Name           string    `gorm:"uniqueIndex;size:32;not null" json:"name"`
 	Type           string    `gorm:"size:16;not null" json:"type"` // mysql / postgres / redis / mongo
+	Origin         string    `gorm:"size:16;not null;default:container" json:"origin"` // container / external
+	Host           string    `gorm:"size:255;not null;default:127.0.0.1" json:"host"`  // external: 远端主机地址
 	Port           int       `gorm:"not null" json:"port"`
 	RootUser       string    `gorm:"size:32" json:"rootUser"`
 	PasswordEnc    string    `gorm:"type:text;not null" json:"-"`
+	Remark         string    `gorm:"size:255" json:"remark"`
 	ComposeProject string    `gorm:"size:64;not null" json:"composeProject"`
 	CreatedAt      time.Time `json:"createdAt"`
 	UpdatedAt      time.Time `json:"updatedAt"`
@@ -257,6 +290,22 @@ type AIProvider struct {
 	APIKey    string    `gorm:"type:text;not null" json:"apiKey"`
 	Model     string    `gorm:"size:64;not null" json:"model"`
 	IsDefault bool      `gorm:"not null;default:false" json:"isDefault"`
+	CreatedAt time.Time `json:"createdAt"`
+	UpdatedAt time.Time `json:"updatedAt"`
+}
+
+// AIMemory AI 长期记忆（B18：AI 自动沉淀的运维经验/用户偏好）。
+type AIMemory struct {
+	ID        uint      `gorm:"primaryKey" json:"id"`
+	Content   string    `gorm:"type:text;not null" json:"content"`
+	CreatedAt time.Time `json:"createdAt"`
+}
+
+// AIConversation AI 会话（B18：多会话持久化）。
+type AIConversation struct {
+	ID        uint      `gorm:"primaryKey" json:"id"`
+	Title     string    `gorm:"size:128" json:"title"`
+	Messages  string    `gorm:"type:text" json:"messages"`
 	CreatedAt time.Time `json:"createdAt"`
 	UpdatedAt time.Time `json:"updatedAt"`
 }
@@ -302,4 +351,24 @@ type ConfigRevision struct {
 	Trigger   string    `gorm:"size:16;not null;default:save" json:"trigger"` // save / rollback
 	Note      string    `gorm:"size:255" json:"note"`
 	Author    string    `gorm:"size:32" json:"author"`
+}
+
+// NatForwardRule NAT 端口转发规则（iptables DNAT，M24）。
+// 渲染语义：映射端口与目标端口仅允许「范围→同尺寸范围」或「单端口→单端口」。
+type NatForwardRule struct {
+	ID            uint      `gorm:"primaryKey" json:"id"`
+	NodeID        string    `gorm:"index;size:32;not null;default:local" json:"nodeId"` // local 或远程节点 ID
+	Name          string    `gorm:"size:64;not null" json:"name"`
+	Protocol      string    `gorm:"size:8;not null;default:tcp" json:"protocol"` // tcp / udp
+	IPFamily      int       `gorm:"not null;default:4" json:"ipFamily"`          // 4 / 6
+	ListenPort    int       `gorm:"not null" json:"listenPort"`
+	ListenPortEnd int       `gorm:"not null;default:0" json:"listenPortEnd"` // 0 = 单端口
+	TargetIP      string    `gorm:"size:64;not null" json:"targetIp"`
+	TargetPort    int       `gorm:"not null" json:"targetPort"`
+	TargetPortEnd int       `gorm:"not null;default:0" json:"targetPortEnd"` // 0 = 单端口
+	Iface         string    `gorm:"size:32" json:"iface"`                    // 空 = 所有网卡
+	Enabled       bool      `gorm:"not null;default:true" json:"enabled"`
+	Sort          int       `gorm:"not null;default:0" json:"sort"`
+	CreatedAt     time.Time `json:"createdAt"`
+	UpdatedAt     time.Time `json:"updatedAt"`
 }

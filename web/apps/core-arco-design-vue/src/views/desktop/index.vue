@@ -19,7 +19,8 @@ const appLoaders: Record<string, () => Promise<any>> = {
   terminal: () => import('@/views/terminal/index.vue'),
   database: () => import('@/views/database/index.vue'),
   sites: () => import('@/views/sites/index.vue'),
-  compose: () => import('@/views/compose/index.vue'),
+  // M23：compose 并入容器模块（默认落在应用 tab）
+  compose: () => import('@/views/container/index.vue'),
   cron: () => import('@/views/cron/index.vue'),
   icons: () => import('@/views/icons/index.vue'),
 }

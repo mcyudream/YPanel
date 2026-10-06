@@ -156,3 +156,171 @@ func (a *AIAPI) DeleteKnowledge(c *gin.Context) {
 	}
 	respOK(c, a.AI.ListKnowledge())
 }
+
+// ListConversations GET /api/v1/ai/conversations
+func (a *AIAPI) ListConversations(c *gin.Context) {
+	respOK(c, a.AI.ListConversations())
+}
+
+// GetConversation GET /api/v1/ai/conversations/:id
+func (a *AIAPI) GetConversation(c *gin.Context) {
+	if id := aiIDParam(c); id == 0 {
+		respErr(c, errBadRequest("会话 ID 不合法"))
+		return
+	} else if out, err := a.AI.GetConversation(id); err != nil {
+		respErr(c, err)
+		return
+	} else {
+		respOK(c, out)
+	}
+}
+
+// SaveConversation POST /api/v1/ai/conversations {id?, title, messages}
+func (a *AIAPI) SaveConversation(c *gin.Context) {
+	req, ok := bind[struct {
+		ID       uint                  `json:"id"`
+		Title    string                `json:"title"`
+		Messages []service.ChatMessage `json:"messages"`
+	}](c)
+	if !ok {
+		return
+	}
+	id, err := a.AI.SaveConversation(c.Request.Context(), req.ID, req.Title, req.Messages)
+	if err != nil {
+		respErr(c, err)
+		return
+	}
+	respOK(c, gin.H{"id": id})
+}
+
+// DeleteConversation DELETE /api/v1/ai/conversations/:id
+func (a *AIAPI) DeleteConversation(c *gin.Context) {
+	if id := aiIDParam(c); id == 0 {
+		respErr(c, errBadRequest("会话 ID 不合法"))
+		return
+	} else if err := a.AI.DeleteConversation(id); err != nil {
+		respErr(c, err)
+		return
+	}
+	respOK(c, struct{}{})
+}
+
+// ListMemories GET /api/v1/ai/memories
+func (a *AIAPI) ListMemories(c *gin.Context) {
+	respOK(c, a.AI.RecallMemories(""))
+}
+
+// ClearMemories DELETE /api/v1/ai/memories（清空全部记忆）
+func (a *AIAPI) ClearMemories(c *gin.Context) {
+	if err := a.AI.DeleteAllMemories(); err != nil {
+		respErr(c, err)
+		return
+	}
+	respOK(c, struct{}{})
+}
+
+// ---- Skills（技能包） ----
+
+// ListSkills GET /api/v1/ai/skills
+func (a *AIAPI) ListSkills(c *gin.Context) {
+	out, err := a.AI.ListSkills(c.Request.Context())
+	if err != nil {
+		respErr(c, err)
+		return
+	}
+	respOK(c, out)
+}
+
+// SaveSkill POST /api/v1/ai/skills {name, description, body}
+func (a *AIAPI) SaveSkill(c *gin.Context) {
+	req, ok := bind[struct {
+		Name        string `json:"name" binding:"required"`
+		Description string `json:"description"`
+		Body        string `json:"body" binding:"required"`
+	}](c)
+	if !ok {
+		return
+	}
+	if err := a.AI.SaveSkill(c.Request.Context(), req.Name, req.Description, req.Body); err != nil {
+		respErr(c, err)
+		return
+	}
+	respOK(c, struct{}{})
+}
+
+// SetSkillEnabled POST /api/v1/ai/skills/:name/enable {enabled}
+func (a *AIAPI) SetSkillEnabled(c *gin.Context) {
+	name := c.Param("name")
+	req, ok := bind[struct {
+		Enabled bool `json:"enabled"`
+	}](c)
+	if !ok {
+		return
+	}
+	if err := a.AI.SetSkillEnabled(name, req.Enabled); err != nil {
+		respErr(c, err)
+		return
+	}
+	respOK(c, struct{}{})
+}
+
+// RemoveSkill DELETE /api/v1/ai/skills/:name
+func (a *AIAPI) RemoveSkill(c *gin.Context) {
+	name := c.Param("name")
+	if name == "" {
+		respErr(c, errBadRequest("技能名必填"))
+		return
+	}
+	if err := a.AI.RemoveSkill(c.Request.Context(), name); err != nil {
+		respErr(c, err)
+		return
+	}
+	respOK(c, struct{}{})
+}
+
+// ---- MCP（服务器配置与测试） ----
+
+// ListMCPServers GET /api/v1/ai/mcp/servers
+func (a *AIAPI) ListMCPServers(c *gin.Context) {
+	respOK(c, a.AI.ListMCPServers())
+}
+
+// SaveMCPServers PUT /api/v1/ai/mcp/servers（整表保存）
+func (a *AIAPI) SaveMCPServers(c *gin.Context) {
+	req, ok := bind[struct {
+		Servers []service.MCPServerConf `json:"servers"`
+	}](c)
+	if !ok {
+		return
+	}
+	if err := a.AI.SaveMCPServers(req.Servers); err != nil {
+		respErr(c, err)
+		return
+	}
+	respOK(c, req.Servers)
+}
+
+// TestMCP POST /api/v1/ai/mcp/test（连接并列出工具）
+func (a *AIAPI) TestMCP(c *gin.Context) {
+	req, ok := bind[service.MCPServerConf](c)
+	if !ok {
+		return
+	}
+	out, err := a.AI.TestMCP(c.Request.Context(), *req)
+	if err != nil {
+		respErr(c, err)
+		return
+	}
+	respOK(c, out)
+}
+
+// CloseMCP DELETE /api/v1/ai/mcp/:name（断开会话）
+func (a *AIAPI) CloseMCP(c *gin.Context) {
+	name := c.Param("name")
+	if name == "" {
+		respErr(c, errBadRequest("名称必填"))
+		return
+	}
+	a.AI.CloseMCP(name)
+	respOK(c, struct{}{})
+}

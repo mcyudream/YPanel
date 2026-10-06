@@ -61,4 +61,12 @@ export const dockerExtApi = {
     return (res.data as { content: string }).content
   },
   updateDaemonConfig: (content: string) => api.put('api/v1/docker/daemon-config', { content }, { timeout: 300000 }),
+  // ---- 镜像仓库（~/.docker/config.json auths）----
+  registries: async () => {
+    const res = await api.get('api/v1/docker/registry', { silent: true })
+    return res.data as { registry: string, username: string, auth?: string }[]
+  },
+  setRegistry: (registry: string, username: string, password: string) =>
+    api.put('api/v1/docker/registry', { registry, username, password }),
+  removeRegistry: (registry: string) => api.delete(`api/v1/docker/registry?registry=${encodeURIComponent(registry)}`),
 }

@@ -68,8 +68,11 @@ func (s *AIService) StreamAgentChat(
 		emitJSON(map[string]any{"scene": scene})
 	}
 
-	// system：提示词 + 知识库检索 + 场景摘要
+	// system：提示词 + 技能注入 + 知识库检索 + 场景摘要
 	sys := aiSystemPrompt
+	if sk := s.skills.EnabledBodies(ctx); len(sk) > 0 {
+		sys += "\n\n可用技能（用户提问匹配技能用途时，按技能正文执行）：\n" + strings.Join(sk, "\n---\n")
+	}
 	if ks := s.searchKnowledge(strings.Join(func() []string {
 		msgs := []string{scenePath}
 		for _, m := range history {
@@ -95,8 +98,18 @@ func (s *AIService) StreamAgentChat(
 		}
 	}
 
-	// 原生 function calling 工具循环
+	// 原生 function calling 工具循环（面板工具 + MCP 工具）
 	toolDefs := s.toolsFor(ctx)
+	for _, mt := range s.enabledMCPTools(ctx) {
+		mt := mt
+		toolDefs = append(toolDefs, &aiTool{
+			name:        mt.Name,
+			description: mt.Descr + "（来自 MCP 服务器 " + mt.Server + "）",
+			fn: func(_ context.Context, input string) (string, error) {
+				return s.callMCPTool(ctx, mt.Name, input)
+			},
+		})
+	}
 	toolList := make([]llms.Tool, len(toolDefs))
 	for i, t := range toolDefs {
 		toolList[i] = llms.Tool{Type: "function", Function: &llms.FunctionDefinition{

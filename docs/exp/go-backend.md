@@ -82,3 +82,24 @@
 - Web 服务器是 **OpenResty**（应用商店安装），站点 conf 由面板生成（`/www/sites/<域名>/{index,ssl,log}` 目录约定），面板"配置文件"页可直接编辑整段 server 块并"保存并重载"。
 - 生成的 server 块固定带：敏感文件 `location ~ ^/(\.user.ini|\.htaccess|\.git|\.env|...)` return 404、`^~ /.well-known/acme-challenge` 放行、`ssl_protocols TLSv1.3 TLSv1.2`、`ssl_prefer_server_ciphers off`、`ssl_session_cache shared:SSL:10m`、`error_page 497 https://$host$request_uri`（HTTP 打到 443 时重定向）、启用 HSTS 时 `add_header Strict-Transport-Security "max-age=31536000" always`。YPanel B23 的 sslServer 段（site.go confTemplate）已对齐其中协议版本/套件/会话缓存/HSTS；497 与 acme-challenge 放行暂未加，后续补。
 - **来源**：2026-10-07 对照用户在用 1Panel（yudream 实例）B23 网站增强批次
+
+### GORM AutoMigrate 不迁移已有索引：唯一索引改复合唯一要手动先删
+
+- **现象**：`appstore_apps.key` 原为单列唯一索引，模型改成 `(source_id,key)` 复合唯一后 AutoMigrate 直接跑，旧唯一索引仍在（新复合索引也不一定建出），多源同 key 应用插入必然冲突。
+- **根因**：GORM AutoMigrate 只"增量加"不"改造"——已存在的同名/同列索引不会删除或重建，SQLite 也没有在线改索引的 DDL。
+- **规避/解决**：AutoMigrate 之前 `gdb.Migrator().HasIndex(&Model{}, "旧索引名") → DropIndex`；索引名用 GORM 默认命名（`idx_<表名>_<列>`）才能被识别。历史行数据归属（source_id=0 → 内置源 ID）在 seed 步骤一并 UPDATE。
+- **来源**：2026-10-07 应用商店多源改造（core/internal/db/db.go seedStore）
+
+### gin 同一位置"静态段 + 参数段"跨方法可共存，勿用通配绕路
+
+- **现象**：`POST /database/instances/external`（静态）与 `DELETE /database/instances/:id`（参数）担心 httprouter 冲突，曾考虑统一成 `/instances/takeover/:id` 之类的绕路路由。
+- **根因**：gin 的路由树按 HTTP 方法各自建树；同方法内同位置静态优先于参数（POST 树下只有 `external`，DELETE 树下只有 `:id`），互不冲突。真正会炸的是**同方法**下同位置既有静态又有参数且路径前缀交错歧义的场景。
+- **规避/解决**：直接用语义化静态段（`/external`），前端同步更新；不要为规避不存在的冲突牺牲 REST 语义。
+- **来源**：2026-10-07 数据库/PHP 外部接管路由（core/internal/router/router.go）
+
+### exec git 做"源同步"的三个安全点：ext:: 注入、token 内嵌、浅克隆
+
+- **现象**：用 `git clone` 给"应用商店 git 源"做同步时，git 传输协议里 `ext::<command>` 形态会执行任意 shell 命令；私有仓库 token 若拼错位置会进日志；整克隆大仓库拖慢同步。
+- **根因**：git URL 是"协议 DSL"不是纯地址；`ext::` 与 `-` 开头的参数会被 git 当作传输命令/选项。
+- **规避/解决**：URL 白名单校验（http/https/ssh/git@/file:// 前缀 + 禁 `ext::` + 禁前导 `-`）；token 用 `https://ypanel:<token>@host/path` 内嵌（argv 传递不经 shell、不落日志）；`clone --depth 1` + 已有仓库 `fetch --depth 1 && reset --hard FETCH_HEAD`；`GIT_TERMINAL_PROMPT=0` 防交互挂死。
+- **来源**：2026-10-07 应用商店 yp-git 源（core/internal/service/store.go gitCheckout）

@@ -75,7 +75,7 @@ networks:
 `
 }
 
-// ensureNginx 安装并启动 nginx 容器（幂等）。
+// ensureNginx 确保 nginx 环境可用（幂等）：host 模式仅保证目录与默认配置；container 模式安装并启动容器。
 func (s *SiteService) ensureNginx(ctx context.Context) error {
 	ac, err := s.client()
 	if err != nil {
@@ -88,25 +88,31 @@ func (s *SiteService) ensureNginx(ctx context.Context) error {
 			return err
 		}
 	}
-	// compose 配置 + up（已存在则覆盖无害）
-	if _, err := agentclient.DoJSON[dto.ComposeWriteReq, struct{}](ac, ctx, "POST", "/agent/v1/compose/config",
-		&dto.ComposeWriteReq{Name: nginxProject, Content: nginxComposeTemplate()}); err != nil {
-		return err
-	}
-	if _, err := agentclient.DoJSON[dto.ComposeActionReq, map[string]string](ac, ctx, "POST", "/agent/v1/compose/up",
-		&dto.ComposeActionReq{Name: nginxProject}); err != nil {
-		return err
+	if s.nginxMode() != "host" {
+		// compose 配置 + up（已存在则覆盖无害）
+		if _, err := agentclient.DoJSON[dto.ComposeWriteReq, struct{}](ac, ctx, "POST", "/agent/v1/compose/config",
+			&dto.ComposeWriteReq{Name: nginxProject, Content: nginxComposeTemplate()}); err != nil {
+			return err
+		}
+		if _, err := agentclient.DoJSON[dto.ComposeActionReq, map[string]string](ac, ctx, "POST", "/agent/v1/compose/up",
+			&dto.ComposeActionReq{Name: nginxProject}); err != nil {
+			return err
+		}
 	}
 	// 默认配置（仅首次）
 	if _, err := agentclient.GetJSON[dto.FileReadResp](ac, ctx, "/agent/v1/files/read?path="+escapeURL(path.Join(nginxConfDir, "default.conf"))); err == nil {
 		return nil // 已有默认配置
 	}
+	certPrefix := "/etc/nginx/certs"
+	if s.nginxMode() == "host" {
+		certPrefix = nginxCertDir
+	}
 	defaultConf := `# YPanel nginx 默认配置：未匹配站点一律 404
 server {
     listen 80 default_server;
     listen 443 ssl default_server;
-    ssl_certificate     /etc/nginx/certs/default.crt;
-    ssl_certificate_key /etc/nginx/certs/default.key;
+    ssl_certificate     ` + certPrefix + `/default.crt;
+    ssl_certificate_key ` + certPrefix + `/default.key;
     return 404;
 }
 `
@@ -118,27 +124,104 @@ server {
 	return s.selfSign(ctx, "default", nil)
 }
 
+// nginx 模式 setting key（container=面板容器 / host=接管本机 nginx）。
+const settingKeyNginxMode = "nginx.mode"
+
+// nginxMode 当前 nginx 环境模式。
+func (s *SiteService) nginxMode() string {
+	var row model.Setting
+	if err := s.db.Where("`key` = ?", settingKeyNginxMode).First(&row).Error; err == nil && row.Value == "host" {
+		return "host"
+	}
+	return "container"
+}
+
+// SetNginxMode 设置 nginx 环境模式。
+func (s *SiteService) SetNginxMode(mode string) error {
+	if mode != "container" && mode != "host" {
+		return errs.Wrap(errs.ErrBadRequest, "模式仅支持 container/host")
+	}
+	var row model.Setting
+	if err := s.db.Where("`key` = ?", settingKeyNginxMode).First(&row).Error; err != nil {
+		return s.db.Create(&model.Setting{Key: settingKeyNginxMode, Value: mode}).Error
+	}
+	return s.db.Model(&row).Update("value", mode).Error
+}
+
+// AdoptHostNginx 接管本机 nginx：探测二进制与 systemd 服务，接管后站点配置仍写 /opt/ypanel/nginx/conf.d。
+func (s *SiteService) AdoptHostNginx(ctx context.Context) (map[string]any, error) {
+	ac, err := s.client()
+	if err != nil {
+		return nil, err
+	}
+	out, err := agentclient.DoJSON[dto.ExecReq, dto.ExecResp](ac, ctx, "POST", "/agent/v1/exec",
+		&dto.ExecReq{Command: "command -v nginx && systemctl is-active nginx || true", TimeoutSecs: 30})
+	if err != nil {
+		return nil, err
+	}
+	lines := nonEmptyLines(out.Output)
+	detected := len(lines) >= 1 && strings.Contains(out.Output, "nginx")
+	active := strings.TrimSpace(out.Output) != "" && strings.HasSuffix(strings.TrimSpace(out.Output), "active")
+	if !detected {
+		return map[string]any{"detected": false}, errs.Wrap(errs.ErrBadRequest, "未在本机检测到 nginx（需已安装并注册 systemd 服务）")
+	}
+	// 确保 conf 目录（接管模式下面板仍写 /opt/ypanel/nginx/conf.d，需本机 nginx include）
+	for _, d := range []string{nginxConfDir, nginxCertDir, nginxWwwDir} {
+		_, _ = agentclient.DoJSON[dto.FileMkdirReq, struct{}](ac, ctx, "POST", "/agent/v1/files/mkdir",
+			&dto.FileMkdirReq{Path: d})
+	}
+	if err := s.SetNginxMode("host"); err != nil {
+		return nil, err
+	}
+	_ = active
+	return map[string]any{
+		"detected": true, "mode": "host",
+		"hint": "请在本机 nginx.conf 的 http 块加入：include " + nginxConfDir + "/*.conf; 并确认证书/站点目录可读（/opt/ypanel/nginx/*）",
+	}, nil
+}
+
+func nonEmptyLines(s string) []string {
+	out := []string{}
+	for _, l := range strings.Split(s, "\n") {
+		l = strings.TrimSpace(l)
+		if l != "" {
+			out = append(out, l)
+		}
+	}
+	return out
+}
+
 // Status nginx 运行状态。
 func (s *SiteService) Status(ctx context.Context) (map[string]any, error) {
 	ac, err := s.client()
 	if err != nil {
 		return nil, err
 	}
-	projects, err := agentclient.GetJSON[[]dto.ComposeProject](ac, ctx, "/agent/v1/compose/projects")
-	if err != nil {
-		return nil, err
-	}
+	mode := s.nginxMode()
 	installed, running := false, false
-	for _, p := range projectsSafe(projects) {
-		if p.Name == nginxProject {
-			installed = true
-			running = p.Running > 0
+	if mode == "host" {
+		out, err := agentclient.DoJSON[dto.ExecReq, dto.ExecResp](ac, ctx, "POST", "/agent/v1/exec",
+			&dto.ExecReq{Command: "command -v nginx >/dev/null && echo ok || true; systemctl is-active nginx 2>/dev/null || true", TimeoutSecs: 30})
+		if err == nil {
+			installed = strings.Contains(out.Output, "ok")
+			running = strings.Contains(out.Output, "active")
+		}
+	} else {
+		projects, err := agentclient.GetJSON[[]dto.ComposeProject](ac, ctx, "/agent/v1/compose/projects")
+		if err != nil {
+			return nil, err
+		}
+		for _, p := range projectsSafe(projects) {
+			if p.Name == nginxProject {
+				installed = true
+				running = p.Running > 0
+			}
 		}
 	}
 	var count int64
 	_ = s.db.Model(&model.Site{}).Count(&count).Error
 	return map[string]any{
-		"installed": installed, "running": running,
+		"installed": installed, "running": running, "mode": mode,
 		"sites": count,
 		"hostIP": "",
 	}, nil
@@ -591,7 +674,12 @@ func confTemplate(site *model.Site, ssl bool, waf SiteWaf) string {
 		}
 		if meta.RuntimeContainer != "" {
 			fmt.Fprintf(&b, "    location ~ \\.php$ {\n")
-			fmt.Fprintf(&b, "        fastcgi_pass %s:9000;\n", meta.RuntimeContainer)
+			if addr, ok := strings.CutPrefix(meta.RuntimeContainer, "ext:"); ok {
+				// 外部接管：host:port 或 unix:/path 直连
+				fmt.Fprintf(&b, "        fastcgi_pass %s;\n", addr)
+			} else {
+				fmt.Fprintf(&b, "        fastcgi_pass %s:9000;\n", meta.RuntimeContainer)
+			}
 			b.WriteString("        fastcgi_index index.php;\n")
 			b.WriteString("        fastcgi_param SCRIPT_FILENAME $document_root$fastcgi_script_name;\n")
 			b.WriteString("        include fastcgi_params;\n")
@@ -659,11 +747,22 @@ func confTemplate(site *model.Site, ssl bool, waf SiteWaf) string {
 	return b.String()
 }
 
+// hostPathMap host 模式下 conf 内容器路径 → 本机实际路径（挂载点对齐）。
+var hostPathMap = strings.NewReplacer(
+	"/etc/nginx/certs/", "/opt/ypanel/nginx/certs/",
+	"/var/www/", "/opt/ypanel/nginx/www/",
+	"/var/log/nginx/", "/opt/ypanel/nginx/logs/",
+	"/var/cache/nginx/", "/opt/ypanel/nginx/cache/",
+)
+
 // writeConf 写配置 + 校验 + 重载（失败回滚）。
 func (s *SiteService) writeConf(ctx context.Context, site *model.Site, content string) error {
 	ac, err := s.client()
 	if err != nil {
 		return err
+	}
+	if s.nginxMode() == "host" {
+		content = hostPathMap.Replace(content)
 	}
 	confPath := path.Join(nginxConfDir, site.Name+".conf")
 	orig := ""
@@ -698,14 +797,18 @@ func (s *SiteService) writeViaFiles(ctx context.Context, p, content string) erro
 	return err
 }
 
-// reloadNginx 校验并重载 nginx。
+// reloadNginx 校验并重载 nginx（容器/接管双模式）。
 func (s *SiteService) reloadNginx(ctx context.Context) error {
 	ac, err := s.client()
 	if err != nil {
 		return err
 	}
+	testCmd, reloadCmd := "docker exec "+nginxContainer+" nginx -t", "docker exec "+nginxContainer+" nginx -s reload"
+	if s.nginxMode() == "host" {
+		testCmd, reloadCmd = "nginx -t", "systemctl reload nginx"
+	}
 	out, err := agentclient.DoJSON[dto.ExecReq, dto.ExecResp](ac, ctx, "POST", "/agent/v1/exec",
-		&dto.ExecReq{Command: "docker exec " + nginxContainer + " nginx -t", TimeoutSecs: 30})
+		&dto.ExecReq{Command: testCmd, TimeoutSecs: 30})
 	if err != nil {
 		return err
 	}
@@ -713,7 +816,7 @@ func (s *SiteService) reloadNginx(ctx context.Context) error {
 		return errs.Wrapc(errs.CodeFileOpFailed, "nginx 配置校验失败: "+firstLine(out.Output))
 	}
 	out, err = agentclient.DoJSON[dto.ExecReq, dto.ExecResp](ac, ctx, "POST", "/agent/v1/exec",
-		&dto.ExecReq{Command: "docker exec " + nginxContainer + " nginx -s reload", TimeoutSecs: 30})
+		&dto.ExecReq{Command: reloadCmd, TimeoutSecs: 30})
 	if err != nil {
 		return err
 	}
@@ -1033,7 +1136,12 @@ func (s *SiteService) Create(ctx context.Context, req SiteCreateInput) (*model.S
 		if err := s.db.First(&rt, req.RuntimeID).Error; err != nil {
 			return nil, errs.Wrap(errs.ErrBadRequest, "运行环境不存在")
 		}
-		runtimeContainer = "php-" + rt.Name
+		if rt.Origin == "external" {
+			// 外部接管：fastcgi 直连地址以 ext: 前缀区分容器名
+			runtimeContainer = "ext:" + rt.FCGIAddr
+		} else {
+			runtimeContainer = "php-" + rt.Name
+		}
 	}
 	if req.Type == "proxy" {
 		if len(req.ProxyRules) == 0 && req.ProxyPass == "" {

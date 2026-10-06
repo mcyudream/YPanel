@@ -109,16 +109,15 @@ func run(ctx context.Context, cfg *config.Config) error {
 	cronSvc.DBSvc = dbSvc
 	cronSvc.SiteBk = service.NewSiteBackupService(nodes)
 	scriptSvc := service.NewScriptService(gdb)
-	aiSvc := service.NewAIService(gdb, nodes)
 	if err := cronSvc.Start(); err != nil {
 		return fmt.Errorf("启动计划任务调度失败: %w", err)
 	}
 	defer cronSvc.Stop()
-	marketSvc := service.NewMarketService(gdb, nodes)
-	marketStoreSvc := service.NewMarketStoreService(gdb, nodes)
+	storeSvc := service.NewStoreService(gdb, nodes, siteSvc, cfg.DataDir)
 	fwSvc := service.NewFirewallService(nodes, cfg.Port)
 	f2bSvc := service.NewFail2banService(nodes)
 	dbAdminSvc := service.NewDBAdminService(gdb, dbSvc)
+	aiSvc := service.NewAIService(gdb, nodes, dbSvc, dbAdminSvc, settings, service.NewSkillsManager(nodes, settings))
 	rtSvc := service.NewRuntimeService(gdb, nodes)
 	dockerExtSvc := service.NewDockerExtService(nodes)
 	suSvc := service.NewSelfUpdateService(nodes, version)
@@ -129,6 +128,18 @@ func run(ctx context.Context, cfg *config.Config) error {
 	histSvc := service.NewHistoryRecorder(gdb, nodes)
 	histSvc.Start(ctx)
 	revSvc := service.NewRevisionService(gdb, nodes)
+	natSvc := service.NewNatForwardService(gdb, nodes)
+	// M24 NAT 转发启动重放：失败仅告警不阻断启动（agent 不可达 / iptables 缺失属预期场景）
+	go func() {
+		fails, err := natSvc.ApplyAll(ctx)
+		if err != nil {
+			slog.Warn("NAT 转发启动重放：规则清单读取失败", "err", err.Error())
+			return
+		}
+		for nodeId, applyErr := range fails {
+			slog.Warn("NAT 转发启动重放失败", "node", nodeId, "err", applyErr.Error())
+		}
+	}()
 
 	if os.Getenv("GIN_MODE") == "" {
 		gin.SetMode(gin.ReleaseMode)
@@ -136,10 +147,10 @@ func run(ctx context.Context, cfg *config.Config) error {
 	r, err := router.Setup(&router.Deps{
 		Auth: auth, Nodes: nodes, Settings: settings, Cron: cronSvc, DBS: dbSvc, Sites: siteSvc, Certs: certSvc, Groups: groupSvc,
 		Scripts: scriptSvc, DBSvc: dbSvc, Acme: acmeSvc, AI: aiSvc,
-		Market: marketSvc, FW: fwSvc, Alerts: alertSvc,
+		FW: fwSvc, Alerts: alertSvc,
 		Notif: notifSvc, PanelBP: service.NewPanelBackupService(nodes), Hist: histSvc,
-		F2B: f2bSvc, DBAdmin: dbAdminSvc, SU: suSvc, MarketStore: marketStoreSvc, RT: rtSvc,
-		DockerExt: dockerExtSvc, Sec: secSvc, Rev: revSvc, Version: version,
+		F2B: f2bSvc, DBAdmin: dbAdminSvc, SU: suSvc, Store: storeSvc, RT: rtSvc,
+		DockerExt: dockerExtSvc, Sec: secSvc, Rev: revSvc, NatF: natSvc, Version: version,
 	})
 	if err != nil {
 		return err

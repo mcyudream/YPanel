@@ -277,6 +277,9 @@ catalogs:
     '@zumer/snapdom':
       specifier: ^3.1.1
       version: 3.1.1
+    ajv:
+      specifier: ^8.20.0
+      version: 8.20.0
     autoprefixer:
       specifier: ^10.6.1
       version: 10.6.1
@@ -490,6 +493,9 @@ catalogs:
     vue-tsc:
       specifier: ^3.3.11
       version: 3.3.11
+    yaml:
+      specifier: ^2.9.1
+      version: 2.9.1
     zod:
       specifier: ^4.6.5
       version: 4.6.5
@@ -612,6 +618,9 @@ importers:
       '@zumer/snapdom':
         specifier: 'catalog:'
         version: 3.1.1
+      ajv:
+        specifier: 'catalog:'
+        version: 8.20.0
       axios:
         specifier: 'catalog:'
         version: 1.20.0(debug@4.4.3(supports-color@10.2.2))(supports-color@10.2.2)
@@ -699,6 +708,9 @@ importers:
       vue-router:
         specifier: 'catalog:'
         version: 5.3.1(@vue/compiler-sfc@3.5.43)(esbuild@0.28.2)(pinia@4.0.3(@vue/devtools-api@8.2.1)(typescript@6.0.3)(vue@3.5.43(typescript@6.0.3)))(rolldown@1.2.11)(vite@8.3.1(@types/node@26.6.3)(esbuild@0.28.2)(jiti@2.7.0)(sass-embedded@1.105.0)(sass@1.104.1)(terser@5.51.2)(tsx@4.23.15)(yaml@2.9.1))(vue@3.5.43(typescript@6.0.3))
+      yaml:
+        specifier: 'catalog:'
+        version: 2.9.1
       zod:
         specifier: 'catalog:'
         version: 4.6.5

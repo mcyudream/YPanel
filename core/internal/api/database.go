@@ -44,6 +44,28 @@ func (a *DatabaseAPI) Create(c *gin.Context) {
 	respOK(c, gin.H{"id": inst.ID, "name": inst.Name, "port": inst.Port})
 }
 
+// CreateExternal POST /api/v1/database/instances/external（接管已有实例）
+func (a *DatabaseAPI) CreateExternal(c *gin.Context) {
+	req, ok := bind[struct {
+		Name     string `json:"name" binding:"required"`
+		Type     string `json:"type" binding:"required,oneof=mysql postgres redis mongo"`
+		Host     string `json:"host"`
+		Port     int    `json:"port" binding:"required"`
+		User     string `json:"user"`
+		Password string `json:"password" binding:"required"`
+		Remark   string `json:"remark"`
+	}](c)
+	if !ok {
+		return
+	}
+	inst, err := a.DBS.AddExternalInstance(c.Request.Context(), req.Name, req.Type, req.Host, req.Port, req.User, req.Password, req.Remark)
+	if err != nil {
+		respErr(c, err)
+		return
+	}
+	respOK(c, gin.H{"id": inst.ID, "name": inst.Name, "host": inst.Host, "port": inst.Port})
+}
+
 // Delete DELETE /api/v1/database/instances/:id?purge=
 func (a *DatabaseAPI) Delete(c *gin.Context) {
 	id, err := idParam(c)

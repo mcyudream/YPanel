@@ -25,6 +25,7 @@
     "@xterm/addon-fit": "catalog:",
     "@xterm/xterm": "catalog:",
     "@zumer/snapdom": "catalog:",
+    "ajv": "catalog:",
     "axios": "catalog:",
     "class-variance-authority": "catalog:",
     "clsx": "catalog:",
@@ -54,6 +55,7 @@
     "vee-validate": "catalog:",
     "vue": "catalog:",
     "vue-router": "catalog:",
+    "yaml": "catalog:",
     "zod": "catalog:"
   },
   "devDependencies": {

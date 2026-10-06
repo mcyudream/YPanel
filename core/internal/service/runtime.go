@@ -4,6 +4,7 @@ package service
 import (
 	"context"
 	"fmt"
+	"regexp"
 
 	"gorm.io/gorm"
 
@@ -56,7 +57,7 @@ networks:
 `, image, name)
 }
 
-// Create 创建运行环境。
+// Create 创建运行环境（容器化）。
 func (s *RuntimeService) Create(ctx context.Context, name, version string) (*model.Runtime, error) {
 	if !siteNamePattern.MatchString(name) {
 		return nil, errs.Wrap(errs.ErrBadRequest, "名称不合法（小写字母/数字/中划线）")
@@ -70,7 +71,7 @@ func (s *RuntimeService) Create(ctx context.Context, name, version string) (*mod
 	if count > 0 {
 		return nil, errs.New(errs.CodeConflict, "error.runtimeExists", "运行环境名已存在")
 	}
-	row := &model.Runtime{Name: name, Version: version, ComposeProject: "rt-php-" + name}
+	row := &model.Runtime{Name: name, Version: version, Origin: "container", ComposeProject: "rt-php-" + name}
 	if err := s.db.Create(row).Error; err != nil {
 		return nil, err
 	}
@@ -89,6 +90,35 @@ func (s *RuntimeService) Create(ctx context.Context, name, version string) (*mod
 	return row, nil
 }
 
+// fcgiAddrPattern 外部 fastcgi 地址（host:port 或 unix:/path/socket.sock）。
+var fcgiAddrPattern = regexp.MustCompile(`^([a-zA-Z0-9._-]+:[0-9]{1,5}|unix:/[^\s]{1,200})$`)
+
+// AttachExternal 接管本机已有 php-fpm（fastcgi 直连，不创建容器）。
+func (s *RuntimeService) AttachExternal(name, version, fcgiAddr, remark string) (*model.Runtime, error) {
+	if !siteNamePattern.MatchString(name) {
+		return nil, errs.Wrap(errs.ErrBadRequest, "名称不合法（小写字母/数字/中划线）")
+	}
+	if version == "" {
+		version = "unknown"
+	}
+	if !fcgiAddrPattern.MatchString(fcgiAddr) {
+		return nil, errs.Wrap(errs.ErrBadRequest, "FastCGI 地址需为 host:port 或 unix:/path 形式")
+	}
+	var count int64
+	_ = s.db.Model(&model.Runtime{}).Where("name = ?", name).Count(&count).Error
+	if count > 0 {
+		return nil, errs.New(errs.CodeConflict, "error.runtimeExists", "运行环境名已存在")
+	}
+	row := &model.Runtime{
+		Name: name, Version: version, Origin: "external", FCGIAddr: fcgiAddr,
+		Remark: truncStr(remark, 255), ComposeProject: "-",
+	}
+	if err := s.db.Create(row).Error; err != nil {
+		return nil, err
+	}
+	return row, nil
+}
+
 // List 运行环境列表（含容器状态）。
 func (s *RuntimeService) List(ctx context.Context) ([]map[string]any, error) {
 	var rows []model.Runtime
@@ -100,16 +130,25 @@ func (s *RuntimeService) List(ctx context.Context) ([]map[string]any, error) {
 		return nil, err
 	}
 	projects, _ := agentclient.GetJSON[[]dto.ComposeProject](ac, ctx, "/agent/v1/compose/projects")
-	running := map[string]bool{}
+	runningMap := map[string]bool{}
 	for _, p := range projectsSafe(projects) {
-		running[p.Name] = p.Running > 0
+		runningMap[p.Name] = p.Running > 0
 	}
 	out := make([]map[string]any, 0, len(rows))
 	for _, r := range rows {
+		running := false
+		switch r.Origin {
+		case "external":
+			// 外部 fastcgi 以连通性为准（列表不做阻塞探测，站点绑定时校验）
+			running = r.FCGIAddr != ""
+		default:
+			running = runningMap[r.ComposeProject]
+		}
 		out = append(out, map[string]any{
 			"id": r.ID, "name": r.Name, "version": r.Version,
-			"composeProject": r.ComposeProject, "running": running[r.ComposeProject],
-			"createdAt": r.CreatedAt,
+			"origin": r.Origin, "fcgiAddr": r.FCGIAddr, "remark": r.Remark,
+			"composeProject": r.ComposeProject,
+			"running":        running, "createdAt": r.CreatedAt,
 		})
 	}
 	return out, nil
@@ -120,6 +159,10 @@ func (s *RuntimeService) Delete(ctx context.Context, id uint) error {
 	var row model.Runtime
 	if err := s.db.First(&row, id).Error; err != nil {
 		return errs.New(errs.CodeNotFound, "error.runtimeNotFound", "运行环境不存在")
+	}
+	if row.Origin == "external" {
+		// 外部接管仅解除纳管
+		return s.db.Delete(&model.Runtime{}, id).Error
 	}
 	ac, err := s.client()
 	if err != nil {
@@ -135,6 +178,9 @@ func (s *RuntimeService) SetEnabled(ctx context.Context, id uint, up bool) error
 	var row model.Runtime
 	if err := s.db.First(&row, id).Error; err != nil {
 		return err
+	}
+	if row.Origin == "external" {
+		return errs.Wrap(errs.ErrBadRequest, "外部运行环境由其所在主机管理，面板不支持启停")
 	}
 	ac, err := s.client()
 	if err != nil {

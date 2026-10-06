@@ -1,0 +1,113 @@
+{
+  "name": "YPanel 官方源",
+  "apps": [
+    {
+      "id": "uptime-kuma",
+      "name": "Uptime Kuma",
+      "category": "监控",
+      "kind": "app",
+      "description": "开箱即用的服务可用性监控（自带拨测与状态页）",
+      "author": "YuDream",
+      "arch": ["amd64", "arm64"],
+      "logo": "apps/uptime-kuma/logo.svg",
+      "readme": "apps/uptime-kuma/README.md",
+      "reverseProxy": "PANEL_APP_PORT",
+      "versions": [
+        {
+          "id": "1.23.16",
+          "package": "apps/uptime-kuma/1.23.16",
+          "releaseNotes": "首版",
+          "ports": [{ "envKey": "PANEL_APP_PORT", "default": 3001 }]
+        }
+      ]
+    },
+    {
+      "id": "memcached",
+      "name": "Memcached",
+      "category": "缓存",
+      "kind": "middleware",
+      "description": "分布式内存缓存（可复用中间件）",
+      "author": "YuDream",
+      "arch": ["amd64", "arm64"],
+      "logo": "apps/memcached/logo.svg",
+      "readme": "apps/memcached/README.md",
+      "versions": [
+        {
+          "id": "1.6",
+          "package": "apps/memcached/1.6",
+          "ports": [{ "envKey": "PANEL_APP_PORT", "default": 11211 }]
+        }
+      ]
+    },
+    {
+      "id": "neo4j",
+      "name": "Neo4j",
+      "category": "中间件",
+      "kind": "middleware",
+      "description": "图数据库（可复用中间件）",
+      "author": "YuDream",
+      "arch": ["amd64", "arm64"],
+      "logo": "apps/neo4j/logo.svg",
+      "readme": "apps/neo4j/README.md",
+      "reverseProxy": "PANEL_APP_PORT_HTTP",
+      "versions": [
+        {
+          "id": "5.20-community",
+          "package": "apps/neo4j/5.20-community",
+          "env": [
+            { "key": "NEO4J_AUTH", "label": "认证（none 或 neo4j/密码）", "type": "text", "default": "neo4j/yp_neo4j_2026", "required": true }
+          ],
+          "ports": [
+            { "envKey": "PANEL_APP_PORT_HTTP", "default": 7474 },
+            { "envKey": "PANEL_APP_PORT_BOLT", "default": 7687 }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "rustfs",
+      "name": "RustFS",
+      "category": "中间件",
+      "kind": "middleware",
+      "description": "Rust 实现的高性能 S3 兼容对象存储（可复用中间件）",
+      "author": "YuDream",
+      "arch": ["amd64", "arm64"],
+      "logo": "apps/rustfs/logo.svg",
+      "readme": "apps/rustfs/README.md",
+      "reverseProxy": "PANEL_APP_PORT",
+      "versions": [
+        {
+          "id": "latest",
+          "package": "apps/rustfs/latest",
+          "env": [
+            { "key": "RUSTFS_ACCESS_KEY", "label": "Access Key", "type": "text", "default": "ypadmin", "required": true },
+            { "key": "RUSTFS_SECRET_KEY", "label": "Secret Key", "type": "password", "default": "yp_rustfs_2026", "required": true }
+          ],
+          "ports": [{ "envKey": "PANEL_APP_PORT", "default": 9000 }]
+        }
+      ]
+    },
+    {
+      "id": "wordpress",
+      "name": "WordPress",
+      "category": "建站",
+      "kind": "app",
+      "description": "博客/CMS（内置 MySQL）",
+      "author": "YuDream",
+      "arch": ["amd64", "arm64"],
+      "logo": "apps/wordpress/logo.svg",
+      "readme": "apps/wordpress/README.md",
+      "reverseProxy": "PANEL_APP_PORT",
+      "versions": [
+        {
+          "id": "6.7",
+          "package": "apps/wordpress/6.7",
+          "env": [
+            { "key": "WORDPRESS_DB_PASSWORD", "label": "数据库密码", "type": "password", "default": "wp_db_2026", "required": true }
+          ],
+          "ports": [{ "envKey": "PANEL_APP_PORT", "default": 8082 }]
+        }
+      ]
+    }
+  ]
+}

@@ -4,8 +4,11 @@ export interface DbInstance {
   id: number
   name: string
   type: 'mysql' | 'postgres' | 'redis' | 'mongo'
+  origin: 'container' | 'external'
+  host: string
   port: number
   user: string
+  remark: string
   composeProject: string
   running: boolean
   createdAt: string
@@ -39,6 +42,8 @@ export default {
   },
   create: (data: { name: string, type: string, port?: number, password?: string }) =>
     api.post('api/v1/database/instances', data),
+  createExternal: (data: { name: string, type: string, host?: string, port: number, user?: string, password: string, remark?: string }) =>
+    api.post('api/v1/database/instances/external', data, { timeout: 30000 }),
   remove: (id: number, purge: boolean) => api.delete(`api/v1/database/instances/${id}?purge=${purge}`),
   start: (id: number) => api.post(`api/v1/database/instances/${id}/start`),
   stop: (id: number) => api.post(`api/v1/database/instances/${id}/stop`),

@@ -9,6 +9,7 @@ import apiNode from '@/api/modules/node'
 import type { NodeItem } from '@/api/modules/node'
 import { pushFileHistory } from '@/composables/useFileHistory'
 import { b64ToBytes, decodeWith, detectEol, detectEncoding, languageOf } from '@/composables/useTextEncoding'
+import { isManagedConfig, refreshDiagnostics } from '@/utils/composeDiagnostics'
 import { loadMonaco } from '@/utils/monacoLoader'
 
 export interface FileEditorTab {
@@ -224,15 +225,30 @@ export const useFileEditorStore = defineStore('fileEditor', () => {
         const uri = m.Uri.parse(`ypanel:///${cid ? `c-${cid}` : nodeId}${path}`)
         model = m.editor.getModel(uri) ?? m.editor.createModel(text, lang, uri)
         modelRegistry.set(id, model)
+        // 受管配置（compose/daemon.json）编辑时防抖刷新诊断 marker
+        let diagTimer: ReturnType<typeof setTimeout> | null = null
         model.onDidChangeContent(() => {
           const t = tabs.value[id]
           if (t) {
             t.dirty = true
           }
+          if (isManagedConfig(path)) {
+            if (diagTimer) {
+              clearTimeout(diagTimer)
+            }
+            diagTimer = setTimeout(() => {
+              if (modelRegistry.get(id)) {
+                refreshDiagnostics(m, model!, path)
+              }
+            }, 600)
+          }
         })
       }
       model.setValue(text)
       model.setEOL(eol === 'crlf' ? m.editor.EndOfLineSequence.CRLF : m.editor.EndOfLineSequence.LF)
+      if (isManagedConfig(path)) {
+        refreshDiagnostics(m, model, path)
+      }
 
       tabs.value[id] = {
         id,
@@ -316,6 +332,15 @@ export const useFileEditorStore = defineStore('fileEditor', () => {
     tab.saving = true
     try {
       const content = model.getValue()
+      // 受管配置：语法级错误阻断保存（compose yaml 解析失败 / daemon.json JSON 非法）
+      if (!tab.containerId && isManagedConfig(tab.path)) {
+        const m = await ensureMonaco()
+        const blocking = refreshDiagnostics(m, model, tab.path)
+        if (blocking > 0) {
+          useFaToast().error('配置存在语法错误，已阻止保存（请查看编辑器红色标记）')
+          return
+        }
+      }
       if (tab.containerId) {
         // 容器文件：直存 UTF-8（后端 tar 写回，暂不支持转码）
         if (tab.encoding !== 'utf-8') {
@@ -336,6 +361,41 @@ export const useFileEditorStore = defineStore('fileEditor', () => {
     }
     finally {
       tab.saving = false
+    }
+  }
+
+  // 重读盘上内容覆盖当前 model（服务端版本回滚后刷新 tab 用）
+  async function reload(tabId: string) {
+    const tab = tabs.value[tabId]
+    if (!tab) {
+      return
+    }
+    try {
+      const res = tab.containerId
+        ? await apiCFile.read(tab.containerId, tab.path, { raw: true })
+        : await apiFile.read(tab.path, tab.node, { raw: true })
+      if (!res.contentB64 || res.isBinary) {
+        return
+      }
+      const bytes = b64ToBytes(res.contentB64)
+      const { encoding, text } = detectEncoding(bytes)
+      const eol = detectEol(text)
+      const model = modelRegistry.get(tabId)
+      if (model) {
+        const m = await ensureMonaco()
+        model.setValue(text)
+        model.setEOL(eol === 'crlf' ? m.editor.EndOfLineSequence.CRLF : m.editor.EndOfLineSequence.LF)
+      }
+      tab.encoding = encoding
+      tab.eol = eol
+      tab.dirty = false
+      tab.rawB64 = res.contentB64
+      tab.size = res.size
+      tab.truncated = res.truncated
+      useFaToast().success('已按盘上最新内容刷新')
+    }
+    catch (e: unknown) {
+      useFaToast().error('重读失败', { description: errMsg(e) })
     }
   }
 
@@ -502,6 +562,7 @@ export const useFileEditorStore = defineStore('fileEditor', () => {
     closeTab,
     save,
     saveAll,
+    reload,
     setEncoding,
     setEol,
     setLanguage,

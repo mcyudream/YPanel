@@ -56,19 +56,26 @@ async function doCreate() {
 }
 
 function remove(inst: DbInstance) {
+  const external = inst.origin === 'external'
   const modal = useFaModal()
   modal.confirm({
-    title: '删除实例',
-    content: `确认删除 ${inst.name}？选择"清除"将同时移除容器数据与备份；否则仅摘除管理。`,
+    title: external ? '解除纳管' : '删除实例',
+    content: external
+      ? `确认解除对 ${inst.name} 的纳管？远端实例不受影响。`
+      : `确认删除 ${inst.name}？选择"清除"将同时移除容器数据与备份；否则仅摘除管理。`,
     onConfirm: async () => {
       await apiDb.remove(inst.id, false)
-      useFaToast().success('已删除（数据保留，可 purge 清理）')
+      useFaToast().success(external ? '已解除纳管' : '已删除（数据保留，可 purge 清理）')
       await load()
     },
   })
 }
 
 async function toggleRun(inst: DbInstance) {
+  if (inst.origin === 'external') {
+    useFaToast().info('外部实例由其所在主机管理')
+    return
+  }
   try {
     if (inst.running) {
       await apiDb.stop(inst.id)
@@ -82,6 +89,39 @@ async function toggleRun(inst: DbInstance) {
   }
   catch (e: any) {
     useFaToast().error('操作失败', { description: e?.message })
+  }
+}
+
+// ---- 接入外部实例 ----
+const extVisible = ref(false)
+const extForm = ref({ name: '', type: 'mysql', host: '127.0.0.1', port: 3306, user: 'root', password: '', remark: '' })
+const extSaving = ref(false)
+
+function openExternal() {
+  extForm.value = { name: '', type: 'mysql', host: '127.0.0.1', port: 3306, user: 'root', password: '', remark: '' }
+  extVisible.value = true
+}
+
+function extType(t: string) {
+  const ports: Record<string, number> = { mysql: 3306, postgres: 5432, redis: 6379, mongo: 27017 }
+  const users: Record<string, string> = { mysql: 'root', postgres: 'postgres', redis: 'default', mongo: 'root' }
+  extForm.value.port = ports[t] || 3306
+  extForm.value.user = users[t] || 'root'
+}
+
+async function doCreateExternal() {
+  extSaving.value = true
+  try {
+    await apiDb.createExternal(extForm.value)
+    useFaToast().success('外部实例已接入（直连纳管）')
+    extVisible.value = false
+    await load()
+  }
+  catch (e: any) {
+    useFaToast().error('接入失败', { description: e?.message })
+  }
+  finally {
+    extSaving.value = false
   }
 }
 
@@ -345,9 +385,14 @@ onBeforeUnmount(() => {
       <template #description>
         <span>MySQL / PostgreSQL / Redis / MongoDB 实例：容器化安装、库/用户管理、备份恢复</span>
       </template>
-      <FaButton size="sm" @click="openCreate">
-        <FaIcon name="i-lucide:plus" class="mr-1" /> 创建实例
-      </FaButton>
+      <div class="flex gap-2">
+        <FaButton size="sm" variant="outline" @click="openExternal">
+          <FaIcon name="i-lucide:plug-zap" class="mr-1" /> 接入外部实例
+        </FaButton>
+        <FaButton size="sm" @click="openCreate">
+          <FaIcon name="i-lucide:plus" class="mr-1" /> 创建实例
+        </FaButton>
+      </div>
     </FaPageHeader>
 
     <FaPageMain>
@@ -362,8 +407,16 @@ onBeforeUnmount(() => {
             <div class="flex items-center gap-2">
               <YdMorphIcon :name="TYPE_META[inst.type]?.icon || 'database'" :size="22" :color="TYPE_META[inst.type]?.color" />
               <div>
-                <div class="font-medium">{{ inst.name }}</div>
-                <div class="text-xs text-muted-foreground">{{ TYPE_META[inst.type]?.label }} · :{{ inst.port }}</div>
+                <div class="flex items-center gap-1.5">
+                  <span class="font-medium">{{ inst.name }}</span>
+                  <span
+                    class="rounded px-1.5 py-0.5 text-xs"
+                    :class="inst.origin === 'external' ? 'bg-blue-500/10 text-blue-600' : 'bg-muted text-muted-foreground'"
+                  >
+                    {{ inst.origin === 'external' ? '外部接管' : '容器' }}
+                  </span>
+                </div>
+                <div class="text-xs text-muted-foreground">{{ TYPE_META[inst.type]?.label }} · {{ inst.host || '127.0.0.1' }}:{{ inst.port }}</div>
               </div>
             </div>
             <span class="rounded-full px-2 py-0.5 text-xs" :class="inst.running ? 'bg-emerald-500/10 text-emerald-600' : 'bg-muted text-muted-foreground'">
@@ -374,14 +427,14 @@ onBeforeUnmount(() => {
             <FaButton variant="outline" size="sm" @click="openPanel(inst)">
               管理
             </FaButton>
-            <FaButton variant="ghost" size="sm" @click="toggleRun(inst)">
+            <FaButton v-if="inst.origin !== 'external'" variant="ghost" size="sm" @click="toggleRun(inst)">
               {{ inst.running ? '停止' : '启动' }}
             </FaButton>
             <FaButton variant="ghost" size="sm" @click="showConn(inst)">
               连接信息
             </FaButton>
             <FaButton variant="ghost" size="sm" class="ml-auto text-red-500!" @click="remove(inst)">
-              删除
+              {{ inst.origin === 'external' ? '解除' : '删除' }}
             </FaButton>
           </div>
         </div>
@@ -506,6 +559,58 @@ onBeforeUnmount(() => {
         </table>
       </div>
     </FaPageMain>
+
+    <!-- 接入外部实例 -->
+    <FaModal v-model="extVisible" title="接入外部数据库实例" :destroy-on-close="true">
+      <div class="flex flex-col gap-3">
+        <div class="flex items-center gap-3">
+          <span class="w-20 shrink-0 text-sm text-muted-foreground">类型</span>
+          <div class="flex flex-1 gap-1.5">
+            <button
+              v-for="(meta, t) in TYPE_META"
+              :key="t"
+              type="button"
+              class="flex-1 cursor-pointer rounded-md border px-2 py-1.5 text-sm transition-colors"
+              :class="extForm.type === t ? 'border-primary bg-primary/10' : 'border-border hover:bg-accent/50'"
+              @click="extType(t as string); extForm.type = t"
+            >
+              {{ meta.label }}
+            </button>
+          </div>
+        </div>
+        <div class="flex items-center gap-3">
+          <span class="w-20 shrink-0 text-sm text-muted-foreground">实例名</span>
+          <FaInput v-model="extForm.name" placeholder="如 local-mysql" class="flex-1" />
+        </div>
+        <div class="flex items-center gap-3">
+          <span class="w-20 shrink-0 text-sm text-muted-foreground">主机</span>
+          <FaInput v-model="extForm.host" placeholder="127.0.0.1 / 内网 IP / 域名" class="flex-1" />
+        </div>
+        <div class="flex items-center gap-3">
+          <span class="w-20 shrink-0 text-sm text-muted-foreground">端口</span>
+          <FaInput v-model="extForm.port" type="number" class="flex-1" />
+        </div>
+        <div class="flex items-center gap-3">
+          <span class="w-20 shrink-0 text-sm text-muted-foreground">用户</span>
+          <FaInput v-model="extForm.user" class="flex-1" />
+        </div>
+        <div class="flex items-center gap-3">
+          <span class="w-20 shrink-0 text-sm text-muted-foreground">密码</span>
+          <FaInput v-model="extForm.password" type="password" placeholder="必填" class="flex-1" />
+        </div>
+        <div class="flex items-center gap-3">
+          <span class="w-20 shrink-0 text-sm text-muted-foreground">备注</span>
+          <FaInput v-model="extForm.remark" placeholder="选填" class="flex-1" />
+        </div>
+        <div class="text-xs text-muted-foreground">
+          直连纳管本机或远端已有实例（不做容器安装）；库/用户管理走 SQL 直连；备份需面板所在主机安装对应客户端工具
+        </div>
+      </div>
+      <template #footer>
+        <FaButton variant="outline" @click="extVisible = false">取消</FaButton>
+        <FaButton :loading="extSaving" @click="doCreateExternal">测试并接入</FaButton>
+      </template>
+    </FaModal>
 
     <!-- 创建实例 -->
     <FaModal v-model="createVisible" title="创建数据库实例" :destroy-on-close="true">

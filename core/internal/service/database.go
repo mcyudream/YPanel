@@ -197,7 +197,7 @@ func (s *DatabaseService) CreateInstance(ctx context.Context, name, dbType strin
 		return nil, err
 	}
 	inst := &model.DatabaseInstance{
-		Name: name, Type: dbType, Port: port, RootUser: rootUser,
+		Name: name, Type: dbType, Origin: "container", Host: "127.0.0.1", Port: port, RootUser: rootUser,
 		PasswordEnc: enc, ComposeProject: "db-" + name,
 	}
 	if err := s.db.Create(inst).Error; err != nil {
@@ -223,11 +223,71 @@ func (s *DatabaseService) CreateInstance(ctx context.Context, name, dbType strin
 	return inst, nil
 }
 
+// hostPatternDB 外部实例主机（IPv4/IPv6/域名，不做连通性限制）。
+var hostPatternDB = regexp.MustCompile(`^[a-zA-Z0-9._:-]{1,253}$`)
+
+// AddExternalInstance 接入外部数据库实例（直连纳管，不创建容器）。
+func (s *DatabaseService) AddExternalInstance(ctx context.Context, name, dbType, host string, port int, user, password, remark string) (*model.DatabaseInstance, error) {
+	if !namePatternDB.MatchString(name) {
+		return nil, errs.Wrap(errs.ErrBadRequest, "实例名不合法（小写字母开头，小写字母/数字/中划线，3-32 位）")
+	}
+	if _, ok := dbDefaults[dbType]; !ok {
+		return nil, errs.Wrap(errs.ErrBadRequest, "不支持的数据库类型: "+dbType)
+	}
+	if host == "" {
+		host = "127.0.0.1"
+	}
+	if !hostPatternDB.MatchString(host) {
+		return nil, errs.Wrap(errs.ErrBadRequest, "主机地址不合法")
+	}
+	if port < 1 || port > 65535 {
+		return nil, errs.Wrap(errs.ErrBadRequest, "端口需在 1-65535")
+	}
+	if user == "" {
+		user = dbDefaults[dbType].user
+	}
+	if password == "" {
+		return nil, errs.Wrap(errs.ErrBadRequest, "外部实例必须提供连接密码")
+	}
+	var count int64
+	_ = s.db.Model(&model.DatabaseInstance{}).Where("name = ?", name).Count(&count).Error
+	if count > 0 {
+		return nil, errs.New(errs.CodeConflict, "error.instanceExists", "实例名已存在")
+	}
+	enc, err := s.encryptPassword(password)
+	if err != nil {
+		return nil, err
+	}
+	inst := &model.DatabaseInstance{
+		Name: name, Type: dbType, Origin: "external", Host: host, Port: port,
+		RootUser: user, PasswordEnc: enc, ComposeProject: "-", Remark: truncStr(remark, 255),
+	}
+	// 连通性预检
+	drv, err := dbdriver.New(dbType, inst.Host, inst.Port, inst.RootUser, password)
+	if err == nil {
+		cctx, cancel := context.WithTimeout(ctx, 8*time.Second)
+		perr := drv.Ping(cctx)
+		cancel()
+		drv.Close()
+		if perr != nil {
+			return nil, errs.Wrap(errs.ErrAgentUnreach, "连接实例失败: "+perr.Error())
+		}
+	}
+	if err := s.db.Create(inst).Error; err != nil {
+		return nil, err
+	}
+	return inst, nil
+}
+
 // DeleteInstance 删除实例：down + 元数据删除（purge 时同时清理 compose 目录与备份）。
 func (s *DatabaseService) DeleteInstance(ctx context.Context, id uint, purge bool) error {
 	inst, err := s.ByID(id)
 	if err != nil {
 		return err
+	}
+	if inst.Origin == "external" {
+		// 外部实例仅解除纳管，不触碰远端
+		return s.db.Delete(&model.DatabaseInstance{}, id).Error
 	}
 	ac, err := s.client()
 	if err != nil {
@@ -245,11 +305,14 @@ func (s *DatabaseService) DeleteInstance(ctx context.Context, id uint, purge boo
 	return s.db.Delete(&model.DatabaseInstance{}, id).Error
 }
 
-// StartStop 启动/停止实例（compose up/down）。
+// StartStop 启动/停止实例（compose up/down；外部实例由本机服务自管）。
 func (s *DatabaseService) StartStop(ctx context.Context, id uint, up bool) error {
 	inst, err := s.ByID(id)
 	if err != nil {
 		return err
+	}
+	if inst.Origin == "external" {
+		return errs.Wrap(errs.ErrBadRequest, "外部实例由其所在主机管理，面板不支持启停")
 	}
 	ac, err := s.client()
 	if err != nil {
@@ -275,16 +338,24 @@ func (s *DatabaseService) List(ctx context.Context) ([]map[string]any, error) {
 		return nil, err
 	}
 	projects, _ := agentclient.GetJSON[[]dto.ComposeProject](ac, ctx, "/agent/v1/compose/projects")
-	running := map[string]bool{}
+	runningMap := map[string]bool{}
 	for _, p := range projectsSafe(projects) {
-		running[p.Name] = p.Running > 0
+		runningMap[p.Name] = p.Running > 0
 	}
 	out := make([]map[string]any, 0, len(rows))
 	for _, r := range rows {
+		running := false
+		if r.Origin == "external" {
+			// 外部实例以直连可达为准（异步探测代价高，仅在查看库列表时校验）
+			running = true
+		} else {
+			running = runningMap[r.ComposeProject]
+		}
 		out = append(out, map[string]any{
-			"id": r.ID, "name": r.Name, "type": r.Type, "port": r.Port,
-			"user": r.RootUser, "composeProject": r.ComposeProject,
-			"running": running[r.ComposeProject], "createdAt": r.CreatedAt,
+			"id": r.ID, "name": r.Name, "type": r.Type, "origin": r.Origin, "host": r.Host,
+			"port": r.Port, "user": r.RootUser, "remark": r.Remark,
+			"composeProject": r.ComposeProject,
+			"running":        running, "createdAt": r.CreatedAt,
 		})
 	}
 	return out, nil
@@ -300,9 +371,13 @@ func (s *DatabaseService) Reveal(id uint) (map[string]any, error) {
 	if err != nil {
 		return nil, err
 	}
+	host := inst.Host
+	if host == "" {
+		host = "127.0.0.1"
+	}
 	return map[string]any{
 		"name": inst.Name, "type": inst.Type, "port": inst.Port,
-		"user": inst.RootUser, "password": pwd, "host": "127.0.0.1",
+		"user": inst.RootUser, "password": pwd, "host": host, "origin": inst.Origin,
 	}, nil
 }
 
@@ -321,7 +396,11 @@ func (s *DatabaseService) driverFor(inst *model.DatabaseInstance) (dbdriver.Driv
 	if err != nil {
 		return nil, err
 	}
-	return dbdriver.New(inst.Type, "127.0.0.1", inst.Port, inst.RootUser, pwd)
+	host := inst.Host
+	if host == "" {
+		host = "127.0.0.1"
+	}
+	return dbdriver.New(inst.Type, host, inst.Port, inst.RootUser, pwd)
 }
 
 // Databases 库列表。
@@ -506,17 +585,37 @@ func (s *DatabaseService) CreateBackup(ctx context.Context, id uint) (map[string
 	file := s.BackupFileName(inst)
 	target := path.Join(s.BackupDir(inst), file)
 	c := inst.ComposeProject
+	host := inst.Host
+	if host == "" {
+		host = "127.0.0.1"
+	}
 	var cmd string
 	switch inst.Type {
 	case "mysql":
-		cmd = fmt.Sprintf("docker exec %s sh -c 'mysqldump -uroot -p\"%s\" --all-databases --single-transaction' > %s", c, pwd, target)
+		if inst.Origin == "external" {
+			cmd = fmt.Sprintf("sh -c 'command -v mysqldump >/dev/null || { echo \"本机缺少 mysqldump 客户端\"; exit 127; }; mysqldump -h %s -P %d -u%s -p\"%s\" --all-databases --single-transaction' > %s", host, inst.Port, inst.RootUser, pwd, target)
+		} else {
+			cmd = fmt.Sprintf("docker exec %s sh -c 'mysqldump -uroot -p\"%s\" --all-databases --single-transaction' > %s", c, pwd, target)
+		}
 	case "postgres":
-		cmd = fmt.Sprintf("docker exec %s pg_dumpall -U postgres > %s", c, target)
+		if inst.Origin == "external" {
+			cmd = fmt.Sprintf("sh -c 'command -v pg_dumpall >/dev/null || { echo \"本机缺少 pg_dumpall 客户端\"; exit 127; }; PGPASSWORD=\"%s\" pg_dumpall -h %s -p %d -U %s' > %s", pwd, host, inst.Port, inst.RootUser, target)
+		} else {
+			cmd = fmt.Sprintf("docker exec %s pg_dumpall -U postgres > %s", c, target)
+		}
 	case "redis":
-		// SAVE 输出与告警均丢弃，避免污染 RDB 流
-		cmd = fmt.Sprintf("docker exec %s sh -c 'redis-cli -a \"%s\" SAVE >/dev/null 2>&1; cat /data/dump.rdb' > %s", c, pwd, target)
+		if inst.Origin == "external" {
+			cmd = fmt.Sprintf("sh -c 'command -v redis-cli >/dev/null || { echo \"本机缺少 redis-cli 客户端\"; exit 127; }; redis-cli -h %s -p %d -a \"%s\" --rdb %s' ", host, inst.Port, pwd, target)
+		} else {
+			// SAVE 输出与告警均丢弃，避免污染 RDB 流
+			cmd = fmt.Sprintf("docker exec %s sh -c 'redis-cli -a \"%s\" SAVE >/dev/null 2>&1; cat /data/dump.rdb' > %s", c, pwd, target)
+		}
 	case "mongo":
-		cmd = fmt.Sprintf("docker exec %s sh -c 'mongodump --archive --gzip -u %s -p \"%s\" --authenticationDatabase admin' > %s", c, inst.RootUser, pwd, target)
+		if inst.Origin == "external" {
+			cmd = fmt.Sprintf("sh -c 'command -v mongodump >/dev/null || { echo \"本机缺少 mongodump 客户端\"; exit 127; }; mongodump --archive --gzip --host %s --port %d -u %s -p \"%s\" --authenticationDatabase admin' > %s", host, inst.Port, inst.RootUser, pwd, target)
+		} else {
+			cmd = fmt.Sprintf("docker exec %s sh -c 'mongodump --archive --gzip -u %s -p \"%s\" --authenticationDatabase admin' > %s", c, inst.RootUser, pwd, target)
+		}
 	}
 	if cmd == "" {
 		return nil, errs.Wrap(errs.ErrBadRequest, "不支持的备份类型: "+inst.Type)
@@ -602,19 +701,38 @@ func (s *DatabaseService) Restore(ctx context.Context, id uint, file string) err
 	src := path.Join(s.BackupDir(inst), file)
 	slog.Info("db restore", "file", file, "src", src, "len", len(cmd0Placeholder()))
 	c := inst.ComposeProject
+	host := inst.Host
+	if host == "" {
+		host = "127.0.0.1"
+	}
 	var cmd string
 	switch inst.Type {
 	case "mysql":
-		cmd = fmt.Sprintf("docker exec -i %s sh -c 'mysql -uroot -p\"%s\"' < %s", c, pwd, src)
-		slog.Info("db restore cmd", "cmdLen", len(cmd), "cmdPrefix", cmd[:min(80, len(cmd))])
+		if inst.Origin == "external" {
+			cmd = fmt.Sprintf("sh -c 'command -v mysql >/dev/null || { echo \"本机缺少 mysql 客户端\"; exit 127; }; mysql -h %s -P %d -u%s -p\"%s\"' < %s", host, inst.Port, inst.RootUser, pwd, src)
+		} else {
+			cmd = fmt.Sprintf("docker exec -i %s sh -c 'mysql -uroot -p\"%s\"' < %s", c, pwd, src)
+			slog.Info("db restore cmd", "cmdLen", len(cmd), "cmdPrefix", cmd[:min(80, len(cmd))])
+		}
 	case "postgres":
-		cmd = fmt.Sprintf("docker exec -i %s psql -U postgres < %s", c, src)
+		if inst.Origin == "external" {
+			cmd = fmt.Sprintf("sh -c 'command -v psql >/dev/null || { echo \"本机缺少 psql 客户端\"; exit 127; }; PGPASSWORD=\"%s\" psql -h %s -p %d -U %s' < %s", pwd, host, inst.Port, inst.RootUser, src)
+		} else {
+			cmd = fmt.Sprintf("docker exec -i %s psql -U postgres < %s", c, src)
+		}
 	case "redis":
+		if inst.Origin == "external" {
+			return errs.Wrap(errs.ErrBadRequest, "外部 Redis 不支持面板恢复（请由所在主机执行 RDB 恢复）")
+		}
 		// RDB 恢复：拷入后重启实例加载
 		cmd = fmt.Sprintf("docker cp %s %s:/data/dump.rdb && docker restart %s", src, c, c)
 		_ = pwd
 	case "mongo":
-		cmd = fmt.Sprintf("docker exec -i %s sh -c 'mongorestore --archive --gzip -u %s -p \"%s\" --authenticationDatabase admin --drop' < %s", c, inst.RootUser, pwd, src)
+		if inst.Origin == "external" {
+			cmd = fmt.Sprintf("sh -c 'command -v mongorestore >/dev/null || { echo \"本机缺少 mongorestore 客户端\"; exit 127; }; mongorestore --archive --gzip --host %s --port %d -u %s -p \"%s\" --authenticationDatabase admin --drop' < %s", host, inst.Port, inst.RootUser, pwd, src)
+		} else {
+			cmd = fmt.Sprintf("docker exec -i %s sh -c 'mongorestore --archive --gzip -u %s -p \"%s\" --authenticationDatabase admin --drop' < %s", c, inst.RootUser, pwd, src)
+		}
 	}
 	out, err := agentclient.DoJSON[dto.ExecReq, dto.ExecResp](ac, ctx, "POST", "/agent/v1/exec",
 		&dto.ExecReq{Command: cmd, TimeoutSecs: 1800})

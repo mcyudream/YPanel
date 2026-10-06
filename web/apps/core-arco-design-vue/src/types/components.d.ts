@@ -74,6 +74,7 @@ declare module 'vue' {
     YdIconPicker: typeof import('./../components/YdIconPicker/index.vue')['default']
     YdMonitorSidebar: typeof import('./../components/YdMonitorSidebar/index.vue')['default']
     YdMorphIcon: typeof import('./../components/YdMorphIcon/index.vue')['default']
+    YdRevisionHistory: typeof import('./../components/YdRevisionHistory/index.vue')['default']
     YdTerminal: typeof import('./../components/YdTerminal/index.vue')['default']
   }
 }
@@ -142,5 +143,6 @@ declare global {
   const YdIconPicker: typeof import('./../components/YdIconPicker/index.vue')['default']
   const YdMonitorSidebar: typeof import('./../components/YdMonitorSidebar/index.vue')['default']
   const YdMorphIcon: typeof import('./../components/YdMorphIcon/index.vue')['default']
+  const YdRevisionHistory: typeof import('./../components/YdRevisionHistory/index.vue')['default']
   const YdTerminal: typeof import('./../components/YdTerminal/index.vue')['default']
 }

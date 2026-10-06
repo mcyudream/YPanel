@@ -1,28 +1,15 @@
 import type { RouteRecordRaw } from 'vue-router'
 
-function Layout() {
-  return import('@/layouts/index.vue')
-}
-
+// M23：Docker 管理并入 /container 模块（镜像/网络/卷/配置 tab），旧路由重定向兼容。
 const routes: RouteRecordRaw = {
   path: '/docker',
-  component: Layout,
   name: 'docker',
+  redirect: { path: '/container', query: { tab: 'images' } },
   meta: {
     title: 'Docker 管理',
-    icon: 'yd:container',
+    menu: false,
   },
-  children: [
-    {
-      path: '',
-      name: 'dockerIndex',
-      component: () => import('@/views/docker/index.vue'),
-      meta: {
-        title: 'Docker 管理',
-        menu: false,
-      },
-    },
-  ],
+  children: [],
 }
 
 export default routes

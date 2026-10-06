@@ -11,8 +11,8 @@ import MonitorsRoutes from './modules/monitors'
 import AIRoutes from './modules/ai'
 import ManageRoutes from './modules/manage'
 import NodesRoutes from './modules/nodes'
-import MarketRoutes from './modules/market'
 import FirewallRoutes from './modules/firewall'
+import NatRoutes from './modules/nat'
 import AlertRoutes from './modules/alert'
 import NotificationRoutes from './modules/notifications'
 import ProcessesRoutes from './modules/processes'
@@ -126,7 +126,6 @@ const asyncRoutes: RouteRecordMainRaw[] = [
     },
     children: [
       StoreRoutes,
-      MarketRoutes,
     ],
   },
   {
@@ -160,6 +159,7 @@ const asyncRoutes: RouteRecordMainRaw[] = [
       FileRoutes,
       TerminalRoutes,
       FirewallRoutes,
+      NatRoutes,
       ProcessesRoutes,
       NodesRoutes,
       ManageRoutes,

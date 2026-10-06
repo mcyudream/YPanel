@@ -93,9 +93,14 @@ export const wafApi = {
 export default {
   status: async () => {
     const res = await api.get('api/v1/nginx/status', { silent: true })
-    return res.data as { installed: boolean, running: boolean, sites: number }
+    return res.data as { installed: boolean, running: boolean, sites: number, mode?: 'container' | 'host' }
   },
   install: () => api.post('api/v1/nginx/install'),
+  adoptHost: async () => {
+    const res = await api.post('api/v1/nginx/adopt-host', null, { timeout: 60000 })
+    return res.data as { detected: boolean, mode?: string, hint?: string }
+  },
+  setMode: (mode: 'container' | 'host') => api.put('api/v1/nginx/mode', { mode }),
   getOne: async (id: number | string) => {
     const res = await api.get(`api/v1/sites/${id}/detail`, { silent: true })
     return res.data as SiteItem

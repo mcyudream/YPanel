@@ -11,7 +11,7 @@ defineOptions({
 
 const router = useRouter()
 
-const status = ref<{ installed: boolean, running: boolean, sites: number }>()
+const status = ref<{ installed: boolean, running: boolean, sites: number, mode?: 'container' | 'host' }>()
 const sites = ref<SiteItem[]>([])
 const loading = ref(false)
 const installing = ref(false)
@@ -92,6 +92,23 @@ async function install() {
   }
   finally {
     installing.value = false
+  }
+}
+
+const nginxAdopting = ref(false)
+
+async function adoptHost() {
+  nginxAdopting.value = true
+  try {
+    const out = await apiSite.adoptHost()
+    useFaToast().success('已接管本机 nginx', { description: out.hint })
+    await load()
+  }
+  catch (e: any) {
+    useFaToast().error('接管失败', { description: e?.message })
+  }
+  finally {
+    nginxAdopting.value = false
   }
 }
 
@@ -310,15 +327,18 @@ onMounted(() => {
         </div>
       </template>
       <template #description>
-        <span>容器化 nginx：静态站 / 反向代理 / PHP / HTTPS 与证书管理</span>
+        <span>nginx 环境（容器化 / 接管本机）：静态站 / 反向代理 / PHP / HTTPS 与证书管理</span>
       </template>
       <div class="flex items-center gap-2">
         <span v-if="status?.installed" class="mr-2 inline-flex items-center gap-1.5 text-xs text-muted-foreground">
           <span class="inline-block size-1.5 rounded-full" :class="status.running ? 'bg-emerald-500' : 'bg-red-500'" />
-          nginx {{ status.running ? '运行中' : '已停止' }} · {{ status.sites }} 个站点
+          nginx（{{ status.mode === 'host' ? '本机接管' : '容器' }}）{{ status.running ? '运行中' : '已停止' }} · {{ status.sites }} 个站点
         </span>
         <FaButton v-if="!status?.installed" size="sm" :loading="installing" @click="install">
           <YdMorphIcon name="download" :size="14" class="mr-1" /> 安装 nginx
+        </FaButton>
+        <FaButton v-if="!status?.installed" variant="outline" size="sm" :loading="nginxAdopting" @click="adoptHost">
+          <FaIcon name="i-lucide:plug-zap" class="mr-1" /> 接管本机 nginx
         </FaButton>
         <FaButton v-if="status?.installed" variant="outline" size="sm" @click="openScan">
           <YdMorphIcon name="search" :size="14" class="mr-1" /> 扫描识别
@@ -334,7 +354,7 @@ onMounted(() => {
 
     <FaPageMain>
       <div v-if="status && !status.installed" class="rounded-lg border p-10 text-center text-sm text-muted-foreground">
-        尚未安装 nginx（容器化，端口 80/443）。点击右上角"安装 nginx"开始。
+        尚未配置 nginx 环境：可"安装 nginx"（容器化，端口 80/443），或"接管本机 nginx"（systemd 管理的本机 nginx）。
       </div>
 
       <div v-else>

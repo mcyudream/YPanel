@@ -1,0 +1,139 @@
+<script setup lang="ts">
+import type { DockerVolume } from '@/api/modules/dockerext'
+import { dockerExtApi } from '@/api/modules/dockerext'
+
+// 卷管理（自 Docker 管理页迁入，M23）。
+const toast = useFaToast()
+
+const volumes = ref<DockerVolume[]>([])
+const loading = ref(false)
+
+async function load() {
+  loading.value = true
+  try {
+    volumes.value = await dockerExtApi.volumes()
+  }
+  catch (e: any) {
+    toast.error('卷列表加载失败', { description: e?.message })
+  }
+  finally {
+    loading.value = false
+  }
+}
+
+onMounted(load)
+
+const visible = ref(false)
+const volName = ref('')
+
+async function doCreate() {
+  try {
+    await dockerExtApi.createVolume(volName.value)
+    toast.success('卷已创建')
+    visible.value = false
+    await load()
+  }
+  catch (e: any) {
+    toast.error('创建失败', { description: e?.message })
+  }
+}
+
+function remove(v: DockerVolume) {
+  const modal = useFaModal()
+  modal.confirm({
+    title: '删除卷',
+    content: `确认删除卷 ${v.name}？数据不可恢复。`,
+    onConfirm: async () => {
+      try {
+        await dockerExtApi.removeVolume(v.name)
+        toast.success('已删除')
+        await load()
+      }
+      catch (e: any) {
+        toast.error('删除失败', { description: e?.message })
+      }
+    },
+  })
+}
+
+async function prune() {
+  try {
+    const out = await dockerExtApi.pruneVolumes()
+    toast.success(out)
+    await load()
+  }
+  catch (e: any) {
+    toast.error('清理失败', { description: e?.message })
+  }
+}
+</script>
+
+<template>
+  <div>
+    <div class="mb-3 flex items-center gap-2">
+      <FaButton variant="outline" size="sm" @click="prune">
+        清理未使用卷
+      </FaButton>
+      <FaButton size="sm" @click="visible = true">
+        <FaIcon name="i-lucide:plus" class="mr-1" /> 创建卷
+      </FaButton>
+      <FaButton variant="outline" size="icon-sm" title="刷新" class="ml-auto" @click="load()">
+        <FaIcon name="i-lucide:refresh-cw" class="text-sm" :class="loading ? 'animate-spin' : ''" />
+      </FaButton>
+    </div>
+
+    <div class="overflow-x-auto rounded-lg border">
+      <table class="w-full text-sm">
+        <thead class="bg-muted/50 text-left text-xs text-muted-foreground">
+          <tr>
+            <th class="px-3 py-2">卷名</th>
+            <th class="px-3 py-2">驱动</th>
+            <th class="hidden px-3 py-2 md:table-cell">挂载点</th>
+            <th class="px-3 py-2 text-right">操作</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr v-if="loading && !volumes.length">
+            <td colspan="4" class="px-3 py-10 text-center text-muted-foreground">
+              加载中…
+            </td>
+          </tr>
+          <tr v-for="v in volumes" :key="v.name" class="border-t transition-colors hover:bg-accent/30">
+            <td class="px-3 py-1.5">
+              <div class="flex items-center gap-2">
+                <FaIcon name="i-lucide:hard-drive" class="text-sm text-primary opacity-60" />
+                <span class="font-mono text-[13px]">{{ v.name }}</span>
+              </div>
+            </td>
+            <td class="px-3 py-1.5 text-xs text-muted-foreground">
+              {{ v.driver }}
+            </td>
+            <td class="hidden max-w-96 truncate px-3 py-1.5 font-mono text-xs text-muted-foreground md:table-cell" :title="v.mountpoint">
+              {{ v.mountpoint }}
+            </td>
+            <td class="px-3 py-1.5 text-right">
+              <FaButton variant="outline" size="sm" @click="remove(v)">
+                删除
+              </FaButton>
+            </td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <FaModal v-model="visible" title="创建卷" :destroy-on-close="true">
+      <div class="flex items-center gap-3">
+        <span class="w-20 shrink-0 text-sm text-muted-foreground">卷名</span>
+        <FaInput v-model="volName" placeholder="如 my-data" class="flex-1" @keyup.enter="doCreate" />
+      </div>
+      <template #footer>
+        <FaButton variant="outline" @click="visible = false">
+          取消
+        </FaButton>
+        <FaButton @click="doCreate">
+          创建
+        </FaButton>
+      </template>
+    </FaModal>
+  </div>
+</template>

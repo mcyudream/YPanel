@@ -134,3 +134,77 @@ export const providerPresets: ProviderPreset[] = [
 export function providerIcon(name: string): string | undefined {
   return providerPresets.find(p => p.name === name || name.includes(p.name.split(' ')[0]))?.icon
 }
+
+// B18：会话持久化
+export interface AIConversationMeta {
+  id: number
+  title: string
+  updatedAt: string
+}
+
+export const conversationApi = {
+  list: async () => {
+    const res = await api.get('api/v1/ai/conversations', { silent: true })
+    return res.data as AIConversationMeta[]
+  },
+  get: async (id: number) => {
+    const res = await api.get(`api/v1/ai/conversations/${id}`, { silent: true })
+    return res.data as { id: number, title: string, messages: ChatMsg[] }
+  },
+  save: (id: number, title: string, messages: ChatMsg[]) =>
+    api.post('api/v1/ai/conversations', { id, title, messages }),
+  remove: (id: number) => api.delete(`api/v1/ai/conversations/${id}`),
+}
+
+// B18：长期记忆
+export const memoryApi = {
+  list: async () => {
+    const res = await api.get('api/v1/ai/memories', { silent: true })
+    return res.data as { id: number, content: string, createdAt: string }[]
+  },
+  clear: () => api.delete('api/v1/ai/memories'),
+}
+
+// B18+：技能包（SKILL.md 文件格式）
+export interface AISkill {
+  name: string
+  description: string
+  body: string
+  enabled: boolean
+}
+
+export const skillApi = {
+  list: async () => {
+    const res = await api.get('api/v1/ai/skills', { silent: true })
+    return res.data as AISkill[]
+  },
+  save: (data: { name: string, description: string, body: string }) =>
+    api.post('api/v1/ai/skills', data),
+  setEnabled: (name: string, enabled: boolean) =>
+    api.post(`api/v1/ai/skills/${encodeURIComponent(name)}/enable`, { enabled }),
+  remove: (name: string) => api.delete(`api/v1/ai/skills/${encodeURIComponent(name)}`),
+}
+
+// B18+：MCP 服务器
+export interface MCPServer {
+  name: string
+  transport: 'stdio' | 'streamable-http'
+  command?: string
+  args?: string[]
+  url?: string
+  env?: Record<string, string>
+  enabled: boolean
+}
+
+export const mcpApi = {
+  list: async () => {
+    const res = await api.get('api/v1/ai/mcp/servers', { silent: true })
+    return res.data as MCPServer[]
+  },
+  saveAll: (servers: MCPServer[]) => api.put('api/v1/ai/mcp/servers', { servers }),
+  test: async (server: MCPServer) => {
+    const res = await api.post('api/v1/ai/mcp/test', server, { timeout: 60000 })
+    return res.data as { connected: boolean, tools: string[] }
+  },
+  close: (name: string) => api.delete(`api/v1/ai/mcp/${encodeURIComponent(name)}`),
+}
