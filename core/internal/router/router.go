@@ -22,6 +22,7 @@ type Deps struct {
 	Cron     *service.Cron
 	Scripts  *service.ScriptService
 	DBSvc    *service.DatabaseService
+	Acme     *service.AcmeService
 	DBS      *service.DatabaseService
 	Sites    *service.SiteService
 	Market   *service.MarketService
@@ -61,7 +62,7 @@ func Setup(d *Deps) (*gin.Engine, error) {
 	cronAPI := &api.CronAPI{DB: d.CronDB(), Cron: d.Cron}
 	scriptAPI := &api.ScriptAPI{Scripts: d.Scripts}
 	dbAPI := &api.DatabaseAPI{DBS: d.DBS}
-	siteAPI := &api.SiteAPI{Sites: d.Sites}
+	siteAPI := &api.SiteAPI{Sites: d.Sites, Acme: d.Acme}
 	siteConfAPI := &api.SiteConfAPI{Sites: d.Sites}
 	nodeAPI := &api.NodeAPI{Nodes: d.Nodes}
 	marketAPI := &api.MarketAPI{Market: d.Market}
@@ -210,6 +211,7 @@ func Setup(d *Deps) (*gin.Engine, error) {
 			authed.PUT("/sites/:id/config", siteAPI.UpdateConfig)
 			authed.GET("/sites/:id/waf", siteAPI.GetWaf)
 			authed.PUT("/sites/:id/waf", siteAPI.UpdateWaf)
+			authed.POST("/sites/:id/cert/acme", siteAPI.IssueACME)
 			authed.POST("/sites/:id/cert/selfsigned", siteAPI.IssueSelfSigned)
 
 			admin := authed.Group("", middleware.Admin())

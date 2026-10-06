@@ -11,6 +11,28 @@ const toast = useFaToast()
 const conf = ref<SiteHTTPSConf | null>(null)
 const loading = ref(false)
 const busy = ref(false)
+const acmeBusy = ref(false)
+const acmeDomain = ref('')
+
+async function issueACME() {
+  acmeBusy.value = true
+  try {
+    const res = await siteConfApi.issueACME(props.site.id, acmeDomain.value.trim())
+    if (conf.value) {
+      conf.value.enable = true
+      conf.value.certDomain = res.certDomain
+      conf.value.httpRedirect = true
+    }
+    toast.success('ACME 证书已签发并部署（自动续期已挂 reload）')
+    emit('changed')
+  }
+  catch (e: any) {
+    toast.error('ACME 签发失败', { description: e?.message })
+  }
+  finally {
+    acmeBusy.value = false
+  }
+}
 
 async function load() {
   loading.value = true
@@ -95,6 +117,19 @@ onMounted(load)
         </FaButton>
         <FaButton v-else variant="outline" size="sm" :loading="busy" class="text-red-500!" @click="disable">
           停用 HTTPS
+        </FaButton>
+      </div>
+    </div>
+
+    <div class="rounded-lg border p-4">
+      <div class="mb-1 text-sm font-medium">Let's Encrypt 证书（ACME，DNS 验证）</div>
+      <p class="mb-3 text-xs text-muted-foreground">
+        需服务器配置阿里云 DNS 凭据（YPANEL_ACME_ALI_KEY/SECRET）。签发泛域名 *.{{ site.domain }} 并自动续期
+      </p>
+      <div class="flex items-center gap-2">
+        <FaInput v-model="acmeDomain" :placeholder="`${site.domain}（留空用主域名）`" class="w-64!" />
+        <FaButton size="sm" :loading="acmeBusy" @click="issueACME">
+          签发 ACME 证书
         </FaButton>
       </div>
     </div>

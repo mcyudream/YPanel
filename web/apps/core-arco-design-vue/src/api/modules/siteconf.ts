@@ -84,6 +84,11 @@ export const siteConfApi = {
     const res = await api.delete(base(id, 'https'))
     return res.data as SiteHTTPSConf
   },
+  // B1：ACME 签发（DNS API 验证）
+  issueACME: async (id: number | string, domain: string) => {
+    const res = await api.post(`api/v1/sites/${id}/cert/acme`, { domain }, { timeout: 600000 })
+    return res.data as { domain: string, certDomain: string, issuer: string }
+  },
 }
 
 // ---- S20 第二批配置域 ----

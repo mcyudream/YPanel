@@ -10,6 +10,7 @@ import (
 // SiteAPI 站点接口。
 type SiteAPI struct {
 	Sites *service.SiteService
+	Acme  *service.AcmeService
 }
 
 // Status GET /api/v1/nginx/status
@@ -31,7 +32,32 @@ func (a *SiteAPI) Install(c *gin.Context) {
 	respOK(c, struct{}{})
 }
 
-// GetSite GET /api/v1/sites/:id/detail（F8 单条端点）
+// IssueACME POST /api/v1/sites/:id/cert/acme {domain?}（B1：DNS API 挑战签发）
+func (a *SiteAPI) IssueACME(c *gin.Context) {
+	id, err := strconv.ParseUint(c.Param("id"), 10, 64)
+	if err != nil || id == 0 {
+		respErr(c, errBadRequest("站点 ID 不合法"))
+		return
+	}
+	req, ok := bind[struct {
+		Domain string `json:"domain"`
+	}](c)
+	if !ok {
+		return
+	}
+	if a.Acme == nil {
+		respErr(c, errBadRequest("ACME 服务未启用"))
+		return
+	}
+	out, err := a.Acme.IssueACME(c.Request.Context(), uint(id), req.Domain)
+	if err != nil {
+		respErr(c, err)
+		return
+	}
+	respOK(c, out)
+}
+
+// GetSite GET /api/v1/sites/:id/detail// GetSite GET /api/v1/sites/:id/detail（F8 单条端点）
 func (a *SiteAPI) GetSite(c *gin.Context) {
 	id, err := strconv.ParseUint(c.Param("id"), 10, 64)
 	if err != nil || id == 0 {
