@@ -68,8 +68,11 @@ declare module 'vue' {
     FaTooltip: typeof import('@fantastic-admin/components')['FaTooltip']
     FaTrend: typeof import('@fantastic-admin/components')['FaTrend']
     YdCodeEditor: typeof import('./../components/YdCodeEditor/index.vue')['default']
+    YdFileTree: typeof import('./../components/YdFileTree/index.vue')['default']
     YdIconPicker: typeof import('./../components/YdIconPicker/index.vue')['default']
+    YdMonitorSidebar: typeof import('./../components/YdMonitorSidebar/index.vue')['default']
     YdMorphIcon: typeof import('./../components/YdMorphIcon/index.vue')['default']
+    YdTerminal: typeof import('./../components/YdTerminal/index.vue')['default']
   }
 }
 
@@ -131,6 +134,9 @@ declare global {
   const FaTooltip: typeof import('@fantastic-admin/components')['FaTooltip']
   const FaTrend: typeof import('@fantastic-admin/components')['FaTrend']
   const YdCodeEditor: typeof import('./../components/YdCodeEditor/index.vue')['default']
+  const YdFileTree: typeof import('./../components/YdFileTree/index.vue')['default']
   const YdIconPicker: typeof import('./../components/YdIconPicker/index.vue')['default']
+  const YdMonitorSidebar: typeof import('./../components/YdMonitorSidebar/index.vue')['default']
   const YdMorphIcon: typeof import('./../components/YdMorphIcon/index.vue')['default']
+  const YdTerminal: typeof import('./../components/YdTerminal/index.vue')['default']
 }

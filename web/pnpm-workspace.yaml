@@ -114,6 +114,7 @@ catalog:
   vue-input-otp: ^0.4.0
   vue-router: ^5.3.1
   vue-sonner: ^2.0.9
+  vue-web-terminal: ^3.4.2
   vue-tsc: ^3.3.11
   zod: ^4.6.5
 

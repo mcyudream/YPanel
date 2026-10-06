@@ -7,6 +7,7 @@ import ContainerRoutes from './modules/container'
 import CronRoutes from './modules/cron'
 import FileRoutes from './modules/file'
 import MonitorsRoutes from './modules/monitors'
+import AIRoutes from './modules/ai'
 import ManageRoutes from './modules/manage'
 import NodesRoutes from './modules/nodes'
 import MarketRoutes from './modules/market'
@@ -92,6 +93,7 @@ const single = (title: string, icon: string, mod: RouteRecordRaw) => ({
 
 const asyncRoutes: RouteRecordMainRaw[] = [
   single('网站', 'yd:globe', SitesRoutes),
+  single('智能', 'yd:sparkles', AIRoutes),
   {
     meta: {
       title: '数据库',

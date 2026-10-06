@@ -106,6 +106,7 @@ func run(ctx context.Context, cfg *config.Config) error {
 	cronSvc.DBSvc = dbSvc
 	cronSvc.SiteBk = service.NewSiteBackupService(nodes)
 	scriptSvc := service.NewScriptService(gdb)
+	aiSvc := service.NewAIService(gdb, nodes)
 	if err := cronSvc.Start(); err != nil {
 		return fmt.Errorf("启动计划任务调度失败: %w", err)
 	}
@@ -130,7 +131,7 @@ func run(ctx context.Context, cfg *config.Config) error {
 	}
 	r, err := router.Setup(&router.Deps{
 		Auth: auth, Nodes: nodes, Settings: settings, Cron: cronSvc, DBS: dbSvc, Sites: siteSvc,
-		Scripts: scriptSvc, DBSvc: dbSvc, Acme: acmeSvc,
+		Scripts: scriptSvc, DBSvc: dbSvc, Acme: acmeSvc, AI: aiSvc,
 		Market: marketSvc, FW: fwSvc, Alerts: alertSvc,
 		Notif: notifSvc, PanelBP: service.NewPanelBackupService(nodes), Hist: histSvc,
 		F2B: f2bSvc, DBAdmin: dbAdminSvc, SU: suSvc, MarketStore: marketStoreSvc, RT: rtSvc,

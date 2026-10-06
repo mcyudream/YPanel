@@ -74,3 +74,17 @@
 
 - **补充**：此前已记录 simple-git-hooks 装到仓库根导致提交必挂；实测 web/ 下每次 `pnpm install` 都会重新写入 `.git/hooks/pre-commit`，提交前若报 "No package.json found" 先删根钩子。根治需 monorepo 顶层具备 node 工程或在 web/package.json 关闭 simple-git-hooks。
 - **来源**：2026-10-07，M20 依赖安装后钩子复现。
+
+### splitpanes 的 `<Pane>` 忘写 import：vue-tsc 不报错、构建无告警、运行期静默空白
+
+- **现象**：M20 文件编辑器里 FileTreePanel/TerminalPanel 模板用了 `<Pane>` 但没 import（EditorGroup 有 import 正常），整片侧栏/终端消失；生产构建与 `vue-tsc -b` 全绿，无任何线索。
+- **根因**：vue-tsc 默认非 strictTemplates，**不校验未解析的组件标签**；生产 Vue 对 "Failed to resolve component" 只发 console.warn，且组件渲染为空不抛错。
+- **规避/解决**：第三方库的模板组件（splitpanes 的 Pane/Splitpanes 等）一律显式 import；排查这类"DOM 缺失但零报错"问题时，先 `grep 模板标签对应 import`，再用 console.warn 钩子（只钩 console.error 看不到）。
+- **来源**：2026-10-07，M20 文件编辑器侧栏/终端消失排查。
+
+### dev server 监视了构建产物 dist/：外部触碰即整页 reload，且反复冲掉自动化验证
+
+- **现象**：dev 下页面每隔几十秒自发整页刷新（vite 日志 `page reload dist/index.html`），长流程浏览器自动化反复被打断。
+- **根因**：vite 默认 watch 项目根，`dist/`（此前构建产物）被外部进程触碰（杀毒/索引/其它构建）即触发 reload。
+- **规避/解决**：`server.watch.ignored: ['**/dist/**', '**/dist-*/**']`；跑长链路浏览器验证时把整个流程压进单次 evaluate（工具/协议有 ~30s 上限），或避开有人在用的共享环境。
+- **来源**：2026-10-07，M20 验收期间 dev 环境反复 reload。

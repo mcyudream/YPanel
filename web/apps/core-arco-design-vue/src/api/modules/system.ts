@@ -34,13 +34,18 @@ export interface MetricRecord {
   load1: number
 }
 
+// node 为节点 id（默认 local，core 端 ?node= 路由）
+function nodeQ(node?: string) {
+  return node && node !== 'local' ? `&node=${encodeURIComponent(node)}` : ''
+}
+
 export default {
-  overview: async () => {
-    const res = await api.get('api/v1/system/overview')
+  overview: async (node?: string) => {
+    const res = await api.get(`api/v1/system/overview?1=1${nodeQ(node)}`)
     return res.data as SystemOverview
   },
-  history: async (seconds = 600) => {
-    const res = await api.get(`api/v1/system/history?seconds=${seconds}`)
+  history: async (seconds = 600, node?: string) => {
+    const res = await api.get(`api/v1/system/history?seconds=${seconds}${nodeQ(node)}`)
     return res.data as MetricSample[]
   },
   // 历史监控持久化查询（30 天，60s 粒度）

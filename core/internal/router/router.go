@@ -22,6 +22,7 @@ type Deps struct {
 	Cron     *service.Cron
 	Scripts  *service.ScriptService
 	DBSvc    *service.DatabaseService
+	AI       *service.AIService
 	Acme     *service.AcmeService
 	DBS      *service.DatabaseService
 	Sites    *service.SiteService
@@ -61,6 +62,7 @@ func Setup(d *Deps) (*gin.Engine, error) {
 	composeAPI := &api.ComposeAPI{Nodes: d.Nodes}
 	cronAPI := &api.CronAPI{DB: d.CronDB(), Cron: d.Cron}
 	scriptAPI := &api.ScriptAPI{Scripts: d.Scripts}
+	aiAPI := &api.AIAPI{AI: d.AI}
 	dbAPI := &api.DatabaseAPI{DBS: d.DBS}
 	siteAPI := &api.SiteAPI{Sites: d.Sites, Acme: d.Acme}
 	siteConfAPI := &api.SiteConfAPI{Sites: d.Sites}
@@ -138,6 +140,11 @@ func Setup(d *Deps) (*gin.Engine, error) {
 			authed.POST("/compose/service-action", composeAPI.ServiceAction)
 			authed.GET("/compose/logs", composeAPI.Logs)
 
+			authed.GET("/ai/providers", aiAPI.ListProviders)
+			authed.GET("/ai/presets", aiAPI.Presets)
+			authed.POST("/ai/providers", aiAPI.SaveProvider)
+			authed.DELETE("/ai/providers/:id", aiAPI.DeleteProvider)
+			authed.POST("/ai/chat", aiAPI.Chat)
 			authed.GET("/scripts", scriptAPI.List)
 			authed.POST("/scripts", scriptAPI.Create)
 			authed.PUT("/scripts/:id", scriptAPI.Update)

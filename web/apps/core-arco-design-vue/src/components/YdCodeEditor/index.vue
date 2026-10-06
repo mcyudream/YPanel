@@ -83,13 +83,19 @@ onMounted(async () => {
 })
 
 watch(() => props.model, (model) => {
-  if (editor && editor.getModel() !== model) {
-    editor.setModel(model)
+  if (editor) {
+    if (model && editor.getModel() !== model) {
+      const st = editor.saveViewState()
+      editor.setModel(model)
+      editor.restoreViewState(st)
+    }
+    // 容器曾在 v-show 隐藏下挂载时，补一次布局确保视口尺寸正确
+    editor.layout()
   }
   if (diffEditor) {
     diffEditor.setModel({ original: originalModel!, modified: model! })
   }
-})
+}, { immediate: true })
 
 watch(() => appSettingsStore.settings.theme.colorScheme, (scheme) => {
   loadMonaco().then(m => m.editor.setTheme(monacoThemeName(scheme)))

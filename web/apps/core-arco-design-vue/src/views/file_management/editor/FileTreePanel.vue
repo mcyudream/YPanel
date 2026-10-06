@@ -3,6 +3,7 @@ import apiFile from '@/api/modules/file'
 import type { FileEntry } from '@/api/modules/file'
 import type { FileTreeApi, FileTreeMenuItem, FileTreeNode } from './types'
 import { fmtBytes } from '@/utils/format'
+import { Pane } from 'splitpanes'
 import FileTreeRow from './FileTreeRow.vue'
 
 // 文件树侧栏：懒加载目录树 + 右键操作 + 子树过滤 + 全局搜索。

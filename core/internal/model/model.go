@@ -196,6 +196,19 @@ type AlertRule struct {
 	UpdatedAt   time.Time `json:"updatedAt"`
 }
 
+// AIProvider AI 供应商配置（B18）：支持多供应商与自定义接入。
+type AIProvider struct {
+	ID        uint      `gorm:"primaryKey" json:"id"`
+	Name      string    `gorm:"size:32;not null" json:"name"`
+	APIType   string    `gorm:"size:16;not null" json:"apiType"` // openai / anthropic / response
+	BaseURL   string    `gorm:"size:255;not null" json:"baseURL"`
+	APIKey    string    `gorm:"type:text;not null" json:"apiKey"`
+	Model     string    `gorm:"size:64;not null" json:"model"`
+	IsDefault bool      `gorm:"not null;default:false" json:"isDefault"`
+	CreatedAt time.Time `json:"createdAt"`
+	UpdatedAt time.Time `json:"updatedAt"`
+}
+
 // Script 脚本库（B13：计划任务可引用）。
 type Script struct {
 	ID        uint      `gorm:"primaryKey" json:"id"`

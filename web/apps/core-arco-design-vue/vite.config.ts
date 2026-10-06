@@ -34,11 +34,17 @@ export default defineConfig(({ mode, command }) => {
       open: true,
       host: true,
       port: 9000,
+      // 构建产物目录不参与 dev watch（防外部触碰 dist 触发整页 reload）
+      watch: {
+        ignored: ['**/dist/**', '**/dist-*/**'],
+      },
       proxy: {
         '/proxy': {
           target: env.VITE_APP_API_BASEURL,
           changeOrigin: command === 'serve' && env.VITE_ENABLE_PROXY,
           rewrite: path => path.replace(/\/proxy/, ''),
+          // 终端/容器 exec 的 WebSocket 升级必须转发，否则 dev 下握手挂起
+          ws: true,
         },
       },
     },

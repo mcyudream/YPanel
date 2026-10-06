@@ -4,6 +4,7 @@ import { FitAddon } from '@xterm/addon-fit'
 import { Terminal } from '@xterm/xterm'
 import '@xterm/xterm/css/xterm.css'
 import { useReconnectingWs } from '@/composables/useReconnectingWs'
+import { Pane } from 'splitpanes'
 
 // 底部终端面板：xterm 多实例 + useReconnectingWs（PTY 不发心跳；断线自动重开新会话并提示）。
 const props = defineProps<{

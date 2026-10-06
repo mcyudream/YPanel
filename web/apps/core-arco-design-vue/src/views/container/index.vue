@@ -1,11 +1,8 @@
 <script setup lang="ts">
-import { FitAddon } from '@xterm/addon-fit'
-import { Terminal } from '@xterm/xterm'
-import '@xterm/xterm/css/xterm.css'
 import * as z from 'zod'
-import { useReconnectingWs } from '@/composables/useReconnectingWs'
 import type { ContainerCreateReq, ContainerItem } from '@/api/modules/container'
 import apiContainer from '@/api/modules/container'
+import YdTerminalModal from '@/components/YdTerminal/Modal.vue'
 
 defineOptions({
   name: 'ContainerIndex',
@@ -159,12 +156,9 @@ async function submitCreate() {
   }
 }
 
-// ---- exec 终端 ----
+// ---- exec 终端（YdTerminalModal 承载） ----
 const execVisible = ref(false)
 const execTarget = ref<ContainerItem | null>(null)
-let execTerm: Terminal | null = null
-let execWS: WebSocket | null = null
-const execBoxRef = useTemplateRef<HTMLElement>('execBox')
 
 function wsBase() {
   return (import.meta.env.DEV && import.meta.env.VITE_ENABLE_PROXY) ? '/proxy' : ''
@@ -173,56 +167,6 @@ function wsBase() {
 function openExec(c: ContainerItem) {
   execTarget.value = c
   execVisible.value = true
-  nextTick(() => mountExecTerm(c))
-}
-
-function mountExecTerm(c: ContainerItem) {
-  const el = execBoxRef.value
-  if (!el) {
-    return
-  }
-  const appSettingsStore = useAppSettingsStore()
-  const term = new Terminal({
-    cursorBlink: true,
-    fontSize: 13,
-    fontFamily: 'Menlo, Monaco, "Courier New", monospace',
-    theme: appSettingsStore.settings.theme.colorScheme === 'dark' ? { background: '#1c1c1a' } : { background: '#ffffff' },
-  })
-  const fit = new FitAddon()
-  term.loadAddon(fit)
-  term.open(el)
-  try {
-    fit.fit()
-  }
-  catch {}
-  execTerm = term
-
-  const proto = location.protocol === 'https:' ? 'wss' : 'ws'
-  // F6：统一重连封装（maxRetries=0：PTY 会话结束即终止，不做自动重连）
-  const conn = useReconnectingWs({
-    url: () => `${proto}://${location.host}${wsBase()}/${apiContainer.execWSURL(c.id, appAccountStore.token)}`,
-    maxRetries: 0,
-    heartbeatMs: 0,
-    onMessage: (data) => {
-      term.write(typeof data === 'string' ? data : new Uint8Array(data as ArrayBuffer))
-    },
-    onOpen: () => {
-      term.onData((data) => conn.send(data))
-      term.focus()
-    },
-    onGiveUp: () => {
-      term.write('\r\n[33m[会话已结束][0m\r\n')
-    },
-  })
-
-}
-
-function closeExec() {
-  execWS?.close()
-  execWS = null
-  execTerm?.dispose()
-  execTerm = null
-  execVisible.value = false
 }
 
 // ---- 详情 ----
@@ -365,8 +309,6 @@ onBeforeUnmount(() => {
     clearInterval(timer)
   }
   logsAbort?.abort()
-  execWS?.close()
-  execTerm?.dispose()
 })
 </script>
 
@@ -578,21 +520,12 @@ onBeforeUnmount(() => {
       </template>
     </FaModal>
 
-    <!-- exec 终端 -->
-    <FaModal
-      v-model="execVisible"
+    <!-- exec 终端（YdTerminalModal：双引擎，默认 xterm） -->
+    <YdTerminalModal
+      v-model:open="execVisible"
       :title="`容器终端：${execTarget?.name || ''}`"
-      class="max-w-4xl!"
-      :destroy-on-close="true"
-      @close="closeExec"
-    >
-      <div ref="execBox" class="h-96 w-full overflow-hidden rounded-md border" />
-      <template #footer>
-        <FaButton variant="outline" @click="closeExec">
-          关闭
-        </FaButton>
-      </template>
-    </FaModal>
+      :container-id="execTarget?.id || ''"
+    />
 
     <!-- 详情 -->
     <FaModal

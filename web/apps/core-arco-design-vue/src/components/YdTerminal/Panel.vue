@@ -1,0 +1,225 @@
+<script setup lang="ts">
+import type { NodeItem } from '@/api/modules/node'
+import type { TerminalConnState, TerminalEngine } from './types'
+import YdTerminal from './index.vue'
+import StatusBar from './StatusBar.vue'
+
+// 终端面板（host 协议多标签）：顶部工具栏 + 标签 + 终端 + 底部状态栏。
+// 侧栏开合与节点选择由上层（Workspace）持有，通过 props/emits 协作。
+defineOptions({
+  name: 'YdTerminalPanel',
+})
+
+const props = defineProps<{
+  /** 新建会话使用的节点 */
+  node: string
+  nodes: NodeItem[]
+  treeVisible: boolean
+  monitorVisible: boolean
+}>()
+
+const emits = defineEmits<{
+  'update:node': [node: string]
+  'toggle-tree': []
+  'toggle-monitor': []
+}>()
+
+const DEFAULT_ENGINE_KEY = 'ypanel.terminal.engine'
+
+interface TermTab {
+  id: number
+  title: string
+  node: string
+  engine: TerminalEngine
+  state: TerminalConnState
+  stateText?: string
+  size: { cols: number, rows: number }
+}
+
+let uid = 0
+const tabs = ref<TermTab[]>([])
+const activeId = ref(0)
+const syncInput = ref(false)
+const termRefs = new Map<number, InstanceType<typeof YdTerminal>>()
+
+const activeTab = computed(() => tabs.value.find(t => t.id === activeId.value))
+
+function setRef(id: number) {
+  return (el: any) => {
+    if (el) {
+      termRefs.set(id, el)
+    }
+    else {
+      termRefs.delete(id)
+    }
+  }
+}
+
+function nodeLabel(id: string) {
+  const n = props.nodes.find(n => n.id === id)
+  return n ? (n.hostname || n.name || id) : id
+}
+
+function createTab() {
+  uid++
+  const engine = (localStorage.getItem(DEFAULT_ENGINE_KEY) as TerminalEngine) || 'vwt'
+  tabs.value.push({
+    id: uid,
+    title: `终端 ${uid}`,
+    node: props.node,
+    engine,
+    state: 'connecting',
+    size: { cols: 80, rows: 24 },
+  })
+  activeId.value = uid
+}
+
+function closeTab(id: number) {
+  const idx = tabs.value.findIndex(t => t.id === id)
+  if (idx === -1) {
+    return
+  }
+  termRefs.delete(id)
+  tabs.value.splice(idx, 1)
+  if (activeId.value === id && tabs.value.length) {
+    activeId.value = tabs.value[Math.max(0, idx - 1)].id
+  }
+  if (!tabs.value.length) {
+    createTab()
+  }
+}
+
+function switchEngine() {
+  const t = activeTab.value
+  if (!t) {
+    return
+  }
+  t.engine = t.engine === 'vwt' ? 'xterm' : 'vwt'
+  localStorage.setItem(DEFAULT_ENGINE_KEY, t.engine)
+}
+
+// 同步输入：任一会话键入广播到全部会话
+function onTabInput(id: number, data: string) {
+  if (!syncInput.value) {
+    return
+  }
+  for (const t of tabs.value) {
+    if (t.id !== id) {
+      termRefs.get(t.id)?.sendRaw(data)
+    }
+  }
+}
+
+function onTabState(id: number, state: TerminalConnState, text?: string) {
+  const t = tabs.value.find(t => t.id === id)
+  if (t) {
+    t.state = state
+    t.stateText = text
+  }
+}
+
+// 引擎切换（activeTab），并把终端上报尺寸写入标签状态
+function onTabSize(id: number, cols: number, rows: number) {
+  const t = tabs.value.find(t => t.id === id)
+  if (t) {
+    t.size.cols = cols
+    t.size.rows = rows
+  }
+}
+
+// 新建终端时跟随当前节点（已有会话保持原节点）
+watch(() => props.node, () => {
+  if (!tabs.value.length) {
+    createTab()
+  }
+})
+
+onMounted(() => createTab())
+</script>
+
+<template>
+  <div class="flex size-full min-h-0 min-w-0 flex-col overflow-hidden">
+    <!-- 顶部工具栏：节点 + 标签 + 面板开关 -->
+    <div class="flex h-8 shrink-0 items-center gap-1 border-b bg-muted/40 px-1.5 text-[13px]">
+      <FaSelect
+        :model-value="props.node"
+        :options="[{ label: '本地节点', value: 'local' }, ...props.nodes.filter(n => n.id !== 'local').map(n => ({ label: n.hostname || n.name || n.id, value: n.id }))]"
+        class="w-28 shrink-0"
+        :disabled="props.nodes.filter(n => n.id !== 'local').length === 0"
+        @update:model-value="emits('update:node', String($event))"
+      />
+      <FaButton variant="ghost" size="icon-sm" class="size-5! shrink-0" title="新建终端" @click="createTab">
+        <FaIcon name="i-lucide:plus" class="text-xs" />
+      </FaButton>
+
+      <!-- 标签 -->
+      <div class="min-w-0 flex flex-1 items-center gap-0.5 overflow-x-auto">
+        <button
+          v-for="t in tabs"
+          :key="t.id"
+          type="button"
+          class="group inline-flex shrink-0 cursor-pointer items-center gap-1 rounded px-2 py-0.5 transition-colors"
+          :class="activeId === t.id ? 'bg-primary/10 text-foreground' : 'text-muted-foreground hover:bg-accent/50'"
+          :title="`${nodeLabel(t.node)} · ${t.engine}`"
+          @click="activeId = t.id"
+        >
+          <YdMorphIcon name="square-terminal" :size="12" />
+          <span class="max-w-28 truncate">{{ t.title }}</span>
+          <span v-if="t.node !== 'local'" class="text-[10px] opacity-60">@{{ nodeLabel(t.node) }}</span>
+          <span
+            class="inline-flex size-3.5 shrink-0 cursor-pointer items-center justify-center rounded-full opacity-0 transition-opacity group-hover:opacity-60 hover:!opacity-100 hover:bg-accent"
+            title="关闭"
+            @click.stop="closeTab(t.id)"
+          >
+            <FaIcon name="i-lucide:x" class="text-[9px]" />
+          </span>
+        </button>
+      </div>
+
+      <div class="ml-auto flex shrink-0 items-center gap-0.5">
+        <label class="flex cursor-pointer items-center gap-1 rounded px-1.5 py-0.5 text-xs text-muted-foreground transition-colors hover:bg-accent/50" title="键入广播到全部终端">
+          <input v-model="syncInput" type="checkbox" class="size-3">
+          同步
+        </label>
+        <FaButton variant="ghost" size="sm" class="h-5! px-1.5! text-[11px]" title="切换终端引擎（vwt 行模式 / xterm 全仿真）" @click="switchEngine">
+          {{ activeTab?.engine === 'xterm' ? 'xterm' : 'vwt' }}
+        </FaButton>
+        <FaButton variant="ghost" size="icon-sm" class="size-5!" :title="props.treeVisible ? '收起文件树' : '展开文件树'" @click="emits('toggle-tree')">
+          <FaIcon :name="props.treeVisible ? 'i-lucide:panel-left-close' : 'i-lucide:panel-left'" class="text-xs" />
+        </FaButton>
+        <FaButton variant="ghost" size="icon-sm" class="size-5!" :title="props.monitorVisible ? '收起监控' : '展开监控'" @click="emits('toggle-monitor')">
+          <FaIcon :name="props.monitorVisible ? 'i-lucide:panel-right-close' : 'i-lucide:panel-right'" class="text-xs" />
+        </FaButton>
+      </div>
+    </div>
+
+    <!-- 终端区（多实例 keep-alive：v-show 切换，保持会话与滚动位置） -->
+    <div class="relative min-h-0 min-w-0 flex-1">
+      <div
+        v-for="t in tabs"
+        :key="t.id"
+        v-show="activeId === t.id"
+        class="absolute inset-0"
+      >
+        <YdTerminal
+          :ref="setRef(t.id)"
+          :endpoint="{ kind: 'host', node: t.node }"
+          :engine="t.engine"
+          :active="activeId === t.id"
+          @input="onTabInput(t.id, $event)"
+          @size="(c: number, r: number) => onTabSize(t.id, c, r)"
+          @state="(s, text) => onTabState(t.id, s, text)"
+        />
+      </div>
+    </div>
+
+    <!-- 底部状态栏 -->
+    <StatusBar
+      :state="activeTab?.state ?? 'closed'"
+      :state-text="activeTab?.stateText"
+      :node-label="activeTab ? nodeLabel(activeTab.node) : props.node"
+      :engine="activeTab?.engine ?? 'vwt'"
+      :size="activeTab?.size"
+    />
+  </div>
+</template>

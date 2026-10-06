@@ -52,6 +52,7 @@
     "vee-validate": "catalog:",
     "vue": "catalog:",
     "vue-router": "catalog:",
+    "vue-web-terminal": "catalog:",
     "zod": "catalog:"
   },
   "devDependencies": {
