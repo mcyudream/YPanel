@@ -14,6 +14,9 @@ import RealIPConf from './conf/RealIPConf.vue'
 import LimitConnConf from './conf/LimitConnConf.vue'
 import LoadBalanceConf from './conf/LoadBalanceConf.vue'
 import OtherConf from './conf/OtherConf.vue'
+import LogsConf from './conf/LogsConf.vue'
+import WafConf from './conf/WafConf.vue'
+import FileConf from './conf/FileConf.vue'
 
 defineOptions({
   name: 'SitesDetail',
@@ -55,6 +58,9 @@ const tabs = computed(() => {
     { key: 'cors', label: 'CORS', icon: 'i-lucide:shuffle', comp: CorsConf },
     { key: 'realip', label: '真实 IP', icon: 'i-lucide:locate', comp: RealIPConf },
     { key: 'limitconn', label: '连接限制', icon: 'i-lucide:gauge', comp: LimitConnConf },
+    { key: 'logs', label: '日志', icon: 'i-lucide:scroll-text', comp: LogsConf },
+    { key: 'waf', label: 'WAF', icon: 'i-lucide:shield-alert', comp: WafConf },
+    { key: 'file', label: '配置文件', icon: 'i-lucide:file-code', comp: FileConf },
     { key: 'other', label: '其他', icon: 'i-lucide:code', comp: OtherConf },
   ]
   if (site.value?.type === 'proxy') {
