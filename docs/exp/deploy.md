@@ -32,3 +32,10 @@
 - **现象**：容器化安装数据库时 `failed to resolve reference docker.io/...: connection refused`。
 - **规避/解决**：`/etc/docker/daemon.json` 配置 `registry-mirrors`（daocloud/1ms/1panel 等公共镜像），`systemctl restart docker`；YPanel 测试机已配置，更换测试机时需重做。
 - **来源**：2026-10-06，M4 部署。
+
+### compose 卷相对路径是相对 compose 文件目录，别与其他约定目录混用
+
+- **现象**：nginx 容器"启动成功、进程活着、nginx -t 通过"，但容器内不监听任何端口、无任何错误日志；写进 `/opt/ypanel/nginx/conf.d` 的站点配置"凭空消失"。
+- **根因**：compose 模板里卷写相对路径 `./conf.d`（解析为 compose 项目目录 `/opt/ypanel/compose/ypanel-nginx/conf.d`），而站点配置按面板约定写到 `/opt/ypanel/nginx/conf.d`——容器挂载的是空目录，nginx 无任何 server 块故不监听，且 nginx 对"无 server"合法静默。
+- **规避/解决**：面板管理的 compose 卷**一律绝对路径**；"进程活着但不干活"先核对容器内实际挂载（docker inspect .Mounts）与文件落点是否一致。
+- **来源**：2026-10-06，M5 站点管理。

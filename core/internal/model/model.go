@@ -35,6 +35,20 @@ type Setting struct {
 	UpdatedAt time.Time `json:"updatedAt"`
 }
 
+// Site 站点（容器化 nginx vhost）。
+type Site struct {
+	ID         uint      `gorm:"primaryKey" json:"id"`
+	Name       string    `gorm:"uniqueIndex;size:32;not null" json:"name"`
+	Type       string    `gorm:"size:8;not null" json:"type"` // static / proxy
+	Domain     string    `gorm:"uniqueIndex;size:255;not null" json:"domain"`
+	Port       int       `gorm:"not null;default:80" json:"port"`
+	ProxyPass  string    `gorm:"size:255" json:"proxyPass"`
+	CertDomain string    `gorm:"size:255" json:"certDomain"` // 非空 = 已启用 SSL
+	Enabled    bool      `gorm:"not null;default:true" json:"enabled"`
+	CreatedAt  time.Time `json:"createdAt"`
+	UpdatedAt  time.Time `json:"updatedAt"`
+}
+
 // CronTask 计划任务（shell 类型）。
 type CronTask struct {
 	ID          uint       `gorm:"primaryKey" json:"id"`

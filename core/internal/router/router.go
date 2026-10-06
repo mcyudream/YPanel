@@ -20,6 +20,7 @@ type Deps struct {
 	Settings *service.SettingService
 	Cron     *service.Cron
 	DBS      *service.DatabaseService
+	Sites    *service.SiteService
 	Version  string
 }
 
@@ -41,6 +42,7 @@ func Setup(d *Deps) (*gin.Engine, error) {
 	composeAPI := &api.ComposeAPI{Nodes: d.Nodes}
 	cronAPI := &api.CronAPI{DB: d.CronDB(), Cron: d.Cron}
 	dbAPI := &api.DatabaseAPI{DBS: d.DBS}
+	siteAPI := &api.SiteAPI{Sites: d.Sites}
 
 	r.GET("/health", func(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{"status": "ok", "version": d.Version})
@@ -109,6 +111,17 @@ func Setup(d *Deps) (*gin.Engine, error) {
 			authed.POST("/database/instances/:id/backups", dbAPI.CreateBackup)
 			authed.DELETE("/database/instances/:id/backups", dbAPI.DeleteBackup)
 			authed.POST("/database/instances/:id/backups/restore", dbAPI.RestoreBackup)
+
+			authed.GET("/nginx/status", siteAPI.Status)
+			authed.POST("/nginx/install", siteAPI.Install)
+			authed.GET("/sites", siteAPI.List)
+			authed.POST("/sites", siteAPI.Create)
+			authed.DELETE("/sites/:id", siteAPI.Delete)
+			authed.POST("/sites/:id/enable", siteAPI.SetEnabled(true))
+			authed.POST("/sites/:id/disable", siteAPI.SetEnabled(false))
+			authed.GET("/sites/:id/config", siteAPI.Config)
+			authed.PUT("/sites/:id/config", siteAPI.UpdateConfig)
+			authed.POST("/sites/:id/cert/selfsigned", siteAPI.IssueSelfSigned)
 
 			admin := authed.Group("", middleware.Admin())
 			{
