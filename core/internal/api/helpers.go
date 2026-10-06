@@ -2,6 +2,7 @@
 package api
 
 import (
+	"strconv"
 	"log/slog"
 	"net/http"
 
@@ -36,3 +37,12 @@ func bind[T any](c *gin.Context) (*T, bool) {
 
 // clientIP 取真实客户端 IP。
 func clientIP(c *gin.Context) string { return c.ClientIP() }
+
+// idParam 解析路径 :id（旧签名，供 runtime/sites 等历史引用点使用；certs.go 用 certIDParam）。
+func idParam(c *gin.Context) (uint, error) {
+	id, err := strconv.ParseUint(c.Param("id"), 10, 64)
+	if err != nil || id == 0 {
+		return 0, errBadRequest("ID 不合法")
+	}
+	return uint(id), nil
+}

@@ -146,12 +146,64 @@ type Site struct {
 	CacheEnable    bool   `gorm:"not null;default:false" json:"cacheEnable"`
 	CacheDuration  string `gorm:"size:16" json:"cacheDuration"`      // 如 12h / 1d
 	CertDomain  string    `gorm:"size:255" json:"certDomain"` // 非空 = 已启用 SSL
+	CertID      uint      `gorm:"not null;default:0" json:"certId"` // 绑定证书库条目（B23）
+	RunDir      string    `gorm:"size:128" json:"runDir"`     // 运行目录（相对 root 的二级目录，空=根）
+	GroupID     uint      `gorm:"not null;default:0" json:"groupId"` // 分组（0=默认分组）
+	Remark      string    `gorm:"size:255" json:"remark"`     // 备注
+	HTTPSJSON   string    `gorm:"type:text" json:"httpsJson"` // HTTPS 高级设置 JSON（HTTP 模式/HSTS/TLS 版本/加密算法）
 	OriginFile  string    `gorm:"size:255" json:"originFile"` // 接管来源 conf（站点识别）
 	WafJSON     string    `gorm:"type:text" json:"wafJson"`   // WAF 配置（service.SiteWaf 序列化）
 	ConfJSON    string    `gorm:"type:text" json:"confJson"`  // 扩展配置域 JSON（防盗链/Basic认证/CORS/重定向/真实IP/限连/负载均衡）
 	Enabled     bool      `gorm:"not null;default:true" json:"enabled"`
 	CreatedAt   time.Time `json:"createdAt"`
 	UpdatedAt   time.Time `json:"updatedAt"`
+}
+
+// SiteGroup 站点分组（对齐 1Panel：创建/删除/设为默认，默认分组不可删）。
+type SiteGroup struct {
+	ID        uint      `gorm:"primaryKey" json:"id"`
+	Name      string    `gorm:"uniqueIndex;size:32;not null" json:"name"`
+	IsDefault bool      `gorm:"not null;default:false" json:"isDefault"`
+	CreatedAt time.Time `json:"createdAt"`
+}
+
+// Certificate 证书库（独立于站点的证书全生命周期管理，对齐 1Panel 证书页）。
+type Certificate struct {
+	ID          uint      `gorm:"primaryKey" json:"id"`
+	CertName    string    `gorm:"uniqueIndex;size:255;not null" json:"certName"` // 文件名基准（nginx 引用）
+	Domain      string    `gorm:"size:255;not null" json:"domain"`               // 主域名
+	AltDomains  string    `gorm:"type:text" json:"altDomains"`                   // 其他域名 JSON 数组
+	Provider    string    `gorm:"size:16;not null" json:"provider"`              // acme / selfsigned / upload
+	Issuer      string    `gorm:"size:128" json:"issuer"`                        // 颁发组织（Let's Encrypt / ZeroSSL…）
+	Remark      string    `gorm:"size:255" json:"remark"`
+	AutoRenew   bool      `gorm:"not null;default:true" json:"autoRenew"`
+	NotAfter    *time.Time `json:"notAfter"`  // 过期时间（签发/上传后探测落库）
+	Status      string    `gorm:"size:16;not null;default:ok" json:"status"` // ok / expiring / expired / error
+	AcmeAccountID uint    `json:"acmeAccountId"`
+	DnsAccountID  uint    `json:"dnsAccountId"`
+	IssueLog    string    `gorm:"type:text" json:"issueLog"` // 最近一次申请日志
+	CreatedAt   time.Time `json:"createdAt"`
+	UpdatedAt   time.Time `json:"updatedAt"`
+}
+
+// DnsAccount DNS 服务商 API 账户（ACME DNS 挑战用；密钥 AES-GCM 加密存储）。
+type DnsAccount struct {
+	ID        uint      `gorm:"primaryKey" json:"id"`
+	Name      string    `gorm:"uniqueIndex;size:64;not null" json:"name"`
+	Provider  string    `gorm:"size:16;not null" json:"provider"` // aliyun / dnspod / cloudflare
+	AccessKey string    `gorm:"size:255;not null" json:"accessKey"`
+	SecretEnc string    `gorm:"type:text;not null" json:"-"` // AES-GCM
+	CreatedAt time.Time `json:"createdAt"`
+	UpdatedAt time.Time `json:"updatedAt"`
+}
+
+// AcmeAccount ACME 账户（邮箱 + CA + 密钥算法）。
+type AcmeAccount struct {
+	ID        uint      `gorm:"primaryKey" json:"id"`
+	Email     string    `gorm:"size:128;not null" json:"email"`
+	CAType    string    `gorm:"size:24;not null" json:"caType"` // letsencrypt / zerossl / buypass
+	KeyType   string    `gorm:"size:16;not null;default:ec-256" json:"keyType"`
+	CreatedAt time.Time `json:"createdAt"`
 }
 
 // CronTask 计划任务（shell 类型）。

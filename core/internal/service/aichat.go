@@ -109,8 +109,20 @@ func (s *AIService) StreamAgentChat(
 		resp, err := llm.GenerateContent(ctx, msgs,
 			llms.WithTools(toolList),
 			llms.WithStreamingFunc(func(_ context.Context, chunk []byte) error {
-				// 仅最终轮文本从这里出（工具调用轮的 delta 是 tool_call 片段，非文本）
-				emitContent(string(chunk))
+				// 只透出文本 delta：tool_call 轮的 delta 是参数 JSON 片段，不能进正文
+				var ev struct {
+					Choices []struct {
+						Delta struct {
+							Content   string          `json:"content"`
+							ToolCalls json.RawMessage `json:"tool_calls,omitempty"`
+						} `json:"delta"`
+					} `json:"choices"`
+				}
+				if json.Unmarshal(chunk, &ev) == nil && len(ev.Choices) > 0 {
+					if c := ev.Choices[0].Delta.Content; c != "" {
+						emitContent(c)
+					}
+				}
 				return nil
 			}))
 		if err != nil {

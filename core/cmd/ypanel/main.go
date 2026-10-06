@@ -99,7 +99,10 @@ func run(ctx context.Context, cfg *config.Config) error {
 	// 数据库实例管理（凭据加密密钥由 JWT 密钥派生）
 	dbSvc := service.NewDatabaseService(gdb, nodes, string(auth.Secret()))
 	siteSvc := service.NewSiteService(gdb, nodes)
-	acmeSvc := service.NewAcmeService(siteSvc, nodes, os.Getenv)
+	certSvc := service.NewCertificateService(gdb, nodes, siteSvc, string(auth.Secret()))
+	certSvc.SetEnvGetter(os.Getenv)
+	groupSvc := service.NewSiteGroupService(gdb)
+	acmeSvc := service.NewAcmeService(siteSvc, certSvc)
 
 	// 计划任务调度器（B4：依赖数据库备份/站点备份服务）
 	cronSvc := service.NewCron(gdb, nodes)
@@ -130,7 +133,7 @@ func run(ctx context.Context, cfg *config.Config) error {
 		gin.SetMode(gin.ReleaseMode)
 	}
 	r, err := router.Setup(&router.Deps{
-		Auth: auth, Nodes: nodes, Settings: settings, Cron: cronSvc, DBS: dbSvc, Sites: siteSvc,
+		Auth: auth, Nodes: nodes, Settings: settings, Cron: cronSvc, DBS: dbSvc, Sites: siteSvc, Certs: certSvc, Groups: groupSvc,
 		Scripts: scriptSvc, DBSvc: dbSvc, Acme: acmeSvc, AI: aiSvc,
 		Market: marketSvc, FW: fwSvc, Alerts: alertSvc,
 		Notif: notifSvc, PanelBP: service.NewPanelBackupService(nodes), Hist: histSvc,

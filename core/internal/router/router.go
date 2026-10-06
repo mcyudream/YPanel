@@ -26,6 +26,8 @@ type Deps struct {
 	Acme     *service.AcmeService
 	DBS      *service.DatabaseService
 	Sites    *service.SiteService
+	Certs    *service.CertificateService
+	Groups   *service.SiteGroupService
 	Market   *service.MarketService
 	FW       *service.FirewallService
 	Alerts   *service.AlertService
@@ -66,6 +68,7 @@ func Setup(d *Deps) (*gin.Engine, error) {
 	dbAPI := &api.DatabaseAPI{DBS: d.DBS}
 	siteAPI := &api.SiteAPI{Sites: d.Sites, Acme: d.Acme}
 	siteConfAPI := &api.SiteConfAPI{Sites: d.Sites}
+	certAPI := &api.CertAPI{Certs: d.Certs, Groups: d.Groups}
 	nodeAPI := &api.NodeAPI{Nodes: d.Nodes}
 	marketAPI := &api.MarketAPI{Market: d.Market}
 	fwAPI := &api.FirewallAPI{FW: d.FW}
@@ -196,7 +199,10 @@ func Setup(d *Deps) (*gin.Engine, error) {
 			authed.PUT("/sites/:id/conf/rewrite", siteConfAPI.UpdateRewrite)
 			authed.GET("/sites/:id/conf/https", siteConfAPI.GetHTTPS)
 			authed.POST("/sites/:id/conf/https", siteConfAPI.EnableHTTPS)
+			authed.PUT("/sites/:id/conf/https", siteConfAPI.UpdateHTTPS)
 			authed.DELETE("/sites/:id/conf/https", siteConfAPI.DisableHTTPS)
+			authed.GET("/sites/:id/conf/rundir", siteAPI.GetRunDir)
+			authed.PUT("/sites/:id/conf/rundir", siteAPI.UpdateRunDir)
 			authed.GET("/sites/:id/conf/antileech", siteConfAPI.GetAntiLeech)
 			authed.PUT("/sites/:id/conf/antileech", siteConfAPI.UpdateAntiLeech)
 			authed.GET("/sites/:id/conf/authbasic", siteConfAPI.GetAuthBasic)
@@ -222,10 +228,33 @@ func Setup(d *Deps) (*gin.Engine, error) {
 			authed.GET("/sites/:id/config", siteAPI.Config)
 			authed.GET("/sites/:id/logs", siteAPI.SiteLogs)
 			authed.PUT("/sites/:id/config", siteAPI.UpdateConfig)
+			authed.PUT("/sites/:id/meta", siteAPI.UpdateMeta)
 			authed.GET("/sites/:id/waf", siteAPI.GetWaf)
 			authed.PUT("/sites/:id/waf", siteAPI.UpdateWaf)
 			authed.POST("/sites/:id/cert/acme", siteAPI.IssueACME)
 			authed.POST("/sites/:id/cert/selfsigned", siteAPI.IssueSelfSigned)
+
+			// B23 证书库 / 站点分组
+			authed.GET("/certs", certAPI.List)
+			authed.POST("/certs/issue", certAPI.Issue)
+			authed.POST("/certs/upload", certAPI.Upload)
+			authed.POST("/certs/selfsigned", certAPI.SelfSigned)
+			authed.GET("/certs/dns-accounts", certAPI.ListDnsAccounts)
+			authed.POST("/certs/dns-accounts", certAPI.CreateDnsAccount)
+			authed.PUT("/certs/dns-accounts/:id", certAPI.UpdateDnsAccount)
+			authed.DELETE("/certs/dns-accounts/:id", certAPI.DeleteDnsAccount)
+			authed.GET("/certs/acme-accounts", certAPI.ListAcmeAccounts)
+			authed.POST("/certs/acme-accounts", certAPI.CreateAcmeAccount)
+			authed.DELETE("/certs/acme-accounts/:id", certAPI.DeleteAcmeAccount)
+			authed.GET("/certs/:id", certAPI.Detail)
+			authed.PUT("/certs/:id", certAPI.Update)
+			authed.POST("/certs/:id/renew", certAPI.Renew)
+			authed.DELETE("/certs/:id", certAPI.Remove)
+			authed.GET("/site-groups", certAPI.ListGroups)
+			authed.POST("/site-groups", certAPI.CreateGroup)
+			authed.PUT("/site-groups/:id", certAPI.UpdateGroup)
+			authed.DELETE("/site-groups/:id", certAPI.DeleteGroup)
+			authed.POST("/site-groups/:id/default", certAPI.SetDefaultGroup)
 
 			admin := authed.Group("", middleware.Admin())
 			{

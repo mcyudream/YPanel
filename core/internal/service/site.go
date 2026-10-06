@@ -8,6 +8,7 @@ import (
 	"path"
 	"regexp"
 	"strings"
+	"time"
 
 	"gorm.io/gorm"
 
@@ -321,10 +322,65 @@ func wafSection(site *model.Site, w SiteWaf) (zoneTop, serverPart string) {
 	return zoneTop, b.String()
 }
 
+// SiteHTTPSCfg HTTPS 高级设置（B23，持久化于 Site.HTTPSJSON）。
+type SiteHTTPSCfg struct {
+	HTTPMode      string   `json:"httpMode"`      // redirect（默认）/ both / deny
+	HSTS          bool     `json:"hsts"`          // Strict-Transport-Security
+	HSTSSubdomain bool     `json:"hstsSubdomain"` // includeSubDomains
+	TLSVersions   []string `json:"tlsVersions"`   // ["1.3","1.2"]（空=默认 1.3+1.2）
+	Ciphers       string   `json:"ciphers"`       // 空=默认现代套件
+	HTTP2         bool     `json:"http2"`
+}
+
+// parseHTTPS 解析站点 HTTPS 高级设置（含默认值）。
+func parseHTTPS(site *model.Site) SiteHTTPSCfg {
+	cfg := SiteHTTPSCfg{HTTPMode: "redirect", TLSVersions: []string{"1.3", "1.2"}, HTTP2: true}
+	if site.HTTPSJSON == "" {
+		return cfg
+	}
+	_ = json.Unmarshal([]byte(site.HTTPSJSON), &cfg)
+	if cfg.HTTPMode != "redirect" && cfg.HTTPMode != "both" && cfg.HTTPMode != "deny" {
+		cfg.HTTPMode = "redirect"
+	}
+	if len(cfg.TLSVersions) == 0 {
+		cfg.TLSVersions = []string{"1.3", "1.2"}
+	}
+	return cfg
+}
+
+// defaultCiphers 现代 TLS 默认加密套件（对齐 1Panel 默认值）。
+const defaultCiphers = "ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384:ECDHE-ECDSA-CHACHA20-POLY1305:ECDHE-RSA-CHACHA20-POLY1305:ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256"
+
+// runDirSafe 校验运行目录（/ 开头相对站点 root 的路径，禁止穿越）。
+func runDirSafe(d string) bool {
+	if d == "" || d == "/" {
+		return true
+	}
+	if !strings.HasPrefix(d, "/") || strings.Contains(d, "..") || strings.Contains(d, "\\") {
+		return false
+	}
+	for _, seg := range strings.Split(strings.Trim(d, "/"), "/") {
+		if seg == "" || seg == "." || seg == ".." {
+			return false
+		}
+	}
+	return true
+}
+
+// siteRoot 站点 root 指令（含运行目录）。
+func siteRoot(site *model.Site) string {
+	p := "/var/www/sites/" + site.Name
+	if d := strings.TrimSuffix(site.RunDir, "/"); d != "" && d != "/" {
+		p += d
+	}
+	return p
+}
+
 // confTemplate 生成站点配置。
 func confTemplate(site *model.Site, ssl bool, waf SiteWaf) string {
 	meta := parseSiteMeta(site)
 	wafCfg := parseWaf(site)
+	httpsCfg := parseHTTPS(site)
 	zoneTop, wafServer := wafSection(site, wafCfg)
 	var b strings.Builder
 	b.WriteString(zoneTop)
@@ -377,11 +433,56 @@ func confTemplate(site *model.Site, ssl bool, waf SiteWaf) string {
 		}
 	}
 
-	// 有证书：80 跳 443 + 443 主段
+	// 有证书：80 段按 HTTP 模式（redirect 跳转 / both 共存 / deny 拒绝）+ 443 主段
 	if site.CertDomain != "" {
-		fmt.Fprintf(&b, "# ypanel-site:%d\nserver {\n    listen 80;\n    server_name %s;\n    return 301 https://$host$request_uri;\n}\n\n", site.ID, serverNames)
-		b.WriteString(fmt.Sprintf("# ypanel-site:%d\nserver {\n    listen 443 ssl;\n    server_name %s;\n", site.ID, serverNames))
+		switch httpsCfg.HTTPMode {
+		case "both":
+			listenSSL := ""
+			if ssl {
+				listenSSL = " ssl"
+			}
+			b.WriteString(fmt.Sprintf("# ypanel-site:%d\nserver {\n    listen %d%s;\n    server_name %s;\n", site.ID, site.Port, listenSSL, serverNames))
+			b.WriteString(wafServer)
+			b.WriteString("}\n\n")
+		case "deny":
+			fmt.Fprintf(&b, "# ypanel-site:%d\nserver {\n    listen 80;\n    server_name %s;\n    return 444;\n}\n\n", site.ID, serverNames)
+		default: // redirect
+			fmt.Fprintf(&b, "# ypanel-site:%d\nserver {\n    listen 80;\n    server_name %s;\n    return 301 https://$host$request_uri;\n}\n\n", site.ID, serverNames)
+		}
+		listenSSLFlag := " ssl"
+		if httpsCfg.HTTP2 {
+			listenSSLFlag += " http2"
+		}
+		b.WriteString(fmt.Sprintf("# ypanel-site:%d\nserver {\n    listen 443%s;\n    server_name %s;\n", site.ID, listenSSLFlag, serverNames))
 		fmt.Fprintf(&b, "    ssl_certificate     /etc/nginx/certs/%s.crt;\n    ssl_certificate_key /etc/nginx/certs/%s.key;\n", site.CertDomain, site.CertDomain)
+		// TLS 协议版本与加密套件
+		protos := make([]string, 0, len(httpsCfg.TLSVersions))
+		for _, v := range httpsCfg.TLSVersions {
+			if v == "1.3" || v == "1.2" || v == "1.1" || v == "1.0" {
+				protos = append(protos, "TLSv"+v)
+			}
+		}
+		if len(protos) == 0 {
+			protos = []string{"TLSv1.3", "TLSv1.2"}
+		}
+		fmt.Fprintf(&b, "    ssl_protocols %s;\n", strings.Join(protos, " "))
+		ciphers := httpsCfg.Ciphers
+		if ciphers == "" {
+			ciphers = defaultCiphers
+		}
+		fmt.Fprintf(&b, "    ssl_ciphers %s;\n", ciphers)
+		b.WriteString("    ssl_prefer_server_ciphers off;\n")
+		b.WriteString("    ssl_session_cache shared:SSL:10m;\n")
+		b.WriteString("    ssl_session_timeout 10m;\n")
+		if httpsCfg.HSTS {
+			v := `add_header Strict-Transport-Security "max-age=31536000`
+			if httpsCfg.HSTSSubdomain {
+				v += "; includeSubDomains"
+			}
+			v += `" always;` + "\n"
+			b.WriteString("    " + v)
+		}
+		// HTTP 共存模式下 443 段同样生成站点内容，主流程继续（下方 switch）
 	} else {
 		// 整站重定向：80 段直接 return（有证书时 80 已被 301 到 https，重定向域不生效）
 		if rd := extra.Redirect; rd != nil && rd.Enable && rd.Target != "" {
@@ -471,7 +572,7 @@ func confTemplate(site *model.Site, ssl bool, waf SiteWaf) string {
 		if index == "" {
 			index = "index.html"
 		}
-		fmt.Fprintf(&b, "    root /var/www/sites/%s;\n", site.Name)
+		fmt.Fprintf(&b, "    root %s;\n", siteRoot(site))
 		if index != "" {
 			fmt.Fprintf(&b, "    index %s;\n", index)
 		}
@@ -484,7 +585,7 @@ func confTemplate(site *model.Site, ssl bool, waf SiteWaf) string {
 			b.WriteString("    location / { try_files $uri $uri/ =404; }\n")
 		}
 	case "php":
-		fmt.Fprintf(&b, "    root /var/www/sites/%s;\n", site.Name)
+		fmt.Fprintf(&b, "    root %s;\n", siteRoot(site))
 		if meta.IndexFiles != "" {
 			fmt.Fprintf(&b, "    index %s;\n", meta.IndexFiles)
 		}
@@ -842,11 +943,24 @@ func escapeURL(s string) string {
 	return r.Replace(s)
 }
 
-// List 站点列表（元数据 + conf 对账）。
+// List 站点列表（元数据 + conf 对账 + 分组/备注/证书过期时间）。
 func (s *SiteService) List(ctx context.Context) ([]map[string]any, error) {
 	var rows []model.Site
 	if err := s.db.Order("id").Find(&rows).Error; err != nil {
 		return nil, err
+	}
+	// 分组名与证书过期时间映射（B23）
+	groupNames := map[uint]string{}
+	var groups []model.SiteGroup
+	_ = s.db.Find(&groups).Error
+	for _, g := range groups {
+		groupNames[g.ID] = g.Name
+	}
+	certExpiry := map[uint]*time.Time{}
+	var certs []model.Certificate
+	_ = s.db.Select("id, not_after").Find(&certs).Error
+	for i := range certs {
+		certExpiry[certs[i].ID] = certs[i].NotAfter
 	}
 	ac, err := s.client()
 	if err != nil {
@@ -870,11 +984,21 @@ func (s *SiteService) List(ctx context.Context) ([]map[string]any, error) {
 		if r.Domains != "" {
 			_ = json.Unmarshal([]byte(r.Domains), &extra)
 		}
+		groupName := groupNames[r.GroupID]
+		if groupName == "" {
+			groupName = "默认"
+		}
+		var notAfter *time.Time
+		if r.CertID != 0 {
+			notAfter = certExpiry[r.CertID]
+		}
 		out = append(out, map[string]any{
 			"id": r.ID, "name": r.Name, "type": r.Type,
 			"domain": r.Domain, "domains": extra,
 			"port": r.Port, "proxyPass": r.ProxyPass, "certDomain": r.CertDomain,
 			"indexFiles": r.IndexFiles, "logsEnabled": r.LogsEnabled,
+			"groupId": r.GroupID, "groupName": groupName, "remark": r.Remark,
+			"runDir": r.RunDir, "certId": r.CertID, "certNotAfter": notAfter,
 			"enabled": r.Enabled, "onDisk": onDisk, "nginxRunning": nginxRunning,
 			"createdAt": r.CreatedAt,
 		})
@@ -938,11 +1062,15 @@ func (s *SiteService) Create(ctx context.Context, req SiteCreateInput) (*model.S
 	if indexFiles == "" {
 		indexFiles = "index.html"
 	}
+	if req.RunDir != "" && !runDirSafe(req.RunDir) {
+		return nil, errs.Wrap(errs.ErrBadRequest, "运行目录不合法（需 / 开头且不含 ..）")
+	}
 	site := &model.Site{
 		Name: req.Name, Type: req.Type, Domain: domain, Domains: extraJSON,
 		Port: req.Port, ProxyPass: req.ProxyPass, ProxyRules: rulesJSON,
 		IndexFiles: indexFiles, LogsEnabled: true, Enabled: true,
 		RuntimeID: req.RuntimeID, RuntimeContainer: runtimeContainer,
+		GroupID: req.GroupID, Remark: strings.TrimSpace(req.Remark), RunDir: req.RunDir,
 	}
 	if err := s.db.Create(site).Error; err != nil {
 		return nil, err
@@ -1008,6 +1136,103 @@ type SiteCreateInput struct {
 	ProxyRules   []ProxyRule `json:"proxyRules"`
 	IndexFiles   string      `json:"indexFiles"`
 	RuntimeID    uint        `json:"runtimeId"`
+	GroupID      uint        `json:"groupId"`
+	Remark       string      `json:"remark"`
+	RunDir       string      `json:"runDir"`
+}
+
+// SiteMetaInput 站点元信息编辑（分组/备注）。
+type SiteMetaInput struct {
+	GroupID *uint   `json:"groupId"`
+	Remark  *string `json:"remark"`
+}
+
+// UpdateMeta 更新分组/备注（不触发 nginx 变更）。
+func (s *SiteService) UpdateMeta(id uint, in SiteMetaInput) error {
+	site, err := s.siteByID(id)
+	if err != nil {
+		return err
+	}
+	updates := map[string]any{}
+	if in.GroupID != nil {
+		if *in.GroupID != 0 {
+			var g model.SiteGroup
+			if err := s.db.First(&g, *in.GroupID).Error; err != nil {
+				return errs.Wrap(errs.ErrBadRequest, "分组不存在")
+			}
+		}
+		updates["group_id"] = *in.GroupID
+	}
+	if in.Remark != nil {
+		updates["remark"] = strings.TrimSpace(*in.Remark)
+	}
+	if len(updates) == 0 {
+		return nil
+	}
+	return s.db.Model(site).Updates(updates).Error
+}
+
+// GetRunDir 运行目录读取（含 root 与子目录列表）。
+func (s *SiteService) GetRunDir(ctx context.Context, id uint) (map[string]any, error) {
+	site, err := s.siteByID(id)
+	if err != nil {
+		return nil, err
+	}
+	ac, err := s.client()
+	if err != nil {
+		return nil, err
+	}
+	hostDir := path.Join(nginxWwwDir, "sites", site.Name)
+	// 列出站点根目录下的子目录（经 agent files/list）
+	resp, err := agentclient.GetJSON[struct {
+		Entries []struct {
+			Name  string `json:"name"`
+			IsDir bool   `json:"isDir"`
+		} `json:"entries"`
+	}](ac, ctx, "/agent/v1/files/list?path="+escapeURL(hostDir))
+	subdirs := []string{}
+	if err == nil {
+		for _, e := range resp.Entries {
+			if e.IsDir && !strings.HasPrefix(e.Name, ".") {
+				subdirs = append(subdirs, "/"+e.Name)
+			}
+		}
+	}
+	return map[string]any{
+		"root":     siteRoot(site),
+		"hostRoot": hostDir,
+		"runDir":   site.RunDir,
+		"subdirs":  subdirs,
+	}, nil
+}
+
+// UpdateRunDir 更新运行目录并重载（PHP 框架二级目录场景，如 /public）。
+func (s *SiteService) UpdateRunDir(ctx context.Context, id uint, runDir string) error {
+	site, err := s.siteByID(id)
+	if err != nil {
+		return err
+	}
+	runDir = strings.TrimSpace(runDir)
+	if runDir == "/" {
+		runDir = ""
+	}
+	if !runDirSafe(runDir) {
+		return errs.Wrap(errs.ErrBadRequest, "运行目录不合法（需 / 开头、不含 ..，如 /public）")
+	}
+	if err := s.db.Model(site).Update("run_dir", runDir).Error; err != nil {
+		return err
+	}
+	return s.writeConf(ctx, site, confTemplate(site, site.CertDomain != "", parseWaf(site)))
+}
+
+// ApplyCert 将证书库证书绑定到站点并启用 HTTPS（B23）。
+func (s *SiteService) ApplyCert(ctx context.Context, site *model.Site, certID uint, certName string) error {
+	site.CertDomain = certName
+	site.CertID = certID
+	if err := s.db.Model(site).Updates(map[string]any{"cert_domain": certName, "cert_id": certID}).Error; err != nil {
+		return err
+	}
+	return s.writeConf(ctx, site, confTemplate(site, true, parseWaf(site)))
 }
 
 // SiteLogs 读取站点日志（logs 卷内站点级文件，tail 通道）。

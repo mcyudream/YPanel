@@ -15,14 +15,6 @@ type DatabaseAPI struct {
 	DBS *service.DatabaseService
 }
 
-func idParam(c *gin.Context) (uint, error) {
-	id, err := strconv.ParseUint(c.Param("id"), 10, 64)
-	if err != nil || id == 0 {
-		return 0, errs.ErrBadRequest
-	}
-	return uint(id), nil
-}
-
 // List GET /api/v1/database/instances
 func (a *DatabaseAPI) List(c *gin.Context) {
 	out, err := a.DBS.List(c.Request.Context())

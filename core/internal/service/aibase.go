@@ -76,11 +76,28 @@ func (s *AIService) ListProviders() []AIProvider {
 // Presets 内置供应商预设。
 func (s *AIService) Presets() []AIProvider {
 	return []AIProvider{
-		{ID: 0, Name: "智谱 GLM", APIType: "openai", BaseURL: "https://open.bigmodel.cn/api/coding/paas/v4", Model: "glm-4.6"},
 		{ID: 0, Name: "OpenAI", APIType: "openai", BaseURL: "https://api.openai.com/v1", Model: "gpt-4o"},
-		{ID: 0, Name: "Anthropic", APIType: "anthropic", BaseURL: "https://api.anthropic.com", Model: "claude-sonnet-4-20250514"},
+		{ID: 0, Name: "Anthropic Claude", APIType: "anthropic", BaseURL: "https://api.anthropic.com", Model: "claude-sonnet-4-20250514"},
+		{ID: 0, Name: "Google Gemini", APIType: "openai", BaseURL: "https://generativelanguage.googleapis.com/v1beta/openai", Model: "gemini-2.0-flash"},
 		{ID: 0, Name: "DeepSeek", APIType: "openai", BaseURL: "https://api.deepseek.com/v1", Model: "deepseek-chat"},
-		{ID: 0, Name: "Ollama 本地", APIType: "openai", BaseURL: "http://127.0.0.1:11434/v1", Model: "qwen2.5:7b"},
+		{ID: 0, Name: "智谱 GLM", APIType: "openai", BaseURL: "https://open.bigmodel.cn/api/paas/v4", Model: "glm-4.6"},
+		{ID: 0, Name: "Moonshot Kimi", APIType: "openai", BaseURL: "https://api.moonshot.cn/v1", Model: "moonshot-v1-32k"},
+		{ID: 0, Name: "阿里通义 Qwen", APIType: "openai", BaseURL: "https://dashscope.aliyuncs.com/compatible-mode/v1", Model: "qwen-plus"},
+		{ID: 0, Name: "字节豆包（火山方舟）", APIType: "openai", BaseURL: "https://ark.cn-beijing.volces.com/api/v3", Model: "doubao-pro-32k"},
+		{ID: 0, Name: "MiniMax", APIType: "openai", BaseURL: "https://api.minimax.chat/v1", Model: "abab6.5s-chat"},
+		{ID: 0, Name: "零一万物 Yi", APIType: "openai", BaseURL: "https://api.lingyiwanwu.com/v1", Model: "yi-large"},
+		{ID: 0, Name: "百度文心", APIType: "openai", BaseURL: "https://qianfan.baidubce.com/v2", Model: "ernie-4.0-8k"},
+		{ID: 0, Name: "讯飞星火", APIType: "openai", BaseURL: "https://spark-api-open.xf-yun.com/v1", Model: "generalv3.5"},
+		{ID: 0, Name: "硅基流动 SiliconCloud", APIType: "openai", BaseURL: "https://api.siliconflow.cn/v1", Model: "deepseek-ai/DeepSeek-V3"},
+		{ID: 0, Name: "xAI Grok", APIType: "openai", BaseURL: "https://api.x.ai/v1", Model: "grok-3"},
+		{ID: 0, Name: "Mistral", APIType: "openai", BaseURL: "https://api.mistral.ai/v1", Model: "mistral-large-latest"},
+		{ID: 0, Name: "Groq", APIType: "openai", BaseURL: "https://api.groq.com/openai/v1", Model: "llama-3.3-70b-versatile"},
+		{ID: 0, Name: "Together", APIType: "openai", BaseURL: "https://api.together.xyz/v1", Model: "meta-llama/Llama-3.3-70B-Instruct-Turbo"},
+		{ID: 0, Name: "OpenRouter", APIType: "openai", BaseURL: "https://openrouter.ai/api/v1", Model: "openai/gpt-4o"},
+		{ID: 0, Name: "百川 Baichuan", APIType: "openai", BaseURL: "https://api.baichuan-ai.com/v1", Model: "Baichuan4"},
+		{ID: 0, Name: "Cohere", APIType: "openai", BaseURL: "https://api.cohere.com/compatibility/v1", Model: "command-r-plus"},
+		{ID: 0, Name: "Azure OpenAI", APIType: "openai", BaseURL: "https://<resource>.openai.azure.com", Model: "gpt-4o"},
+		{ID: 0, Name: "Ollama 本地", APIType: "openai", BaseURL: "http://127.0.0.1:11434/v1", Model: "llama3.1"},
 	}
 }
 
