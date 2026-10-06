@@ -94,6 +94,7 @@ declare global {
   const useRouter: typeof import('vue-router').useRouter
   const useSlots: typeof import('vue').useSlots
   const useTemplateRef: typeof import('vue').useTemplateRef
+  const useWorkbenchStore: typeof import('../store/modules/app/workbench').useWorkbenchStore
   const watch: typeof import('vue').watch
   const watchEffect: typeof import('vue').watchEffect
   const watchPostEffect: typeof import('vue').watchPostEffect
@@ -104,4 +105,7 @@ declare global {
   // @ts-ignore
   export type { Component, Slot, Slots, ComponentPublicInstance, ComputedRef, DirectiveBinding, ExtractDefaultPropTypes, ExtractPropTypes, ExtractPublicPropTypes, InjectionKey, PropType, Ref, ShallowRef, MaybeRef, MaybeRefOrGetter, VNode, WritableComputedRef } from 'vue'
   import('vue')
+  // @ts-ignore
+  export type { WorkbenchApp, WorkbenchWindow } from '../store/modules/app/workbench'
+  import('../store/modules/app/workbench')
 }

@@ -22,6 +22,10 @@ build_one() {
   cd "$ROOT/core"
   CGO_ENABLED=0 GOOS=$goos GOARCH=$goarch go build -trimpath -ldflags "$LDFLAGS" -o "$ROOT/bin/ypanel-$goos-$goarch" ./cmd/ypanel
   echo "   产出 bin/ypanel-$goos-$goarch"
+  # 多节点 agent 独立分发二进制
+  cd "$ROOT/agent"
+  CGO_ENABLED=0 GOOS=$goos GOARCH=$goarch go build -trimpath -ldflags "$LDFLAGS" -o "$ROOT/bin/ypagent-$goos-$goarch" ./cmd/agent
+  echo "   产出 bin/ypagent-$goos-$goarch"
 }
 case "$TARGET" in
   linux-amd64) build_one linux amd64 ;;

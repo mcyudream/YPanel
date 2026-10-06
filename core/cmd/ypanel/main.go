@@ -62,7 +62,7 @@ func run(ctx context.Context, cfg *config.Config) error {
 	}
 
 	// 本机节点：进程内嵌 agent（loopback）
-	nodes, err := service.NewNodeService(ctx)
+	nodes, err := service.NewNodeService(ctx, gdb)
 	if err != nil {
 		return fmt.Errorf("启动内嵌 agent 失败: %w", err)
 	}

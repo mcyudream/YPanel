@@ -35,6 +35,29 @@ type Setting struct {
 	UpdatedAt time.Time `json:"updatedAt"`
 }
 
+// Node 远程受管节点（local 本机节点不入库，进程内嵌）。
+type Node struct {
+	ID         uint      `gorm:"primaryKey" json:"id"`
+	Name       string    `gorm:"uniqueIndex;size:64;not null" json:"name"`
+	Addr       string    `gorm:"size:255;not null" json:"addr"` // agent 基址 http://host:9527
+	Token      string    `gorm:"size:128;not null" json:"-"`
+	Hostname   string    `gorm:"size:255" json:"hostname"`
+	OS         string    `gorm:"size:64" json:"os"`
+	Arch       string    `gorm:"size:32" json:"arch"`
+	Version    string    `gorm:"size:32" json:"version"`
+	LastSeenAt time.Time `json:"lastSeenAt"`
+	CreatedAt  time.Time `json:"createdAt"`
+	UpdatedAt  time.Time `json:"updatedAt"`
+}
+
+// PairingCode 一次性配对码。
+type PairingCode struct {
+	Code      string    `gorm:"primaryKey;size:16" json:"code"`
+	ExpiredAt time.Time `json:"expiredAt"`
+	Used      bool      `gorm:"not null;default:false" json:"used"`
+	CreatedAt time.Time `json:"createdAt"`
+}
+
 // Site 站点（容器化 nginx vhost）。
 type Site struct {
 	ID         uint      `gorm:"primaryKey" json:"id"`

@@ -3,6 +3,8 @@ import * as echarts from 'echarts'
 import type { SystemOverview } from '@/api/modules/system'
 import apiSystem from '@/api/modules/system'
 
+const router = useRouter()
+
 defineOptions({
   name: 'OverviewIndex',
 })
@@ -138,6 +140,14 @@ const stateCards = computed(() => {
       </template>
       <template #description>
         <div class="flex flex-wrap items-center gap-x-4 gap-y-1 text-sm">
+          <button
+            type="button"
+            class="inline-flex cursor-pointer items-center gap-1 rounded-md border px-2 py-0.5 transition-colors hover:bg-accent/50"
+            title="切换到桌面工作台"
+            @click="router.push('/desktop')"
+          >
+            <YdMorphIcon name="layout-grid" :size="13" /> 桌面工作台
+          </button>
           <span class="flex items-center gap-1"><YdMorphIcon name="monitor" :size="14" /> {{ overview?.hostname || '—' }}</span>
           <span class="flex items-center gap-1"><YdMorphIcon name="hard-drive" :size="14" /> {{ overview?.platform || '—' }} · {{ overview?.arch }}</span>
           <span class="flex items-center gap-1"><YdMorphIcon name="clock" :size="14" /> 已运行 {{ overview ? fmtUptime(overview.uptime) : '—' }}</span>

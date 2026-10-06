@@ -43,6 +43,7 @@ func Setup(d *Deps) (*gin.Engine, error) {
 	cronAPI := &api.CronAPI{DB: d.CronDB(), Cron: d.Cron}
 	dbAPI := &api.DatabaseAPI{DBS: d.DBS}
 	siteAPI := &api.SiteAPI{Sites: d.Sites}
+	nodeAPI := &api.NodeAPI{Nodes: d.Nodes}
 
 	r.GET("/health", func(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{"status": "ok", "version": d.Version})
@@ -51,6 +52,8 @@ func Setup(d *Deps) (*gin.Engine, error) {
 	v1 := r.Group("/api/v1")
 	{
 		v1.POST("/auth/login", authAPI.Login)
+	v1.POST("/pair", nodeAPI.Pair)
+	v1.POST("/pair/heartbeat", nodeAPI.Heartbeat)
 
 		authed := v1.Group("", middleware.Auth(d.Auth))
 		{
@@ -125,6 +128,9 @@ func Setup(d *Deps) (*gin.Engine, error) {
 
 			admin := authed.Group("", middleware.Admin())
 			{
+				admin.GET("/nodes", nodeAPI.List)
+				admin.POST("/nodes/pairing-code", nodeAPI.PairingCode)
+				admin.DELETE("/nodes/:id", nodeAPI.Delete)
 				admin.GET("/users", userAPI.List)
 				admin.POST("/users", userAPI.Create)
 				admin.PUT("/users/:id", userAPI.Update)

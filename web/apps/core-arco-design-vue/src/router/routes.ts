@@ -8,6 +8,7 @@ import CronRoutes from './modules/cron'
 import FileRoutes from './modules/file'
 import IconsRoutes from './modules/icons'
 import ManageRoutes from './modules/manage'
+import NodesRoutes from './modules/nodes'
 import TerminalRoutes from './modules/terminal'
 
 // 固定路由（默认路由）
@@ -18,6 +19,15 @@ const constantRoutes: RouteRecordRaw[] = [
     component: () => import('@/views/login.vue'),
     meta: {
       title: '登录',
+    },
+  },
+  {
+    path: '/desktop',
+    name: 'desktop',
+    component: () => import('@/views/desktop/index.vue'),
+    meta: {
+      title: '桌面工作台',
+      breadcrumb: false,
     },
   },
   {
@@ -96,6 +106,7 @@ const asyncRoutes: RouteRecordMainRaw[] = [
     },
     children: [
       ManageRoutes,
+      NodesRoutes,
     ],
   },
 ]
