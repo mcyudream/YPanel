@@ -1,6 +1,7 @@
 package service
 
 import (
+	"github.com/ypanel/core/internal/wsbus"
 
 	"gorm.io/gorm"
 
@@ -21,6 +22,8 @@ func NewNotificationService(db *gorm.DB) *NotificationService {
 func (s *NotificationService) Push(level, title, content string) {
 	row := &model.Notification{Level: level, Title: title, Content: content}
 	_ = s.db.Create(row).Error
+	// B7：通知事件推送
+	wsbus.Default.Publish("notification", level, title, map[string]any{"content": content})
 }
 
 // List 通知列表（分页由调用方限制条数）。

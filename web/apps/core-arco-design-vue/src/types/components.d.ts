@@ -67,6 +67,7 @@ declare module 'vue' {
     FaToast: typeof import('@fantastic-admin/components')['FaToast']
     FaTooltip: typeof import('@fantastic-admin/components')['FaTooltip']
     FaTrend: typeof import('@fantastic-admin/components')['FaTrend']
+    YdCodeEditor: typeof import('./../components/YdCodeEditor/index.vue')['default']
     YdIconPicker: typeof import('./../components/YdIconPicker/index.vue')['default']
     YdMorphIcon: typeof import('./../components/YdMorphIcon/index.vue')['default']
   }
@@ -129,6 +130,7 @@ declare global {
   const FaToast: typeof import('@fantastic-admin/components')['FaToast']
   const FaTooltip: typeof import('@fantastic-admin/components')['FaTooltip']
   const FaTrend: typeof import('@fantastic-admin/components')['FaTrend']
+  const YdCodeEditor: typeof import('./../components/YdCodeEditor/index.vue')['default']
   const YdIconPicker: typeof import('./../components/YdIconPicker/index.vue')['default']
   const YdMorphIcon: typeof import('./../components/YdMorphIcon/index.vue')['default']
 }

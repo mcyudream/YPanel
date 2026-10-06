@@ -47,6 +47,9 @@ export default defineConfig(({ mode, command }) => {
             if (id.includes('xterm')) {
               return 'vendor-xterm'
             }
+            if (id.includes('monaco-editor')) {
+              return 'vendor-monaco'
+            }
             if (id.includes('arco-design')) {
               return 'vendor-arco'
             }
@@ -99,6 +102,9 @@ export default defineConfig(({ mode, command }) => {
           }
           if (id.includes('xterm')) {
             return 'vendor-xterm'
+          }
+          if (id.includes('monaco-editor')) {
+            return 'vendor-monaco'
           }
           if (id.includes('arco-design')) {
             return 'vendor-arco'

@@ -9,15 +9,22 @@
 export {}
 declare global {
   const EffectScope: typeof import('vue').EffectScope
+  const FILE_ENCODINGS: typeof import('../composables/useTextEncoding').FILE_ENCODINGS
   const acceptHMRUpdate: typeof import('pinia').acceptHMRUpdate
+  const b64ToBytes: typeof import('../composables/useTextEncoding').b64ToBytes
+  const bytesToB64: typeof import('../composables/useTextEncoding').bytesToB64
   const computed: typeof import('vue').computed
   const createApp: typeof import('vue').createApp
   const createPinia: typeof import('pinia').createPinia
   const customRef: typeof import('vue').customRef
+  const decodeWith: typeof import('../composables/useTextEncoding').decodeWith
   const defineAsyncComponent: typeof import('vue').defineAsyncComponent
   const defineComponent: typeof import('vue').defineComponent
   const defineStore: typeof import('pinia').defineStore
+  const detectEncoding: typeof import('../composables/useTextEncoding').detectEncoding
+  const detectEol: typeof import('../composables/useTextEncoding').detectEol
   const effectScope: typeof import('vue').effectScope
+  const encodingLabel: typeof import('../composables/useTextEncoding').encodingLabel
   const getActivePinia: typeof import('pinia').getActivePinia
   const getCurrentInstance: typeof import('vue').getCurrentInstance
   const getCurrentScope: typeof import('vue').getCurrentScope
@@ -29,6 +36,8 @@ declare global {
   const isReadonly: typeof import('vue').isReadonly
   const isRef: typeof import('vue').isRef
   const isShallow: typeof import('vue').isShallow
+  const languageOf: typeof import('../composables/useTextEncoding').languageOf
+  const listFileHistory: typeof import('../composables/useFileHistory').listFileHistory
   const mapActions: typeof import('pinia').mapActions
   const mapGetters: typeof import('pinia').mapGetters
   const mapState: typeof import('pinia').mapState
@@ -53,6 +62,7 @@ declare global {
   const onUpdated: typeof import('vue').onUpdated
   const onWatcherCleanup: typeof import('vue').onWatcherCleanup
   const provide: typeof import('vue').provide
+  const pushFileHistory: typeof import('../composables/useFileHistory').pushFileHistory
   const reactive: typeof import('vue').reactive
   const readonly: typeof import('vue').readonly
   const ref: typeof import('vue').ref
@@ -82,10 +92,12 @@ declare global {
   const useAttrs: typeof import('vue').useAttrs
   const useCssModule: typeof import('vue').useCssModule
   const useCssVars: typeof import('vue').useCssVars
+  const useEventBus: typeof import('../composables/useEventBus').useEventBus
   const useFaDrawer: typeof import('@fantastic-admin/components').useFaDrawer
   const useFaImagePreview: typeof import('@fantastic-admin/components').useFaImagePreview
   const useFaModal: typeof import('@fantastic-admin/components').useFaModal
   const useFaToast: typeof import('@fantastic-admin/components').useFaToast
+  const useFileEditorStore: typeof import('../store/modules/fileEditor').useFileEditorStore
   const useId: typeof import('vue').useId
   const useLink: typeof import('vue-router').useLink
   const useModel: typeof import('vue').useModel
@@ -111,9 +123,21 @@ declare global {
   export type { WorkbenchApp, WorkbenchWindow } from '../store/modules/app/workbench'
   import('../store/modules/app/workbench')
   // @ts-ignore
+  export type { FileEditorTab, FileEditorGroup, FileEditorLayout, FileEditorCursor } from '../store/modules/fileEditor'
+  import('../store/modules/fileEditor')
+  // @ts-ignore
+  export type { BusEvent } from '../composables/useEventBus'
+  import('../composables/useEventBus')
+  // @ts-ignore
+  export type { FileHistoryEntry } from '../composables/useFileHistory'
+  import('../composables/useFileHistory')
+  // @ts-ignore
   export type { PollingOptions } from '../composables/usePolling'
   import('../composables/usePolling')
   // @ts-ignore
   export type { ReconnectingWsOptions } from '../composables/useReconnectingWs'
   import('../composables/useReconnectingWs')
+  // @ts-ignore
+  export type { FileEncodingOption } from '../composables/useTextEncoding'
+  import('../composables/useTextEncoding')
 }

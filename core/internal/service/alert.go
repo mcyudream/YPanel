@@ -134,6 +134,14 @@ func (s *AlertService) notify(ctx context.Context, url, typ, msg string) {
 		payload = map[string]any{"msgtype": "text", "text": map[string]string{"content": msg}}
 	case "wecom":
 		payload = map[string]any{"msgtype": "text", "text": map[string]string{"content": msg}}
+	case "telegram":
+		// B15：TG bot API——url 即 https://api.telegram.org/bot<token>/sendMessage，chat_id 经 query
+		if i := strings.Index(url, "?chat_id="); i > 0 {
+			payload = map[string]any{"chat_id": url[i+len("?chat_id="):], "text": msg}
+			url = url[:i]
+		} else {
+			return
+		}
 	default:
 		payload = map[string]any{"text": msg, "source": "ypanel", "time": time.Now().Format(time.RFC3339)}
 	}

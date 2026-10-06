@@ -124,6 +124,11 @@ func (m *Manager) statEntry(path string, isSymlink bool) (dto.FileEntry, error) 
 
 // Read 读文本文件，超限截断。
 func (m *Manager) Read(path string) (*dto.FileReadResp, error) {
+	return m.ReadOpts(path, ReadOptions{})
+}
+
+// ReadOpts 读文件，支持 raw（原始字节 + 二进制检测）与指定编码解码。
+func (m *Manager) ReadOpts(path string, opts ReadOptions) (*dto.FileReadResp, error) {
 	abs, err := m.Normalize(path)
 	if err != nil {
 		return nil, err
@@ -153,24 +158,48 @@ func (m *Manager) Read(path string) (*dto.FileReadResp, error) {
 	if truncated {
 		n = readLimit
 	}
-	return &dto.FileReadResp{
+	raw := buf[:n]
+	resp := &dto.FileReadResp{
 		Path:      abs,
-		Content:   string(buf[:n]),
 		Size:      st.Size(),
 		Truncated: truncated,
-	}, nil
+	}
+	if opts.Raw {
+		resp.ContentB64 = b64Encode(raw)
+		resp.IsBinary = isBinaryData(raw)
+		if _, canon, derr := decodeBytes(raw, opts.Encoding); derr == nil {
+			resp.Encoding = canon
+		}
+		return resp, nil
+	}
+	decoded, canon, derr := decodeBytes(raw, opts.Encoding)
+	if derr != nil {
+		return nil, errs.Wrap(errs.ErrBadRequest, derr.Error())
+	}
+	resp.Content = string(decoded)
+	resp.Encoding = canon
+	return resp, nil
 }
 
 // Write 写文件（覆盖），自动创建父目录。
 func (m *Manager) Write(path, content string) error {
+	return m.WriteEncoded(path, content, "")
+}
+
+// WriteEncoded 写文件，content 按 encoding（白名单）编码落盘；encoding 空/utf-8 原样写。
+func (m *Manager) WriteEncoded(path, content, encodingID string) error {
 	abs, err := m.Normalize(path)
 	if err != nil {
 		return err
 	}
+	data, err := encodeBytes([]byte(content), encodingID)
+	if err != nil {
+		return errs.Wrap(errs.ErrBadRequest, err.Error())
+	}
 	if err := os.MkdirAll(filepath.Dir(abs), 0o755); err != nil {
 		return errs.Wrapc(errs.CodeFileOpFailed, err.Error())
 	}
-	if err := os.WriteFile(abs, []byte(content), 0o644); err != nil {
+	if err := os.WriteFile(abs, data, 0o644); err != nil {
 		return errs.Wrapc(errs.CodeFileOpFailed, err.Error())
 	}
 	return nil

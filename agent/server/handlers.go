@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/gorilla/websocket"
+	"github.com/ypanel/agent/internal/files"
 	"github.com/ypanel/agent/internal/term"
 	"github.com/ypanel/shared/dto"
 	"github.com/ypanel/shared/errs"
@@ -76,7 +77,11 @@ func (s *Server) handleFileList(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleFileRead(w http.ResponseWriter, r *http.Request) {
-	out, err := s.files.Read(qParam(r, "path"))
+	opts := files.ReadOptions{
+		Raw:      qParam(r, "raw") == "1",
+		Encoding: qParam(r, "encoding"),
+	}
+	out, err := s.files.ReadOpts(qParam(r, "path"), opts)
 	if err != nil {
 		writeErr(w, err)
 		return
@@ -113,7 +118,7 @@ func (s *Server) handleFileWrite(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, err)
 		return
 	}
-	if err := s.files.Write(req.Path, req.Content); err != nil {
+	if err := s.files.WriteEncoded(req.Path, req.Content, req.Encoding); err != nil {
 		writeErr(w, err)
 		return
 	}

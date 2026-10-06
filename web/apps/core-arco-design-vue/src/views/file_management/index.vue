@@ -3,12 +3,14 @@ import type { FileEntry } from '@/api/modules/file'
 import apiFile from '@/api/modules/file'
 import { fmtBytes } from '@/utils/format'
 import { useFaModal } from '@fantastic-admin/components'
+import FileEditorWorkspace from './editor/Workspace.vue'
 
 defineOptions({
   name: 'FileManagementIndex',
 })
 
 const appAccountStore = useAppAccountStore()
+const fileEditorStore = useFileEditorStore()
 
 const cwd = ref('/')
 const entries = ref<FileEntry[]>([])
@@ -132,40 +134,9 @@ async function doDelete() {
   })
 }
 
-// ---- 编辑器 ----
-const editorVisible = ref(false)
-const editorPath = ref('')
-const editorContent = ref('')
-const editorTruncated = ref(false)
-const editorSaving = ref(false)
-
+// ---- 编辑器（VS Code 式工作台弹窗） ----
 async function openEditor(entry: FileEntry) {
-  try {
-    const res = await apiFile.read(entry.path)
-    editorPath.value = res.path
-    editorContent.value = res.content
-    editorTruncated.value = res.truncated
-    editorVisible.value = true
-  }
-  catch (e: any) {
-    useFaToast().error('读取失败', { description: e?.message })
-  }
-}
-
-async function saveEditor() {
-  editorSaving.value = true
-  try {
-    await apiFile.write(editorPath.value, editorContent.value)
-    useFaToast().success('已保存')
-    editorVisible.value = false
-    load()
-  }
-  catch (e: any) {
-    useFaToast().error('保存失败', { description: e?.message })
-  }
-  finally {
-    editorSaving.value = false
-  }
+  await fileEditorStore.openWorkspace(entry.path)
 }
 
 // ---- 上传 / 下载 ----
@@ -521,30 +492,8 @@ onMounted(() => load('/'))
       </template>
     </FaModal>
 
-    <!-- 文本编辑器 -->
-    <FaModal
-      v-model="editorVisible"
-      :title="`编辑：${editorPath}`"
-      class="max-w-4xl!"
-      :destroy-on-close="true"
-    >
-      <div v-if="editorTruncated" class="mb-2 rounded-md border border-amber-300 bg-amber-50 p-2 text-xs text-amber-700 dark:bg-amber-950/30">
-        文件较大，仅显示前 1 MiB；保存将覆盖整个文件，请谨慎操作。
-      </div>
-      <textarea
-        v-model="editorContent"
-        class="h-96 w-full resize-y rounded-md border border-input bg-background p-3 font-mono text-[13px] leading-relaxed outline-none focus:ring-1 focus:ring-primary"
-        spellcheck="false"
-      />
-      <template #footer>
-        <FaButton variant="outline" @click="editorVisible = false">
-          取消
-        </FaButton>
-        <FaButton :loading="editorSaving" @click="saveEditor">
-          保存
-        </FaButton>
-      </template>
-    </FaModal>
+    <!-- 文件编辑工作台（VS Code 式弹窗） -->
+    <FileEditorWorkspace />
 
     <!-- 隐藏上传控件 -->
     <input ref="uploadInput" type="file" multiple class="hidden" @change="onUploadChange">

@@ -24,8 +24,9 @@ type FileListResp struct {
 
 // FileWriteReq 写文本文件。
 type FileWriteReq struct {
-	Path    string `json:"path" binding:"required"`
-	Content string `json:"content"`
+	Path     string `json:"path" binding:"required"`
+	Content  string `json:"content"`
+	Encoding string `json:"encoding,omitempty"` // 落盘编码，默认 utf-8（白名单见 agent files 包）
 }
 
 // FileMkdirReq 创建目录（递归）。
@@ -50,6 +51,10 @@ type FileReadResp struct {
 	Content   string `json:"content"`
 	Size      int64  `json:"size"`
 	Truncated bool   `json:"truncated"` // 超出读取上限被截断
+	// 以下字段仅 raw=1 读取时返回（编辑器编码检测用）
+	ContentB64 string `json:"contentB64,omitempty"` // 原始字节 base64
+	Encoding   string `json:"encoding,omitempty"`   // 请求中实际应用的服务端编码
+	IsBinary   bool   `json:"isBinary,omitempty"`   // 检测到 NUL 字节，视为二进制
 }
 
 // FileChmodReq 权限修改请求。

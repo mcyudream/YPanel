@@ -67,6 +67,8 @@ type CronTask struct {
 	Name        string    `json:"name"`
 	Cron        string    `json:"cron"`
 	Command     string    `json:"command"`
+	Type        string    `json:"type,omitempty"`
+	Payload     string    `json:"payload,omitempty"`
 	Enabled     bool      `json:"enabled"`
 	TimeoutSecs int       `json:"timeoutSecs"`
 	LastRunAt   *time.Time `json:"lastRunAt"`
@@ -79,6 +81,8 @@ type CronTaskCreateReq struct {
 	Name        string `json:"name" binding:"required,max=64"`
 	Cron        string `json:"cron" binding:"required"`
 	Command     string `json:"command" binding:"required,max=8192"`
+	Type        string `json:"type"`                          // B4：shell（默认）/ db_backup / site_backup / container_op / script
+	Payload     string `json:"payload"`                       // 类型参数 JSON
 	TimeoutSecs int    `json:"timeoutSecs"` // 0 = 300
 }
 
@@ -87,6 +91,8 @@ type CronTaskUpdateReq struct {
 	Name        *string `json:"name" binding:"omitempty,max=64"`
 	Cron        *string `json:"cron" binding:"omitempty"`
 	Command     *string `json:"command" binding:"omitempty,max=8192"`
+	Type        *string `json:"type" binding:"omitempty,oneof=shell db_backup site_backup container_op script"`
+	Payload     *string `json:"payload"`
 	TimeoutSecs *int    `json:"timeoutSecs" binding:"omitempty,min=1,max=86400"`
 	Enabled     *bool   `json:"enabled"`
 }

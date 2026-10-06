@@ -160,6 +160,8 @@ type CronTask struct {
 	Name        string     `gorm:"size:64;not null" json:"name"`
 	Cron        string     `gorm:"size:32;not null" json:"cron"`
 	Command     string     `gorm:"type:text;not null" json:"command"`
+	Type        string     `gorm:"size:16;not null;default:shell" json:"type"`  // shell / db_backup / site_backup / container_op / script
+	Payload     string     `gorm:"type:text" json:"payload"`                    // 类型参数 JSON（B4：{dbId|siteName|container|action|scriptId}）
 	Enabled     bool       `gorm:"not null;default:true" json:"enabled"`
 	TimeoutSecs int        `gorm:"not null;default:300" json:"timeoutSecs"`
 	LastRunAt   *time.Time `json:"lastRunAt"`
@@ -192,6 +194,15 @@ type AlertRule struct {
 	Enabled     bool      `gorm:"not null;default:true" json:"enabled"`
 	CreatedAt   time.Time `json:"createdAt"`
 	UpdatedAt   time.Time `json:"updatedAt"`
+}
+
+// Script 脚本库（B13：计划任务可引用）。
+type Script struct {
+	ID        uint      `gorm:"primaryKey" json:"id"`
+	Name      string    `gorm:"size:64;not null" json:"name"`
+	Content   string    `gorm:"type:text;not null" json:"content"`
+	CreatedAt time.Time `json:"createdAt"`
+	UpdatedAt time.Time `json:"updatedAt"`
 }
 
 // CronTaskLog 计划任务执行记录。

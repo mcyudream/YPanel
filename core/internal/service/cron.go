@@ -2,6 +2,8 @@ package service
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
 	"log/slog"
 	"sync"
 	"time"
@@ -11,14 +13,17 @@ import (
 
 	"github.com/ypanel/core/internal/agentclient"
 	"github.com/ypanel/core/internal/model"
+	"github.com/ypanel/core/internal/wsbus"
 	"github.com/ypanel/shared/dto"
 	"github.com/ypanel/shared/errs"
 )
 
 // Cron 计划任务调度器：core 侧调度，执行经 agent 受控 exec。
 type Cron struct {
-	db    *gorm.DB
-	nodes *NodeService
+	db     *gorm.DB
+	nodes  *NodeService
+	SiteBk *SiteBackupService
+	DBSvc  *DatabaseService
 
 	mu      sync.Mutex
 	inner   *cron.Cron
@@ -109,8 +114,81 @@ func (c *Cron) RunTask(t *model.CronTask, trigger string) {
 		return
 	}
 
-	out, execErr := agentclient.DoJSON[dto.ExecReq, dto.ExecResp](ac, context.Background(),
-		"POST", "/agent/v1/exec", &dto.ExecReq{Command: t.Command, TimeoutSecs: t.TimeoutSecs})
+	// B4：任务类型分支（shell 为默认；其余类型由内部服务执行或按 payload 组装命令）
+	var output string
+	var timedOut, exitFail bool
+	var execErr error
+	switch t.Type {
+	case "db_backup":
+		var payload struct {
+			DbId uint `json:"dbId"`
+		}
+		_ = json.Unmarshal([]byte(t.Payload), &payload)
+		if c.DBSvc == nil {
+			execErr = fmt.Errorf("数据库服务未就绪")
+			break
+		}
+		var res map[string]any
+		res, execErr = c.DBSvc.CreateBackup(context.Background(), payload.DbId)
+		output = fmt.Sprintf("备份完成: %v", res["file"])
+	case "site_backup":
+		var payload struct {
+			SiteName string `json:"siteName"`
+		}
+		_ = json.Unmarshal([]byte(t.Payload), &payload)
+		if c.SiteBk == nil {
+			execErr = fmt.Errorf("站点备份服务未就绪")
+			break
+		}
+		var res map[string]any
+		res, execErr = c.SiteBk.Backup(context.Background(), payload.SiteName)
+		output = fmt.Sprintf("站点备份完成: %v", res["file"])
+	case "container_op":
+		var payload struct {
+			Container string `json:"container"`
+			Action    string `json:"action"`
+		}
+		_ = json.Unmarshal([]byte(t.Payload), &payload)
+		if payload.Action != "start" && payload.Action != "stop" && payload.Action != "restart" {
+			execErr = fmt.Errorf("不支持的容器操作: %s", payload.Action)
+			break
+		}
+		var res *dto.ExecResp
+		res, execErr = agentclient.DoJSON[dto.ExecReq, dto.ExecResp](ac, context.Background(),
+			"POST", "/agent/v1/exec", &dto.ExecReq{Command: fmt.Sprintf("docker %s %s", payload.Action, payload.Container), TimeoutSecs: t.TimeoutSecs})
+		if res != nil {
+			output, timedOut, exitFail = res.Output, res.TimedOut, res.ExitCode != 0
+		}
+	case "script":
+		content := t.Command
+		var payload struct {
+			ScriptId uint `json:"scriptId"`
+		}
+		_ = json.Unmarshal([]byte(t.Payload), &payload)
+		if payload.ScriptId > 0 {
+			var sc model.Script
+			if err := c.db.First(&sc, payload.ScriptId).Error; err == nil {
+				content = sc.Content
+			} else {
+				execErr = fmt.Errorf("脚本不存在: %d", payload.ScriptId)
+			}
+		}
+		if execErr == nil {
+			var res *dto.ExecResp
+			res, execErr = agentclient.DoJSON[dto.ExecReq, dto.ExecResp](ac, context.Background(),
+				"POST", "/agent/v1/exec", &dto.ExecReq{Command: content, TimeoutSecs: t.TimeoutSecs})
+			if res != nil {
+				output, timedOut, exitFail = res.Output, res.TimedOut, res.ExitCode != 0
+			}
+		}
+	default:
+		var res *dto.ExecResp
+		res, execErr = agentclient.DoJSON[dto.ExecReq, dto.ExecResp](ac, context.Background(),
+			"POST", "/agent/v1/exec", &dto.ExecReq{Command: t.Command, TimeoutSecs: t.TimeoutSecs})
+		if res != nil {
+			output, timedOut, exitFail = res.Output, res.TimedOut, res.ExitCode != 0
+		}
+	}
 
 	end := time.Now()
 	logRow.EndAt = &end
@@ -119,8 +197,8 @@ func (c *Cron) RunTask(t *model.CronTask, trigger string) {
 		logRow.Success = false
 		logRow.Output = tail(execErr.Error(), logOutputCap)
 	} else {
-		logRow.Success = !out.TimedOut && out.ExitCode == 0
-		logRow.Output = tail(out.Output, logOutputCap)
+		logRow.Success = !timedOut && !exitFail
+		logRow.Output = tail(output, logOutputCap)
 	}
 	if err := c.db.Model(logRow).Updates(map[string]any{
 		"end_at": logRow.EndAt, "duration_ms": logRow.DurationMs,
@@ -136,6 +214,16 @@ func (c *Cron) RunTask(t *model.CronTask, trigger string) {
 	if !logRow.Success {
 		slog.Warn("cron 任务执行失败", "task", t.Name, "trigger", trigger, "output", firstLine(logRow.Output))
 	}
+	// B7：任务事件推送（WS 总线）
+	typ := "success"
+	title := fmt.Sprintf("计划任务完成: %s", t.Name)
+	if !logRow.Success {
+		typ = "failed"
+		title = fmt.Sprintf("计划任务失败: %s", t.Name)
+	}
+	wsbus.Default.Publish("task", typ, title, map[string]any{
+		"taskId": t.ID, "name": t.Name, "trigger": trigger, "success": logRow.Success,
+	})
 }
 
 // RunNow 手动立即执行（异步）。

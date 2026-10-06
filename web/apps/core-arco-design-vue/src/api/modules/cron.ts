@@ -5,6 +5,8 @@ export interface CronTask {
   name: string
   cron: string
   command: string
+  type?: string
+  payload?: string
   enabled: boolean
   timeoutSecs: number
   lastRunAt?: string | null
@@ -34,7 +36,7 @@ export default {
     const res = await api.get(`api/v1/cron/tasks?page=${page}&pageSize=${pageSize}`)
     return res.data as PageResp<CronTask>
   },
-  create: (data: { name: string, cron: string, command: string, timeoutSecs?: number }) =>
+  create: (data: { name: string, cron: string, command: string, timeoutSecs?: number, type?: string, payload?: string }) =>
     api.post('api/v1/cron/tasks', data),
   update: (id: number, data: { name?: string, cron?: string, command?: string, timeoutSecs?: number, enabled?: boolean }) =>
     api.put(`api/v1/cron/tasks/${id}`, data),
@@ -45,4 +47,22 @@ export default {
     const res = await api.get(`api/v1/cron/logs${q}`)
     return res.data as PageResp<CronTaskLog>
   },
+}
+
+// B13：脚本库
+export interface ScriptItem {
+  id: number
+  name: string
+  content: string
+  createdAt: string
+}
+
+export const scriptApi = {
+  list: async () => {
+    const res = await api.get('api/v1/scripts', { silent: true })
+    return res.data as ScriptItem[]
+  },
+  create: (data: { name: string, content: string }) => api.post('api/v1/scripts', data),
+  update: (id: number, data: { name?: string, content?: string }) => api.put(`api/v1/scripts/${id}`, data),
+  remove: (id: number) => api.delete(`api/v1/scripts/${id}`),
 }

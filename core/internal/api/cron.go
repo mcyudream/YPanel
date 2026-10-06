@@ -37,7 +37,7 @@ func (a *CronAPI) List(c *gin.Context) {
 	for i := range rows {
 		t := &rows[i]
 		items = append(items, dto.CronTask{
-			ID: t.ID, Name: t.Name, Cron: t.Cron, Command: t.Command,
+			ID: t.ID, Name: t.Name, Cron: t.Cron, Command: t.Command, Type: t.Type, Payload: t.Payload,
 			Enabled: t.Enabled, TimeoutSecs: t.TimeoutSecs,
 			LastRunAt: t.LastRunAt, LastSuccess: t.LastSuccess, CreatedAt: t.CreatedAt,
 		})
@@ -59,7 +59,11 @@ func (a *CronAPI) Create(c *gin.Context) {
 	if timeout <= 0 {
 		timeout = 300
 	}
-	row := model.CronTask{Name: req.Name, Cron: req.Cron, Command: req.Command, Enabled: true, TimeoutSecs: timeout}
+		taskType := req.Type
+	if taskType == "" {
+		taskType = "shell"
+	}
+	row := model.CronTask{Name: req.Name, Cron: req.Cron, Command: req.Command, Type: taskType, Payload: req.Payload, Enabled: true, TimeoutSecs: timeout}
 	if err := a.DB.Create(&row).Error; err != nil {
 		respErr(c, err)
 		return

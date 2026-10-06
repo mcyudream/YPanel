@@ -31,8 +31,37 @@ func main() {
 	case cfg.ResetAdmin != "":
 		resetAdmin(cfg)
 		return
+	case flag.NArg() > 0 && flag.Arg(0) == "version":
+		fmt.Println("YPanel", version)
+		return
+	case flag.NArg() > 0 && flag.Arg(0) == "backup":
+		gdb, err := db.Open(cfg.DataDir)
+		if err != nil {
+			os.Exit(1)
+		}
+		settings := service.NewSettingService(gdb)
+		_, _ = settings.GetOrCreate("jwt_secret", "")
+		bp := service.NewPanelBackupService(nil)
+		res, err := bp.Create(context.Background())
+		if err != nil {
+			slog.Error("备份失败", "err", err)
+			os.Exit(1)
+		}
+		fmt.Printf("备份完成: %v\n", res["file"])
+		return
+	case flag.NArg() > 0 && flag.Arg(0) == "clean-cache":
+		gdb, err := db.Open(cfg.DataDir)
+		if err != nil {
+			os.Exit(1)
+		}
+		if err := gdb.Exec("DELETE FROM metric_records WHERE at < datetime('now', '-30 days')").Error; err != nil {
+			slog.Error("清理失败", "err", err)
+			os.Exit(1)
+		}
+		fmt.Println("历史监控缓存已清理（保留 30 天）")
+		return
 	case flag.NArg() > 0:
-		fmt.Fprintf(os.Stderr, "未知命令: %s\n可用: ypanel [--port] [--data] | ypanel -reset-admin <user>\n", flag.Arg(0))
+		fmt.Fprintf(os.Stderr, "未知命令: %s\n可用: ypanel [--port] [--data] | ypanel version | backup | clean-cache | -reset-admin <user>\n", flag.Arg(0))
 		os.Exit(2)
 	}
 
@@ -67,16 +96,19 @@ func run(ctx context.Context, cfg *config.Config) error {
 		return fmt.Errorf("启动内嵌 agent 失败: %w", err)
 	}
 
-	// 计划任务调度器
+	// 数据库实例管理（凭据加密密钥由 JWT 密钥派生）
+	dbSvc := service.NewDatabaseService(gdb, nodes, string(auth.Secret()))
+	siteSvc := service.NewSiteService(gdb, nodes)
+
+	// 计划任务调度器（B4：依赖数据库备份/站点备份服务）
 	cronSvc := service.NewCron(gdb, nodes)
+	cronSvc.DBSvc = dbSvc
+	cronSvc.SiteBk = service.NewSiteBackupService(nodes)
+	scriptSvc := service.NewScriptService(gdb)
 	if err := cronSvc.Start(); err != nil {
 		return fmt.Errorf("启动计划任务调度失败: %w", err)
 	}
 	defer cronSvc.Stop()
-
-	// 数据库实例管理（凭据加密密钥由 JWT 密钥派生）
-	dbSvc := service.NewDatabaseService(gdb, nodes, string(auth.Secret()))
-	siteSvc := service.NewSiteService(gdb, nodes)
 	marketSvc := service.NewMarketService(gdb, nodes)
 	marketStoreSvc := service.NewMarketStoreService(gdb, nodes)
 	fwSvc := service.NewFirewallService(nodes, cfg.Port)
@@ -97,6 +129,7 @@ func run(ctx context.Context, cfg *config.Config) error {
 	}
 	r, err := router.Setup(&router.Deps{
 		Auth: auth, Nodes: nodes, Settings: settings, Cron: cronSvc, DBS: dbSvc, Sites: siteSvc,
+		Scripts: scriptSvc, DBSvc: dbSvc,
 		Market: marketSvc, FW: fwSvc, Alerts: alertSvc,
 		Notif: notifSvc, PanelBP: service.NewPanelBackupService(nodes), Hist: histSvc,
 		F2B: f2bSvc, DBAdmin: dbAdminSvc, SU: suSvc, MarketStore: marketStoreSvc, RT: rtSvc,

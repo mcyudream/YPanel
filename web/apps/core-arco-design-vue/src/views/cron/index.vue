@@ -24,20 +24,20 @@ async function load() {
 const editorVisible = ref(false)
 const isCreate = ref(false)
 const editorId = ref<number>(0)
-const form = ref({ name: '', cron: '*/5 * * * *', command: '', timeoutSecs: 300 })
+const form = ref({ name: '', cron: '*/5 * * * *', command: '', timeoutSecs: 300, type: 'shell', payload: '' })
 const saving = ref(false)
 
 function openCreate() {
   isCreate.value = true
   editorId.value = 0
-  form.value = { name: '', cron: '*/5 * * * *', command: '', timeoutSecs: 300 }
+  form.value = { name: '', cron: '*/5 * * * *', command: '', timeoutSecs: 300, type: 'shell', payload: '' }
   editorVisible.value = true
 }
 
 function openEdit(t: CronTask) {
   isCreate.value = false
   editorId.value = t.id
-  form.value = { name: t.name, cron: t.cron, command: t.command, timeoutSecs: t.timeoutSecs }
+  form.value = { name: t.name, cron: t.cron, command: t.command, timeoutSecs: t.timeoutSecs, type: t.type || 'shell', payload: t.payload || '' }
   editorVisible.value = true
 }
 
@@ -247,6 +247,41 @@ onMounted(load)
           <FaInput v-model="form.name" placeholder="如：日志清理" class="flex-1" />
         </div>
         <div class="flex items-center gap-3">
+          <span class="w-24 shrink-0 text-sm text-muted-foreground">任务类型</span>
+          <select v-model="form.type" class="h-9 flex-1 rounded-md border bg-background px-2 text-sm outline-none focus:border-primary">
+            <option value="shell">Shell 命令</option>
+            <option value="db_backup">数据库备份</option>
+            <option value="site_backup">站点备份</option>
+            <option value="container_op">容器操作</option>
+            <option value="script">引用脚本</option>
+          </select>
+        </div>
+        <div v-if="form.type === 'shell'" class="flex items-start gap-3">
+          <span class="w-24 shrink-0 text-sm text-muted-foreground">命令</span>
+          <textarea
+            v-model="form.command"
+            class="h-24 w-full flex-1 resize-y rounded-md border border-input bg-background p-2 font-mono text-[13px] outline-none focus:ring-1 focus:ring-primary"
+            placeholder="sh 命令，如：find /var/log -name '*.log' -mtime +7 -delete"
+            spellcheck="false"
+          />
+        </div>
+        <div v-if="form.type === 'db_backup'" class="flex items-center gap-3">
+          <span class="w-24 shrink-0 text-sm text-muted-foreground">数据库实例 ID</span>
+          <FaInput v-model="form.payload" type="number" placeholder="实例 ID（见数据库页）" class="flex-1" />
+        </div>
+        <div v-if="form.type === 'site_backup'" class="flex items-center gap-3">
+          <span class="w-24 shrink-0 text-sm text-muted-foreground">站点名</span>
+          <FaInput v-model="form.payload" placeholder="如 demo" class="flex-1" />
+        </div>
+        <div v-if="form.type === 'container_op'" class="flex items-center gap-3">
+          <span class="w-24 shrink-0 text-sm text-muted-foreground">容器与操作</span>
+          <FaInput v-model="form.payload" placeholder='{"container":"web","action":"restart"}' class="flex-1" />
+        </div>
+        <div v-if="form.type === 'script'" class="flex items-center gap-3">
+          <span class="w-24 shrink-0 text-sm text-muted-foreground">脚本 ID</span>
+          <FaInput v-model="form.payload" type="number" placeholder="脚本库中的 ID" class="flex-1" />
+        </div>
+        <div class="flex items-center gap-3">
           <span class="w-24 shrink-0 text-sm text-muted-foreground">cron 表达式</span>
           <FaInput v-model="form.cron" placeholder="分 时 日 月 周，如 */5 * * * *" class="flex-1" />
         </div>
@@ -260,15 +295,6 @@ onMounted(load)
           >
             {{ preset }}
           </button>
-        </div>
-        <div class="flex items-start gap-3">
-          <span class="w-24 shrink-0 text-sm text-muted-foreground">命令</span>
-          <textarea
-            v-model="form.command"
-            class="h-24 w-full flex-1 resize-y rounded-md border border-input bg-background p-2 font-mono text-[13px] outline-none focus:ring-1 focus:ring-primary"
-            placeholder="sh 命令，如：find /var/log -name '*.log' -mtime +7 -delete"
-            spellcheck="false"
-          />
         </div>
         <div class="flex items-center gap-3">
           <span class="w-24 shrink-0 text-sm text-muted-foreground">超时（秒）</span>

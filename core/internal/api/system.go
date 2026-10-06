@@ -62,9 +62,16 @@ func (f *FileAPI) List(c *gin.Context) {
 	respOK(c, out)
 }
 
-// Read GET /api/v1/files/read?path=
+// Read GET /api/v1/files/read?path=&raw=&encoding=
 func (f *FileAPI) Read(c *gin.Context) {
-	out, err := agentclient.GetJSON[dto.FileReadResp](f.client(c), c.Request.Context(), "/agent/v1/files/read?path="+escape(c.Query("path")))
+	q := "/agent/v1/files/read?path=" + escape(c.Query("path"))
+	if c.Query("raw") != "" {
+		q += "&raw=" + escape(c.Query("raw"))
+	}
+	if c.Query("encoding") != "" {
+		q += "&encoding=" + escape(c.Query("encoding"))
+	}
+	out, err := agentclient.GetJSON[dto.FileReadResp](f.client(c), c.Request.Context(), q)
 	if err != nil {
 		respErr(c, err)
 		return

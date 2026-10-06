@@ -11,6 +11,7 @@ import (
 	"github.com/ypanel/core/internal/middleware"
 	"github.com/ypanel/core/internal/service"
 	"github.com/ypanel/core/internal/web"
+	"github.com/ypanel/core/internal/wsbus"
 )
 
 // Deps 路由依赖。
@@ -19,6 +20,8 @@ type Deps struct {
 	Nodes    *service.NodeService
 	Settings *service.SettingService
 	Cron     *service.Cron
+	Scripts  *service.ScriptService
+	DBSvc    *service.DatabaseService
 	DBS      *service.DatabaseService
 	Sites    *service.SiteService
 	Market   *service.MarketService
@@ -55,6 +58,7 @@ func Setup(d *Deps) (*gin.Engine, error) {
 	setAPI := &api.SettingsAPI{Settings: d.Settings}
 	composeAPI := &api.ComposeAPI{Nodes: d.Nodes}
 	cronAPI := &api.CronAPI{DB: d.CronDB(), Cron: d.Cron}
+	scriptAPI := &api.ScriptAPI{Scripts: d.Scripts}
 	dbAPI := &api.DatabaseAPI{DBS: d.DBS}
 	siteAPI := &api.SiteAPI{Sites: d.Sites}
 	siteConfAPI := &api.SiteConfAPI{Sites: d.Sites}
@@ -82,6 +86,10 @@ func Setup(d *Deps) (*gin.Engine, error) {
 	{
 		v1.POST("/auth/login", authAPI.Login)
 	v1.GET("/auth/2fa/status", authAPI.TwoFAStatus)
+	v1.GET("/ws", wsbus.HandleGET(func(t string) error {
+			_, err := d.Auth.ParseToken(t)
+			return err
+		}))
 	v1.POST("/pair", nodeAPI.Pair)
 	v1.POST("/pair/heartbeat", nodeAPI.Heartbeat)
 
@@ -125,6 +133,10 @@ func Setup(d *Deps) (*gin.Engine, error) {
 			authed.POST("/compose/service-action", composeAPI.ServiceAction)
 			authed.GET("/compose/logs", composeAPI.Logs)
 
+			authed.GET("/scripts", scriptAPI.List)
+			authed.POST("/scripts", scriptAPI.Create)
+			authed.PUT("/scripts/:id", scriptAPI.Update)
+			authed.DELETE("/scripts/:id", scriptAPI.Delete)
 			authed.GET("/cron/tasks", cronAPI.List)
 			authed.POST("/cron/tasks", cronAPI.Create)
 			authed.PUT("/cron/tasks/:id", cronAPI.Update)

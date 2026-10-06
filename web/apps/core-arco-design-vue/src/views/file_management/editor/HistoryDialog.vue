@@ -1,0 +1,95 @@
+<script setup lang="ts">
+import type { FileHistoryEntry } from '@/composables/useFileHistory'
+import { encodingLabel } from '@/composables/useTextEncoding'
+import { fmtBytes } from '@/utils/format'
+import { loadMonaco } from '@/utils/monacoLoader'
+
+// 历史版本弹窗：快照列表 + diff 预览 + 一键恢复。
+const props = defineProps<{
+  tabId: string | null
+}>()
+
+const visible = defineModel<boolean>({ default: false })
+const store = useFileEditorStore()
+
+const entries = ref<FileHistoryEntry[]>([])
+const selected = ref<FileHistoryEntry | null>(null)
+const restoring = ref(false)
+
+const tab = computed(() => (props.tabId ? store.tabs[props.tabId] : undefined))
+const model = computed(() => (props.tabId ? store.getModel(props.tabId) : null))
+
+watch(visible, async (v) => {
+  if (v && props.tabId) {
+    selected.value = null
+    entries.value = await listFileHistory(props.tabId)
+  }
+})
+
+function fmtTime(ts: number) {
+  return new Date(ts).toLocaleString('zh-CN', { hour12: false })
+}
+
+async function restore(entry: FileHistoryEntry) {
+  const m = model.value
+  if (!m || !tab.value) {
+    return
+  }
+  restoring.value = true
+  try {
+    m.setValue(entry.content)
+    const monaco = await loadMonaco()
+    tab.value.eol = entry.eol
+    m.setEOL(entry.eol === 'crlf' ? monaco.editor.EndOfLineSequence.CRLF : monaco.editor.EndOfLineSequence.LF)
+    useFaToast().success('已恢复此版本（未保存，可 Ctrl+S 写盘）')
+    visible.value = false
+  }
+  finally {
+    restoring.value = false
+  }
+}
+</script>
+
+<template>
+  <FaModal v-model="visible" title="历史版本（本地）" class="max-w-4xl!" :destroy-on-close="true">
+    <div class="text-xs text-muted-foreground">
+      每次保存自动记录快照（本机 IndexedDB，按文件保留最近 30 份）。{{ tab?.path }}
+    </div>
+    <div class="mt-2 flex gap-2">
+      <!-- 列表 -->
+      <div class="w-56 shrink-0 overflow-auto rounded-md border" style="height: 384px;">
+        <button
+          v-for="e in entries"
+          :key="e.id"
+          type="button"
+          class="block w-full cursor-pointer border-b px-2 py-1.5 text-left text-xs transition-colors last:border-b-0 hover:bg-accent/50"
+          :class="selected?.id === e.id ? 'bg-primary/10' : ''"
+          @click="selected = e"
+        >
+          <div class="font-medium">{{ fmtTime(e.ts) }}</div>
+          <div class="text-muted-foreground">{{ fmtBytes(e.size) }} · {{ encodingLabel(e.encoding) }}</div>
+        </button>
+        <div v-if="!entries.length" class="px-2 py-8 text-center text-muted-foreground">
+          暂无快照，保存后自动记录
+        </div>
+      </div>
+      <!-- diff 预览 -->
+      <div class="min-w-0 flex-1 overflow-hidden rounded-md border" style="height: 384px;">
+        <template v-if="selected">
+          <YdCodeEditor :model="model" :diff-original="selected.content" class="h-full" />
+        </template>
+        <div v-else class="flex h-full items-center justify-center text-sm text-muted-foreground">
+          选择左侧快照查看与当前内容的差异
+        </div>
+      </div>
+    </div>
+    <template #footer>
+      <FaButton variant="outline" @click="visible = false">
+        关闭
+      </FaButton>
+      <FaButton :disabled="!selected" :loading="restoring" @click="selected && restore(selected)">
+        恢复此版本
+      </FaButton>
+    </template>
+  </FaModal>
+</template>
