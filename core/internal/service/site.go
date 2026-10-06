@@ -3,6 +3,7 @@ package service
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"path"
 	"regexp"
@@ -139,9 +140,104 @@ func (s *SiteService) Install(ctx context.Context) error {
 	return s.ensureNginx(ctx)
 }
 
-// confTemplate 生成站点配置。
-func confTemplate(site *model.Site, ssl bool) string {
+// SiteWaf 站点 WAF 配置。
+type SiteWaf struct {
+	DenyIPs    []string `json:"denyIps"`
+	AllowIPs   []string `json:"allowIps"`
+	DenyUAs    []string `json:"denyUAs"`
+	RateEnable bool     `json:"rateEnable"`
+	Rate       int      `json:"rate"`
+	Burst      int      `json:"burst"`
+}
+
+// parseWaf 解析站点 WAF 配置（空 = 默认关闭）。
+func parseWaf(site *model.Site) SiteWaf {
+	w := SiteWaf{Rate: 10, Burst: 20}
+	if site.WafJSON == "" {
+		return w
+	}
+	_ = json.Unmarshal([]byte(site.WafJSON), &w)
+	return w
+}
+
+var ipPattern = regexp.MustCompile(`^((25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)$`)
+
+// sanitizeUA 片段去除 nginx 配置危险字符。
+func sanitizeUA(s string) string {
+	bad := func(r rune) bool {
+		switch r {
+		case '\\', '"', '\'', '{', '}', ';', '(', ')':
+			return true
+		}
+		return false
+	}
+	return strings.Map(func(r rune) rune {
+		if bad(r) {
+			return -1
+		}
+		return r
+	}, strings.TrimSpace(s))
+}
+
+// validateWaf 校验 WAF 配置。
+func validateWaf(w SiteWaf) error {
+	for _, ip := range append(append([]string{}, w.DenyIPs...), w.AllowIPs...) {
+		if !ipPattern.MatchString(ip) {
+			return errs.Wrap(errs.ErrBadRequest, "IP 不合法: "+ip)
+		}
+	}
+	for _, ua := range w.DenyUAs {
+		if sanitizeUA(ua) == "" || len(ua) > 64 {
+			return errs.Wrap(errs.ErrBadRequest, "UA 关键字不合法（禁含引号/花括号等）")
+		}
+	}
+	if w.RateEnable && (w.Rate < 1 || w.Rate > 10000 || w.Burst < 0 || w.Burst > 10000) {
+		return errs.Wrap(errs.ErrBadRequest, "限流参数不合法")
+	}
+	return nil
+}
+
+// wafSection 生成 WAF 配置段（zone 在 conf.d 顶层=http 上下文；server 段由调用方缩进包裹使用）。
+func wafSection(site *model.Site, w SiteWaf) (zoneTop, serverPart string) {
+	zoneName := "rl_" + site.Name
+	if w.RateEnable {
+		zoneTop = fmt.Sprintf("limit_req_zone $binary_remote_addr zone=%s:1m rate=%dr/s;\n", zoneName, w.Rate)
+	}
 	var b strings.Builder
+	for _, ip := range w.DenyIPs {
+		fmt.Fprintf(&b, "    deny %s;\n", ip)
+	}
+	if len(w.AllowIPs) > 0 {
+		for _, ip := range w.AllowIPs {
+			fmt.Fprintf(&b, "    allow %s;\n", ip)
+		}
+		b.WriteString("    deny all;\n")
+	}
+	var uas []string
+	for _, ua := range w.DenyUAs {
+		if u := sanitizeUA(ua); u != "" {
+			uas = append(uas, regexp.QuoteMeta(u))
+		}
+	}
+	if len(uas) > 0 {
+		fmt.Fprintf(&b, "    if ($http_user_agent ~* \"(%s)\") { return 403; }\n", strings.Join(uas, "|"))
+	}
+	if w.RateEnable {
+		burst := w.Burst
+		if burst == 0 {
+			burst = w.Rate * 2
+		}
+		fmt.Fprintf(&b, "    limit_req zone=%s burst=%d nodelay;\n", zoneName, burst)
+		b.WriteString("    limit_req_status 503;\n")
+	}
+	return zoneTop, b.String()
+}
+
+// confTemplate 生成站点配置。
+func confTemplate(site *model.Site, ssl bool, waf SiteWaf) string {
+	zoneTop, wafServer := wafSection(site, waf)
+	var b strings.Builder
+	b.WriteString(zoneTop)
 	if !ssl {
 		if site.CertDomain != "" {
 			// 有证书：80 跳 443
@@ -159,6 +255,7 @@ func confTemplate(site *model.Site, ssl bool) string {
 		b.WriteString(fmt.Sprintf("# ypanel-site:%d\nserver {\n    listen 443 ssl;\n    server_name %s;\n", site.ID, site.Domain))
 		fmt.Fprintf(&b, "    ssl_certificate     /etc/nginx/certs/%s.crt;\n    ssl_certificate_key /etc/nginx/certs/%s.key;\n", site.CertDomain, site.CertDomain)
 	}
+	b.WriteString(wafServer)
 	switch site.Type {
 	case "static":
 		fmt.Fprintf(&b, "    root /var/www/sites/%s;\n    index index.html;\n    location / { try_files $uri $uri/ =404; }\n", site.Name)
@@ -234,7 +331,7 @@ func (s *SiteService) Create(ctx context.Context, name, typ, domain string, port
 	if err := s.db.Create(site).Error; err != nil {
 		return nil, err
 	}
-	if err := s.writeConf(ctx, site, confTemplate(site, false)); err != nil {
+	if err := s.writeConf(ctx, site, confTemplate(site, false, parseWaf(site))); err != nil {
 		return nil, err
 	}
 	if typ == "static" {
@@ -350,6 +447,34 @@ func (s *SiteService) selfSign(ctx context.Context, domain string, _ any) error 
 	return nil
 }
 
+// GetWaf 读取站点 WAF 配置。
+func (s *SiteService) GetWaf(id uint) (SiteWaf, error) {
+	site, err := s.siteByID(id)
+	if err != nil {
+		return SiteWaf{}, err
+	}
+	return parseWaf(site), nil
+}
+
+// UpdateWaf 更新 WAF 配置并重写 conf（校验回滚链路）。
+func (s *SiteService) UpdateWaf(ctx context.Context, id uint, w SiteWaf) error {
+	site, err := s.siteByID(id)
+	if err != nil {
+		return err
+	}
+	if err := validateWaf(w); err != nil {
+		return err
+	}
+	raw, err := json.Marshal(w)
+	if err != nil {
+		return err
+	}
+	if err := s.db.Model(site).Update("waf_json", string(raw)).Error; err != nil {
+		return err
+	}
+	return s.writeConf(ctx, site, confTemplate(site, site.CertDomain != "", w))
+}
+
 // IssueSelfSigned 为站点签发自签证书并启用 443。
 func (s *SiteService) IssueSelfSigned(ctx context.Context, id uint) error {
 	site, err := s.siteByID(id)
@@ -363,7 +488,7 @@ func (s *SiteService) IssueSelfSigned(ctx context.Context, id uint) error {
 	if err := s.db.Model(site).Update("cert_domain", site.CertDomain).Error; err != nil {
 		return err
 	}
-	return s.writeConf(ctx, site, confTemplate(site, true))
+	return s.writeConf(ctx, site, confTemplate(site, true, parseWaf(site)))
 }
 
 // UpdateConfig 手动编辑配置（保存即校验+重载，失败回滚）。
@@ -413,7 +538,7 @@ func (s *SiteService) SetEnabled(ctx context.Context, id uint, enabled bool) err
 		}
 		return s.db.Model(site).Update("enabled", false).Error
 	}
-	if err := s.writeConf(ctx, site, confTemplate(site, site.CertDomain != "")); err != nil {
+	if err := s.writeConf(ctx, site, confTemplate(site, site.CertDomain != "", parseWaf(site))); err != nil {
 		return err
 	}
 	return s.db.Model(site).Update("enabled", true).Error

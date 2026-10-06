@@ -101,6 +101,7 @@ type Site struct {
 	ProxyPass  string    `gorm:"size:255" json:"proxyPass"`
 	CertDomain string    `gorm:"size:255" json:"certDomain"` // 非空 = 已启用 SSL
 	OriginFile string    `gorm:"size:255" json:"originFile"` // 接管来源 conf（站点识别）
+	WafJSON    string    `gorm:"type:text" json:"wafJson"`   // WAF 配置（service.SiteWaf 序列化）
 	Enabled    bool      `gorm:"not null;default:true" json:"enabled"`
 	CreatedAt  time.Time `json:"createdAt"`
 	UpdatedAt  time.Time `json:"updatedAt"`

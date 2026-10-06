@@ -154,6 +154,39 @@ func (a *SiteAPI) Adopt(c *gin.Context) {
 	respOK(c, site)
 }
 
+// GetWaf GET /api/v1/sites/:id/waf
+func (a *SiteAPI) GetWaf(c *gin.Context) {
+	id, err := idParam(c)
+	if err != nil {
+		respErr(c, err)
+		return
+	}
+	w, err := a.Sites.GetWaf(id)
+	if err != nil {
+		respErr(c, err)
+		return
+	}
+	respOK(c, w)
+}
+
+// UpdateWaf PUT /api/v1/sites/:id/waf
+func (a *SiteAPI) UpdateWaf(c *gin.Context) {
+	id, err := idParam(c)
+	if err != nil {
+		respErr(c, err)
+		return
+	}
+	req, ok := bind[service.SiteWaf](c)
+	if !ok {
+		return
+	}
+	if err := a.Sites.UpdateWaf(c.Request.Context(), id, *req); err != nil {
+		respErr(c, err)
+		return
+	}
+	respOK(c, struct{}{})
+}
+
 // IssueSelfSigned POST /api/v1/sites/:id/cert/selfsigned
 func (a *SiteAPI) IssueSelfSigned(c *gin.Context) {
 	id, err := idParam(c)

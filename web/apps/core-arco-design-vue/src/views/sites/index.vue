@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import type { SiteItem, DiscoveredSite } from '@/api/modules/site'
-import apiSite, { siteDiscoveryApi } from '@/api/modules/site'
+import apiSite, { siteDiscoveryApi, wafApi } from '@/api/modules/site'
+import type { SiteWaf } from '@/api/modules/site'
 
 defineOptions({
   name: 'SitesIndex',
@@ -80,6 +81,57 @@ async function toggle(s: SiteItem) {
   }
   catch (e: any) {
     useFaToast().error('操作失败', { description: e?.message })
+  }
+}
+
+// ---- WAF 配置 ----
+const wafVisible = ref(false)
+const wafTarget = ref<SiteItem | null>(null)
+const wafForm = ref<SiteWaf>({ denyIps: [], allowIps: [], denyUAs: [], rateEnable: false, rate: 10, burst: 20 })
+const wafSaving = ref(false)
+const wafDenyIps = ref('')
+const wafAllowIps = ref('')
+const wafDenyUAs = ref('')
+
+async function openWaf(s: SiteItem) {
+  wafTarget.value = s
+  try {
+    const w = await wafApi.get(s.id)
+    wafForm.value = { ...w, denyIps: w.denyIps || [], allowIps: w.allowIps || [], denyUAs: w.denyUAs || [] }
+    wafDenyIps.value = (w.denyIps || []).join(', ')
+    wafAllowIps.value = (w.allowIps || []).join(', ')
+    wafDenyUAs.value = (w.denyUAs || []).join(', ')
+    wafVisible.value = true
+  }
+  catch (e: any) {
+    useFaToast().error('读取 WAF 配置失败', { description: e?.message })
+  }
+}
+
+async function saveWaf() {
+  if (!wafTarget.value) {
+    return
+  }
+  const w: SiteWaf = {
+    denyIps: wafDenyIps.value.split(/[,\n]/).map(x => x.trim()).filter(Boolean),
+    allowIps: wafAllowIps.value.split(/[,\n]/).map(x => x.trim()).filter(Boolean),
+    denyUAs: wafDenyUAs.value.split(/[,\n]/).map(x => x.trim()).filter(Boolean),
+    rateEnable: wafForm.value.rateEnable,
+    rate: Number(wafForm.value.rate) || 10,
+    burst: Number(wafForm.value.burst) || 20,
+  }
+  wafSaving.value = true
+  try {
+    await wafApi.update(wafTarget.value.id, w)
+    useFaToast().success('WAF 规则已保存并重载 nginx')
+    wafVisible.value = false
+    await load()
+  }
+  catch (e: any) {
+    useFaToast().error('保存失败（已回滚）', { description: e?.message })
+  }
+  finally {
+    wafSaving.value = false
   }
 }
 
@@ -267,6 +319,7 @@ onMounted(load)
               <td class="px-3 py-2">
                 <div class="flex items-center justify-end gap-1">
                   <FaButton variant="ghost" size="sm" @click="openEditor(s)">配置</FaButton>
+                  <FaButton variant="ghost" size="sm" @click="openWaf(s)">WAF</FaButton>
                   <FaButton v-if="!s.certDomain" variant="ghost" size="sm" @click="issueCert(s)">证书</FaButton>
                   <FaButton variant="outline" size="sm" @click="toggle(s)">{{ s.enabled ? '禁用' : '启用' }}</FaButton>
                   <FaButton variant="outline" size="sm" class="text-red-500!" @click="remove(s)">删除</FaButton>
@@ -344,6 +397,41 @@ onMounted(load)
       <template #footer>
         <FaButton variant="outline" @click="createVisible = false">取消</FaButton>
         <FaButton :loading="creating" @click="doCreate">创建</FaButton>
+      </template>
+    </FaModal>
+
+    <!-- WAF 配置 -->
+    <FaModal v-model="wafVisible" :title="`WAF：${wafTarget?.name || ''}`" class="max-w-2xl!" :destroy-on-close="true">
+      <div class="flex flex-col gap-3">
+        <div>
+          <div class="mb-1 text-sm font-medium">IP 黑名单（逗号分隔，命中返回 403）</div>
+          <textarea v-model="wafDenyIps" class="h-16 w-full rounded-md border border-input bg-background p-2 font-mono text-xs outline-none focus:ring-1 focus:ring-primary" placeholder="如 1.2.3.4, 5.6.7.8" />
+        </div>
+        <div>
+          <div class="mb-1 text-sm font-medium">IP 白名单（逗号分隔；非空 = 仅白名单可访问）</div>
+          <textarea v-model="wafAllowIps" class="h-16 w-full rounded-md border border-input bg-background p-2 font-mono text-xs outline-none focus:ring-1 focus:ring-primary" />
+        </div>
+        <div>
+          <div class="mb-1 text-sm font-medium">UA 拦截关键字（逗号分隔，命中返回 403）</div>
+          <FaInput v-model="wafDenyUAs" placeholder="如 curl, bot, scanner" class="w-full" />
+        </div>
+        <div class="rounded-md border p-3">
+          <label class="flex cursor-pointer items-center gap-2 text-sm font-medium">
+            <input v-model="wafForm.rateEnable" type="checkbox">
+            启用限流（nginx limit_req）
+          </label>
+          <div v-if="wafForm.rateEnable" class="mt-2 flex items-center gap-3">
+            <span class="w-24 text-sm text-muted-foreground">速率（次/秒）</span>
+            <FaInput v-model="wafForm.rate" type="number" class="w-28" />
+            <span class="w-16 text-sm text-muted-foreground">突发</span>
+            <FaInput v-model="wafForm.burst" type="number" class="w-28" />
+          </div>
+          <div class="mt-1 text-xs text-muted-foreground">超限返回 503；保存走 nginx -t 校验，失败自动回滚</div>
+        </div>
+      </div>
+      <template #footer>
+        <FaButton variant="outline" @click="wafVisible = false">取消</FaButton>
+        <FaButton :loading="wafSaving" @click="saveWaf">保存并重载</FaButton>
       </template>
     </FaModal>
 

@@ -32,6 +32,23 @@ export const siteDiscoveryApi = {
     api.post('api/v1/sites/adopt', data),
 }
 
+export interface SiteWaf {
+  denyIps: string[]
+  allowIps: string[]
+  denyUAs: string[]
+  rateEnable: boolean
+  rate: number
+  burst: number
+}
+
+export const wafApi = {
+  get: async (id: number) => {
+    const res = await api.get(`api/v1/sites/${id}/waf`, { silent: true })
+    return res.data as SiteWaf
+  },
+  update: (id: number, waf: SiteWaf) => api.put(`api/v1/sites/${id}/waf`, waf),
+}
+
 export default {
   status: async () => {
     const res = await api.get('api/v1/nginx/status', { silent: true })
