@@ -84,6 +84,10 @@ func (s *Server) Start(ctx context.Context) (base string, wait func(), err error
 	mux.HandleFunc("POST /agent/v1/compose/down", s.auth(s.handleComposeDown))
 	mux.HandleFunc("GET /agent/v1/compose/logs", s.auth(s.handleComposeLogs))
 	mux.HandleFunc("POST /agent/v1/exec", s.auth(s.handleExec))
+	mux.HandleFunc("GET /agent/v1/processes", s.auth(s.handleProcessList))
+	mux.HandleFunc("POST /agent/v1/processes/kill", s.auth(s.handleProcessKill))
+	mux.HandleFunc("GET /agent/v1/services", s.auth(s.handleServiceList))
+	mux.HandleFunc("POST /agent/v1/services/{name}/{action}", s.auth(s.handleServiceAction))
 
 	ln, err := net.Listen("tcp", s.listenAddr())
 	if err != nil {

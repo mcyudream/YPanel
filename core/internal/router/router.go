@@ -54,6 +54,8 @@ func Setup(d *Deps) (*gin.Engine, error) {
 	fwAPI := &api.FirewallAPI{FW: d.FW}
 	alertAPI := &api.AlertAPI{Alerts: d.Alerts}
 	notifAPI := &api.NotificationAPI{Notif: d.Notif}
+	procExecAPI := &api.NodeExecAPI{Nodes: d.Nodes}
+	procProxy := &api.ProcProxy{Nodes: d.Nodes}
 	pbAPI := &api.PanelBackupAPI{BP: d.PanelBP}
 	auditAPI := &api.AuditAPI{DB: d.CronDB(), Hist: d.Hist}
 
@@ -165,6 +167,12 @@ func Setup(d *Deps) (*gin.Engine, error) {
 			authed.GET("/notifications/unread", notifAPI.Unread)
 			authed.POST("/notifications/read", notifAPI.MarkRead)
 			authed.GET("/system/history/persisted", auditAPI.History)
+
+			admin.POST("/nodes/exec", procExecAPI.Exec)
+			authed.GET("/processes", procProxy.Processes)
+			authed.POST("/processes/kill", procProxy.KillProcess)
+			authed.GET("/services", procProxy.Services)
+			authed.POST("/services/:name/:action", procProxy.ServiceAction)
 
 			admin.GET("/audit/ops", auditAPI.List)
 			admin.GET("/panel/backups", pbAPI.List)

@@ -1,6 +1,8 @@
 <script setup lang="ts">
 import type { NodeItem } from '@/api/modules/node'
 import apiNode from '@/api/modules/node'
+import type { NodeExecResult } from '@/api/modules/m10'
+import { nodeExecApi } from '@/api/modules/m10'
 
 defineOptions({
   name: 'NodesIndex',
@@ -32,6 +34,37 @@ async function genCode() {
   }
   catch (e: any) {
     useFaToast().error('生成失败', { description: e?.message })
+  }
+}
+
+// ---- 批量命令 ----
+const execVisible = ref(false)
+const execSelected = ref<string[]>(['local'])
+const execCommand = ref('')
+const execRunning = ref(false)
+const execResults = ref<NodeExecResult[]>([])
+
+function openExec() {
+  execSelected.value = nodes.value.filter(n => n.online).map(n => n.id)
+  execCommand.value = ''
+  execResults.value = []
+  execVisible.value = true
+}
+
+async function doExec() {
+  if (!execSelected.value.length || !execCommand.value.trim()) {
+    useFaToast().warning('请选择节点并输入命令')
+    return
+  }
+  execRunning.value = true
+  try {
+    execResults.value = await nodeExecApi.exec(execSelected.value, execCommand.value)
+  }
+  catch (e: any) {
+    useFaToast().error('执行失败', { description: e?.message })
+  }
+  finally {
+    execRunning.value = false
   }
 }
 
@@ -77,9 +110,14 @@ onBeforeUnmount(() => {
       <template #description>
         <span>多节点：目标机执行 ypagent 配对命令即可接入（心跳 30s，90s 无心跳视为离线）</span>
       </template>
-      <FaButton size="sm" @click="genCode">
-        <YdMorphIcon name="key-round" :size="14" class="mr-1" /> 生成配对码
-      </FaButton>
+      <div class="flex items-center gap-2">
+        <FaButton variant="outline" size="sm" @click="openExec">
+          <YdMorphIcon name="terminal-square" :size="14" class="mr-1" /> 批量命令
+        </FaButton>
+        <FaButton size="sm" @click="genCode">
+          <YdMorphIcon name="key-round" :size="14" class="mr-1" /> 生成配对码
+        </FaButton>
+      </div>
     </FaPageHeader>
 
     <FaPageMain>
@@ -114,6 +152,42 @@ onBeforeUnmount(() => {
         </div>
       </div>
     </FaPageMain>
+
+    <!-- 批量命令 -->
+    <FaModal v-model="execVisible" title="批量命令" class="max-w-3xl!" :destroy-on-close="true">
+      <div class="flex flex-col gap-3">
+        <div class="flex flex-wrap gap-1.5">
+          <label
+            v-for="n in nodes.filter(x => x.online)"
+            :key="n.id"
+            class="flex cursor-pointer items-center gap-1.5 rounded-md border px-2 py-1 text-xs transition-colors"
+            :class="execSelected.includes(n.id) ? 'border-primary bg-primary/10' : 'border-border'"
+          >
+            <input v-model="execSelected" type="checkbox" :value="n.id" class="hidden">
+            {{ n.name }}
+          </label>
+        </div>
+        <textarea
+          v-model="execCommand"
+          class="h-20 w-full resize-y rounded-md border border-input bg-background p-2 font-mono text-[13px] outline-none focus:ring-1 focus:ring-primary"
+          placeholder="将在所选节点并发执行的命令"
+          spellcheck="false"
+        />
+        <FaButton :loading="execRunning" @click="doExec">执行</FaButton>
+        <div v-for="r in execResults" :key="r.nodeId" class="rounded-md border p-2">
+          <div class="mb-1 flex items-center gap-2 text-xs">
+            <span class="rounded-full px-2 py-0.5" :class="r.ok ? 'bg-emerald-500/10 text-emerald-600' : 'bg-red-500/10 text-red-600'">
+              {{ r.name || r.nodeId }} · {{ r.ok ? '成功' : '失败' }}
+            </span>
+            <span v-if="r.error" class="text-red-500">{{ r.error }}</span>
+          </div>
+          <pre v-if="r.output" class="max-h-40 overflow-auto whitespace-pre-wrap bg-muted/50 p-2 font-mono text-xs">{{ r.output }}</pre>
+        </div>
+      </div>
+      <template #footer>
+        <FaButton variant="outline" @click="execVisible = false">关闭</FaButton>
+      </template>
+    </FaModal>
 
     <!-- 配对码 -->
     <FaModal v-model="pairVisible" title="节点配对" :destroy-on-close="true">

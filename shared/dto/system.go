@@ -71,6 +71,25 @@ type MetricSample struct {
 	Load1        float64   `json:"load1"`
 }
 
+// ProcessItem 进程列表条目。
+type ProcessItem struct {
+	Pid     int32   `json:"pid"`
+	Name    string  `json:"name"`
+	Cpu     float64 `json:"cpu"`
+	Mem     float64 `json:"mem"`
+	MemRSS  uint64  `json:"memRss"`
+	User    string  `json:"user"`
+	Cmdline string  `json:"cmdline"`
+}
+
+// ServiceItem systemd 服务条目。
+type ServiceItem struct {
+	Name   string `json:"name"`
+	Load   string `json:"load"`
+	Active string `json:"active"`
+	Desc   string `json:"desc"`
+}
+
 // HealthResp agent 健康检查。
 type HealthResp struct {
 	Status  string `json:"status"` // ok
