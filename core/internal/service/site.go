@@ -823,6 +823,11 @@ func (s *SiteService) Delete(ctx context.Context, id uint, purgeFiles bool) erro
 	return s.db.Delete(&model.Site{}, id).Error
 }
 
+// GetByIDF 单条站点查询（F8：详情页免拉全量列表）。
+func (s *SiteService) GetByIDF(id uint) (*model.Site, error) {
+	return s.siteByID(id)
+}
+
 func (s *SiteService) siteByID(id uint) (*model.Site, error) {
 	var site model.Site
 	if err := s.db.First(&site, id).Error; err != nil {

@@ -34,6 +34,29 @@ export default defineConfig(({ mode, command }) => {
     build: {
       outDir: mode === 'production' ? 'dist' : `dist-${mode}`,
       sourcemap: env.VITE_BUILD_SOURCEMAP,
+      rollupOptions: {
+        output: {
+          // F12：第三方大件分包，避免单 vendor 巨块
+          manualChunks(id: string) {
+            if (!id.includes('node_modules')) {
+              return undefined
+            }
+            if (id.includes('echarts') || id.includes('zrender')) {
+              return 'vendor-echarts'
+            }
+            if (id.includes('xterm')) {
+              return 'vendor-xterm'
+            }
+            if (id.includes('arco-design')) {
+              return 'vendor-arco'
+            }
+            if (id.includes('vue') || id.includes('pinia') || id.includes('vue-router')) {
+              return 'vendor-vue'
+            }
+            return 'vendor'
+          },
+        },
+      },
     },
     define: {
       __SYSTEM_INFO__: JSON.stringify({
@@ -61,6 +84,29 @@ export default defineConfig(({ mode, command }) => {
       preprocessorOptions: {
         scss: {
           additionalData: scssResources.join(''),
+        },
+      },
+    },
+    rollupOptions: {
+      output: {
+        // F12：第三方大件分包，避免单 vendor 巨块
+        manualChunks(id: string) {
+          if (!id.includes('node_modules')) {
+            return undefined
+          }
+          if (id.includes('echarts') || id.includes('zrender')) {
+            return 'vendor-echarts'
+          }
+          if (id.includes('xterm')) {
+            return 'vendor-xterm'
+          }
+          if (id.includes('arco-design')) {
+            return 'vendor-arco'
+          }
+          if (id.includes('vue') || id.includes('pinia') || id.includes('vue-router')) {
+            return 'vendor-vue'
+          }
+          return 'vendor'
         },
       },
     },

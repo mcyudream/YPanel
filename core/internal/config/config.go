@@ -14,6 +14,8 @@ type Config struct {
 	DataDir       string // 数据目录（SQLite、日志、临时文件）
 	AdminPassword string // 初始 admin 密码（仅首启建号时使用；空则随机生成落盘）
 	ResetAdmin    string // 重置指定用户密码并退出
+	TLSCert       string // 面板 HTTPS 证书路径（空=HTTP）
+	TLSKey        string // 面板 HTTPS 私钥路径
 	AgentAddr     string // 外部 agent 地址（多节点；空 = 内嵌 loopback agent）
 	Version       string
 }
@@ -26,6 +28,8 @@ func Load(version string) *Config {
 	flag.StringVar(&cfg.AdminPassword, "admin-password", os.Getenv("YPANEL_ADMIN_PASSWORD"), "初始 admin 密码（仅首启）")
 	flag.StringVar(&cfg.ResetAdmin, "reset-admin", "", "重置指定用户名的密码（交互输入）")
 	flag.StringVar(&cfg.AgentAddr, "agent-addr", os.Getenv("YPANEL_AGENT_ADDR"), "外部 agent 地址（多节点）")
+	flag.StringVar(&cfg.TLSCert, "tls-cert", os.Getenv("YPANEL_TLS_CERT"), "面板 HTTPS 证书路径（空=HTTP）")
+	flag.StringVar(&cfg.TLSKey, "tls-key", os.Getenv("YPANEL_TLS_KEY"), "面板 HTTPS 私钥路径")
 	flag.Parse()
 	return cfg
 }

@@ -2,6 +2,8 @@
 import { FitAddon } from '@xterm/addon-fit'
 import { Terminal } from '@xterm/xterm'
 import '@xterm/xterm/css/xterm.css'
+import * as z from 'zod'
+import { useReconnectingWs } from '@/composables/useReconnectingWs'
 import type { ContainerCreateReq, ContainerItem } from '@/api/modules/container'
 import apiContainer from '@/api/modules/container'
 
@@ -13,6 +15,18 @@ const appAccountStore = useAppAccountStore()
 const toast = useFaToast()
 
 const containers = ref<ContainerItem[]>([])
+// F1：列表搜索三件套
+const search = ref('')
+const filteredContainers = computed(() => {
+  const kw = search.value.trim().toLowerCase()
+  if (!kw) {
+    return containers.value
+  }
+  return containers.value.filter(c =>
+    c.name.toLowerCase().includes(kw)
+    || c.image.toLowerCase().includes(kw)
+    || c.id.toLowerCase().includes(kw))
+})
 const loading = ref(false)
 const disabled = ref(false) // docker 不可用
 const disabledMsg = ref('')
@@ -101,10 +115,17 @@ function lines(raw: string): string[] {
   return raw.split('\n').map(s => s.trim()).filter(Boolean)
 }
 
+// F2：创建表单 zod 校验（vee-validate 体系内的 schema，先覆盖创建类表单）
+const createSchema = z.object({
+  name: z.string().regex(/^[a-z0-9][a-z0-9_-]*$/, '容器名需小写字母/数字开头，含 - _'),
+  image: z.string().min(1, '镜像必填'),
+})
+
 async function submitCreate() {
   const f = createForm.value
-  if (!f.name || !f.image) {
-    toast.error('名称与镜像必填')
+  const parsed = createSchema.safeParse({ name: f.name, image: f.image })
+  if (!parsed.success) {
+    toast.error(parsed.error.issues[0]?.message ?? '表单校验失败')
     return
   }
   creating.value = true
@@ -177,25 +198,23 @@ function mountExecTerm(c: ContainerItem) {
   execTerm = term
 
   const proto = location.protocol === 'https:' ? 'wss' : 'ws'
-  const ws = new WebSocket(`${proto}://${location.host}${wsBase()}/${apiContainer.execWSURL(c.id, appAccountStore.token)}`)
-  execWS = ws
-  ws.onopen = () => {
-    term.onData((data) => {
-      if (ws.readyState === WebSocket.OPEN) {
-        ws.send(data)
-      }
-    })
-    term.focus()
-  }
-  ws.onmessage = (ev) => {
-    term.write(typeof ev.data === 'string' ? ev.data : new Uint8Array(ev.data as ArrayBuffer))
-  }
-  ws.onclose = () => {
-    term.write('\r\n\x1b[33m[会话已结束]\x1b[0m\r\n')
-  }
-  ws.onerror = () => {
-    term.write('\r\n\x1b[31m[连接错误]\x1b[0m\r\n')
-  }
+  // F6：统一重连封装（maxRetries=0：PTY 会话结束即终止，不做自动重连）
+  const conn = useReconnectingWs({
+    url: () => `${proto}://${location.host}${wsBase()}/${apiContainer.execWSURL(c.id, appAccountStore.token)}`,
+    maxRetries: 0,
+    heartbeatMs: 0,
+    onMessage: (data) => {
+      term.write(typeof data === 'string' ? data : new Uint8Array(data as ArrayBuffer))
+    },
+    onOpen: () => {
+      term.onData((data) => conn.send(data))
+      term.focus()
+    },
+    onGiveUp: () => {
+      term.write('\r\n[33m[会话已结束][0m\r\n')
+    },
+  })
+
 }
 
 function closeExec() {
@@ -363,6 +382,7 @@ onBeforeUnmount(() => {
       <template #description>
         <span>Docker 容器列表、电源操作、终端与详情</span>
       </template>
+      <FaInput v-model="search" placeholder="搜索名称/镜像/ID…" class="w-52!" />
       <div class="flex items-center gap-2">
         <FaButton variant="outline" size="icon-sm" title="刷新" @click="load()">
           <FaIcon name="i-lucide:refresh-cw" class="text-sm" :class="loading ? 'animate-spin' : ''" />
@@ -400,12 +420,12 @@ onBeforeUnmount(() => {
                 加载中…
               </td>
             </tr>
-            <tr v-else-if="!containers.length && !disabled">
+            <tr v-else-if="!filteredContainers.length && !disabled">
               <td colspan="6" class="px-3 py-10 text-center text-muted-foreground">
                 暂无容器
               </td>
             </tr>
-            <tr v-for="c in containers" :key="c.id" class="border-t transition-colors hover:bg-accent/30">
+            <tr v-for="c in filteredContainers" :key="c.id" class="border-t transition-colors hover:bg-accent/30">
               <td class="px-3 py-2">
                 <div class="font-mono text-[13px] font-medium">{{ c.name }}</div>
                 <div class="font-mono text-xs text-muted-foreground">{{ c.id }}</div>

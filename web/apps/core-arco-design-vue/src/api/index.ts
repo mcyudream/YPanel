@@ -1,4 +1,5 @@
 import axios from 'axios'
+import { isSessionError } from '@/utils/errorCodes'
 
 // YPanel 统一 API 封装。
 // 后端契约：HTTP 200 + { code: 0 成功 | 业务错误码, message, data }；鉴权 Authorization: Bearer <jwt>。
@@ -45,14 +46,15 @@ api.interceptors.request.use(
   },
 )
 
-// 业务错误 → 统一提示（config.silent 可跳过全局提示，由调用方自行处理）；2001/2002 会话失效全局登出
+// 业务错误 → 统一提示（config.silent 可跳过全局提示，由调用方自行处理）；
+// 会话失效全局登出；F3：错误标题直接使用后端业务 message，保留语义而非笼统"操作失败"。
 function handleBizError(code: number, message: string, silent?: boolean) {
-  if (code === 2001 || code === 2002) {
+  if (isSessionError(code)) {
     useAppAccountStore().requestLogout()
     useFaToast().error('登录失效', { description: message })
   }
   else if (!silent) {
-    useFaToast().error('操作失败', { description: message })
+    useFaToast().error(message || '操作失败')
   }
   return Promise.reject({ code, message })
 }

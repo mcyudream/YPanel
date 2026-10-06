@@ -1,11 +1,14 @@
 <script setup lang="ts">
 import api from '@/api'
+import { rawApi } from '@/api'
 
 interface UpdateFile {
   name: string
   sizeMb: number
   modTime: string
 }
+
+const router = useRouter()
 
 defineOptions({
   name: 'SelfUpdateIndex',
@@ -41,7 +44,7 @@ function apply(file: string) {
         for (let i = 0; i < 20; i++) {
           await new Promise(r => setTimeout(r, 1500))
           try {
-            const h = await fetch('/health').then(r => r.json())
+            const h = await rawApi.get('/health').then(r => r.data)
             if (h.status === 'ok') {
               recovered = true
               useFaToast().success(`服务已恢复，版本 ${h.version}`)
@@ -80,6 +83,9 @@ onMounted(load)
       <template #description>
         <span>更新通道：将新版本二进制放入服务器 {{ status?.channelDir || '/opt/ypanel/updates' }}（ypanel 前缀命名），此处一键应用；更新前自动备份 ypanel.bak</span>
       </template>
+      <FaButton variant="outline" size="sm" @click="() => router.push('/manage/security')">
+        <FaIcon name="i-lucide:shield-check" class="mr-1" /> 安全设置
+      </FaButton>
       <FaButton variant="outline" size="sm" @click="load">
         <FaIcon name="i-lucide:refresh-cw" class="mr-1" :class="loading ? 'animate-spin' : ''" /> 刷新
       </FaButton>

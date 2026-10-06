@@ -90,6 +90,10 @@ export default {
     return res.data as { installed: boolean, running: boolean, sites: number }
   },
   install: () => api.post('api/v1/nginx/install'),
+  getOne: async (id: number | string) => {
+    const res = await api.get(`api/v1/sites/${id}/detail`, { silent: true })
+    return res.data as SiteItem
+  },
   list: async () => {
     const res = await api.get('api/v1/sites', { silent: true })
     return res.data as SiteItem[]

@@ -117,5 +117,69 @@ export const useWorkbenchStore = defineStore('workbench', () => {
     }
   }
 
-  return { apps, windows, focusedId, open, focus, close, toggleMinimize, toggleMaximize, move }
+  // F20：窗口布局持久化（localStorage）——刷新/重登后恢复窗口位置与尺寸
+  const LS_KEY = 'ypanel.workbench.layout'
+
+  function persist() {
+    try {
+      const snapshot = windows.value.map(w => ({
+        key: w.key, x: w.x, y: w.y, width: w.width, height: w.height,
+        minimized: w.minimized, maximized: w.maximized, z: w.z,
+      }))
+      localStorage.setItem(LS_KEY, JSON.stringify({ topZ: topZ.value, nextId: nextId.value, windows: snapshot }))
+    }
+    catch {}
+  }
+
+  function restore() {
+    try {
+      const raw = localStorage.getItem(LS_KEY)
+      if (!raw) {
+        return
+      }
+      const saved = JSON.parse(raw) as { topZ?: number, nextId?: number, windows?: Array<{ key: string, x: number, y: number, width: number, height: number, minimized?: boolean, maximized?: boolean, z?: number }> }
+      if (!saved.windows?.length) {
+        return
+      }
+      const restored: WorkbenchWindow[] = []
+      for (const w of saved.windows) {
+        const app = apps.find(a => a.key === w.key)
+        if (!app) {
+          continue
+        }
+        const vw = window.innerWidth
+        const vh = window.innerHeight
+        restored.push({
+          id: w.z ?? restored.length + 1,
+          key: w.key,
+          title: app.title,
+          icon: app.icon,
+          x: Math.max(0, Math.min(w.x, vw - 80)),
+          y: Math.max(0, Math.min(w.y, vh - 80)),
+          width: Math.min(w.width, vw - 40),
+          height: Math.min(w.height, vh - 80),
+          minimized: !!w.minimized,
+          maximized: !!w.maximized,
+          z: w.z ?? restored.length + 1,
+        })
+      }
+      if (restored.length) {
+        windows.value = restored
+        nextId.value = Math.max(saved.nextId ?? 1, ...restored.map(w => w.id + 1))
+        topZ.value = Math.max(10, saved.topZ ?? 10)
+        const visible = restored.find(w => !w.minimized)
+        if (visible) {
+          focusedId.value = visible.id
+        }
+      }
+    }
+    catch {}
+  }
+
+  restore()
+
+  // 任何窗口状态变化（移动/缩放/开关/最小化）都自动持久化
+  watch(windows, () => persist(), { deep: true })
+
+  return { apps, windows, focusedId, open, focus, close, toggleMinimize, toggleMaximize, move, persist }
 })

@@ -1,8 +1,8 @@
 <script setup lang="ts">
 import type { NodeItem } from '@/api/modules/node'
 import apiNode from '@/api/modules/node'
-import type { NodeExecResult } from '@/api/modules/m10'
-import { nodeExecApi } from '@/api/modules/m10'
+import type { NodeExecResult } from '@/api/modules/nodeexec'
+import { nodeExecApi } from '@/api/modules/nodeexec'
 
 defineOptions({
   name: 'NodesIndex',

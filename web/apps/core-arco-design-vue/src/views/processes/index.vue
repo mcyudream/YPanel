@@ -1,6 +1,6 @@
 <script setup lang="ts">
-import type { ProcessItem, ServiceItem } from '@/api/modules/m10'
-import { procApi } from '@/api/modules/m10'
+import type { ProcessItem, ServiceItem } from '@/api/modules/nodeexec'
+import { procApi } from '@/api/modules/nodeexec'
 
 defineOptions({
   name: 'ProcessesIndex',

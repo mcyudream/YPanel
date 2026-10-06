@@ -1,6 +1,6 @@
 <script setup lang="ts">
-import type { NotificationItem } from '@/api/modules/m9'
-import { notificationApi } from '@/api/modules/m9'
+import type { NotificationItem } from '@/api/modules/ops'
+import { notificationApi } from '@/api/modules/ops'
 
 defineOptions({
   name: 'NotificationsIndex',
@@ -11,6 +11,16 @@ const toast = useFaToast()
 const notifications = ref<NotificationItem[]>([])
 const unread = ref(0)
 const loading = ref(false)
+// F1：列表搜索
+const keyword = ref('')
+const filtered = computed(() => {
+  const kw = keyword.value.trim().toLowerCase()
+  if (!kw) {
+    return notifications.value
+  }
+  return notifications.value.filter(n =>
+    (n.title || '').toLowerCase().includes(kw) || (n.content || '').toLowerCase().includes(kw))
+})
 
 async function load() {
   loading.value = true
@@ -59,6 +69,7 @@ onMounted(load)
       <template #description>
         <span>站内通知（告警/关键事件）</span>
       </template>
+      <FaInput v-model="keyword" placeholder="搜索通知…" class="w-44!" />
       <FaButton variant="outline" size="sm" :disabled="!unread" @click="markAll">
         全部已读
       </FaButton>
@@ -76,7 +87,7 @@ onMounted(load)
           暂无通知
         </div>
         <div
-          v-for="n in notifications"
+          v-for="n in filtered"
           :key="n.id"
           class="flex cursor-pointer items-start gap-3 border-t px-4 py-3 transition-colors hover:bg-accent/30"
           :class="n.read ? 'opacity-60' : ''"

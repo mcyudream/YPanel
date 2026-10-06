@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import * as echarts from 'echarts'
+import echarts from '@/utils/echarts'
+import { fmtBytes } from '@/utils/format'
 import type { MetricRecord } from '@/api/modules/system'
 import apiSystem from '@/api/modules/system'
 
@@ -26,19 +27,7 @@ const netChartRef = useTemplateRef<HTMLElement>('netChart')
 let cpuChart: echarts.ECharts | null = null
 let netChart: echarts.ECharts | null = null
 
-function fmtBytes(n: number) {
-  if (!n) {
-    return '0 B'
-  }
-  const units = ['B', 'KB', 'MB', 'GB', 'TB']
-  let i = 0
-  let v = n
-  while (v >= 1024 && i < units.length - 1) {
-    v /= 1024
-    i++
-  }
-  return `${v.toFixed(v >= 100 || i === 0 ? 0 : 1)} ${units[i]}`
-}
+
 
 // 大范围时抽样到 ≤720 点，避免曲线过密
 function decimate(list: MetricRecord[], max = 720): MetricRecord[] {

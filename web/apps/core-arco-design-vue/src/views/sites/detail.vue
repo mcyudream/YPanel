@@ -33,8 +33,8 @@ const loading = ref(false)
 async function load() {
   loading.value = true
   try {
-    const list = await apiSite.list()
-    site.value = list.find(s => s.id === siteId.value) ?? null
+    // F8：单条端点，免拉全量列表
+    site.value = await apiSite.getOne(siteId.value)
   }
   catch (e: any) {
     toast.error('加载站点失败', { description: e?.message })

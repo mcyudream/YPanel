@@ -89,7 +89,9 @@ declare global {
   const useId: typeof import('vue').useId
   const useLink: typeof import('vue-router').useLink
   const useModel: typeof import('vue').useModel
-  const usePagination: typeof import('@fantastic-admin/composables').usePagination
+  const usePagination: typeof import('../composables/usePagination').usePagination
+  const usePolling: typeof import('../composables/usePolling').usePolling
+  const useReconnectingWs: typeof import('../composables/useReconnectingWs').useReconnectingWs
   const useRoute: typeof import('vue-router').useRoute
   const useRouter: typeof import('vue-router').useRouter
   const useSlots: typeof import('vue').useSlots
@@ -108,4 +110,10 @@ declare global {
   // @ts-ignore
   export type { WorkbenchApp, WorkbenchWindow } from '../store/modules/app/workbench'
   import('../store/modules/app/workbench')
+  // @ts-ignore
+  export type { PollingOptions } from '../composables/usePolling'
+  import('../composables/usePolling')
+  // @ts-ignore
+  export type { ReconnectingWsOptions } from '../composables/useReconnectingWs'
+  import('../composables/useReconnectingWs')
 }

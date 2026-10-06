@@ -18,6 +18,8 @@ import (
 	"github.com/ypanel/agent/internal/files"
 	"github.com/ypanel/agent/internal/sysinfo"
 	"github.com/ypanel/shared/errs"
+	"os"
+	"strings"
 )
 
 // Config 服务配置。
@@ -46,7 +48,7 @@ func New(cfg Config) *Server {
 	m := &Server{
 		cfg:   cfg,
 		sys:   sysinfo.New(2, 1800), // 2s 采样，保留 1 小时
-		files: files.New(nil),        // 根为 "/"，全盘管理
+		files: files.New(filesRootsFromEnv()), // YPANEL_FILES_ROOTS 未设时全盘管理
 		dock:  dockerx.New(),
 	}
 	// 目录创建失败时 compose 为 nil，接口层降级为能力不可用
@@ -191,4 +193,20 @@ func slogWarn(msg string, err error) {
 	if err != nil {
 		slog.Warn(msg, "err", err)
 	}
+}
+
+// filesRootsFromEnv 读取 YPANEL_FILES_ROOTS（逗号分隔白名单根目录）。
+// 未设置或为空 = 全盘管理（单机面板默认形态）；设置后文件管理仅可访问白名单内目录。
+func filesRootsFromEnv() []string {
+	raw := strings.TrimSpace(os.Getenv("YPANEL_FILES_ROOTS"))
+	if raw == "" {
+		return nil
+	}
+	var roots []string
+	for _, r := range strings.Split(raw, ",") {
+		if r = strings.TrimSpace(r); r != "" {
+			roots = append(roots, r)
+		}
+	}
+	return roots
 }

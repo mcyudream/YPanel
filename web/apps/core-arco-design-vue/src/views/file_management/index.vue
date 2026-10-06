@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import type { FileEntry } from '@/api/modules/file'
 import apiFile from '@/api/modules/file'
+import { fmtBytes } from '@/utils/format'
 import { useFaModal } from '@fantastic-admin/components'
 
 defineOptions({
@@ -16,19 +17,7 @@ const selected = ref<Set<string>>(new Set())
 const errorMsg = ref('')
 
 // ---- 格式化 ----
-function fmtSize(n: number) {
-  if (n < 1024) {
-    return `${n} B`
-  }
-  const units = ['B', 'KB', 'MB', 'GB', 'TB']
-  let i = 0
-  let v = n
-  while (v >= 1024 && i < units.length - 1) {
-    v /= 1024
-    i++
-  }
-  return `${v.toFixed(v >= 100 || i === 0 ? 0 : 1)} ${units[i]}`
-}
+
 
 function fmtTime(iso: string) {
   return new Date(iso).toLocaleString('zh-CN', { hour12: false })
@@ -465,7 +454,7 @@ onMounted(() => load('/'))
                 </button>
               </td>
               <td class="hidden px-3 py-1.5 text-xs tabular-nums text-muted-foreground md:table-cell">
-                {{ e.isDir ? '—' : fmtSize(e.size) }}
+                {{ e.isDir ? '—' : fmtBytes(e.size) }}
               </td>
               <td class="hidden px-3 py-1.5 text-xs text-muted-foreground lg:table-cell">
                 {{ e.owner }}:{{ e.group }} · {{ e.modeOct }}

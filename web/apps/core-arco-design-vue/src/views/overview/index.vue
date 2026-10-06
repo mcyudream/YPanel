@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import * as echarts from 'echarts'
+import { fmtBytes } from '@/utils/format'
+import echarts from '@/utils/echarts'
 import type { SystemOverview } from '@/api/modules/system'
 import apiSystem from '@/api/modules/system'
 
@@ -14,19 +15,7 @@ const loading = ref(true)
 const errorMsg = ref('')
 
 // ---- 格式化 ----
-function fmtBytes(n: number): string {
-  if (!n) {
-    return '0 B'
-  }
-  const units = ['B', 'KB', 'MB', 'GB', 'TB', 'PB']
-  let i = 0
-  let v = n
-  while (v >= 1024 && i < units.length - 1) {
-    v /= 1024
-    i++
-  }
-  return `${v.toFixed(v >= 100 || i === 0 ? 0 : 1)} ${units[i]}`
-}
+
 
 function fmtUptime(sec: number): string {
   const d = Math.floor(sec / 86400)

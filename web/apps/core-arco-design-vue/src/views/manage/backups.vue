@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { panelBackupApi } from '@/api/modules/m9'
+import { panelBackupApi } from '@/api/modules/ops'
 
 defineOptions({
   name: 'ManageBackups',

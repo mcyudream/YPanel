@@ -113,8 +113,17 @@ func run(ctx context.Context, cfg *config.Config) error {
 	}()
 
 	slog.Info("YPanel 启动完成", "version", version, "addr", cfg.Addr(), "data", cfg.DataDir)
-	slog.Info("默认入口", "url", fmt.Sprintf("http://127.0.0.1:%d", cfg.Port))
-	err = srv.ListenAndServe()
+	scheme := "http"
+	if cfg.TLSCert != "" && cfg.TLSKey != "" {
+		scheme = "https"
+		slog.Info("面板 HTTPS 已启用", "cert", cfg.TLSCert)
+	}
+	slog.Info("默认入口", "url", fmt.Sprintf("%s://127.0.0.1:%d", scheme, cfg.Port))
+	if scheme == "https" {
+		err = srv.ListenAndServeTLS(cfg.TLSCert, cfg.TLSKey)
+	} else {
+		err = srv.ListenAndServe()
+	}
 	if errors.Is(err, http.ErrServerClosed) {
 		return nil
 	}

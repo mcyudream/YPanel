@@ -1,6 +1,7 @@
 package api
 
 import (
+	"strconv"
 	"github.com/gin-gonic/gin"
 
 	"github.com/ypanel/core/internal/service"
@@ -28,6 +29,21 @@ func (a *SiteAPI) Install(c *gin.Context) {
 		return
 	}
 	respOK(c, struct{}{})
+}
+
+// GetSite GET /api/v1/sites/:id/detail（F8 单条端点）
+func (a *SiteAPI) GetSite(c *gin.Context) {
+	id, err := strconv.ParseUint(c.Param("id"), 10, 64)
+	if err != nil || id == 0 {
+		respErr(c, errBadRequest("站点 ID 不合法"))
+		return
+	}
+	site, err := a.Sites.GetByIDF(uint(id))
+	if err != nil {
+		respErr(c, err)
+		return
+	}
+	respOK(c, site)
 }
 
 // List GET /api/v1/sites

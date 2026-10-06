@@ -180,6 +180,7 @@ func Setup(d *Deps) (*gin.Engine, error) {
 			authed.PUT("/sites/:id/conf/limitconn", siteConfAPI.UpdateLimitConn)
 			authed.GET("/sites/:id/conf/loadbalance", siteConfAPI.GetLoadBalance)
 			authed.PUT("/sites/:id/conf/loadbalance", siteConfAPI.UpdateLoadBalance)
+			authed.GET("/sites/:id/detail", siteAPI.GetSite)
 			authed.GET("/sites/:id/ext", siteAPI.GetExt)
 			authed.PUT("/sites/:id/ext", siteAPI.UpdateExt)
 			authed.POST("/sites/adopt", siteAPI.Adopt)
