@@ -107,6 +107,35 @@ func runDocker(ctx context.Context, args ...string) (string, int, error) {
 	return string(out), 0, nil
 }
 
+
+// ServiceAction 单服务操作（start/stop/restart/restart 前先 pull 可选）。
+func (m *Manager) ServiceAction(ctx context.Context, project, service, action string) (string, error) {
+	if err := ValidateName(project); err != nil {
+		return "", err
+	}
+	if err := ValidateName(service); err != nil {
+		return "", err
+	}
+	switch action {
+	case "start", "stop", "restart", "pull":
+	default:
+		return "", errs.ErrBadRequest
+	}
+	workDir := filepath.Join(m.baseDir, project)
+	cfg, ok := findConfig(workDir)
+	if !ok {
+		return "", errs.Wrap(errs.ErrNotFound, "未在 "+workDir+" 找到 compose 配置")
+	}
+	out, code, err := runDocker(ctx, composeArgs(cfg, "--project-name", project, action, service)...)
+	if err != nil {
+		return out, err
+	}
+	if code != 0 {
+		return out, errs.Wrapc(errs.CodeFileOpFailed, "compose "+action+" 失败")
+	}
+	return out, nil
+}
+
 // List 项目列表：托管目录扫描 + 容器 label 聚合（外部项目识别，对应功能清单 §3.4-20）。
 func (m *Manager) List(ctx context.Context) ([]dto.ComposeProject, error) {
 	type agg struct {

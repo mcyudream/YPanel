@@ -51,4 +51,8 @@ export const storeApi = {
     return res.data as { project: string, logs: string }
   },
   uninstall: (project: string) => api.delete(`api/v1/store/install/${encodeURIComponent(project)}`),
+  reinstall: async (key: string, version: string, name: string, params: Record<string, string>) => {
+    const res = await api.post('api/v1/store/install', { key, version, name, params }, { timeout: 600000 })
+    return res.data as { project: string, logs: string }
+  },
 }

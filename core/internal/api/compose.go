@@ -110,3 +110,23 @@ func (c *ComposeAPI) Logs(ctx *gin.Context) {
 		}
 	}
 }
+
+// ServiceAction POST /api/v1/compose/service-action {project, service, action}
+func (c *ComposeAPI) ServiceAction(ctx *gin.Context) {
+	req, ok := bind[struct {
+		Project string `json:"project" binding:"required"`
+		Service string `json:"service" binding:"required"`
+		Action  string `json:"action" binding:"required,oneof=start stop restart pull"`
+	}](ctx)
+	if !ok {
+		return
+	}
+	q := "?project=" + escape(req.Project) + "&service=" + escape(req.Service) + "&action=" + escape(req.Action)
+	out, err := agentclient.DoJSON[dto.ExecReq, dto.ExecResp](c.client(ctx), ctx.Request.Context(), http.MethodPost,
+		"/agent/v1/compose/service-action"+q, &dto.ExecReq{Command: req.Project, TimeoutSecs: 300})
+	if err != nil {
+		respErr(ctx, err)
+		return
+	}
+	respOK(ctx, gin.H{"output": out.Output})
+}

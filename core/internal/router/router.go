@@ -114,6 +114,7 @@ func Setup(d *Deps) (*gin.Engine, error) {
 			authed.POST("/compose/config", composeAPI.Write)
 			authed.POST("/compose/up", composeAPI.Action("up"))
 			authed.POST("/compose/down", composeAPI.Action("down"))
+			authed.POST("/compose/service-action", composeAPI.ServiceAction)
 			authed.GET("/compose/logs", composeAPI.Logs)
 
 			authed.GET("/cron/tasks", cronAPI.List)
