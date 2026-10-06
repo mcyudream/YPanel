@@ -10,6 +10,7 @@ const routes: RouteRecordRaw = {
   name: 'manage',
   meta: {
     title: '系统管理',
+    icon: 'yd:settings',
   },
   children: [
     {

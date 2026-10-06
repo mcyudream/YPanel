@@ -10,7 +10,7 @@ const routes: RouteRecordRaw = {
   name: 'dbAdmin',
   meta: {
     title: '数据库管理台',
-    icon: 'database',
+    icon: 'yd:database',
   },
   children: [
     {
