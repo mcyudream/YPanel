@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"strconv"
 
 	"github.com/gin-gonic/gin"
@@ -11,6 +12,40 @@ import (
 // SiteConfAPI 站点配置域接口（对标 1Panel 站点详情子页：每域独立读写）。
 type SiteConfAPI struct {
 	Sites *service.SiteService
+}
+
+// confGet GET 泛型代理。
+func confGet[T any](c *gin.Context, get func(uint) (T, error)) {
+	id, err := siteIDParam(c)
+	if err != nil {
+		respErr(c, err)
+		return
+	}
+	out, err := get(id)
+	if err != nil {
+		respErr(c, err)
+		return
+	}
+	respOK(c, out)
+}
+
+// confPut PUT 泛型代理（apply 首参为 request context）。
+func confPut[Req any, Out any](c *gin.Context, apply func(context.Context, uint, Req) (Out, error)) {
+	id, err := siteIDParam(c)
+	if err != nil {
+		respErr(c, err)
+		return
+	}
+	req, ok := bind[Req](c)
+	if !ok {
+		return
+	}
+	out, err := apply(c.Request.Context(), id, *req)
+	if err != nil {
+		respErr(c, err)
+		return
+	}
+	respOK(c, out)
 }
 
 func siteIDParam(c *gin.Context) (uint, error) {
@@ -202,4 +237,58 @@ func (a *SiteConfAPI) DisableHTTPS(c *gin.Context) {
 		return
 	}
 	respOK(c, out)
+}
+
+// ---- S20 第二批配置域 ----
+
+// GetAntiLeech GET /api/v1/sites/:id/conf/antileech
+func (a *SiteConfAPI) GetAntiLeech(c *gin.Context) { confGet(c, a.Sites.GetAntiLeech) }
+
+// UpdateAntiLeech PUT /api/v1/sites/:id/conf/antileech
+func (a *SiteConfAPI) UpdateAntiLeech(c *gin.Context) {
+	confPut(c, a.Sites.UpdateAntiLeech)
+}
+
+// GetAuthBasic GET /api/v1/sites/:id/conf/authbasic
+func (a *SiteConfAPI) GetAuthBasic(c *gin.Context) { confGet(c, a.Sites.GetAuthBasic) }
+
+// UpdateAuthBasic PUT /api/v1/sites/:id/conf/authbasic
+func (a *SiteConfAPI) UpdateAuthBasic(c *gin.Context) {
+	confPut(c, a.Sites.UpdateAuthBasic)
+}
+
+// GetCORS GET /api/v1/sites/:id/conf/cors
+func (a *SiteConfAPI) GetCORS(c *gin.Context) { confGet(c, a.Sites.GetCORS) }
+
+// UpdateCORS PUT /api/v1/sites/:id/conf/cors
+func (a *SiteConfAPI) UpdateCORS(c *gin.Context) { confPut(c, a.Sites.UpdateCORS) }
+
+// GetRedirect GET /api/v1/sites/:id/conf/redirect
+func (a *SiteConfAPI) GetRedirect(c *gin.Context) { confGet(c, a.Sites.GetRedirect) }
+
+// UpdateRedirect PUT /api/v1/sites/:id/conf/redirect
+func (a *SiteConfAPI) UpdateRedirect(c *gin.Context) {
+	confPut(c, a.Sites.UpdateRedirect)
+}
+
+// GetRealIP GET /api/v1/sites/:id/conf/realip
+func (a *SiteConfAPI) GetRealIP(c *gin.Context) { confGet(c, a.Sites.GetRealIP) }
+
+// UpdateRealIP PUT /api/v1/sites/:id/conf/realip
+func (a *SiteConfAPI) UpdateRealIP(c *gin.Context) { confPut(c, a.Sites.UpdateRealIP) }
+
+// GetLimitConn GET /api/v1/sites/:id/conf/limitconn
+func (a *SiteConfAPI) GetLimitConn(c *gin.Context) { confGet(c, a.Sites.GetLimitConn) }
+
+// UpdateLimitConn PUT /api/v1/sites/:id/conf/limitconn
+func (a *SiteConfAPI) UpdateLimitConn(c *gin.Context) {
+	confPut(c, a.Sites.UpdateLimitConn)
+}
+
+// GetLoadBalance GET /api/v1/sites/:id/conf/loadbalance
+func (a *SiteConfAPI) GetLoadBalance(c *gin.Context) { confGet(c, a.Sites.GetLoadBalance) }
+
+// UpdateLoadBalance PUT /api/v1/sites/:id/conf/loadbalance
+func (a *SiteConfAPI) UpdateLoadBalance(c *gin.Context) {
+	confPut(c, a.Sites.UpdateLoadBalance)
 }

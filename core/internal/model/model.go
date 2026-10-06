@@ -148,6 +148,7 @@ type Site struct {
 	CertDomain  string    `gorm:"size:255" json:"certDomain"` // 非空 = 已启用 SSL
 	OriginFile  string    `gorm:"size:255" json:"originFile"` // 接管来源 conf（站点识别）
 	WafJSON     string    `gorm:"type:text" json:"wafJson"`   // WAF 配置（service.SiteWaf 序列化）
+	ConfJSON    string    `gorm:"type:text" json:"confJson"`  // 扩展配置域 JSON（防盗链/Basic认证/CORS/重定向/真实IP/限连/负载均衡）
 	Enabled     bool      `gorm:"not null;default:true" json:"enabled"`
 	CreatedAt   time.Time `json:"createdAt"`
 	UpdatedAt   time.Time `json:"updatedAt"`

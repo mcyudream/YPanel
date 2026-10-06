@@ -329,6 +329,28 @@ func confTemplate(site *model.Site, ssl bool, waf SiteWaf) string {
 	var b strings.Builder
 	b.WriteString(zoneTop)
 
+	// S20 第二批配置域：http 上下文指令（limit_conn_zone / upstream）
+	extra := parseSiteExtra(site)
+	if lc := extra.LimitConn; lc != nil && lc.Enable {
+		fmt.Fprintf(&b, "limit_conn_zone $binary_remote_addr zone=conn_%s:1m;\n", site.Name)
+	}
+	if lb := extra.LoadBalance; lb != nil && lb.Enable && site.Type == "proxy" {
+		b.WriteString("upstream lb_" + site.Name + " {\n")
+		if lb.Strategy != "" {
+			b.WriteString("    " + lb.Strategy + ";\n")
+		}
+		for _, u := range lb.Upstreams {
+			// upstream server 指令不允许 http:// 前缀
+			addr := strings.TrimPrefix(strings.TrimPrefix(u.Address, "http://"), "https://")
+			if u.Weight > 0 {
+				fmt.Fprintf(&b, "    server %s weight=%d;\n", addr, u.Weight)
+			} else {
+				fmt.Fprintf(&b, "    server %s;\n", addr)
+			}
+		}
+		b.WriteString("}\n")
+	}
+
 	// 日志（站点级落盘，logs 卷）
 	if meta.LogsEnabled {
 		fmt.Fprintf(&b, "access_log /var/log/nginx/%s.access.log;\n", site.Name)
@@ -361,6 +383,15 @@ func confTemplate(site *model.Site, ssl bool, waf SiteWaf) string {
 		b.WriteString(fmt.Sprintf("# ypanel-site:%d\nserver {\n    listen 443 ssl;\n    server_name %s;\n", site.ID, serverNames))
 		fmt.Fprintf(&b, "    ssl_certificate     /etc/nginx/certs/%s.crt;\n    ssl_certificate_key /etc/nginx/certs/%s.key;\n", site.CertDomain, site.CertDomain)
 	} else {
+		// 整站重定向：80 段直接 return（有证书时 80 已被 301 到 https，重定向域不生效）
+		if rd := extra.Redirect; rd != nil && rd.Enable && rd.Target != "" {
+			code := rd.Code
+			if code == 0 {
+				code = 301
+			}
+			fmt.Fprintf(&b, "# ypanel-site:%d\nserver {\n    listen %d;\n    server_name %s;\n    return %d %s;\n}\n", site.ID, site.Port, serverNames, code, rd.Target)
+			return b.String()
+		}
 		listenSSL := ""
 		if ssl {
 			listenSSL = " ssl"
@@ -369,6 +400,62 @@ func confTemplate(site *model.Site, ssl bool, waf SiteWaf) string {
 	}
 
 	b.WriteString(wafServer)
+
+	// S20 第二批：server 上下文指令
+	if al := extra.AntiLeech; al != nil && al.Enable {
+		parts := []string{}
+		if al.AllowNone {
+			parts = append(parts, "none")
+		}
+		if al.AllowBlocked {
+			parts = append(parts, "blocked")
+		}
+		parts = append(parts, "server_names")
+		parts = append(parts, al.ValidReferers...)
+		fmt.Fprintf(&b, "    valid_referers %s;\n", strings.Join(parts, " "))
+		code := al.ReturnCode
+		if code != 403 && code != 404 {
+			code = 403
+		}
+		fmt.Fprintf(&b, "    if ($invalid_referer) { return %d; }\n", code)
+	}
+	if ab := extra.AuthBasic; ab != nil && ab.Enable && len(ab.Users) > 0 {
+		realm := ab.Realm
+		if realm == "" {
+			realm = "Restricted"
+		}
+		fmt.Fprintf(&b, "    auth_basic %s;\n", quoteGo(realm))
+		fmt.Fprintf(&b, "    auth_basic_user_file /etc/nginx/conf.d/%s.htpasswd;\n", site.Name)
+	}
+	if co := extra.CORS; co != nil && co.Enable && len(co.AllowOrigins) > 0 {
+		b.WriteString("    # CORS\n")
+		if len(co.AllowOrigins) == 1 && co.AllowOrigins[0] == "*" {
+			b.WriteString("    add_header Access-Control-Allow-Origin \"*\" always;\n")
+		} else {
+			b.WriteString("    add_header Access-Control-Allow-Origin $http_origin always;\n")
+		}
+		if co.AllowCredentials {
+			b.WriteString("    add_header Access-Control-Allow-Credentials \"true\" always;\n")
+		}
+		fmt.Fprintf(&b, "    add_header Access-Control-Allow-Methods \"%s\" always;\n", strings.Join(co.AllowMethods, ", "))
+		if len(co.AllowHeaders) > 0 {
+			fmt.Fprintf(&b, "    add_header Access-Control-Allow-Headers \"%s\" always;\n", strings.Join(co.AllowHeaders, ", "))
+		}
+		if co.MaxAge > 0 {
+			fmt.Fprintf(&b, "    add_header Access-Control-Max-Age \"%d\" always;\n", co.MaxAge)
+		}
+		b.WriteString("    if ($request_method = 'OPTIONS') { return 204; }\n")
+	}
+	if rp := extra.RealIP; rp != nil && rp.Enable && len(rp.TrustedProxies) > 0 {
+		b.WriteString("    # real IP\n")
+		for _, p := range rp.TrustedProxies {
+			fmt.Fprintf(&b, "    set_real_ip_from %s;\n", p)
+		}
+		fmt.Fprintf(&b, "    real_ip_header %s;\n", rp.Header)
+	}
+	if lc := extra.LimitConn; lc != nil && lc.Enable {
+		fmt.Fprintf(&b, "    limit_conn conn_%s %d;\n", site.Name, lc.ConnPerIP)
+	}
 
 	// 自定义 404 页（static 类型）
 	if site.Type == "static" && meta.ErrorPage404 != "" {
@@ -423,7 +510,12 @@ func confTemplate(site *model.Site, ssl bool, waf SiteWaf) string {
 				prefix = "/"
 			}
 			fmt.Fprintf(&b, "    location %s {\n", prefix)
-			fmt.Fprintf(&b, "        proxy_pass %s;\n", r.Target)
+			// LB: 
+			if lb2 := extra.LoadBalance; lb2 != nil && lb2.Enable && len(lb2.Upstreams) > 1 {
+				fmt.Fprintf(&b, "        proxy_pass http://lb_%s;\n", site.Name)
+			} else {
+				fmt.Fprintf(&b, "        proxy_pass %s;\n", r.Target)
+			}
 			b.WriteString("        proxy_set_header Host $host;\n")
 			b.WriteString("        proxy_set_header X-Real-IP $remote_addr;\n")
 			b.WriteString("        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;\n")

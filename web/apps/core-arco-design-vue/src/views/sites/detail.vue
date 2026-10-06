@@ -6,6 +6,14 @@ import DefaultsConf from './conf/DefaultsConf.vue'
 import ProxyConf from './conf/ProxyConf.vue'
 import RewriteConf from './conf/RewriteConf.vue'
 import HTTPSConf from './conf/HTTPSConf.vue'
+import AntiLeechConf from './conf/AntiLeechConf.vue'
+import AuthBasicConf from './conf/AuthBasicConf.vue'
+import CorsConf from './conf/CorsConf.vue'
+import RedirectConf from './conf/RedirectConf.vue'
+import RealIPConf from './conf/RealIPConf.vue'
+import LimitConnConf from './conf/LimitConnConf.vue'
+import LoadBalanceConf from './conf/LoadBalanceConf.vue'
+import OtherConf from './conf/OtherConf.vue'
 
 defineOptions({
   name: 'SitesDetail',
@@ -40,11 +48,19 @@ const tabs = computed(() => {
     { key: 'domain', label: '域名', icon: 'i-lucide:globe', comp: DomainConf },
     { key: 'defaults', label: '默认文档', icon: 'i-lucide:file-text', comp: DefaultsConf },
     { key: 'rewrite', label: '伪静态', icon: 'i-lucide:repeat', comp: RewriteConf },
+    { key: 'redirect', label: '重定向', icon: 'i-lucide:corner-up-right', comp: RedirectConf },
+    { key: 'https', label: 'HTTPS', icon: 'i-lucide:lock', comp: HTTPSConf },
+    { key: 'antileech', label: '防盗链', icon: 'i-lucide:shield-off', comp: AntiLeechConf },
+    { key: 'authbasic', label: 'Basic 认证', icon: 'i-lucide:key-round', comp: AuthBasicConf },
+    { key: 'cors', label: 'CORS', icon: 'i-lucide:shuffle', comp: CorsConf },
+    { key: 'realip', label: '真实 IP', icon: 'i-lucide:locate', comp: RealIPConf },
+    { key: 'limitconn', label: '连接限制', icon: 'i-lucide:gauge', comp: LimitConnConf },
+    { key: 'other', label: '其他', icon: 'i-lucide:code', comp: OtherConf },
   ]
   if (site.value?.type === 'proxy') {
-    base.splice(2, 0, { key: 'proxy', label: '反向代理', icon: 'i-lucide:arrow-left-right', comp: ProxyConf })
+    base.splice(3, 0, { key: 'proxy', label: '反向代理', icon: 'i-lucide:arrow-left-right', comp: ProxyConf })
+    base.splice(4, 0, { key: 'loadbalance', label: '负载均衡', icon: 'i-lucide:network', comp: LoadBalanceConf })
   }
-  base.push({ key: 'https', label: 'HTTPS', icon: 'i-lucide:lock', comp: HTTPSConf })
   return base
 })
 const activeTab = ref('domain')

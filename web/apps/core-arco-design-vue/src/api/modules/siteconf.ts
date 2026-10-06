@@ -85,3 +85,92 @@ export const siteConfApi = {
     return res.data as SiteHTTPSConf
   },
 }
+
+// ---- S20 第二批配置域 ----
+
+export interface SiteAntiLeech {
+  enable: boolean
+  validReferers: string[]
+  allowNone: boolean
+  allowBlocked: boolean
+  returnCode: number
+}
+
+export interface SiteAuthBasicUser {
+  user: string
+  password: string
+}
+
+export interface SiteAuthBasic {
+  enable: boolean
+  realm: string
+  users: SiteAuthBasicUser[]
+}
+
+export interface SiteCORS {
+  enable: boolean
+  allowOrigins: string[]
+  allowMethods: string[]
+  allowHeaders: string[]
+  allowCredentials: boolean
+  maxAge: number
+}
+
+export interface SiteRedirect {
+  enable: boolean
+  target: string
+  code: number
+}
+
+export interface SiteRealIP {
+  enable: boolean
+  trustedProxies: string[]
+  header: string
+}
+
+export interface SiteLimitConn {
+  enable: boolean
+  connPerIP: number
+}
+
+export interface SiteUpstream {
+  address: string
+  weight: number
+}
+
+export interface SiteLoadBalance {
+  enable: boolean
+  strategy: string
+  upstreams: SiteUpstream[]
+}
+
+export interface SiteExtraConf {
+  antiLeech?: SiteAntiLeech
+  authBasic?: SiteAuthBasic
+  cors?: SiteCORS
+  redirect?: SiteRedirect
+  realIP?: SiteRealIP
+  limitConn?: SiteLimitConn
+  loadBalance?: SiteLoadBalance
+}
+
+function put<TReq, TRes>(id: number | string, domain: string, body: TReq) {
+  return api.put(base(id, domain), body).then((res) => res.data as TRes)
+}
+
+export const siteExtraApi = {
+  getAntiLeech: async (id: number | string) => (await api.get(base(id, 'antileech'), { silent: true })).data as SiteAntiLeech,
+  updateAntiLeech: (id: number | string, c: SiteAntiLeech) => put<SiteAntiLeech, SiteAntiLeech>(id, 'antileech', c),
+  getAuthBasic: async (id: number | string) => (await api.get(base(id, 'authbasic'), { silent: true })).data as SiteAuthBasic,
+  updateAuthBasic: (id: number | string, c: SiteAuthBasic) => put<SiteAuthBasic, SiteAuthBasic>(id, 'authbasic', c),
+  getCORS: async (id: number | string) => (await api.get(base(id, 'cors'), { silent: true })).data as SiteCORS,
+  updateCORS: (id: number | string, c: SiteCORS) => put<SiteCORS, SiteCORS>(id, 'cors', c),
+  getRedirect: async (id: number | string) => (await api.get(base(id, 'redirect'), { silent: true })).data as SiteRedirect,
+  updateRedirect: (id: number | string, c: SiteRedirect) => put<SiteRedirect, SiteRedirect>(id, 'redirect', c),
+  getRealIP: async (id: number | string) => (await api.get(base(id, 'realip'), { silent: true })).data as SiteRealIP,
+  updateRealIP: (id: number | string, c: SiteRealIP) => put<SiteRealIP, SiteRealIP>(id, 'realip', c),
+  getLimitConn: async (id: number | string) => (await api.get(base(id, 'limitconn'), { silent: true })).data as SiteLimitConn,
+  updateLimitConn: (id: number | string, c: SiteLimitConn) => put<SiteLimitConn, SiteLimitConn>(id, 'limitconn', c),
+  getLoadBalance: async (id: number | string) => (await api.get(base(id, 'loadbalance'), { silent: true })).data as SiteLoadBalance,
+  updateLoadBalance: (id: number | string, c: SiteLoadBalance) => put<SiteLoadBalance, SiteLoadBalance>(id, 'loadbalance', c),
+}
