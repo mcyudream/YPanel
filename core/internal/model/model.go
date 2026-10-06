@@ -68,6 +68,31 @@ type MetricRecord struct {
 	Load1     float64   `json:"load1"`
 }
 
+// AppStoreApp 应用商店应用（1Panel 默认源同步）。
+type AppStoreApp struct {
+	ID           uint      `gorm:"primaryKey" json:"id"`
+	Key          string    `gorm:"uniqueIndex;size:64;not null" json:"key"`
+	Name         string    `gorm:"size:128;not null" json:"name"`
+	Title        string    `gorm:"size:255" json:"title"`
+	Description  string    `gorm:"type:text" json:"description"`
+	ReadMe       string    `gorm:"type:text" json:"readMe"`
+	IconURL      string    `gorm:"size:512" json:"iconUrl"`
+	Tags         string    `gorm:"size:255" json:"tags"`
+	VersionsJSON string    `gorm:"type:text" json:"versionsJson"`
+	LastModified int64     `json:"lastModified"`
+	SyncedAt     time.Time `json:"syncedAt"`
+}
+
+// AppStoreInstall 已安装的商店应用。
+type AppStoreInstall struct {
+	ID             uint      `gorm:"primaryKey" json:"id"`
+	Key            string    `gorm:"size:64;not null" json:"key"`
+	Name           string    `gorm:"size:64;not null" json:"name"`
+	Version        string    `gorm:"size:32;not null" json:"version"`
+	ComposeProject string    `gorm:"size:64;not null;uniqueIndex" json:"composeProject"`
+	CreatedAt      time.Time `json:"createdAt"`
+}
+
 // Node 远程受管节点（local 本机节点不入库，进程内嵌）。
 type Node struct {
 	ID         uint      `gorm:"primaryKey" json:"id"`

@@ -30,6 +30,7 @@ type Deps struct {
 	F2B      *service.Fail2banService
 	DBAdmin  *service.DBAdminService
 	SU       *service.SelfUpdateService
+	MarketStore *service.MarketStoreService
 	Version  string
 }
 
@@ -59,6 +60,7 @@ func Setup(d *Deps) (*gin.Engine, error) {
 	f2bAPI := &api.Fail2banAPI{F2B: d.F2B}
 	dbAdminAPI := &api.DBAdminAPI{Admin: d.DBAdmin}
 	suAPI := &api.SelfUpdateAPI{SU: d.SU}
+	storeAPI := &api.MarketStoreAPI{Store: d.MarketStore}
 	notifAPI := &api.NotificationAPI{Notif: d.Notif}
 	procExecAPI := &api.NodeExecAPI{Nodes: d.Nodes}
 	procProxy := &api.ProcProxy{Nodes: d.Nodes}
@@ -156,6 +158,13 @@ func Setup(d *Deps) (*gin.Engine, error) {
 				admin.GET("/nodes", nodeAPI.List)
 				admin.POST("/nodes/pairing-code", nodeAPI.PairingCode)
 				admin.DELETE("/nodes/:id", nodeAPI.Delete)
+
+			authed.GET("/store/apps", storeAPI.List)
+			authed.GET("/store/apps/:key", storeAPI.Get)
+			authed.POST("/store/sync", storeAPI.Sync)
+			authed.GET("/store/installed", storeAPI.Installed)
+			authed.POST("/store/install", storeAPI.Install)
+			authed.DELETE("/store/install/:project", storeAPI.Uninstall)
 
 			admin.GET("/market/apps", marketAPI.List)
 			admin.GET("/market/installed", marketAPI.Installed)

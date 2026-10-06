@@ -78,6 +78,7 @@ func run(ctx context.Context, cfg *config.Config) error {
 	dbSvc := service.NewDatabaseService(gdb, nodes, string(auth.Secret()))
 	siteSvc := service.NewSiteService(gdb, nodes)
 	marketSvc := service.NewMarketService(gdb, nodes)
+	marketStoreSvc := service.NewMarketStoreService(gdb, nodes)
 	fwSvc := service.NewFirewallService(nodes, cfg.Port)
 	f2bSvc := service.NewFail2banService(nodes)
 	dbAdminSvc := service.NewDBAdminService(gdb, dbSvc)
@@ -95,7 +96,7 @@ func run(ctx context.Context, cfg *config.Config) error {
 		Auth: auth, Nodes: nodes, Settings: settings, Cron: cronSvc, DBS: dbSvc, Sites: siteSvc,
 		Market: marketSvc, FW: fwSvc, Alerts: alertSvc,
 		Notif: notifSvc, PanelBP: service.NewPanelBackupService(nodes), Hist: histSvc,
-		F2B: f2bSvc, DBAdmin: dbAdminSvc, SU: suSvc, Version: version,
+		F2B: f2bSvc, DBAdmin: dbAdminSvc, SU: suSvc, MarketStore: marketStoreSvc, Version: version,
 	})
 	if err != nil {
 		return err
