@@ -1,0 +1,11 @@
+id: db-admin
+name: 数据库管理台
+version: 0.1.0
+minCoreVersion: 0.1.0
+description: 库表浏览、数据预览与只读 SQL 查询器（MySQL/PostgreSQL/Redis/MongoDB，对接面板数据库实例）
+permissions:
+  - database.connection.read   # 读连接配置（经宿主 dbdriver）
+  - database.query.readonly   # 只读查询
+menus:
+  - { path: /plugin/db-admin, title: 数据库管理台, icon: database, modes: [classic, desktop] }
+defaultEnabled: true

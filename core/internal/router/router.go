@@ -28,6 +28,7 @@ type Deps struct {
 	PanelBP  *service.PanelBackupService
 	Hist     *service.HistoryRecorder
 	F2B      *service.Fail2banService
+	DBAdmin  *service.DBAdminService
 	Version  string
 }
 
@@ -55,6 +56,7 @@ func Setup(d *Deps) (*gin.Engine, error) {
 	fwAPI := &api.FirewallAPI{FW: d.FW}
 	alertAPI := &api.AlertAPI{Alerts: d.Alerts}
 	f2bAPI := &api.Fail2banAPI{F2B: d.F2B}
+	dbAdminAPI := &api.DBAdminAPI{Admin: d.DBAdmin}
 	notifAPI := &api.NotificationAPI{Notif: d.Notif}
 	procExecAPI := &api.NodeExecAPI{Nodes: d.Nodes}
 	procProxy := &api.ProcProxy{Nodes: d.Nodes}
@@ -165,6 +167,14 @@ func Setup(d *Deps) (*gin.Engine, error) {
 			admin.GET("/fail2ban/status", f2bAPI.Status)
 			admin.POST("/fail2ban/unban", f2bAPI.Unban)
 			admin.POST("/fail2ban/ban", f2bAPI.Ban)
+
+			dbAdmin := authed.Group("/plugin/db-admin")
+			{
+				dbAdmin.GET("/instances", dbAdminAPI.Instances)
+				dbAdmin.GET("/:id/databases", dbAdminAPI.Databases)
+				dbAdmin.GET("/:id/tables", dbAdminAPI.Tables)
+				dbAdmin.POST("/:id/query", dbAdminAPI.Query)
+			}
 
 			admin.GET("/alert/rules", alertAPI.ListRules)
 			admin.POST("/alert/rules", alertAPI.CreateRule)
