@@ -31,6 +31,7 @@ type Deps struct {
 	DBAdmin  *service.DBAdminService
 	SU       *service.SelfUpdateService
 	MarketStore *service.MarketStoreService
+	RT       *service.RuntimeService
 	Version  string
 }
 
@@ -58,6 +59,7 @@ func Setup(d *Deps) (*gin.Engine, error) {
 	fwAPI := &api.FirewallAPI{FW: d.FW}
 	alertAPI := &api.AlertAPI{Alerts: d.Alerts}
 	f2bAPI := &api.Fail2banAPI{F2B: d.F2B}
+	rtAPI := &api.RuntimeAPI{RT: d.RT}
 	dbAdminAPI := &api.DBAdminAPI{Admin: d.DBAdmin}
 	suAPI := &api.SelfUpdateAPI{SU: d.SU}
 	storeAPI := &api.MarketStoreAPI{Store: d.MarketStore}
@@ -203,6 +205,12 @@ func Setup(d *Deps) (*gin.Engine, error) {
 			authed.GET("/notifications/unread", notifAPI.Unread)
 			authed.POST("/notifications/read", notifAPI.MarkRead)
 			authed.GET("/system/history/persisted", auditAPI.History)
+
+			authed.GET("/runtimes", rtAPI.List)
+			authed.POST("/runtimes", rtAPI.Create)
+			authed.DELETE("/runtimes/:id", rtAPI.Delete)
+			authed.POST("/runtimes/:id/start", rtAPI.SetEnabled(true))
+			authed.POST("/runtimes/:id/stop", rtAPI.SetEnabled(false))
 
 			admin.POST("/nodes/exec", procExecAPI.Exec)
 			authed.GET("/processes", procProxy.Processes)

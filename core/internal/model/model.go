@@ -68,6 +68,15 @@ type MetricRecord struct {
 	Load1     float64   `json:"load1"`
 }
 
+// Runtime PHP 运行环境（php-fpm 容器化）。
+type Runtime struct {
+	ID             uint      `gorm:"primaryKey" json:"id"`
+	Name           string    `gorm:"uniqueIndex;size:32;not null" json:"name"`
+	Version        string    `gorm:"size:16;not null" json:"version"` // 8.2 / 8.3
+	ComposeProject string    `gorm:"size:64;not null" json:"composeProject"`
+	CreatedAt      time.Time `json:"createdAt"`
+}
+
 // AppStoreApp 应用商店应用（1Panel 默认源同步）。
 type AppStoreApp struct {
 	ID           uint      `gorm:"primaryKey" json:"id"`
@@ -128,10 +137,12 @@ type Site struct {
 	ProxyRules  string    `gorm:"type:text" json:"proxyRules"` // 反代规则 JSON 数组 [{prefix,target,ws}]
 	IndexFiles  string    `gorm:"size:255" json:"indexFiles"`  // 默认文档
 	LogsEnabled bool      `gorm:"not null;default:true" json:"logsEnabled"`
+	RuntimeContainer string `gorm:"size:64" json:"runtimeContainer"` // php-fpm 容器名
 	RewriteName string    `gorm:"size:32" json:"rewriteName"`         // 伪静态模板名（空=无）
 	RewriteContent string `gorm:"type:text" json:"rewriteContent"`   // 自定义伪静态文本
 	CustomLocations string `gorm:"type:text" json:"customLocations"` // 自定义 location JSON 数组 [{comment,content}]
 	ErrorPage404   string `gorm:"size:255" json:"errorPage404"`      // 自定义 404 路径（相对站点 root）
+	RuntimeID      uint   `json:"runtimeId"`                          // php 类型绑定的运行环境
 	CacheEnable    bool   `gorm:"not null;default:false" json:"cacheEnable"`
 	CacheDuration  string `gorm:"size:16" json:"cacheDuration"`      // 如 12h / 1d
 	CertDomain  string    `gorm:"size:255" json:"certDomain"` // 非空 = 已启用 SSL

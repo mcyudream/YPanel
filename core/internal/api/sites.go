@@ -44,13 +44,14 @@ func (a *SiteAPI) List(c *gin.Context) {
 func (a *SiteAPI) Create(c *gin.Context) {
 	req, ok := bind[struct {
 		Name         string                  `json:"name" binding:"required"`
-		Type         string                  `json:"type" binding:"required,oneof=static proxy"`
+		Type         string                  `json:"type" binding:"required,oneof=static proxy php"`
 		Domain       string                  `json:"domain" binding:"required"`
 		ExtraDomains []string                `json:"extraDomains"`
 		Port         int                     `json:"port"`
 		ProxyRules   []service.ProxyRule     `json:"proxyRules"`
 		ProxyPass    string                  `json:"proxyPass"`
 		IndexFiles   string                  `json:"indexFiles"`
+		RuntimeID    uint                    `json:"runtimeId"`
 	}](c)
 	if !ok {
 		return
@@ -61,6 +62,7 @@ func (a *SiteAPI) Create(c *gin.Context) {
 	site, err := a.Sites.Create(c.Request.Context(), service.SiteCreateInput{
 		Name: req.Name, Type: req.Type, Domain: req.Domain, ExtraDomains: req.ExtraDomains,
 		Port: req.Port, ProxyPass: req.ProxyPass, ProxyRules: req.ProxyRules, IndexFiles: req.IndexFiles,
+		RuntimeID: req.RuntimeID,
 	})
 	if err != nil {
 		respErr(c, err)

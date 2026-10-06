@@ -64,7 +64,13 @@ func nginxComposeTemplate() string {
       - /opt/ypanel/nginx/www:/var/www
       - /opt/ypanel/nginx/logs:/var/log/nginx
       - /opt/ypanel/nginx/cache:/var/cache/nginx
+    networks:
+      - 1panel-network
     restart: unless-stopped
+
+networks:
+  1panel-network:
+    external: true
 `
 }
 
@@ -161,6 +167,8 @@ type siteMeta struct {
 	ErrorPage404    string          `json:"errorPage404,omitempty"`
 	CacheEnable     bool            `json:"cacheEnable"`
 	CacheDuration   string          `json:"cacheDuration,omitempty"`
+	RuntimeID       uint            `json:"runtimeId,omitempty"`
+	RuntimeContainer string         `json:"runtimeContainer,omitempty"`
 }
 
 // parseSiteMeta 解析站点附加元数据（兼容旧数据：仅主域名 + 默认规则）。
@@ -187,6 +195,8 @@ func parseSiteMeta(site *model.Site) siteMeta {
 	m.ErrorPage404 = site.ErrorPage404
 	m.CacheEnable = site.CacheEnable
 	m.CacheDuration = site.CacheDuration
+	m.RuntimeID = site.RuntimeID
+	m.RuntimeContainer = site.RuntimeContainer
 	// 兼容：旧数据默认规则 = 主域名 "/" -> ProxyPass
 	if len(m.ProxyRules) == 0 && site.ProxyPass != "" && site.Type == "proxy" {
 		m.ProxyRules = []ProxyRule{{Prefix: "/", Target: site.ProxyPass}}
@@ -385,6 +395,26 @@ func confTemplate(site *model.Site, ssl bool, waf SiteWaf) string {
 			rewriteContent = ""
 		} else {
 			b.WriteString("    location / { try_files $uri $uri/ =404; }\n")
+		}
+	case "php":
+		fmt.Fprintf(&b, "    root /var/www/sites/%s;\n", site.Name)
+		if meta.IndexFiles != "" {
+			fmt.Fprintf(&b, "    index %s;\n", meta.IndexFiles)
+		}
+		if meta.RuntimeContainer != "" {
+			fmt.Fprintf(&b, "    location ~ \\.php$ {\n")
+			fmt.Fprintf(&b, "        fastcgi_pass %s:9000;\n", meta.RuntimeContainer)
+			b.WriteString("        fastcgi_index index.php;\n")
+			b.WriteString("        fastcgi_param SCRIPT_FILENAME $document_root$fastcgi_script_name;\n")
+			b.WriteString("        include fastcgi_params;\n")
+			b.WriteString("    }\n")
+		}
+		if strings.Contains(rewriteContent, "location /") {
+			b.WriteString(rewriteContent)
+			b.WriteString("\n")
+			rewriteContent = ""
+		} else {
+			b.WriteString("    location / { try_files $uri $uri/ /index.php?$query_string; }\n")
 		}
 	case "proxy":
 		for _, r := range meta.ProxyRules {
@@ -760,8 +790,8 @@ func (s *SiteService) Create(ctx context.Context, req SiteCreateInput) (*model.S
 	if !siteNamePattern.MatchString(req.Name) {
 		return nil, errs.Wrap(errs.ErrBadRequest, "站点名不合法（小写字母/数字/中划线）")
 	}
-	if req.Type != "static" && req.Type != "proxy" {
-		return nil, errs.Wrap(errs.ErrBadRequest, "类型仅支持 static/proxy")
+	if req.Type != "static" && req.Type != "proxy" && req.Type != "php" {
+		return nil, errs.Wrap(errs.ErrBadRequest, "类型仅支持 static/proxy/php")
 	}
 	domains, err := validateDomains(append([]string{req.Domain}, req.ExtraDomains...))
 	if err != nil {
@@ -772,6 +802,17 @@ func (s *SiteService) Create(ctx context.Context, req SiteCreateInput) (*model.S
 	if len(domains) > 1 {
 		b, _ := json.Marshal(domains[1:])
 		extraJSON = string(b)
+	}
+	runtimeContainer := ""
+	if req.Type == "php" {
+		if req.RuntimeID == 0 {
+			return nil, errs.Wrap(errs.ErrBadRequest, "PHP 站点需绑定运行环境")
+		}
+		var rt model.Runtime
+		if err := s.db.First(&rt, req.RuntimeID).Error; err != nil {
+			return nil, errs.Wrap(errs.ErrBadRequest, "运行环境不存在")
+		}
+		runtimeContainer = "php-" + rt.Name
 	}
 	if req.Type == "proxy" {
 		if len(req.ProxyRules) == 0 && req.ProxyPass == "" {
@@ -804,6 +845,7 @@ func (s *SiteService) Create(ctx context.Context, req SiteCreateInput) (*model.S
 		Name: req.Name, Type: req.Type, Domain: domain, Domains: extraJSON,
 		Port: req.Port, ProxyPass: req.ProxyPass, ProxyRules: rulesJSON,
 		IndexFiles: indexFiles, LogsEnabled: true, Enabled: true,
+		RuntimeID: req.RuntimeID, RuntimeContainer: runtimeContainer,
 	}
 	if err := s.db.Create(site).Error; err != nil {
 		return nil, err
@@ -816,7 +858,28 @@ func (s *SiteService) Create(ctx context.Context, req SiteCreateInput) (*model.S
 			return nil, err
 		}
 	}
+	if req.Type == "php" {
+		if err := s.writePhpProbe(ctx, site); err != nil {
+			return nil, err
+		}
+	}
 	return site, nil
+}
+
+// writePhpProbe 写 PHP 探针（验收 php-fpm 链路）。
+func (s *SiteService) writePhpProbe(ctx context.Context, site *model.Site) error {
+	ac, err := s.client()
+	if err != nil {
+		return err
+	}
+	dir := path.Join(nginxWwwDir, "sites", site.Name)
+	if _, err := agentclient.DoJSON[dto.FileMkdirReq, struct{}](ac, ctx, "POST", "/agent/v1/files/mkdir", &dto.FileMkdirReq{Path: dir}); err != nil {
+		return err
+	}
+	probe := "<?php\necho 'PHP ' . PHP_VERSION . ' | YPanel Runtime OK';\n"
+	_, err = agentclient.DoJSON[dto.FileWriteReq, struct{}](ac, ctx, "POST", "/agent/v1/files/write",
+		&dto.FileWriteReq{Path: path.Join(dir, "index.php"), Content: probe})
+	return err
 }
 
 // writeStaticIndex 生成静态站欢迎页。
@@ -847,6 +910,7 @@ type SiteCreateInput struct {
 	ProxyPass    string      `json:"proxyPass"`
 	ProxyRules   []ProxyRule `json:"proxyRules"`
 	IndexFiles   string      `json:"indexFiles"`
+	RuntimeID    uint        `json:"runtimeId"`
 }
 
 // SiteLogs 读取站点日志（logs 卷内站点级文件，tail 通道）。
