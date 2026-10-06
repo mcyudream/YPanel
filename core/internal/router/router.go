@@ -32,6 +32,7 @@ type Deps struct {
 	SU       *service.SelfUpdateService
 	MarketStore *service.MarketStoreService
 	RT       *service.RuntimeService
+	DockerExt *service.DockerExtService
 	Version  string
 }
 
@@ -66,6 +67,7 @@ func Setup(d *Deps) (*gin.Engine, error) {
 	notifAPI := &api.NotificationAPI{Notif: d.Notif}
 	procExecAPI := &api.NodeExecAPI{Nodes: d.Nodes}
 	procProxy := &api.ProcProxy{Nodes: d.Nodes}
+	dockerExtAPI := &api.DockerExtAPI{Ext: d.DockerExt}
 	pbAPI := &api.PanelBackupAPI{BP: d.PanelBP}
 	auditAPI := &api.AuditAPI{DB: d.CronDB(), Hist: d.Hist}
 
@@ -211,6 +213,23 @@ func Setup(d *Deps) (*gin.Engine, error) {
 			authed.DELETE("/runtimes/:id", rtAPI.Delete)
 			authed.POST("/runtimes/:id/start", rtAPI.SetEnabled(true))
 			authed.POST("/runtimes/:id/stop", rtAPI.SetEnabled(false))
+
+			authed.GET("/docker/images", dockerExtAPI.Images)
+			authed.POST("/docker/images/pull", dockerExtAPI.ImagePull)
+			authed.DELETE("/docker/images/:id", dockerExtAPI.ImageRemove)
+			authed.POST("/docker/images/prune", dockerExtAPI.ImagesPrune)
+			authed.GET("/docker/networks", dockerExtAPI.Networks)
+			authed.POST("/docker/networks", dockerExtAPI.NetworkCreate)
+			authed.DELETE("/docker/networks/:name", dockerExtAPI.NetworkRemove)
+			authed.GET("/docker/volumes", dockerExtAPI.Volumes)
+			authed.POST("/docker/volumes", dockerExtAPI.VolumeCreate)
+			authed.DELETE("/docker/volumes/:name", dockerExtAPI.VolumeRemove)
+			authed.POST("/docker/volumes/prune", dockerExtAPI.VolumesPrune)
+			authed.POST("/docker/containers/prune", dockerExtAPI.ContainersPrune)
+			authed.GET("/docker/containers/:id/inspect", dockerExtAPI.ContainerInspect)
+			authed.GET("/docker/containers/:id/stats", dockerExtAPI.ContainerStats)
+			authed.GET("/docker/daemon-config", dockerExtAPI.DaemonConfig)
+			authed.PUT("/docker/daemon-config", dockerExtAPI.UpdateDaemonConfig)
 
 			admin.POST("/nodes/exec", procExecAPI.Exec)
 			authed.GET("/processes", procProxy.Processes)

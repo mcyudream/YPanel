@@ -17,6 +17,7 @@ import ProcessesRoutes from './modules/processes'
 import DbAdminRoutes from './modules/dbadmin'
 import StoreRoutes from './modules/store'
 import RuntimesRoutes from './modules/runtimes'
+import DockerRoutes from './modules/docker'
 import SelfUpdateRoutes from './modules/selfupdate'
 import TerminalRoutes from './modules/terminal'
 
@@ -124,6 +125,7 @@ const asyncRoutes: RouteRecordMainRaw[] = [
       DbAdminRoutes,
       StoreRoutes,
       RuntimesRoutes,
+      DockerRoutes,
       SelfUpdateRoutes,
     ],
   },
