@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import type { FirewallStatus } from '@/api/modules/firewall'
-import apiFW from '@/api/modules/firewall'
+import apiFW, { fail2banApi } from '@/api/modules/firewall'
 
 defineOptions({
   name: 'FirewallIndex',
@@ -10,6 +10,41 @@ const fw = ref<FirewallStatus>()
 const loading = ref(false)
 const allowVisible = ref(false)
 const allowForm = ref({ port: '', proto: 'tcp' })
+
+// fail2ban
+const f2b = ref<{ available: boolean, hint?: string, jails?: { name: string, banned: string[], total: number }[] }>()
+const banModalVisible = ref(false)
+const banForm = ref({ jail: '', ip: '' })
+
+async function loadF2B() {
+  try {
+    f2b.value = await fail2banApi.status()
+  }
+  catch {}
+}
+
+async function doUnban(jail: string, ip: string) {
+  try {
+    await fail2banApi.unban(jail, ip)
+    useFaToast().success(`已解封 ${ip}`)
+    await loadF2B()
+  }
+  catch (e: any) {
+    useFaToast().error('解封失败', { description: e?.message })
+  }
+}
+
+function doBan() {
+  if (!banForm.value.ip || !banForm.value.jail) {
+    useFaToast().warning('请填写 jail 与 IP')
+    return
+  }
+  fail2banApi.ban(banForm.value.jail, banForm.value.ip).then(() => {
+    useFaToast().success(`已封禁 ${banForm.value.ip}`)
+    banModalVisible.value = false
+    loadF2B()
+  }).catch((e: any) => useFaToast().error('封禁失败', { description: e?.message }))
+}
 
 async function load() {
   loading.value = true
@@ -90,7 +125,10 @@ async function deleteRule(raw: string) {
   })
 }
 
-onMounted(load)
+onMounted(() => {
+  load()
+  loadF2B()
+})
 </script>
 
 <template>
@@ -119,6 +157,38 @@ onMounted(load)
     </FaPageHeader>
 
     <FaPageMain>
+      <!-- fail2ban 入侵防护 -->
+      <div class="mb-4 rounded-lg border bg-background p-4">
+        <div class="mb-3 flex flex-wrap items-center justify-between gap-2">
+          <div class="flex items-center gap-2 text-sm font-medium">
+            <YdMorphIcon name="siren" :size="16" />
+            入侵防护（fail2ban）
+          </div>
+          <FaButton variant="outline" size="sm" @click="banModalVisible = true">
+            <FaIcon name="i-lucide:shield-ban" class="mr-1" /> 手动封禁 IP
+          </FaButton>
+        </div>
+        <div v-if="f2b && !f2b.available" class="text-xs text-muted-foreground">{{ f2b.hint }}</div>
+        <template v-else>
+          <div v-for="j in f2b?.jails || []" :key="j.name" class="mb-2">
+            <div class="mb-1 text-xs text-muted-foreground">
+              jail：<span class="font-mono">{{ j.name }}</span> · 封禁 {{ j.total }} 个 IP
+            </div>
+            <div class="flex flex-wrap gap-1.5">
+              <span
+                v-for="ip in j.banned"
+                :key="ip"
+                class="inline-flex items-center gap-1 rounded-md bg-red-500/10 px-2 py-0.5 font-mono text-xs text-red-600"
+              >
+                {{ ip }}
+                <button type="button" class="cursor-pointer opacity-60 hover:opacity-100" title="解封" @click="doUnban(j.name, ip)">✕</button>
+              </span>
+              <span v-if="!j.banned.length" class="text-xs text-muted-foreground">无封禁</span>
+            </div>
+          </div>
+        </template>
+      </div>
+
       <div v-if="fw && !fw.available" class="rounded-md border border-amber-300 bg-amber-50 p-4 text-sm text-amber-700 dark:bg-amber-950/30 dark:text-amber-400">
         {{ fw.hint }}
       </div>
@@ -153,6 +223,25 @@ onMounted(load)
         </div>
       </template>
     </FaPageMain>
+
+    <FaModal v-model="banModalVisible" title="手动封禁 IP" :destroy-on-close="true">
+      <div class="flex flex-col gap-3">
+        <div class="flex items-center gap-3">
+          <span class="w-20 shrink-0 text-sm text-muted-foreground">jail</span>
+          <select v-model="banForm.jail" class="h-9 flex-1 rounded-md border border-input bg-background px-2 text-sm outline-none">
+            <option v-for="j in f2b?.jails || []" :key="j.name" :value="j.name">{{ j.name }}</option>
+          </select>
+        </div>
+        <div class="flex items-center gap-3">
+          <span class="w-20 shrink-0 text-sm text-muted-foreground">IP</span>
+          <FaInput v-model="banForm.ip" placeholder="如 1.2.3.4" class="flex-1" />
+        </div>
+      </div>
+      <template #footer>
+        <FaButton variant="outline" @click="banModalVisible = false">取消</FaButton>
+        <FaButton @click="doBan">封禁</FaButton>
+      </template>
+    </FaModal>
 
     <FaModal v-model="allowVisible" title="放行端口" :destroy-on-close="true">
       <div class="flex items-center gap-3">

@@ -27,6 +27,7 @@ type Deps struct {
 	Notif    *service.NotificationService
 	PanelBP  *service.PanelBackupService
 	Hist     *service.HistoryRecorder
+	F2B      *service.Fail2banService
 	Version  string
 }
 
@@ -53,6 +54,7 @@ func Setup(d *Deps) (*gin.Engine, error) {
 	marketAPI := &api.MarketAPI{Market: d.Market}
 	fwAPI := &api.FirewallAPI{FW: d.FW}
 	alertAPI := &api.AlertAPI{Alerts: d.Alerts}
+	f2bAPI := &api.Fail2banAPI{F2B: d.F2B}
 	notifAPI := &api.NotificationAPI{Notif: d.Notif}
 	procExecAPI := &api.NodeExecAPI{Nodes: d.Nodes}
 	procProxy := &api.ProcProxy{Nodes: d.Nodes}
@@ -159,6 +161,10 @@ func Setup(d *Deps) (*gin.Engine, error) {
 			authed.DELETE("/firewall/rules/:number", fwAPI.DeleteRule)
 			authed.POST("/firewall/enable", fwAPI.SetEnabled(true))
 			authed.POST("/firewall/disable", fwAPI.SetEnabled(false))
+
+			admin.GET("/fail2ban/status", f2bAPI.Status)
+			admin.POST("/fail2ban/unban", f2bAPI.Unban)
+			admin.POST("/fail2ban/ban", f2bAPI.Ban)
 
 			admin.GET("/alert/rules", alertAPI.ListRules)
 			admin.POST("/alert/rules", alertAPI.CreateRule)
