@@ -21,6 +21,16 @@ const routes: RouteRecordRaw = {
         title: '网站',
       },
     },
+    {
+      path: ':id',
+      name: 'sitesDetail',
+      component: () => import('@/views/sites/detail.vue'),
+      meta: {
+        title: '站点配置',
+        menu: false,
+        activeMenu: '/sites',
+      },
+    },
   ],
 }
 

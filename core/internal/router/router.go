@@ -57,6 +57,7 @@ func Setup(d *Deps) (*gin.Engine, error) {
 	cronAPI := &api.CronAPI{DB: d.CronDB(), Cron: d.Cron}
 	dbAPI := &api.DatabaseAPI{DBS: d.DBS}
 	siteAPI := &api.SiteAPI{Sites: d.Sites}
+	siteConfAPI := &api.SiteConfAPI{Sites: d.Sites}
 	nodeAPI := &api.NodeAPI{Nodes: d.Nodes}
 	marketAPI := &api.MarketAPI{Market: d.Market}
 	fwAPI := &api.FirewallAPI{FW: d.FW}
@@ -154,6 +155,17 @@ func Setup(d *Deps) (*gin.Engine, error) {
 			authed.GET("/sites", siteAPI.List)
 			authed.GET("/sites/scan", siteAPI.Scan)
 			authed.GET("/sites/rewrite-templates", siteAPI.RewriteTemplates)
+			authed.GET("/sites/:id/conf/domain", siteConfAPI.GetDomain)
+			authed.PUT("/sites/:id/conf/domain", siteConfAPI.UpdateDomain)
+			authed.GET("/sites/:id/conf/defaults", siteConfAPI.GetDefaults)
+			authed.PUT("/sites/:id/conf/defaults", siteConfAPI.UpdateDefaults)
+			authed.GET("/sites/:id/conf/proxy", siteConfAPI.GetProxy)
+			authed.PUT("/sites/:id/conf/proxy", siteConfAPI.UpdateProxy)
+			authed.GET("/sites/:id/conf/rewrite", siteConfAPI.GetRewrite)
+			authed.PUT("/sites/:id/conf/rewrite", siteConfAPI.UpdateRewrite)
+			authed.GET("/sites/:id/conf/https", siteConfAPI.GetHTTPS)
+			authed.POST("/sites/:id/conf/https", siteConfAPI.EnableHTTPS)
+			authed.DELETE("/sites/:id/conf/https", siteConfAPI.DisableHTTPS)
 			authed.GET("/sites/:id/ext", siteAPI.GetExt)
 			authed.PUT("/sites/:id/ext", siteAPI.UpdateExt)
 			authed.POST("/sites/adopt", siteAPI.Adopt)

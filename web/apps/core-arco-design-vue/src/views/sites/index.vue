@@ -8,6 +8,8 @@ defineOptions({
   name: 'SitesIndex',
 })
 
+const router = useRouter()
+
 const status = ref<{ installed: boolean, running: boolean, sites: number }>()
 const sites = ref<SiteItem[]>([])
 const loading = ref(false)
@@ -430,10 +432,11 @@ onMounted(load)
               </td>
               <td class="px-3 py-2">
                 <div class="flex items-center justify-end gap-1">
-                  <FaButton variant="ghost" size="sm" @click="openEditor(s)">配置</FaButton>
+                  <FaButton size="sm" @click="router.push(`/sites/${s.id}`)">配置</FaButton>
+                  <FaButton variant="ghost" size="sm" @click="openEditor(s)">conf</FaButton>
                   <FaButton variant="ghost" size="sm" @click="openLogs(s)">日志</FaButton>
                   <FaButton variant="ghost" size="sm" @click="openWaf(s)">WAF</FaButton>
-                  <FaButton variant="ghost" size="sm" @click="openExt(s)">高级</FaButton>
+                  <FaButton variant="ghost" size="sm" @click="openExt(s)">location</FaButton>
                   <FaButton v-if="!s.certDomain" variant="ghost" size="sm" @click="issueCert(s)">证书</FaButton>
                   <FaButton variant="outline" size="sm" @click="toggle(s)">{{ s.enabled ? '禁用' : '启用' }}</FaButton>
                   <FaButton variant="outline" size="sm" class="text-red-500!" @click="remove(s)">删除</FaButton>
