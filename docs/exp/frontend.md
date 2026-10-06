@@ -89,11 +89,11 @@
 - **规避/解决**：`server.watch.ignored: ['**/dist/**', '**/dist-*/**']`；跑长链路浏览器验证时把整个流程压进单次 evaluate（工具/协议有 ~30s 上限），或避开有人在用的共享环境。
 - **来源**：2026-10-07，M20 验收期间 dev 环境反复 reload。
 
-### monaco 在 v-show 隐藏容器里挂载后视图 0 行：watch 必须用 flush: 'post' 再调 layout()
+### monaco 在 v-show 隐藏容器里挂载后视图 0 行：挂载时机 + flush: 'post' + settle 脉冲三件套
 
-- **现象**：生产环境首次打开文件编辑器，monaco 外壳/状态栏正常、模型已挂载且 `getValue()` 内容完整（`getLayoutInfo` 也能取到），但 `.view-lines` 0×0、0 行，`execCommand` 插入无显示；dev 模式不复现（时序不同）。`automaticLayout: true` 也救不了。
-- **根因**：编辑器在 `v-show="activeTab"` 为 false（display:none）的容器里创建，随后 model 由异步 open 流程填充。model 的 watch 默认 `flush: 'pre'`，在 **Vue DOM 补丁之前**执行 `editor.layout()`——此刻容器仍 display:none，monaco 量到 0 高并固定；之后容器尺寸 0→516 虽有变化，monaco 内部 automaticLayout 的 RO 触发时序在此场景下不再纠正（实测 4s 不恢复）。
-- **规避/解决**：model watch 加 `{ flush: 'post' }`（DOM 补丁后 v-show 已可见，layout() 量到真实高度即渲染）；诊断手法：把 editor 实例挂到 `window.__ydEditor`，生产包里直接 `getValue()/getLayoutInfo()` + 手动 `layout()` 看行数变化（0→1 即为此症）。
+- **现象**：生产环境首次打开文件编辑器，monaco 外壳/状态栏正常、模型已挂载且 `getValue()` 内容完整（`getLayoutInfo` 也能取到），但 `.view-lines` 0×0、0 行，`execCommand` 插入无显示；dev 模式不复现（时序不同）。`automaticLayout: true` 也救不了（实测 >15s 不自愈）；手动 `layout()` 一次立即恢复（0→1 行）。
+- **根因**：编辑器在 FaModal 开启动画期间（容器有效尺寸 0/变化中）挂载并完成首次测量；model 由异步 open 流程稍后填充，model watch 补 `layout()` 时动画仍未结束，量到的还是过渡尺寸，之后 monaco 内部布局状态停滞不再纠正。仅加 `flush: 'post'` 仍不够——动画时长不固定，post 时机也可能落在动画内。
+- **规避/解决**（三件套，缺一可能复发）：① **挂载时机**：编辑器组件等弹窗动画结束再挂载（`v-if="editorOpened"`；注意 FaModal 定制尺寸下 `@opened` 事件可能不触发，需 `visible=true` 后 350ms 兜底置位）；② model 的 watch 用 `{ flush: 'post', immediate: true }`，setModel 后调 `layout()`；③ **settle 脉冲 + 交互兜底**：创建/换模型后 50/300/1000/2500/5000/12000ms 各补一次 layout，编辑区 pointerdown 与 window resize 也补——任何时序下用户一交互即渲染。诊断手法：把 editor 实例临时挂 `window.__ydEditor`，生产包直接 `getValue()/getLayoutInfo()` + 手动 `layout()` 看行数变化（0→1 即为此症）。
 - **来源**：2026-10-07，M20 文件编辑器 prod 首开空白排查。
 
 ### vite dev 代理转发 WebSocket 必须显式 `ws: true`，否则终端类页面握手挂起/失败
@@ -130,3 +130,10 @@
 - **根因**：`@xterm/xterm/css/xterm.css` 写死 `.xterm .xterm-viewport { background-color: #000000 }`（官方注释：macOS 滚动条需要不透明背景）。viewport 层比文字层宽出一个滚动条槽（14px），主题背景在 v6 DOM 渲染器下**不再以内联样式写回 viewport**，于是槽位永远露出这条 CSS 黑底。
 - **规避/解决**：宿主样式按命名空间覆盖为透明（`.yd-xterm .xterm .xterm-viewport { background-color: transparent }`，选择器三级压过库样式且随明暗主题自适应）；排查思路是对比 viewport 与 screen 的 `getBoundingClientRect` 宽度差 = 滚动条槽宽，再看 viewport 计算背景色是否被库 CSS 写死。
 - **来源**：2026-10-07，M21 容器终端黑框排查（components/YdTerminal/XtermEngine.vue）。
+
+### langchaingo v0.1.15 三处 API 坑（tools 是接口/无 SystemMessageContent/chains 流式选项）
+
+- **现象**：按网上常见示例写 langchaingo 工具调用，编译报 `invalid composite literal element type tools.Tool`、`undefined: llms.SystemMessageContent`、`chains.WithLLMOptions undefined`。
+- **根因**：v0.1.15 中 `tools.Tool` 是**接口**（Name/Description/Call 三方法）而非 struct；system 消息用 `llms.TextParts(llms.ChatMessageTypeSystem, text)`（无 SystemMessageContent 辅助）；chains 流式用 `chains.WithStreamingFunc`（非 WithLLMOptions）。
+- **规避/解决**：自定义工具写成实现接口的小 struct；以 GOMODCACHE 内实际源码为准逐 API 核对，勿凭记忆/旧示例。另：Bash heredoc 会吃一层反斜杠——写含 `\n` 的 Go 源码用 Edit 工具或 python chr() 构造，别在 heredoc python 里硬写。
+- **来源**：2026-10-07，AI v2 工具循环（core/internal/service/aichat.go）。
