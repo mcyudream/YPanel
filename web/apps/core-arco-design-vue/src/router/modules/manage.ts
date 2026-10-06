@@ -33,6 +33,16 @@ const routes: RouteRecordRaw = {
         auth: ['admin'],
       },
     },
+    {
+      path: 'security',
+      name: 'manageSecurity',
+      component: () => import('@/views/manage/security.vue'),
+      meta: {
+        title: '安全设置',
+        icon: 'yd:shield',
+        auth: ['admin'],
+      },
+    },
   ],
 }
 

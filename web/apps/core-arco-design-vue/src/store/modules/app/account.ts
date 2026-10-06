@@ -27,6 +27,7 @@ export const useAppAccountStore = defineStore('appAccount', () => {
   async function login(data: {
     account: string
     password: string
+    otpCode?: string
   }) {
     const res = await apiApp.login(data)
     localStorage.setItem('account', res.data.account)

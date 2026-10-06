@@ -222,6 +222,125 @@ function openDownload(entry: FileEntry) {
   window.open(downloadURL(entry))
 }
 
+// ---- 权限 ----
+const chmodVisible = ref(false)
+const chmodTarget = ref<FileEntry | null>(null)
+const chmodMode = ref('')
+
+function openChmod(entry: FileEntry) {
+  chmodTarget.value = entry
+  // modeOct 形如 0755，取后三位
+  chmodMode.value = entry.modeOct.slice(-3) || '644'
+  chmodVisible.value = true
+}
+
+async function doChmod() {
+  if (!chmodTarget.value || !/^[0-7]{3}$/.test(chmodMode.value)) {
+    useFaToast().error('权限格式错误（3 位八进制，如 755）')
+    return
+  }
+  try {
+    await apiFile.chmod(chmodTarget.value.path, chmodMode.value)
+    chmodVisible.value = false
+    useFaToast().success('权限已修改')
+    load()
+  }
+  catch (e: any) {
+    useFaToast().error('修改失败', { description: e?.message })
+  }
+}
+
+// ---- 压缩 / 解压 ----
+const compressVisible = ref(false)
+const compressTarget = ref<FileEntry | null>(null)
+const compressDest = ref('')
+const compressing = ref(false)
+
+function openCompress(entry: FileEntry) {
+  compressTarget.value = entry
+  compressDest.value = joinPath(cwd.value, `${entry.name}.tar.gz`)
+  compressVisible.value = true
+}
+
+async function doCompress() {
+  if (!compressTarget.value || !compressDest.value.trim()) {
+    return
+  }
+  compressing.value = true
+  try {
+    await apiFile.compress(compressTarget.value.path, compressDest.value.trim())
+    compressVisible.value = false
+    useFaToast().success('压缩完成')
+    load()
+  }
+  catch (e: any) {
+    useFaToast().error('压缩失败', { description: e?.message })
+  }
+  finally {
+    compressing.value = false
+  }
+}
+
+const archivePattern = /\.(tar\.gz|tgz|tar|zip)$/i
+
+function isArchive(entry: FileEntry) {
+  return !entry.isDir && archivePattern.test(entry.name)
+}
+
+const decompressVisible = ref(false)
+const decompressTarget = ref<FileEntry | null>(null)
+const decompressDest = ref('')
+const decompressing = ref(false)
+
+function openDecompress(entry: FileEntry) {
+  decompressTarget.value = entry
+  decompressDest.value = cwd.value
+  decompressVisible.value = true
+}
+
+async function doDecompress() {
+  if (!decompressTarget.value || !decompressDest.value.trim()) {
+    return
+  }
+  decompressing.value = true
+  try {
+    await apiFile.decompress(decompressTarget.value.path, decompressDest.value.trim())
+    decompressVisible.value = false
+    useFaToast().success('解压完成')
+    load()
+  }
+  catch (e: any) {
+    useFaToast().error('解压失败', { description: e?.message })
+  }
+  finally {
+    decompressing.value = false
+  }
+}
+
+// ---- 搜索 ----
+const searchKeyword = ref('')
+const searching = ref(false)
+const searchVisible = ref(false)
+const searchResults = ref<FileEntry[]>([])
+
+async function doSearch() {
+  const kw = searchKeyword.value.trim()
+  if (!kw) {
+    return
+  }
+  searching.value = true
+  try {
+    searchResults.value = await apiFile.search(cwd.value, kw)
+    searchVisible.value = true
+  }
+  catch (e: any) {
+    useFaToast().error('搜索失败', { description: e?.message })
+  }
+  finally {
+    searching.value = false
+  }
+}
+
 function joinPath(dir: string, name: string) {
   if (dir.endsWith('/')) {
     return dir + name
@@ -245,6 +364,17 @@ onMounted(() => load('/'))
         <span>浏览、编辑与管理服务器文件（默认根目录为全盘）</span>
       </template>
       <div class="flex flex-wrap items-center gap-2">
+        <div class="flex items-center gap-1">
+          <FaInput
+            v-model="searchKeyword"
+            placeholder="在当前目录下搜索…"
+            class="w-44!"
+            @keyup.enter="doSearch"
+          />
+          <FaButton variant="outline" size="sm" :loading="searching" @click="doSearch">
+            <FaIcon name="i-lucide:search" class="mr-1" /> 搜索
+          </FaButton>
+        </div>
         <FaButton variant="outline" size="sm" @click="mkdirVisible = true">
           <FaIcon name="i-lucide:folder-plus" class="mr-1" /> 新建目录
         </FaButton>
@@ -293,7 +423,7 @@ onMounted(() => load('/'))
               <th class="hidden w-40 px-3 py-2 md:table-cell">大小</th>
               <th class="hidden w-56 px-3 py-2 lg:table-cell">属主 / 权限</th>
               <th class="hidden w-44 px-3 py-2 sm:table-cell">修改时间</th>
-              <th class="w-28 px-3 py-2 text-right">操作</th>
+              <th class="w-48 px-3 py-2 text-right">操作</th>
             </tr>
           </thead>
           <tbody>
@@ -350,6 +480,15 @@ onMounted(() => load('/'))
                   </FaButton>
                   <FaButton v-if="!e.isDir" variant="ghost" size="icon-sm" title="下载" @click="openDownload(e)">
                     <FaIcon name="i-lucide:download" class="text-sm" />
+                  </FaButton>
+                  <FaButton variant="ghost" size="icon-sm" title="权限" @click="openChmod(e)">
+                    <FaIcon name="i-lucide:lock" class="text-sm" />
+                  </FaButton>
+                  <FaButton variant="ghost" size="icon-sm" title="压缩" @click="openCompress(e)">
+                    <FaIcon name="i-lucide:package" class="text-sm" />
+                  </FaButton>
+                  <FaButton v-if="isArchive(e)" variant="ghost" size="icon-sm" title="解压" @click="openDecompress(e)">
+                    <FaIcon name="i-lucide:package-open" class="text-sm" />
                   </FaButton>
                   <FaButton variant="ghost" size="icon-sm" title="重命名" @click="openRename(e)">
                     <FaIcon name="i-lucide:text-cursor-input" class="text-sm" />
@@ -420,5 +559,91 @@ onMounted(() => load('/'))
 
     <!-- 隐藏上传控件 -->
     <input ref="uploadInput" type="file" multiple class="hidden" @change="onUploadChange">
+
+    <!-- 权限 -->
+    <FaModal v-model="chmodVisible" title="修改权限" :destroy-on-close="true">
+      <div class="space-y-2 text-sm">
+        <div class="text-xs text-muted-foreground">
+          {{ chmodTarget?.path }}
+        </div>
+        <FaInput v-model="chmodMode" placeholder="如 755 / 644" class="w-40" @keyup.enter="doChmod" />
+        <div class="text-xs text-muted-foreground">
+          递归修改请用终端 <code>chmod -R</code>；此处仅修改该项自身。
+        </div>
+      </div>
+      <template #footer>
+        <FaButton variant="outline" @click="chmodVisible = false">
+          取消
+        </FaButton>
+        <FaButton @click="doChmod">
+          确认
+        </FaButton>
+      </template>
+    </FaModal>
+
+    <!-- 压缩 -->
+    <FaModal v-model="compressVisible" title="压缩为 tar.gz" :destroy-on-close="true">
+      <div class="space-y-2 text-sm">
+        <div class="text-xs text-muted-foreground">
+          {{ compressTarget?.path }}
+        </div>
+        <FaInput v-model="compressDest" placeholder="目标 .tar.gz 路径" class="w-full" @keyup.enter="doCompress" />
+      </div>
+      <template #footer>
+        <FaButton variant="outline" @click="compressVisible = false">
+          取消
+        </FaButton>
+        <FaButton :loading="compressing" @click="doCompress">
+          开始压缩
+        </FaButton>
+      </template>
+    </FaModal>
+
+    <!-- 解压 -->
+    <FaModal v-model="decompressVisible" title="解压" :destroy-on-close="true">
+      <div class="space-y-2 text-sm">
+        <div class="text-xs text-muted-foreground">
+          {{ decompressTarget?.path }}
+        </div>
+        <FaInput v-model="decompressDest" placeholder="解压目标目录" class="w-full" @keyup.enter="doDecompress" />
+      </div>
+      <template #footer>
+        <FaButton variant="outline" @click="decompressVisible = false">
+          取消
+        </FaButton>
+        <FaButton :loading="decompressing" @click="doDecompress">
+          开始解压
+        </FaButton>
+      </template>
+    </FaModal>
+
+    <!-- 搜索结果 -->
+    <FaModal
+      v-model="searchVisible"
+      :title="`搜索结果：${searchKeyword}（${searchResults.length} 项）`"
+      class="max-w-2xl!"
+      :destroy-on-close="true"
+    >
+      <div class="max-h-80 overflow-auto rounded-md border">
+        <button
+          v-for="e in searchResults"
+          :key="e.path"
+          type="button"
+          class="flex w-full cursor-pointer items-center gap-2 border-b px-3 py-2 text-left text-sm transition-colors last:border-b-0 hover:bg-accent/50"
+          @click="e.isDir ? load(e.path) : load(e.path.slice(0, e.path.lastIndexOf('/')) || '/')"
+        >
+          <YdMorphIcon :name="e.isDir ? 'folder' : 'file'" :size="15" :class="e.isDir ? 'text-amber-500' : 'text-muted-foreground'" />
+          <span class="truncate font-mono text-xs">{{ e.path }}</span>
+        </button>
+        <div v-if="!searchResults.length" class="px-3 py-8 text-center text-sm text-muted-foreground">
+          无匹配结果
+        </div>
+      </div>
+      <template #footer>
+        <FaButton variant="outline" @click="searchVisible = false">
+          关闭
+        </FaButton>
+      </template>
+    </FaModal>
   </div>
 </template>

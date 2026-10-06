@@ -26,7 +26,32 @@ func userInfoOf(u *model.User) dto.UserInfo {
 // AuthAPI 认证接口。
 type AuthAPI struct {
 	Auth    *service.Auth
+	Sec     *service.SecuritySettingsService
 	Version string
+}
+
+// TwoFASetup POST /api/v1/auth/2fa/setup（admin：生成密钥，返回 otpauth URI）
+func (a *AuthAPI) TwoFASetup(c *gin.Context) {
+	secret, uri, err := a.Sec.Enable2FA(c.Request.Context(), "YPanel", "admin")
+	if err != nil {
+		respErr(c, err)
+		return
+	}
+	respOK(c, gin.H{"secret": secret, "otpauthUri": uri})
+}
+
+// TwoFADisable POST /api/v1/auth/2fa/disable（admin）
+func (a *AuthAPI) TwoFADisable(c *gin.Context) {
+	if err := a.Sec.Disable2FA(c.Request.Context()); err != nil {
+		respErr(c, err)
+		return
+	}
+	respOK(c, struct{}{})
+}
+
+// TwoFAStatus GET /api/v1/auth/2fa/status
+func (a *AuthAPI) TwoFAStatus(c *gin.Context) {
+	respOK(c, gin.H{"enabled": a.Sec.TwoFAEnabled()})
 }
 
 // Login POST /api/v1/auth/login
@@ -35,7 +60,7 @@ func (a *AuthAPI) Login(c *gin.Context) {
 	if !ok {
 		return
 	}
-	user, err := a.Auth.Login(req.Username, req.Password, clientIP(c), c.GetHeader("User-Agent"))
+	user, err := a.Auth.Login(req.Username, req.Password, req.OtpCode, clientIP(c), c.GetHeader("User-Agent"))
 	if err != nil {
 		respErr(c, err)
 		return

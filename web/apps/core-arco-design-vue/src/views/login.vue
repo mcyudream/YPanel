@@ -14,6 +14,11 @@ const appSettingsStore = useAppSettingsStore()
 
 const redirect = ref(route.query.redirect?.toString() ?? appSettingsStore.settings.app.home.fullPath)
 
+// 安全入口：URL 带 ?entry= 段时记录，后续登录请求自动附带
+if (route.query.entry?.toString()) {
+  localStorage.setItem('login_entry', route.query.entry.toString())
+}
+
 // 布局对齐方式
 const layoutAlign = ref<'left' | 'center' | 'right'>('center')
 // 表单相关

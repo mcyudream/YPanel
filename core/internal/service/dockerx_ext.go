@@ -24,6 +24,11 @@ func NewDockerExtService(nodes *NodeService) *DockerExtService {
 	return &DockerExtService{nodes: nodes}
 }
 
+// Client 暴露 agent 客户端（WS 代理等直连场景使用）。
+func (s *DockerExtService) Client() (*agentclient.Client, error) {
+	return s.client()
+}
+
 func (s *DockerExtService) client() (*agentclient.Client, error) {
 	node, err := s.nodes.ByID("local")
 	if err != nil {
@@ -120,8 +125,13 @@ func (s *DockerExtService) ImagePull(ctx context.Context, ref string) (string, e
 	if err != nil {
 		return "", err
 	}
-	out, err := agentclient.DoJSON[dto.ExecReq, dto.ExecResp](ac, ctx, "POST", "/agent/v1/docker/images/pull",
-		&dto.ExecReq{Command: ref, TimeoutSecs: 1800})
+	out, err := agentclient.DoJSON[struct {
+		Ref string `json:"ref"`
+	}, struct {
+		Output string `json:"output"`
+	}](ac, ctx, http.MethodPost, "/agent/v1/docker/images/pull", &struct {
+		Ref string `json:"ref"`
+	}{Ref: ref})
 	if err != nil {
 		return "", err
 	}
@@ -145,8 +155,12 @@ func (s *DockerExtService) NetworkCreate(ctx context.Context, name, driver strin
 	if err != nil {
 		return err
 	}
-	_, err = agentclient.DoJSON[dto.ExecReq, dto.ExecResp](ac, ctx, "POST",
-		"/agent/v1/docker/networks/"+name, &dto.ExecReq{Command: driver, TimeoutSecs: 60})
+	_, err = agentclient.DoJSON[struct {
+		Driver string `json:"driver"`
+	}, struct{}](ac, ctx, http.MethodPost,
+		"/agent/v1/docker/networks/"+name, &struct {
+			Driver string `json:"driver"`
+		}{Driver: driver})
 	return err
 }
 
@@ -202,4 +216,49 @@ func boolStr(b bool) string {
 		return "1"
 	}
 	return "0"
+}
+
+// ExtPortMap 端口映射（与 agent dockerx.PortMap 字段一致）。
+type ExtPortMap struct {
+	Host      string `json:"host"`
+	Container string `json:"container"`
+	Proto     string `json:"proto"`
+}
+
+// ExtContainerCreateReq 容器创建请求（与 agent dockerx.ContainerCreateReq 字段一致）。
+type ExtContainerCreateReq struct {
+	Name    string       `json:"name" binding:"required"`
+	Image   string       `json:"image" binding:"required"`
+	Cmd     []string     `json:"cmd"`
+	Env     []string     `json:"env"`
+	Ports   []ExtPortMap `json:"ports"`
+	Mounts  []string     `json:"mounts"`
+	Restart string       `json:"restart"`
+	Network string       `json:"network"`
+}
+
+// ContainerCreate 创建并启动容器（返回容器 ID）。
+func (s *DockerExtService) ContainerCreate(ctx context.Context, req ExtContainerCreateReq) (string, error) {
+	ac, err := s.client()
+	if err != nil {
+		return "", err
+	}
+	out, err := agentclient.DoJSON[ExtContainerCreateReq, struct {
+		ID string `json:"id"`
+	}](ac, ctx, http.MethodPost, "/agent/v1/docker/containers", &req)
+	if err != nil {
+		return "", err
+	}
+	return out.ID, nil
+}
+
+// ContainerRemove 删除容器。
+func (s *DockerExtService) ContainerRemove(ctx context.Context, id string, force bool) error {
+	ac, err := s.client()
+	if err != nil {
+		return err
+	}
+	_, err = agentclient.DoJSON[struct{}, struct{}](ac, ctx, http.MethodDelete,
+		"/agent/v1/docker/containers/"+id+"?force="+boolStr(force), nil)
+	return err
 }

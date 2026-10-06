@@ -2,8 +2,12 @@ package api
 
 import (
 	"encoding/json"
+	"net/http"
+	"net/url"
+	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/gorilla/websocket"
 
 	"github.com/ypanel/core/internal/service"
 )
@@ -14,7 +18,7 @@ func json2any(raw json.RawMessage) any {
 	return v
 }
 
-// DockerExtAPI Docker 管理扩展接口（镜像/网络/卷/容器详情/清理）。
+// DockerExtAPI Docker 管理扩展接口（镜像/网络/卷/容器详情/清理/exec/创建）。
 type DockerExtAPI struct {
 	Ext *service.DockerExtService
 }
@@ -143,6 +147,115 @@ func (a *DockerExtAPI) VolumesPrune(c *gin.Context) {
 	respOK(c, json2any(out))
 }
 
+// ContainersPrune POST /api/v1/docker/containers/prune
+func (a *DockerExtAPI) ContainersPrune(c *gin.Context) {
+	out, err := a.Ext.ContainersPrune(c.Request.Context())
+	if err != nil {
+		respErr(c, err)
+		return
+	}
+	respOK(c, gin.H{"output": out})
+}
+
+// ContainerInspect GET /api/v1/docker/containers/:id/inspect
+func (a *DockerExtAPI) ContainerInspect(c *gin.Context) {
+	out, err := a.Ext.Passthrough(c.Request.Context(), "/agent/v1/docker/containers/"+c.Param("id")+"/inspect")
+	if err != nil {
+		respErr(c, err)
+		return
+	}
+	respOK(c, json2any(out))
+}
+
+// ContainerStats GET /api/v1/docker/containers/:id/stats
+func (a *DockerExtAPI) ContainerStats(c *gin.Context) {
+	out, err := a.Ext.Passthrough(c.Request.Context(), "/agent/v1/docker/containers/"+c.Param("id")+"/stats")
+	if err != nil {
+		respErr(c, err)
+		return
+	}
+	respOK(c, json2any(out))
+}
+
+// ContainerExecWS GET /api/v1/docker/containers/:id/exec?cmd=/bin/sh（WS 双向代理，浏览器 ↔ agent）
+func (a *DockerExtAPI) ContainerExecWS(c *gin.Context) {
+	id := c.Param("id")
+	cmd := c.DefaultQuery("cmd", "/bin/sh")
+	upgrader := websocket.Upgrader{
+		ReadBufferSize:  4096,
+		WriteBufferSize: 4096,
+		CheckOrigin:     func(*http.Request) bool { return true }, // 鉴权已由中间件完成
+	}
+	browserWS, err := upgrader.Upgrade(c.Writer, c.Request, nil)
+	if err != nil {
+		return
+	}
+	defer func() { _ = browserWS.Close() }()
+
+	ac, err := a.Ext.Client()
+	if err != nil {
+		_ = browserWS.WriteControl(websocket.CloseMessage,
+			websocket.FormatCloseMessage(websocket.CloseInternalServerErr, "节点不可用: "+err.Error()),
+			time.Now().Add(2*time.Second))
+		return
+	}
+	agentURL := ac.WSURL("/agent/v1/docker/containers/" + id + "/exec?cmd=" + url.QueryEscape(cmd))
+	agentConn, _, err := websocket.DefaultDialer.Dial(agentURL, ac.Header())
+	if err != nil {
+		_ = browserWS.WriteControl(websocket.CloseMessage,
+			websocket.FormatCloseMessage(websocket.CloseInternalServerErr, "agent 连接失败: "+err.Error()),
+			time.Now().Add(2*time.Second))
+		return
+	}
+	defer func() { _ = agentConn.Close() }()
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		for {
+			mt, data, err := agentConn.ReadMessage()
+			if err != nil {
+				return
+			}
+			if err := browserWS.WriteMessage(mt, data); err != nil {
+				return
+			}
+		}
+	}()
+	for {
+		mt, payload, err := browserWS.ReadMessage()
+		if err != nil {
+			return
+		}
+		if err := agentConn.WriteMessage(mt, payload); err != nil {
+			return
+		}
+	}
+}
+
+// ContainerCreate POST /api/v1/docker/containers
+func (a *DockerExtAPI) ContainerCreate(c *gin.Context) {
+	req, ok := bind[service.ExtContainerCreateReq](c)
+	if !ok {
+		return
+	}
+	id, err := a.Ext.ContainerCreate(c.Request.Context(), *req)
+	if err != nil {
+		respErr(c, err)
+		return
+	}
+	respOK(c, gin.H{"id": id})
+}
+
+// ContainerRemove DELETE /api/v1/docker/containers/:id
+func (a *DockerExtAPI) ContainerRemove(c *gin.Context) {
+	if err := a.Ext.ContainerRemove(c.Request.Context(), c.Param("id"), c.Query("force") == "1"); err != nil {
+		respErr(c, err)
+		return
+	}
+	respOK(c, struct{}{})
+}
+
 // DaemonConfig GET /api/v1/docker/daemon-config
 func (a *DockerExtAPI) DaemonConfig(c *gin.Context) {
 	out, err := a.Ext.Passthrough(c.Request.Context(), "/agent/v1/docker/daemon-config")
@@ -161,41 +274,11 @@ func (a *DockerExtAPI) UpdateDaemonConfig(c *gin.Context) {
 	if !ok {
 		return
 	}
-	if json.Valid([]byte(req.Content)) == false {
+	if !json.Valid([]byte(req.Content)) {
 		respErr(c, errBadRequest("daemon.json 不是合法 JSON"))
 		return
 	}
 	out, err := a.Ext.PostJSON(c.Request.Context(), "/agent/v1/docker/daemon-config", map[string]string{"content": req.Content})
-	if err != nil {
-		respErr(c, err)
-		return
-	}
-	respOK(c, json2any(out))
-}
-
-// ContainersPrune POST /api/v1/docker/containers/prune
-func (a *DockerExtAPI) ContainersPrune(c *gin.Context) {
-	out, err := a.Ext.Passthrough(c.Request.Context(), "/agent/v1/docker/containers/prune")
-	if err != nil {
-		respErr(c, err)
-		return
-	}
-	respOK(c, json2any(out))
-}
-
-// ContainerInspect GET /api/v1/docker/containers/:id/inspect
-func (a *DockerExtAPI) ContainerInspect(c *gin.Context) {
-	out, err := a.Ext.Passthrough(c.Request.Context(), "/agent/v1/docker/containers/"+c.Param("id")+"/inspect")
-	if err != nil {
-		respErr(c, err)
-		return
-	}
-	respOK(c, json2any(out))
-}
-
-// ContainerStats GET /api/v1/docker/containers/:id/stats
-func (a *DockerExtAPI) ContainerStats(c *gin.Context) {
-	out, err := a.Ext.Passthrough(c.Request.Context(), "/agent/v1/docker/containers/"+c.Param("id")+"/stats")
 	if err != nil {
 		respErr(c, err)
 		return

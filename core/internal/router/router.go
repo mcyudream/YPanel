@@ -33,6 +33,7 @@ type Deps struct {
 	MarketStore *service.MarketStoreService
 	RT       *service.RuntimeService
 	DockerExt *service.DockerExtService
+	Sec      *service.SecuritySettingsService
 	Version  string
 }
 
@@ -42,9 +43,10 @@ func (d *Deps) CronDB() *gorm.DB { return d.Auth.DB() }
 // Setup 装配全部路由。
 func Setup(d *Deps) (*gin.Engine, error) {
 	r := gin.New()
-	r.Use(gin.Recovery(), middleware.AccessLog(), middleware.CORS())
+	r.Use(gin.Recovery(), middleware.AccessLog(), middleware.CORS(), middleware.SecurityGate(d.Sec))
 
-	authAPI := &api.AuthAPI{Auth: d.Auth, Version: d.Version}
+	authAPI := &api.AuthAPI{Auth: d.Auth, Sec: d.Sec, Version: d.Version}
+	securityAPI := &api.SecurityAPI{Sec: d.Sec, Auth: d.Auth}
 	userAPI := &api.UserAPI{DB: d.Auth.DB()}
 	sysAPI := &api.SystemAPI{Nodes: d.Nodes}
 	fileAPI := &api.FileAPI{Nodes: d.Nodes}
@@ -78,6 +80,7 @@ func Setup(d *Deps) (*gin.Engine, error) {
 	v1 := r.Group("/api/v1")
 	{
 		v1.POST("/auth/login", authAPI.Login)
+	v1.GET("/auth/2fa/status", authAPI.TwoFAStatus)
 	v1.POST("/pair", nodeAPI.Pair)
 	v1.POST("/pair/heartbeat", nodeAPI.Heartbeat)
 
@@ -99,6 +102,10 @@ func Setup(d *Deps) (*gin.Engine, error) {
 			authed.POST("/files/mkdir", fileAPI.Mkdir)
 			authed.POST("/files/rename", fileAPI.Rename)
 			authed.POST("/files/delete", fileAPI.Delete)
+			authed.POST("/files/chmod", fileAPI.Chmod)
+			authed.POST("/files/compress", fileAPI.Compress)
+			authed.POST("/files/decompress", fileAPI.Decompress)
+			authed.GET("/files/search", fileAPI.Search)
 
 			authed.GET("/docker/containers", dockerAPI.List)
 			authed.GET("/docker/containers/:id/logs", dockerAPI.Logs)
@@ -167,6 +174,11 @@ func Setup(d *Deps) (*gin.Engine, error) {
 				admin.POST("/nodes/pairing-code", nodeAPI.PairingCode)
 				admin.DELETE("/nodes/:id", nodeAPI.Delete)
 
+			admin.POST("/auth/2fa/setup", authAPI.TwoFASetup)
+			admin.POST("/auth/2fa/disable", authAPI.TwoFADisable)
+			admin.GET("/security/settings", securityAPI.Get)
+			admin.PUT("/security/settings", securityAPI.Update)
+
 			authed.GET("/store/apps", storeAPI.List)
 			authed.GET("/store/apps/:key", storeAPI.Get)
 			authed.POST("/store/sync", storeAPI.Sync)
@@ -229,6 +241,9 @@ func Setup(d *Deps) (*gin.Engine, error) {
 			authed.POST("/docker/containers/prune", dockerExtAPI.ContainersPrune)
 			authed.GET("/docker/containers/:id/inspect", dockerExtAPI.ContainerInspect)
 			authed.GET("/docker/containers/:id/stats", dockerExtAPI.ContainerStats)
+			authed.GET("/docker/containers/:id/exec", dockerExtAPI.ContainerExecWS)
+			authed.POST("/docker/containers", dockerExtAPI.ContainerCreate)
+			authed.DELETE("/docker/containers/:id", dockerExtAPI.ContainerRemove)
 			authed.GET("/docker/daemon-config", dockerExtAPI.DaemonConfig)
 			authed.PUT("/docker/daemon-config", dockerExtAPI.UpdateDaemonConfig)
 

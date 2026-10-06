@@ -51,3 +51,21 @@ type FileReadResp struct {
 	Size      int64  `json:"size"`
 	Truncated bool   `json:"truncated"` // 超出读取上限被截断
 }
+
+// FileChmodReq 权限修改请求。
+type FileChmodReq struct {
+	Path string `json:"path" binding:"required"`
+	Mode string `json:"mode" binding:"required"`
+}
+
+// FileCompressReq 压缩请求（tar.gz）。
+type FileCompressReq struct {
+	Src  string `json:"src" binding:"required"`
+	Dest string `json:"dest" binding:"required"`
+}
+
+// FileDecompressReq 解压请求。
+type FileDecompressReq struct {
+	Archive string `json:"archive" binding:"required"`
+	DestDir string `json:"destDir" binding:"required"`
+}

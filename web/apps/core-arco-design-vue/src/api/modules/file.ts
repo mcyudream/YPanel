@@ -38,6 +38,13 @@ export default {
   mkdir: (path: string) => api.post('api/v1/files/mkdir', { path }),
   rename: (from: string, to: string) => api.post('api/v1/files/rename', { from, to }),
   delete: (paths: string[]) => api.post('api/v1/files/delete', { paths }),
+  chmod: (path: string, mode: string) => api.post('api/v1/files/chmod', { path, mode }),
+  compress: (src: string, dest: string) => api.post('api/v1/files/compress', { src, dest }, { timeout: 600000 }),
+  decompress: (archive: string, destDir: string) => api.post('api/v1/files/decompress', { archive, destDir }, { timeout: 600000 }),
+  search: async (dir: string, keyword: string) => {
+    const res = await api.get(`api/v1/files/search?dir=${encodeURIComponent(dir)}&keyword=${encodeURIComponent(keyword)}`, { timeout: 120000 })
+    return res.data as FileEntry[]
+  },
   upload: (path: string, file: File, onProgress?: (percent: number) => void) => {
     const form = new FormData()
     form.append('file', file)

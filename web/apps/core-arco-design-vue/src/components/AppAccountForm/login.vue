@@ -29,6 +29,10 @@ const model = ref<LoginModel>({
   password: '',
 })
 
+// 2FA：后端返回 2101 表示需要动态码
+const needOtp = ref(false)
+const otpCode = ref('')
+
 const validationSchema = toTypedSchema(z.object({
   account: z.string().min(1, '请输入用户名'),
   password: z.string().min(1, '请输入密码'),
@@ -36,9 +40,14 @@ const validationSchema = toTypedSchema(z.object({
 
 function onSubmit(values: LoginModel) {
   loading.value = true
-  appAccountStore.login(values).then(() => {
+  appAccountStore.login({ ...values, otpCode: otpCode.value }).then(() => {
     localStorage.setItem('login_account', values.account)
     emits('onLogin', values.account)
+  }).catch((err: any) => {
+    if (err?.code === 2101) {
+      needOtp.value = true
+    }
+    throw err
   }).finally(() => {
     loading.value = false
   })
@@ -72,6 +81,13 @@ function onSubmit(values: LoginModel) {
         <FaInput type="password" placeholder="密码" class="w-full">
           <template #start>
             <FaIcon name="i-lucide:lock" />
+          </template>
+        </FaInput>
+      </FaFormItem>
+      <FaFormItem v-if="needOtp" name="otpCode">
+        <FaInput v-model="otpCode" type="text" inputmode="numeric" maxlength="6" placeholder="两步验证码（6 位）" class="w-full">
+          <template #start>
+            <FaIcon name="i-lucide:shield-check" />
           </template>
         </FaInput>
       </FaFormItem>

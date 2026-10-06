@@ -23,11 +23,14 @@ export default {
   login: async (data: {
     account: string
     password: string
+    otpCode?: string
   }) => {
+    const entry = localStorage.getItem('login_entry') ?? ''
     const res = await api.post('api/v1/auth/login', {
       username: data.account,
       password: data.password,
-    })
+      otpCode: data.otpCode ?? '',
+    }, entry ? { headers: { 'X-Safe-Entry': entry } } : undefined)
     return {
       ...res,
       data: {

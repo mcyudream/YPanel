@@ -39,3 +39,10 @@
 - **根因**：compose 模板里卷写相对路径 `./conf.d`（解析为 compose 项目目录 `/opt/ypanel/compose/ypanel-nginx/conf.d`），而站点配置按面板约定写到 `/opt/ypanel/nginx/conf.d`——容器挂载的是空目录，nginx 无任何 server 块故不监听，且 nginx 对"无 server"合法静默。
 - **规避/解决**：面板管理的 compose 卷**一律绝对路径**；"进程活着但不干活"先核对容器内实际挂载（docker inspect .Mounts）与文件落点是否一致。
 - **来源**：2026-10-06，M5 站点管理。
+
+### agent 升级重装不能带一次性配对码重启，要用凭据续启
+
+- **现象**：推新 ypagent 二进制后按原参数 `-core ... -code XXX` 重启，日志报"配对失败：配对码无效、已使用或已过期"，systemd 反复重启。
+- **根因**：配对码是一次性消费的；首次配对成功后凭据已落盘 `/etc/ypanel/agent.json`，再带 `-code` 启动会重新走配对流程必然失败。
+- **规避/解决**：升级时直接无参启动（`ypagent -addr 0.0.0.0:9528`），自动读取已存凭据；systemd 单元按此编写（测试机 ypagent.service 已是凭据续启模式）。另注意 sqlite3 CLI 直读运行中 GORM（WAL）库会看到混合状态，排障以 API 视角为准。
+- **来源**：2026-10-06，M19 部署（ypagent.service）。

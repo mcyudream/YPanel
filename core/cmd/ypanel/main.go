@@ -86,6 +86,7 @@ func run(ctx context.Context, cfg *config.Config) error {
 	dockerExtSvc := service.NewDockerExtService(nodes)
 	suSvc := service.NewSelfUpdateService(nodes, version)
 	notifSvc := service.NewNotificationService(gdb)
+	secSvc := service.NewSecuritySettingsService(settings)
 	alertSvc := service.NewAlertService(gdb, nodes, notifSvc)
 	alertSvc.Start(ctx)
 	histSvc := service.NewHistoryRecorder(gdb, nodes)
@@ -99,7 +100,7 @@ func run(ctx context.Context, cfg *config.Config) error {
 		Market: marketSvc, FW: fwSvc, Alerts: alertSvc,
 		Notif: notifSvc, PanelBP: service.NewPanelBackupService(nodes), Hist: histSvc,
 		F2B: f2bSvc, DBAdmin: dbAdminSvc, SU: suSvc, MarketStore: marketStoreSvc, RT: rtSvc,
-		DockerExt: dockerExtSvc, Version: version,
+		DockerExt: dockerExtSvc, Sec: secSvc, Version: version,
 	})
 	if err != nil {
 		return err

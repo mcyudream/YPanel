@@ -124,6 +124,56 @@ func (f *FileAPI) Delete(c *gin.Context) {
 	respOK(c, struct{}{})
 }
 
+// Chmod POST /api/v1/files/chmod {path, mode}
+func (f *FileAPI) Chmod(c *gin.Context) {
+	req, ok := bind[dto.FileChmodReq](c)
+	if !ok {
+		return
+	}
+	if _, err := agentclient.DoJSON[dto.FileChmodReq, struct{}](f.client(c), c.Request.Context(), http.MethodPost, "/agent/v1/files/chmod", req); err != nil {
+		respErr(c, err)
+		return
+	}
+	respOK(c, struct{}{})
+}
+
+// Compress POST /api/v1/files/compress {src, dest}
+func (f *FileAPI) Compress(c *gin.Context) {
+	req, ok := bind[dto.FileCompressReq](c)
+	if !ok {
+		return
+	}
+	if _, err := agentclient.DoJSON[dto.FileCompressReq, struct{}](f.client(c), c.Request.Context(), http.MethodPost, "/agent/v1/files/compress", req); err != nil {
+		respErr(c, err)
+		return
+	}
+	respOK(c, struct{}{})
+}
+
+// Decompress POST /api/v1/files/decompress {archive, destDir}
+func (f *FileAPI) Decompress(c *gin.Context) {
+	req, ok := bind[dto.FileDecompressReq](c)
+	if !ok {
+		return
+	}
+	if _, err := agentclient.DoJSON[dto.FileDecompressReq, struct{}](f.client(c), c.Request.Context(), http.MethodPost, "/agent/v1/files/decompress", req); err != nil {
+		respErr(c, err)
+		return
+	}
+	respOK(c, struct{}{})
+}
+
+// Search GET /api/v1/files/search?dir=&keyword=
+func (f *FileAPI) Search(c *gin.Context) {
+	out, err := agentclient.GetJSON[[]dto.FileEntry](f.client(c), c.Request.Context(),
+		"/agent/v1/files/search?dir="+escape(c.Query("dir"))+"&keyword="+escape(c.Query("keyword")))
+	if err != nil {
+		respErr(c, err)
+		return
+	}
+	respOK(c, out)
+}
+
 // Upload POST /api/v1/files/upload?path=（multipart 直传转发）
 func (f *FileAPI) Upload(c *gin.Context) {
 	fileHdr, err := c.FormFile("file")

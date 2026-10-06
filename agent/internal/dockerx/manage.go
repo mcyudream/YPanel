@@ -7,8 +7,13 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
+	"net/netip"
+	"regexp"
 	"strings"
 
+	"github.com/moby/moby/api/types/container"
+	"github.com/moby/moby/api/types/network"
 	"github.com/moby/moby/client"
 
 	"github.com/ypanel/shared/errs"
@@ -309,4 +314,112 @@ func (m *Manager) ContainersPrune(ctx context.Context) (string, error) {
 		}
 	}
 	return fmt.Sprintf("清理 %d 个已停止容器", removed), nil
+}
+
+// ContainerExecCreate 创建 exec 实例，返回 exec ID（供 Attach 流式使用）。
+func (m *Manager) ExecCreate(ctx context.Context, id string, cmd []string) (string, error) {
+	cli, err := m.getClient()
+	if err != nil {
+		return "", err
+	}
+	execID, err := cli.ExecCreate(ctx, id, client.ExecCreateOptions{
+		Cmd:          cmd,
+		AttachStdin:  true,
+		AttachStdout: true,
+		AttachStderr: true,
+		TTY:          true,
+	})
+	if err != nil {
+		return "", errs.Wrapc(errs.CodeFileOpFailed, "exec 创建失败: "+err.Error())
+	}
+	return execID.ID, nil
+}
+
+// ExecAttach 附着 exec 实例（TTY 双向流）。调用方负责关闭连接。
+func (m *Manager) ExecAttach(ctx context.Context, execID string) (io.Reader, io.Writer, error) {
+	cli, err := m.getClient()
+	if err != nil {
+		return nil, nil, err
+	}
+	resp, err := cli.ExecAttach(ctx, execID, client.ExecAttachOptions{TTY: true})
+	if err != nil {
+		return nil, nil, errs.Wrapc(errs.CodeFileOpFailed, "exec attach 失败: "+err.Error())
+	}
+	return resp.Reader, resp.Conn, nil
+}
+
+var containerNamePattern = regexp.MustCompile(`^[a-z][a-z0-9-]{1,30}[a-z0-9]$`)
+
+// ContainerCreateReq 容器创建参数（常用子集）。
+type ContainerCreateReq struct {
+	Name    string   `json:"name"`
+	Image   string   `json:"image"`
+	Cmd     []string `json:"cmd"`
+	Env     []string `json:"env"`
+	Ports   []PortMap `json:"ports"`
+	Mounts  []string `json:"mounts"`
+	Restart string   `json:"restart"`
+	Network string   `json:"network"`
+}
+
+// PortMap 端口映射。
+type PortMap struct {
+	Host      string `json:"host"`
+	Container string `json:"container"`
+	Proto     string `json:"proto"`
+}
+
+// ContainerCreate 创建并启动容器。
+func (m *Manager) ContainerCreate(ctx context.Context, r ContainerCreateReq) (string, error) {
+	cli, err := m.getClient()
+	if err != nil {
+		return "", err
+	}
+	if r.Name == "" || r.Image == "" {
+		return "", errs.Wrap(errs.ErrBadRequest, "name/image 必填")
+	}
+	if !containerNamePattern.MatchString(r.Name) {
+		return "", errs.Wrap(errs.ErrBadRequest, "容器名不合法（小写字母/数字/中划线）")
+	}
+	cc := container.Config{Image: r.Image, Cmd: r.Cmd, Env: r.Env}
+	hc := container.HostConfig{}
+	if r.Restart != "" {
+		hc.RestartPolicy = container.RestartPolicy{Name: container.RestartPolicyMode(r.Restart)}
+	}
+	for _, pm := range r.Ports {
+		proto := pm.Proto
+		if proto == "" {
+			proto = "tcp"
+		}
+		if pm.Host == "" || pm.Container == "" {
+			continue
+		}
+		portKey, perr := network.ParsePort(pm.Container + "/" + proto)
+		if perr != nil {
+			return "", errs.Wrap(errs.ErrBadRequest, "端口不合法: "+pm.Container+"/"+proto)
+		}
+		hostIP, iperr := netip.ParseAddr("0.0.0.0")
+		if iperr != nil {
+			return "", errs.Wrap(errs.ErrBadRequest, "HostIP 解析失败")
+		}
+		hc.PortBindings[network.Port(portKey)] = []network.PortBinding{{HostIP: hostIP, HostPort: pm.Host}}
+	}
+	hc.Binds = append(hc.Binds, r.Mounts...)
+	networkingConfig := network.NetworkingConfig{}
+	if r.Network != "" {
+		networkingConfig.EndpointsConfig = map[string]*network.EndpointSettings{r.Network: {}}
+	}
+	resp, err := cli.ContainerCreate(ctx, client.ContainerCreateOptions{
+		Config:           &cc,
+		HostConfig:       &hc,
+		NetworkingConfig: &networkingConfig,
+		Name:             r.Name,
+	})
+	if err != nil {
+		return "", errs.Wrapc(errs.CodeFileOpFailed, "创建容器失败: "+err.Error())
+	}
+	if _, err := cli.ContainerStart(ctx, resp.ID, client.ContainerStartOptions{}); err != nil {
+		return "", errs.Wrapc(errs.CodeFileOpFailed, "启动容器失败: "+err.Error())
+	}
+	return resp.ID, nil
 }

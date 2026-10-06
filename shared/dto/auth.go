@@ -6,6 +6,7 @@ import "time"
 type LoginReq struct {
 	Username string `json:"username" binding:"required"`
 	Password string `json:"password" binding:"required"`
+	OtpCode  string `json:"otpCode"` // 启用 2FA 时必填
 }
 
 // LoginResp 登录响应。

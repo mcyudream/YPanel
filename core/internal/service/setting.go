@@ -4,10 +4,12 @@ package service
 import (
 	"crypto/rand"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"golang.org/x/crypto/bcrypt"
@@ -51,9 +53,22 @@ func (s *SettingService) Get(key, def string) string {
 }
 
 // Set 写设置（upsert）。
+// 注意：不能用 Assign(struct).FirstOrCreate —— GORM struct 更新会忽略零值字段，
+// 导致 Set(key, "") 静默不落库（重启后旧值回魂）。
 func (s *SettingService) Set(key, value string) error {
-	if err := s.db.Where("`key` = ?", key).Assign(model.Setting{Value: value}).FirstOrCreate(&model.Setting{Key: key}).Error; err != nil {
+	var row model.Setting
+	err := s.db.Where("`key` = ?", key).First(&row).Error
+	switch {
+	case errors.Is(err, gorm.ErrRecordNotFound):
+		if err := s.db.Create(&model.Setting{Key: key, Value: value}).Error; err != nil {
+			return err
+		}
+	case err != nil:
 		return err
+	case row.Value != value:
+		if err := s.db.Model(&model.Setting{}).Where("`key` = ?", key).Update("value", value).Error; err != nil {
+			return err
+		}
 	}
 	s.mem[key] = value
 	return nil
@@ -134,6 +149,7 @@ func (s *UserService) ResetPassword(username, newPassword string) error {
 type Auth struct {
 	db       *gorm.DB
 	settings *SettingService
+	security *SecuritySettingsService
 	secret   []byte
 	fails    map[string]*failRecord // username|ip → 失败计数
 }
@@ -150,8 +166,23 @@ func NewAuth(db *gorm.DB, settings *SettingService) (*Auth, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Auth{db: db, settings: settings, secret: []byte(secret), fails: map[string]*failRecord{}}, nil
+	sec := NewSecuritySettingsService(settings)
+	return &Auth{db: db, settings: settings, security: sec, secret: []byte(secret), fails: map[string]*failRecord{}}, nil
 }
+
+// Needs2FA 登录是否需要 OTP 二次校验。
+func (a *Auth) Needs2FA() bool { return a.security.TwoFAEnabled() }
+
+// Verify2FACode 校验 OTP。
+func (a *Auth) Verify2FACode(code string) error {
+	return VerifyTOTP(a.security.TwoFASecret(), code)
+}
+
+// IsIPAllowed 白名单校验。
+func (a *Auth) IsIPAllowed(ip string) bool { return a.security.IsIPAllowed(ip) }
+
+// SessionHours 会话超时小时数。
+func (a *Auth) SessionHours() int { return a.security.SessionHours() }
 
 const (
 	maxFails     = 5
@@ -159,8 +190,8 @@ const (
 	lockDuration = 15 * time.Minute
 )
 
-// Login 登录校验：锁定检查 → 用户校验 → 审计落库。
-func (a *Auth) Login(username, password, ip, ua string) (*model.User, error) {
+// Login 登录校验：锁定检查 → 用户校验 → 2FA → 审计落库。
+func (a *Auth) Login(username, password, totpCode2FA, ip, ua string) (*model.User, error) {
 	key := username + "|" + ip
 	if fr, ok := a.fails[key]; ok && fr.lock.After(time.Now()) {
 		a.writeLog(username, ip, ua, false, "尝试过于频繁，已临时锁定")
@@ -180,6 +211,13 @@ func (a *Auth) Login(username, password, ip, ua string) (*model.User, error) {
 	if user.Status != 1 {
 		a.writeLog(username, ip, ua, false, "账号已禁用")
 		return nil, errs.New(errs.CodeUserDisabled, "error.userDisabled", "账号已禁用")
+	}
+	// 2FA：账号密码通过后，要求携带 OTP 校验码二次验证
+	if a.Needs2FA() {
+		if err := VerifyTOTP(a.security.TwoFASecret(), strings.TrimSpace(totpCode2FA)); err != nil {
+			a.writeLog(username, ip, ua, false, "2FA 验证失败")
+			return nil, errs.New(2101, "error.otpRequired", err.Error())
+		}
 	}
 	delete(a.fails, key)
 	now := time.Now()

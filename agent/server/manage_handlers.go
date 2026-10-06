@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 
+	"github.com/ypanel/agent/internal/dockerx"
 	"github.com/ypanel/shared/errs"
 )
 
@@ -181,4 +182,23 @@ func (s *Server) handleDockerContainersPrune(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	writeOK(w, map[string]string{"output": out})
+}
+
+// handleDockerContainerCreate POST /agent/v1/docker/containers
+func (s *Server) handleDockerContainerCreate(w http.ResponseWriter, r *http.Request) {
+	if !s.dockerOK() {
+		writeErr(w, errs.ErrAgentDisabled)
+		return
+	}
+	req, err := decodeBody[dockerx.ContainerCreateReq](r)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	id, err := s.dock.ContainerCreate(r.Context(), *req)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	writeOK(w, map[string]string{"id": id})
 }

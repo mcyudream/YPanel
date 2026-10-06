@@ -20,9 +20,10 @@ type claims struct {
 	jwt.RegisteredClaims
 }
 
-// IssueToken 签发会话 token。
+// IssueToken 签发会话 token（会话超时从安全设置动态读取，小时粒度）。
 func (a *Auth) IssueToken(u *model.User) (string, time.Time, error) {
-	exp := time.Now().Add(tokenTTL)
+	hours := a.security.SessionHours()
+	exp := time.Now().Add(time.Duration(hours) * time.Hour)
 	c := claims{
 		UID:          u.ID,
 		Username:     u.Username,

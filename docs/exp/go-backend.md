@@ -41,3 +41,24 @@
 - **根因**：`cpu.Percent(0, false)` 非阻塞模式依赖包内全局"上次调用时刻"，采样器（2s 周期）与 API 并发调用会互相消费差值窗口——紧跟着调用的那一方拿到 ~0。
 - **规避/解决**：单一采样器独占 Percent 调用，其余消费方读采样环形缓冲的最新值（agent sysinfo.Overview 的 CPU 字段改取 Latest()）。
 - **来源**：2026-10-06，M7 告警服务。
+
+### GORM Assign(struct)+FirstOrCreate 更新时零值字段被静默忽略
+
+- **现象**：`SettingService.Set(key, "")` 返回成功，API 响应也是空值，但重启进程后旧值"回魂"——白名单关了又出现、安全入口关了又生效，行为像"设置丢失"。
+- **根因**：`db.Where(...).Assign(model.Setting{Value: ""}).FirstOrCreate(...)` 在记录已存在时走 GORM Updates 语义，**struct 更新跳过零值字段**——空字符串、0、false 永远写不进库；内存缓存 `mem` 却同步更新了，形成"当次生效、重启回滚"的假象。
+- **规避/解决**：upsert 手写三分支（查 → 不存在 Create / 存在且值变 `Model.Where.Update("列名", v)`）；或 Assign 传 map。凡是"改了没生效、重启又变回去"类问题，先怀疑零值更新被吞。
+- **来源**：2026-10-06，M19 安全基线（IP 白名单/安全入口持久化）。
+
+### time.Duration 转 int64 是纳秒：TOTP 步长除法恒为 0
+
+- **现象**：手写 TOTP 全链路（生成/格式/时钟全对）但验证码永远"错误"，RFC 6238 标准向量测试失败。
+- **根因**：`t.Unix() / int64(totpStep)` 中 `totpStep = 30 * time.Second`，转 int64 是 30_000_000_000（纳秒）而非 30——计数器恒为 0，所有时刻算出同一个码。
+- **规避/解决**：除前先 `int64(totpStep/time.Second)`；凡 Duration 参与算术，先转目标单位再运算。另：手写密码学实现必须配标准测试向量（RFC 附录）作回归测试，"自测自通过"不算通过。
+- **来源**：2026-10-06，M19 TOTP 2FA（core/internal/service/security.go + security_test.go）。
+
+### Go 1.22 ServeMux 重复注册同 pattern 不报编译错，启动时 panic
+
+- **现象**：agent 编译通过，启动即崩；日志无语法线索。
+- **根因**：`mux.HandleFunc` 同一 pattern 注册两次（编辑时粘贴重复），ServeMux 在运行时注册阶段 panic。
+- **规避/解决**：路由表集中定义（循环注册或常量表）可从根上避免重复；启动崩溃先 grep 路由注册段的重复行。
+- **来源**：2026-10-06，M19 容器管理路由（agent/server/server.go）。
