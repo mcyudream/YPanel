@@ -1,6 +1,8 @@
 package api
 
 import (
+	"fmt"
+	"strings"
 	"net/http"
 
 	"github.com/gin-gonic/gin"
@@ -109,6 +111,40 @@ func (c *ComposeAPI) Logs(ctx *gin.Context) {
 			return
 		}
 	}
+}
+
+// ScanCompose GET /api/v1/compose/scan?dir=（B12：外部项目发现）
+func (c *ComposeAPI) ScanCompose(ctx *gin.Context) {
+	q := "?dir=" + escape(ctx.Query("dir"))
+	out, err := agentclient.GetJSON[[]map[string]any](c.client(ctx), ctx.Request.Context(), "/agent/v1/compose/scan"+q)
+	if err != nil {
+		respErr(ctx, err)
+		return
+	}
+	respOK(ctx, out)
+}
+
+// AdoptCompose POST /api/v1/compose/adopt {dir}（B12：复制外部项目入托管）
+func (c *ComposeAPI) AdoptCompose(ctx *gin.Context) {
+	req, ok := bind[struct {
+		Dir string `json:"dir" binding:"required"`
+	}](ctx)
+	if !ok {
+		return
+	}
+	name := req.Dir[strings.LastIndex(req.Dir, "/")+1:]
+	if name == "" {
+		respErr(ctx, errBadRequest("目录不合法"))
+		return
+	}
+	target := "/opt/ypanel/compose/" + name
+	if _, err := agentclient.DoJSON[dto.ExecReq, dto.ExecResp](c.client(ctx), ctx.Request.Context(),
+		"POST", "/agent/v1/exec",
+		&dto.ExecReq{Command: fmt.Sprintf("mkdir -p %s && cp %s/docker-compose.* %s/ 2>/dev/null; cp %s/compose.* %s/ 2>/dev/null; ls %s/docker-compose.* %s/compose.* 2>/dev/null | head -1", target, req.Dir, target, req.Dir, target, target, target), TimeoutSecs: 30}); err != nil {
+		respErr(ctx, err)
+		return
+	}
+	respOK(ctx, gin.H{"adopted": name, "dir": target})
 }
 
 // ServiceAction POST /api/v1/compose/service-action {project, service, action}

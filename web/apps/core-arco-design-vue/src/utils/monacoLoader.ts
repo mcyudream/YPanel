@@ -1,9 +1,4 @@
 import type * as Monaco from 'monaco-editor'
-import editorWorker from 'monaco-editor/esm/vs/editor/editor.worker.js?worker'
-import cssWorker from 'monaco-editor/esm/vs/language/css/css.worker.js?worker'
-import htmlWorker from 'monaco-editor/esm/vs/language/html/html.worker.js?worker'
-import jsonWorker from 'monaco-editor/esm/vs/language/json/json.worker.js?worker'
-import tsWorker from 'monaco-editor/esm/vs/language/typescript/ts.worker.js?worker'
 
 export type MonacoNamespace = typeof Monaco
 
@@ -54,22 +49,23 @@ export function loadMonaco(): Promise<MonacoNamespace> {
     monacoPromise = (async () => {
       self.MonacoEnvironment = {
         getWorker(_workerId: string, label: string) {
+          // 字面量 new URL：vite 静态分析产出 worker chunk（rolldown 下 ?worker 深导入不可用）
           switch (label) {
             case 'json':
-              return new jsonWorker()
+              return new Worker(new URL('./monaco-workers/json.js', import.meta.url), { type: 'module' })
             case 'css':
             case 'scss':
             case 'less':
-              return new cssWorker()
+              return new Worker(new URL('./monaco-workers/css.js', import.meta.url), { type: 'module' })
             case 'html':
             case 'handlebars':
             case 'razor':
-              return new htmlWorker()
+              return new Worker(new URL('./monaco-workers/html.js', import.meta.url), { type: 'module' })
             case 'typescript':
             case 'javascript':
-              return new tsWorker()
+              return new Worker(new URL('./monaco-workers/typescript.js', import.meta.url), { type: 'module' })
             default:
-              return new editorWorker()
+              return new Worker(new URL('./monaco-workers/editor.js', import.meta.url), { type: 'module' })
           }
         },
       }

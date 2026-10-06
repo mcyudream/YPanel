@@ -31,6 +31,8 @@ export interface DbBackup {
 }
 
 export default {
+  remoteAccess: (id: number, enable: boolean) =>
+    api.post(`api/v1/database/instances/${id}/remote`, { enable }),
   list: async () => {
     const res = await api.get('api/v1/database/instances', { silent: true })
     return res.data as DbInstance[]

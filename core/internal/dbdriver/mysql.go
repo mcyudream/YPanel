@@ -142,3 +142,19 @@ func (d *mysqlDriver) ChangePassword(ctx context.Context, name, host, password s
 func (d *mysqlDriver) Close() {
 	_ = d.db.Close()
 }
+
+// EnableRemote 创建 % 授权的远端管理用户（B3）。
+func (d *mysqlDriver) EnableRemote(ctx context.Context, password string) error {
+	_, err := d.db.ExecContext(ctx, fmt.Sprintf("CREATE USER IF NOT EXISTS `remote`@`%%` IDENTIFIED BY '%s'", password))
+	if err != nil {
+		return err
+	}
+	_, err = d.db.ExecContext(ctx, "GRANT ALL PRIVILEGES ON *.* TO `remote`@`%` WITH GRANT OPTION")
+	return err
+}
+
+// DisableRemote 回收远端管理用户（B3）。
+func (d *mysqlDriver) DisableRemote(ctx context.Context) error {
+	_, err := d.db.ExecContext(ctx, "DROP USER IF EXISTS `remote`@`%`")
+	return err
+}

@@ -4,6 +4,7 @@ package dockerx
 
 import (
 	"context"
+	"strings"
 	"io"
 	"os"
 	"path/filepath"
@@ -40,6 +41,20 @@ func (m *Manager) getClient() (*client.Client, error) {
 	}
 	if m.once.err != nil {
 		return nil, m.once.err
+	}
+	// B19：DOCKER_HOST 优先（tcp://host:port / unix:///path / ssh://user@host）
+	if dh := strings.TrimSpace(os.Getenv("DOCKER_HOST")); dh != "" {
+		cli, err := client.NewClientWithOpts(
+			client.WithHost(dh),
+			client.WithAPIVersionNegotiation(),
+		)
+		if err == nil {
+			if _, perr := cli.Ping(context.Background(), client.PingOptions{}); perr == nil {
+				m.once.cli = cli
+				m.once.err = nil
+				return cli, nil
+			}
+		}
 	}
 	for _, sock := range socketCandidates {
 		if _, err := os.Stat(sock); err != nil {

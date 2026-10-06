@@ -297,3 +297,27 @@ func (d *DockerAPI) Logs(c *gin.Context) {
 		}
 	}
 }
+
+// SysManageAPI 主机管理（B21）：代理 agent 受控系统设置。
+type SysManageAPI struct {
+	Nodes *service.NodeService
+}
+
+func (m *SysManageAPI) client(c *gin.Context) *agentclient.Client {
+	node, _ := m.Nodes.ByID(c.DefaultQuery("node", "local"))
+	return agentclient.New(node.BaseURL, node.Token)
+}
+
+// Manage POST /api/v1/system/manage {action: hostname|timezone|dns, value}
+func (m *SysManageAPI) Manage(c *gin.Context) {
+	req, ok := bind[map[string]string](c)
+	if !ok {
+		return
+	}
+	if _, err := agentclient.DoJSON[map[string]string, map[string]string](m.client(c), c.Request.Context(),
+		http.MethodPost, "/agent/v1/sysmanage", req); err != nil {
+		respErr(c, err)
+		return
+	}
+	respOK(c, struct{}{})
+}

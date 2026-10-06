@@ -55,3 +55,22 @@
 - **根因**：三层耦合。① fa 是"主导航（分组图标）+ 次侧栏（子项）"双栏模式，`MainSidebar` 只渲染 `item.children.length !== 0` 的分组，直达叶子节点（children 被删）在主导航没有可渲染分支；② `filterAsyncMenus` 会 `delete` 空 children，而 `isPathInMenus`/`getExpandPaths` 对 undefined 未设防（此为确定的崩溃点，已单独修复）；③ 白屏主因在 Layout 异步组件（`() => import`）与 fa 守卫/keepAlive 组合的渲染期，菜单节点形态变化会传导到 RouterView 重渲染路径，具体触发链 dev sourcemap 只能定位到 Vue 内部。
 - **规避/解决**：涉及 fa 菜单/布局层的结构性改动，必须：先在 dev 模式（连真实后端）复现与验证，production 无 console 线索时用 `app.config.errorHandler` + `window.onerror` 注入抓栈；改动前确认 `MainSidebar`/`filterAsyncMenus`/`isPathInMenus` 对新节点形态的兼容性。本次已回滚，重做方案需连 MainSidebar 渲染分支一起改。
 - **来源**：2026-10-06，菜单重构回滚。
+
+### rolldown-vite（Vite 8）下 monaco worker 无法用 `?worker` 深导入，且静态分析缺一分支就丢 chunk
+
+- **现象**：`import w from 'monaco-editor/esm/vs/.../xx.worker.js?worker'`（带不带 `.js` 都一样）构建报 "Rolldown failed to resolve import"；改用 `new Worker(new URL('monaco-editor/...', import.meta.url))` 字符串变量三目分支后构建通过，但 dist 里**缺 editor.worker chunk**（明文/Go 等非语言文件运行时 worker 404）。
+- **根因**：rolldown 的包 exports 解析对 `?worker` 查询后缀不剥离，子路径匹配失败；`new URL` 的字面量分支才被 vite 静态分析，变量分支走 glob 且与字面量混用时部分分支静默丢失。另外 worker 子构建连普通 `monaco-editor/esm/...` 深导入也解析失败（主构建能解析）。
+- **规避/解决**：本地建 5 个 worker 包装文件（`src/utils/monaco-workers/*.js`，内容仅一行 `import '#monaco/worker-xxx'`；用 `.js` 避开 vue-tsc 对无类型 worker 入口的 TS2882）；vite.config 用 `createRequire` 定位 monaco 物理目录建 `#monaco/worker-*` alias 指向 worker 物理文件；loader 里 `new Worker(new URL('./monaco-workers/xx.js', import.meta.url), {type:'module'})` 每分支字面量；`worker: { format: 'es' }`。验收必须 `ls dist/assets | grep worker` 数够 5 个。
+- **来源**：2026-10-07，M20 文件编辑器 monaco 接入。
+
+### splitpanes v4（Vue3）API 速记与 allotment 不可用
+
+- **现象**：做 IDE 式分栏时选型踩坑：`allotment` 是 **React** 库，Vue 项目不可用；splitpanes v4 的 payload 类型与旧版文章不一致。
+- **根因**：splitpanes v4 `resized` 事件载荷是 `SplitpanesResizedPayload`（`{panes: PaneData[], ...}`），不是旧版的裸数组；Pane 组件 props 为 `size/minSize/maxSize`，Splitpanes 方向 prop `horizontal`（默认垂直排布=左右分栏）。
+- **规避/解决**：`import { Splitpanes, Pane } from 'splitpanes'` + `import 'splitpanes/dist/splitpanes.css'`；类型从包主入口 `import type { SplitpanesResizedPayload }`；尺寸回写在 `@resized` 里读 `e.panes[i].size`，size prop 只作初始值避免拖拽时与响应式绑定打架。
+- **来源**：2026-10-07，M20 文件编辑器分栏。
+
+### pnpm install（web/）每次都会把 pre-commit 钩子重装回仓库根
+
+- **补充**：此前已记录 simple-git-hooks 装到仓库根导致提交必挂；实测 web/ 下每次 `pnpm install` 都会重新写入 `.git/hooks/pre-commit`，提交前若报 "No package.json found" 先删根钩子。根治需 monorepo 顶层具备 node 工程或在 web/package.json 关闭 simple-git-hooks。
+- **来源**：2026-10-07，M20 依赖安装后钩子复现。

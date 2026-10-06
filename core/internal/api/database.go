@@ -223,6 +223,27 @@ func (a *DatabaseAPI) ChangeUserPassword(c *gin.Context) {
 }
 
 // Backups GET /api/v1/database/instances/:id/backups
+// RemoteAccess POST /api/v1/database/instances/:id/remote {enable}（B3）
+func (a *DatabaseAPI) RemoteAccess(c *gin.Context) {
+	id, err := strconv.ParseUint(c.Param("id"), 10, 64)
+	if err != nil || id == 0 {
+		respErr(c, errBadRequest("实例 ID 不合法"))
+		return
+	}
+	req, ok := bind[struct {
+		Enable bool `json:"enable"`
+	}](c)
+	if !ok {
+		return
+	}
+	out, err := a.DBS.RemoteAccess(c.Request.Context(), uint(id), req.Enable)
+	if err != nil {
+		respErr(c, err)
+		return
+	}
+	respOK(c, out)
+}
+
 func (a *DatabaseAPI) Backups(c *gin.Context) {
 	id, err := idParam(c)
 	if err != nil {

@@ -372,6 +372,31 @@ func (s *DatabaseService) DropDatabase(ctx context.Context, id uint, name string
 }
 
 // Users 用户列表。
+// RemoteAccess B3：远程访问开关（SQL 层授权/回收远端管理用户）。
+func (s *DatabaseService) RemoteAccess(ctx context.Context, id uint, enable bool) (map[string]any, error) {
+	inst, err := s.ByID(id)
+	if err != nil {
+		return nil, err
+	}
+	driver, err := s.driverFor(inst)
+	if err != nil {
+		return nil, err
+	}
+	pwd, err := s.decryptPassword(inst.PasswordEnc)
+	if err != nil {
+		return nil, err
+	}
+	if enable {
+		err = driver.EnableRemote(ctx, pwd)
+	} else {
+		err = driver.DisableRemote(ctx)
+	}
+	if err != nil {
+		return nil, err
+	}
+	return map[string]any{"enabled": enable, "user": "remote"}, nil
+}
+
 func (s *DatabaseService) Users(ctx context.Context, id uint) ([]dbdriver.UserInfo, error) {
 	inst, err := s.ByID(id)
 	if err != nil {

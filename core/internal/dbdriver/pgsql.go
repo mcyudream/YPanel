@@ -131,3 +131,15 @@ func (d *pgDriver) Close() {
 }
 
 var _ = pgx.QueryExecModeCacheStatement
+
+// EnableRemote 创建远端管理角色（B3）。
+func (d *pgDriver) EnableRemote(ctx context.Context, password string) error {
+	_, err := d.pool.Exec(ctx, fmt.Sprintf("CREATE ROLE remote WITH LOGIN SUPERUSER PASSWORD '%s'", password))
+	return err
+}
+
+// DisableRemote 回收远端管理角色（B3）。
+func (d *pgDriver) DisableRemote(ctx context.Context) error {
+	_, err := d.pool.Exec(ctx, "DROP ROLE IF EXISTS remote")
+	return err
+}

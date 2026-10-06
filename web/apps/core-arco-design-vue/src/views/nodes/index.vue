@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import api from '@/api'
 import type { NodeItem } from '@/api/modules/node'
 import apiNode from '@/api/modules/node'
 import type { NodeExecResult } from '@/api/modules/nodeexec'
@@ -10,6 +11,30 @@ defineOptions({
 
 const nodes = ref<NodeItem[]>([])
 const loading = ref(false)
+// B11：聚合监控
+const metrics = ref<any[]>([])
+const metricsLoading = ref(false)
+
+async function loadMetrics() {
+  metricsLoading.value = true
+  try {
+    const res = await api.get('api/v1/nodes/metrics', { silent: true })
+    metrics.value = res.data as any[]
+  }
+  catch {}
+  finally {
+    metricsLoading.value = false
+  }
+}
+
+function fmtSpeed(n: number) {
+  if (!n) return '0 B/s'
+  const u = ['B/s', 'KB/s', 'MB/s', 'GB/s']
+  let i = 0
+  let v = n
+  while (v >= 1024 && i < u.length - 1) { v /= 1024; i++ }
+  return `${v.toFixed(1)} ${u[i]}`
+}
 const pairVisible = ref(false)
 const pairCode = ref('')
 const pairCommand = ref('')
@@ -86,6 +111,7 @@ function remove(n: NodeItem) {
   })
 }
 
+loadMetrics()
 onMounted(() => {
   load()
   timer = setInterval(load, 10000)
@@ -121,6 +147,36 @@ onBeforeUnmount(() => {
     </FaPageHeader>
 
     <FaPageMain>
+      <!-- B11：节点聚合监控 -->
+      <div v-if="metrics.length" class="mb-4 grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+        <div
+          v-for="m in metrics"
+          :key="m.id"
+          class="rounded-lg border p-3"
+          :class="m.online ? '' : 'opacity-60'"
+        >
+          <div class="flex items-center justify-between text-sm font-medium">
+            <span>{{ m.name }}</span>
+            <span
+              class="rounded-full px-2 py-0.5 text-xs"
+              :class="m.online ? 'bg-emerald-500/10 text-emerald-600' : 'bg-red-500/10 text-red-600'"
+            >
+              {{ m.online ? '在线' : '离线' }}
+            </span>
+          </div>
+          <div v-if="m.online" class="mt-2 grid grid-cols-2 gap-x-4 gap-y-1 text-xs text-muted-foreground">
+            <span>CPU {{ m.cpu?.toFixed?.(1) ?? m.cpu }}%</span>
+            <span>内存 {{ m.mem?.toFixed?.(1) ?? m.mem }}%</span>
+            <span>↓ {{ fmtSpeed(m.rxSpeed) }}</span>
+            <span>↑ {{ fmtSpeed(m.txSpeed) }}</span>
+            <span>负载 {{ m.load1 }}</span>
+          </div>
+          <div v-else class="mt-1 text-xs text-red-500">
+            {{ m.error || '不可达' }}
+          </div>
+        </div>
+      </div>
+
       <div class="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
         <div
           v-for="n in nodes"

@@ -1,4 +1,5 @@
 import fs from 'node:fs'
+import { createRequire } from 'node:module'
 import path from 'node:path'
 import process from 'node:process'
 import dayjs from 'dayjs'
@@ -6,6 +7,17 @@ import { defineConfig, loadEnv } from 'vite'
 import { parseLoadedEnv } from 'vite-plugin-env-parse'
 import pkg from './package.json' with { type: 'json' }
 import createVitePlugins from './vite/plugins.ts'
+
+// monaco worker 物理路径别名（rolldown worker 子构建无法解析 monaco exports 子路径）
+const _require = createRequire(import.meta.url)
+const monacoRoot = path.resolve(path.dirname(_require.resolve('monaco-editor')), '../..')
+const monacoWorkerAlias = {
+  '#monaco/worker-editor': path.join(monacoRoot, 'esm/vs/editor/editor.worker.js'),
+  '#monaco/worker-json': path.join(monacoRoot, 'esm/vs/language/json/json.worker.js'),
+  '#monaco/worker-css': path.join(monacoRoot, 'esm/vs/language/css/css.worker.js'),
+  '#monaco/worker-html': path.join(monacoRoot, 'esm/vs/language/html/html.worker.js'),
+  '#monaco/worker-typescript': path.join(monacoRoot, 'esm/vs/language/typescript/ts.worker.js'),
+}
 
 export default defineConfig(({ mode, command }) => {
   const env = parseLoadedEnv(loadEnv(mode, process.cwd()))
@@ -61,6 +73,10 @@ export default defineConfig(({ mode, command }) => {
         },
       },
     },
+    // monaco worker 以 ES module 供 new Worker(url, {type:'module'}) 使用
+    worker: {
+      format: 'es',
+    },
     define: {
       __SYSTEM_INFO__: JSON.stringify({
         pkg: {
@@ -81,6 +97,7 @@ export default defineConfig(({ mode, command }) => {
       alias: {
         '@': path.resolve(import.meta.dirname, 'src'),
         '#': path.resolve(import.meta.dirname, 'src/types'),
+        ...monacoWorkerAlias,
       },
     },
     css: {

@@ -13,7 +13,9 @@ import (
 	"gorm.io/gorm"
 
 	"github.com/ypanel/agent/server"
+	"github.com/ypanel/core/internal/agentclient"
 	"github.com/ypanel/core/internal/model"
+	"github.com/ypanel/shared/dto"
 	"github.com/ypanel/shared/errs"
 )
 
@@ -65,6 +67,41 @@ func (s *NodeService) ByID(id string) (*Node, error) {
 }
 
 // ListNodes 节点列表（含 local 与远程，实时在线状态）。
+// AggregateMetrics B11：全部节点监控聚合（逐节点 overview，离线节点标记 unreachable）。
+func (s *NodeService) AggregateMetrics(ctx context.Context) []map[string]any {
+	out := []map[string]any{}
+	nodes := append([]map[string]any{{"id": "local"}}, func() []map[string]any {
+		rows := []model.Node{}
+		_ = s.db.Order("id").Find(&rows).Error
+		res := []map[string]any{}
+		for _, r := range rows {
+			res = append(res, map[string]any{"id": fmt.Sprintf("%d", r.ID), "name": r.Name})
+		}
+		return res
+	}()...)
+	for _, n := range nodes {
+		entry := map[string]any{"id": n["id"], "name": n["name"], "online": false}
+		node, err := s.ByID(fmt.Sprintf("%v", n["id"]))
+		if err == nil {
+			ov, err := agentclient.GetJSON[dto.SystemOverview](agentclient.New(node.BaseURL, node.Token), ctx, "/agent/v1/sysinfo/overview")
+			if err == nil {
+				entry["online"] = true
+				entry["cpu"] = ov.CPU.UsagePercent
+				entry["mem"] = ov.Memory.UsagePercent
+				entry["rxSpeed"] = ov.Network.RxSpeedBps
+				entry["txSpeed"] = ov.Network.TxSpeedBps
+				entry["load1"] = ov.Load.Load1
+				entry["uptime"] = ov.Uptime
+			}
+		}
+		if err != nil {
+			entry["error"] = "unreachable"
+		}
+		out = append(out, entry)
+	}
+	return out
+}
+
 func (s *NodeService) ListNodes() []map[string]any {
 	out := []map[string]any{{
 		"id": "local", "name": s.local.Name, "remote": false, "online": true,

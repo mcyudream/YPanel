@@ -15,6 +15,11 @@ type NodeAPI struct {
 }
 
 // List GET /api/v1/nodes
+// AggregateMetrics GET /api/v1/nodes/metrics（B11 聚合监控）
+func (a *NodeAPI) AggregateMetrics(c *gin.Context) {
+	respOK(c, a.Nodes.AggregateMetrics(c.Request.Context()))
+}
+
 func (a *NodeAPI) List(c *gin.Context) {
 	respOK(c, a.Nodes.ListNodes())
 }

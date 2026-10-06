@@ -340,3 +340,30 @@ func countStates(services []dto.ComposeServiceState) (running, total int) {
 	}
 	return
 }
+
+// ScanProjects B12：扫描父目录下含 compose 文件的项目（排除托管目录自身）。
+func ScanProjects(parentDir string) ([]map[string]any, error) {
+	entries, err := os.ReadDir(parentDir)
+	if err != nil {
+		return nil, err
+	}
+	out := []map[string]any{}
+	for _, e := range entries {
+		if !e.IsDir() {
+			continue
+		}
+		dir := filepath.Join(parentDir, e.Name())
+		composeFile := ""
+		for _, f := range []string{"docker-compose.yml", "docker-compose.yaml", "compose.yml", "compose.yaml"} {
+			if _, err := os.Stat(filepath.Join(dir, f)); err == nil {
+				composeFile = f
+				break
+			}
+		}
+		if composeFile == "" {
+			continue
+		}
+		out = append(out, map[string]any{"name": e.Name(), "dir": dir, "file": composeFile})
+	}
+	return out, nil
+}

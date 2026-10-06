@@ -52,6 +52,7 @@ func Setup(d *Deps) (*gin.Engine, error) {
 	securityAPI := &api.SecurityAPI{Sec: d.Sec, Auth: d.Auth}
 	userAPI := &api.UserAPI{DB: d.Auth.DB()}
 	sysAPI := &api.SystemAPI{Nodes: d.Nodes}
+	sysManageAPI := &api.SysManageAPI{Nodes: d.Nodes}
 	fileAPI := &api.FileAPI{Nodes: d.Nodes}
 	dockerAPI := &api.DockerAPI{Nodes: d.Nodes}
 	termAPI := &api.TerminalAPI{Nodes: d.Nodes}
@@ -101,6 +102,7 @@ func Setup(d *Deps) (*gin.Engine, error) {
 
 			authed.GET("/system/overview", sysAPI.Overview)
 			authed.GET("/system/history", sysAPI.History)
+			authed.POST("/system/manage", sysManageAPI.Manage)
 
 			authed.GET("/files/list", fileAPI.List)
 			authed.GET("/files/read", fileAPI.Read)
@@ -125,6 +127,8 @@ func Setup(d *Deps) (*gin.Engine, error) {
 			authed.GET("/settings", setAPI.Get)
 			authed.PUT("/settings", setAPI.Put)
 
+			authed.GET("/compose/scan", composeAPI.ScanCompose)
+			authed.POST("/compose/adopt", composeAPI.AdoptCompose)
 			authed.GET("/compose/projects", composeAPI.List)
 			authed.GET("/compose/config", composeAPI.Config)
 			authed.POST("/compose/config", composeAPI.Write)
@@ -157,6 +161,7 @@ func Setup(d *Deps) (*gin.Engine, error) {
 			authed.POST("/database/instances/:id/users", dbAPI.CreateUser)
 			authed.DELETE("/database/instances/:id/users/:name", dbAPI.DropUser)
 			authed.PUT("/database/instances/:id/users/:name/password", dbAPI.ChangeUserPassword)
+			authed.POST("/database/instances/:id/remote", dbAPI.RemoteAccess)
 			authed.GET("/database/instances/:id/backups", dbAPI.Backups)
 			authed.POST("/database/instances/:id/backups", dbAPI.CreateBackup)
 			authed.DELETE("/database/instances/:id/backups", dbAPI.DeleteBackup)
@@ -209,6 +214,7 @@ func Setup(d *Deps) (*gin.Engine, error) {
 
 			admin := authed.Group("", middleware.Admin())
 			{
+			authed.GET("/nodes/metrics", nodeAPI.AggregateMetrics)
 				admin.GET("/nodes", nodeAPI.List)
 				admin.POST("/nodes/pairing-code", nodeAPI.PairingCode)
 				admin.DELETE("/nodes/:id", nodeAPI.Delete)
@@ -283,6 +289,9 @@ func Setup(d *Deps) (*gin.Engine, error) {
 			authed.GET("/docker/containers/:id/exec", dockerExtAPI.ContainerExecWS)
 			authed.POST("/docker/containers", dockerExtAPI.ContainerCreate)
 			authed.DELETE("/docker/containers/:id", dockerExtAPI.ContainerRemove)
+			authed.GET("/docker/registry", dockerExtAPI.RegistryList)
+			authed.PUT("/docker/registry", dockerExtAPI.RegistrySet)
+			authed.DELETE("/docker/registry", dockerExtAPI.RegistryRemove)
 			authed.GET("/docker/daemon-config", dockerExtAPI.DaemonConfig)
 			authed.PUT("/docker/daemon-config", dockerExtAPI.UpdateDaemonConfig)
 

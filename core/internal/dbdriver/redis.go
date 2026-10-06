@@ -97,3 +97,13 @@ func (d *redisDriver) ChangePassword(ctx context.Context, name, host, password s
 func (d *redisDriver) Close() {
 	_ = d.rdb.Close()
 }
+
+// EnableRemote 创建远端 ACL 用户（B3）。
+func (d *redisDriver) EnableRemote(ctx context.Context, password string) error {
+	return d.rdb.ACLSetUser(ctx, "remote", "on", ">"+password, "+@all", "~*", "&*").Err()
+}
+
+// DisableRemote 回收远端 ACL 用户（B3）。
+func (d *redisDriver) DisableRemote(ctx context.Context) error {
+	return d.rdb.ACLDelUser(ctx, "remote").Err()
+}

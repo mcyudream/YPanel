@@ -113,6 +113,11 @@ func (s *Server) Start(ctx context.Context) (base string, wait func(), err error
 	mux.HandleFunc("POST /agent/v1/docker/containers/prune", s.auth(s.handleDockerContainersPrune))
 	mux.HandleFunc("GET /agent/v1/docker/daemon-config", s.auth(s.handleDockerDaemonConfig))
 	mux.HandleFunc("PUT /agent/v1/docker/daemon-config", s.auth(s.handleDockerDaemonConfig))
+	mux.HandleFunc("GET /agent/v1/docker/registry", s.auth(s.handleRegistryList))
+	mux.HandleFunc("PUT /agent/v1/docker/registry", s.auth(s.handleRegistrySet))
+	mux.HandleFunc("DELETE /agent/v1/docker/registry", s.auth(s.handleRegistryRemove))
+	mux.HandleFunc("POST /agent/v1/sysmanage", s.auth(s.handleSysManage))
+	mux.HandleFunc("GET /agent/v1/compose/scan", s.auth(s.handleComposeScan))
 	mux.HandleFunc("POST /agent/v1/services/{name}/{action}", s.auth(s.handleServiceAction))
 
 	ln, err := net.Listen("tcp", s.listenAddr())

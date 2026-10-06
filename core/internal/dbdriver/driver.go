@@ -55,6 +55,9 @@ type Driver interface {
 	CreateUser(ctx context.Context, name, host, password string) error
 	DropUser(ctx context.Context, name, host string) error
 	ChangePassword(ctx context.Context, name, host, password string) error
+	// B3：远程访问开关（SQL 层授权/回收远端管理用户）
+	EnableRemote(ctx context.Context, password string) error
+	DisableRemote(ctx context.Context) error
 	Close()
 }
 

@@ -256,7 +256,52 @@ func (a *DockerExtAPI) ContainerRemove(c *gin.Context) {
 	respOK(c, struct{}{})
 }
 
-// DaemonConfig GET /api/v1/docker/daemon-config
+// RegistryList GET /api/v1/docker/registry（B10）
+func (a *DockerExtAPI) RegistryList(c *gin.Context) {
+	out, err := a.Ext.Passthrough(c.Request.Context(), "/agent/v1/docker/registry")
+	if err != nil {
+		respErr(c, err)
+		return
+	}
+	respOK(c, json2any(out))
+}
+
+// RegistrySet PUT /api/v1/docker/registry（B10）
+func (a *DockerExtAPI) RegistrySet(c *gin.Context) {
+	req, ok := bind[struct {
+		Registry string `json:"registry" binding:"required"`
+		Username string `json:"username" binding:"required"`
+		Password string `json:"password" binding:"required"`
+	}](c)
+	if !ok {
+		return
+	}
+	out, err := a.Ext.PostJSON(c.Request.Context(), "/agent/v1/docker/registry", map[string]string{
+		"registry": req.Registry, "username": req.Username, "password": req.Password,
+	})
+	if err != nil {
+		respErr(c, err)
+		return
+	}
+	respOK(c, json2any(out))
+}
+
+// RegistryRemove DELETE /api/v1/docker/registry?registry=（B10）
+func (a *DockerExtAPI) RegistryRemove(c *gin.Context) {
+	registry := c.Query("registry")
+	if registry == "" {
+		respErr(c, errBadRequest("registry 必填"))
+		return
+	}
+	out, err := a.Ext.Delete(c.Request.Context(), "/agent/v1/docker/registry?registry="+url.QueryEscape(registry))
+	if err != nil {
+		respErr(c, err)
+		return
+	}
+	respOK(c, json2any(out))
+}
+
+// DaemonConfig GET /api/v1/docker/daemon-config// DaemonConfig GET /api/v1/docker/daemon-config
 func (a *DockerExtAPI) DaemonConfig(c *gin.Context) {
 	out, err := a.Ext.Passthrough(c.Request.Context(), "/agent/v1/docker/daemon-config")
 	if err != nil {

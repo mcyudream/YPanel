@@ -106,3 +106,18 @@ func (d *mongoDriver) ChangePassword(ctx context.Context, name, host, password s
 func (d *mongoDriver) Close() {
 	_ = d.client.Disconnect(context.Background())
 }
+
+// EnableRemote 创建远端管理用户（B3）。
+func (d *mongoDriver) EnableRemote(ctx context.Context, password string) error {
+	cmd := bson.D{
+		{Key: "createUser", Value: "remote"},
+		{Key: "pwd", Value: password},
+		{Key: "roles", Value: bson.A{bson.D{{Key: "role", Value: "root"}, {Key: "db", Value: "admin"}}}},
+	}
+	return d.client.Database("admin").RunCommand(ctx, cmd).Err()
+}
+
+// DisableRemote 回收远端管理用户（B3）。
+func (d *mongoDriver) DisableRemote(ctx context.Context) error {
+	return d.client.Database("admin").RunCommand(ctx, bson.D{{Key: "dropUser", Value: "remote"}}).Err()
+}

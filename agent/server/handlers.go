@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/gorilla/websocket"
+	"github.com/ypanel/agent/internal/compose"
 	"github.com/ypanel/agent/internal/files"
 	"github.com/ypanel/agent/internal/term"
 	"github.com/ypanel/shared/dto"
@@ -340,3 +341,17 @@ func (w *bufferedWriter) Write(p []byte) (int, error) {
 }
 
 func (w *bufferedWriter) String() string { return string(w.b) }
+
+// handleComposeScan GET /agent/v1/compose/scan?dir=（B12：外部 compose 项目发现）
+func (s *Server) handleComposeScan(w http.ResponseWriter, r *http.Request) {
+	dir := qParam(r, "dir")
+	if dir == "" {
+		dir = "/opt"
+	}
+	out, err := compose.ScanProjects(dir)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	writeOK(w, out)
+}
