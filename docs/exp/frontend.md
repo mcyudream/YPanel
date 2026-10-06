@@ -48,3 +48,10 @@
 - **根因**：`nginx -s reload` 发 SIGHUP 后 master 异步拉起新 worker、旧 worker 处理完存量连接才退出；保存接口返回 ≠ 新配置已生效。
 - **规避/解决**：功能代码无需改（最终一致）；自动化验收需在 reload 后 sleep 1-2s 再断言，或轮询直到行为变化。
 - **来源**：2026-10-06，M11 WAF 与 M5 站点禁用/启用。
+
+### fantastic-admin 菜单"拍平"重构会撞上双栏导航与异步组件的耦合，白屏且难定位
+
+- **现象**：直接改 `store/modules/app/menu.ts` 的 `convertRouteToMenu/Recursive` 实现"单页模块上提为一级菜单"，构建通过、菜单数据（allMenus）完全正确，但页面白屏——RouterView 渲染出空注释，错误为 Vue 内部 `locateNonHydratedAsyncRoot: Cannot read properties of null (reading 'component')`。
+- **根因**：三层耦合。① fa 是"主导航（分组图标）+ 次侧栏（子项）"双栏模式，`MainSidebar` 只渲染 `item.children.length !== 0` 的分组，直达叶子节点（children 被删）在主导航没有可渲染分支；② `filterAsyncMenus` 会 `delete` 空 children，而 `isPathInMenus`/`getExpandPaths` 对 undefined 未设防（此为确定的崩溃点，已单独修复）；③ 白屏主因在 Layout 异步组件（`() => import`）与 fa 守卫/keepAlive 组合的渲染期，菜单节点形态变化会传导到 RouterView 重渲染路径，具体触发链 dev sourcemap 只能定位到 Vue 内部。
+- **规避/解决**：涉及 fa 菜单/布局层的结构性改动，必须：先在 dev 模式（连真实后端）复现与验证，production 无 console 线索时用 `app.config.errorHandler` + `window.onerror` 注入抓栈；改动前确认 `MainSidebar`/`filterAsyncMenus`/`isPathInMenus` 对新节点形态的兼容性。本次已回滚，重做方案需连 MainSidebar 渲染分支一起改。
+- **来源**：2026-10-06，菜单重构回滚。
