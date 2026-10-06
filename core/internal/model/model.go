@@ -35,6 +35,39 @@ type Setting struct {
 	UpdatedAt time.Time `json:"updatedAt"`
 }
 
+// Notification 站内通知。
+type Notification struct {
+	ID        uint      `gorm:"primaryKey" json:"id"`
+	Level     string    `gorm:"size:8;not null;default:info" json:"level"`
+	Title     string    `gorm:"size:128;not null" json:"title"`
+	Content   string    `gorm:"type:text" json:"content"`
+	Read      bool      `gorm:"not null;default:false" json:"read"`
+	CreatedAt time.Time `gorm:"index" json:"createdAt"`
+}
+
+// AuditLog 操作审计（写操作留痕）。
+type AuditLog struct {
+	ID        uint      `gorm:"primaryKey" json:"id"`
+	Username  string    `gorm:"size:32;index" json:"username"`
+	Method    string    `gorm:"size:8" json:"method"`
+	Path      string    `gorm:"size:255" json:"path"`
+	Detail    string    `gorm:"type:text" json:"detail"`
+	IP        string    `gorm:"size:64" json:"ip"`
+	Success   bool      `json:"success"`
+	CreatedAt time.Time `gorm:"index" json:"createdAt"`
+}
+
+// MetricRecord 历史监控（60s 聚合，保留 30 天）。
+type MetricRecord struct {
+	ID        uint      `gorm:"primaryKey" json:"id"`
+	At        time.Time `gorm:"index" json:"at"`
+	Cpu       float64   `json:"cpu"`
+	Mem       float64   `json:"mem"`
+	RxSpeed   float64   `json:"rxSpeed"`
+	TxSpeed   float64   `json:"txSpeed"`
+	Load1     float64   `json:"load1"`
+}
+
 // Node 远程受管节点（local 本机节点不入库，进程内嵌）。
 type Node struct {
 	ID         uint      `gorm:"primaryKey" json:"id"`
@@ -67,6 +100,7 @@ type Site struct {
 	Port       int       `gorm:"not null;default:80" json:"port"`
 	ProxyPass  string    `gorm:"size:255" json:"proxyPass"`
 	CertDomain string    `gorm:"size:255" json:"certDomain"` // 非空 = 已启用 SSL
+	OriginFile string    `gorm:"size:255" json:"originFile"` // 接管来源 conf（站点识别）
 	Enabled    bool      `gorm:"not null;default:true" json:"enabled"`
 	CreatedAt  time.Time `json:"createdAt"`
 	UpdatedAt  time.Time `json:"updatedAt"`

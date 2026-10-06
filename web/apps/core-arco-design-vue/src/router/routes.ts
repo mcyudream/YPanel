@@ -12,6 +12,7 @@ import NodesRoutes from './modules/nodes'
 import MarketRoutes from './modules/market'
 import FirewallRoutes from './modules/firewall'
 import AlertRoutes from './modules/alert'
+import NotificationRoutes from './modules/notifications'
 import TerminalRoutes from './modules/terminal'
 
 // 固定路由（默认路由）
@@ -113,6 +114,7 @@ const asyncRoutes: RouteRecordMainRaw[] = [
       MarketRoutes,
       FirewallRoutes,
       AlertRoutes,
+      NotificationRoutes,
     ],
   },
 ]

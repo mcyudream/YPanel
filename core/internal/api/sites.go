@@ -125,6 +125,35 @@ func (a *SiteAPI) UpdateConfig(c *gin.Context) {
 	respOK(c, struct{}{})
 }
 
+// Scan GET /api/v1/sites/scan（站点识别）
+func (a *SiteAPI) Scan(c *gin.Context) {
+	out, err := a.Sites.ScanSites(c.Request.Context())
+	if err != nil {
+		respErr(c, err)
+		return
+	}
+	respOK(c, out)
+}
+
+// Adopt POST /api/v1/sites/adopt（接管发现的站点）
+func (a *SiteAPI) Adopt(c *gin.Context) {
+	req, ok := bind[struct {
+		File      string `json:"file" binding:"required"`
+		Domain    string `json:"domain" binding:"required"`
+		Type      string `json:"type" binding:"required,oneof=static proxy"`
+		ProxyPass string `json:"proxyPass"`
+	}](c)
+	if !ok {
+		return
+	}
+	site, err := a.Sites.Adopt(c.Request.Context(), req.File, req.Domain, req.Type, req.ProxyPass)
+	if err != nil {
+		respErr(c, err)
+		return
+	}
+	respOK(c, site)
+}
+
 // IssueSelfSigned POST /api/v1/sites/:id/cert/selfsigned
 func (a *SiteAPI) IssueSelfSigned(c *gin.Context) {
 	id, err := idParam(c)

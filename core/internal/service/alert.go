@@ -25,14 +25,15 @@ const alertDebounce = 10 * time.Minute
 type AlertService struct {
 	db    *gorm.DB
 	nodes *NodeService
+	notif *NotificationService
 
 	fired map[string]time.Time // ruleKey:metric → 上次触发时间（去抖）
 	breach map[string]int      // ruleKey:metric → 连续超阈采样数
 }
 
 // NewAlertService 创建。
-func NewAlertService(db *gorm.DB, nodes *NodeService) *AlertService {
-	return &AlertService{db: db, nodes: nodes, fired: map[string]time.Time{}, breach: map[string]int{}}
+func NewAlertService(db *gorm.DB, nodes *NodeService, notif *NotificationService) *AlertService {
+	return &AlertService{db: db, nodes: nodes, notif: notif, fired: map[string]time.Time{}, breach: map[string]int{}}
 }
 
 // Start 启动评估循环（30s）。
@@ -100,6 +101,9 @@ func (s *AlertService) evaluateOnce(ctx context.Context) {
 					s.fired[key] = time.Now()
 					msg := fmt.Sprintf("【YPanel 告警】%s %s 使用率 %.1f%%，超过阈值 %d%%", ov.Hostname, strings.ToUpper(r.Metric), v, r.Threshold)
 					s.notify(ctx, r.WebhookURL, r.WebhookType, msg)
+					if s.notif != nil {
+						s.notif.Push("warning", "阈值告警", msg)
+					}
 					rec := model.Setting{Key: "alert.record:" + key + ":" + fmt.Sprint(time.Now().Unix()), Value: msg}
 					if err := s.db.Create(&rec).Error; err != nil {
 						slog.Error("alert: 记录落库失败", "err", err)

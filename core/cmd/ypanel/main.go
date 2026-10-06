@@ -79,15 +79,19 @@ func run(ctx context.Context, cfg *config.Config) error {
 	siteSvc := service.NewSiteService(gdb, nodes)
 	marketSvc := service.NewMarketService(gdb, nodes)
 	fwSvc := service.NewFirewallService(nodes, cfg.Port)
-	alertSvc := service.NewAlertService(gdb, nodes)
+	notifSvc := service.NewNotificationService(gdb)
+	alertSvc := service.NewAlertService(gdb, nodes, notifSvc)
 	alertSvc.Start(ctx)
+	histSvc := service.NewHistoryRecorder(gdb, nodes)
+	histSvc.Start(ctx)
 
 	if os.Getenv("GIN_MODE") == "" {
 		gin.SetMode(gin.ReleaseMode)
 	}
 	r, err := router.Setup(&router.Deps{
 		Auth: auth, Nodes: nodes, Settings: settings, Cron: cronSvc, DBS: dbSvc, Sites: siteSvc,
-		Market: marketSvc, FW: fwSvc, Alerts: alertSvc, Version: version,
+		Market: marketSvc, FW: fwSvc, Alerts: alertSvc,
+		Notif: notifSvc, PanelBP: service.NewPanelBackupService(nodes), Hist: histSvc, Version: version,
 	})
 	if err != nil {
 		return err

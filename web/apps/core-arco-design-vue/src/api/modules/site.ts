@@ -14,6 +14,24 @@ export interface SiteItem {
   createdAt: string
 }
 
+export interface DiscoveredSite {
+  file: string
+  domain: string
+  port: string
+  type: 'static' | 'proxy'
+  proxyPass: string
+  root: string
+}
+
+export const siteDiscoveryApi = {
+  scan: async () => {
+    const res = await api.get('api/v1/sites/scan', { silent: true })
+    return res.data as { sites: DiscoveredSite[], containers: { name: string, image: string, ports: string }[] }
+  },
+  adopt: (data: { file: string, domain: string, type: string, proxyPass?: string }) =>
+    api.post('api/v1/sites/adopt', data),
+}
+
 export default {
   status: async () => {
     const res = await api.get('api/v1/nginx/status', { silent: true })

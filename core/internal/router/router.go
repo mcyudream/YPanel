@@ -24,6 +24,9 @@ type Deps struct {
 	Market   *service.MarketService
 	FW       *service.FirewallService
 	Alerts   *service.AlertService
+	Notif    *service.NotificationService
+	PanelBP  *service.PanelBackupService
+	Hist     *service.HistoryRecorder
 	Version  string
 }
 
@@ -50,6 +53,9 @@ func Setup(d *Deps) (*gin.Engine, error) {
 	marketAPI := &api.MarketAPI{Market: d.Market}
 	fwAPI := &api.FirewallAPI{FW: d.FW}
 	alertAPI := &api.AlertAPI{Alerts: d.Alerts}
+	notifAPI := &api.NotificationAPI{Notif: d.Notif}
+	pbAPI := &api.PanelBackupAPI{BP: d.PanelBP}
+	auditAPI := &api.AuditAPI{DB: d.CronDB(), Hist: d.Hist}
 
 	r.GET("/health", func(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{"status": "ok", "version": d.Version})
@@ -61,7 +67,7 @@ func Setup(d *Deps) (*gin.Engine, error) {
 	v1.POST("/pair", nodeAPI.Pair)
 	v1.POST("/pair/heartbeat", nodeAPI.Heartbeat)
 
-		authed := v1.Group("", middleware.Auth(d.Auth))
+		authed := v1.Group("", middleware.Auth(d.Auth), middleware.Audit(d.CronDB()))
 		{
 			authed.GET("/auth/me", authAPI.Me)
 			authed.POST("/auth/logout", authAPI.Logout)
@@ -124,6 +130,8 @@ func Setup(d *Deps) (*gin.Engine, error) {
 			authed.GET("/nginx/status", siteAPI.Status)
 			authed.POST("/nginx/install", siteAPI.Install)
 			authed.GET("/sites", siteAPI.List)
+			authed.GET("/sites/scan", siteAPI.Scan)
+			authed.POST("/sites/adopt", siteAPI.Adopt)
 			authed.POST("/sites", siteAPI.Create)
 			authed.DELETE("/sites/:id", siteAPI.Delete)
 			authed.POST("/sites/:id/enable", siteAPI.SetEnabled(true))
@@ -152,6 +160,17 @@ func Setup(d *Deps) (*gin.Engine, error) {
 			admin.POST("/alert/rules", alertAPI.CreateRule)
 			admin.PUT("/alert/rules/:id", alertAPI.UpdateRule)
 			admin.DELETE("/alert/rules/:id", alertAPI.DeleteRule)
+
+			authed.GET("/notifications", notifAPI.List)
+			authed.GET("/notifications/unread", notifAPI.Unread)
+			authed.POST("/notifications/read", notifAPI.MarkRead)
+			authed.GET("/system/history/persisted", auditAPI.History)
+
+			admin.GET("/audit/ops", auditAPI.List)
+			admin.GET("/panel/backups", pbAPI.List)
+			admin.POST("/panel/backups", pbAPI.Create)
+			admin.DELETE("/panel/backups", pbAPI.Delete)
+			admin.GET("/panel/backups/restore-hint", pbAPI.RestoreHint)
 				admin.GET("/users", userAPI.List)
 				admin.POST("/users", userAPI.Create)
 				admin.PUT("/users/:id", userAPI.Update)

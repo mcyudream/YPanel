@@ -1,6 +1,6 @@
 <script setup lang="ts">
-import type { SiteItem } from '@/api/modules/site'
-import apiSite from '@/api/modules/site'
+import type { SiteItem, DiscoveredSite } from '@/api/modules/site'
+import apiSite, { siteDiscoveryApi } from '@/api/modules/site'
 
 defineOptions({
   name: 'SitesIndex',
@@ -112,6 +112,44 @@ function remove(s: SiteItem) {
   })
 }
 
+// ---- 站点识别（扫描未接管配置与独立容器）----
+
+
+const scanVisible = ref(false)
+const scanning = ref(false)
+const scanResult = ref<{ sites: DiscoveredSite[], containers: { name: string, image: string, ports: string }[] }>()
+const adopting = ref('')
+
+async function openScan() {
+  scanVisible.value = true
+  scanning.value = true
+  try {
+    scanResult.value = await siteDiscoveryApi.scan()
+  }
+  catch (e: any) {
+    useFaToast().error('扫描失败', { description: e?.message })
+  }
+  finally {
+    scanning.value = false
+  }
+}
+
+async function adopt(d: DiscoveredSite) {
+  adopting.value = d.file
+  try {
+    await siteDiscoveryApi.adopt({ file: d.file, domain: d.domain, type: d.type, proxyPass: d.proxyPass })
+    useFaToast().success(`已接管 ${d.domain}`)
+    scanResult.value!.sites = scanResult.value!.sites.filter(x => x.file !== d.file)
+    await load()
+  }
+  catch (e: any) {
+    useFaToast().error('接管失败', { description: e?.message })
+  }
+  finally {
+    adopting.value = ''
+  }
+}
+
 // 配置编辑
 const editorVisible = ref(false)
 const editorId = ref(0)
@@ -169,7 +207,10 @@ onMounted(load)
         <FaButton v-if="!status?.installed" size="sm" :loading="installing" @click="install">
           <YdMorphIcon name="download" :size="14" class="mr-1" /> 安装 nginx
         </FaButton>
-        <FaButton v-else size="sm" @click="openCreate">
+        <FaButton v-if="status?.installed" variant="outline" size="sm" @click="openScan">
+          <YdMorphIcon name="search" :size="14" class="mr-1" /> 扫描识别
+        </FaButton>
+        <FaButton v-if="status?.installed" size="sm" @click="openCreate">
           <FaIcon name="i-lucide:plus" class="mr-1" /> 创建站点
         </FaButton>
       </div>
@@ -234,6 +275,35 @@ onMounted(load)
             </tr>
           </tbody>
         </table>
+      </div>
+      <!-- 扫描识别结果 -->
+      <div v-if="scanVisible" class="mt-4 rounded-lg border bg-background p-4">
+        <div class="mb-3 flex items-center justify-between">
+          <div class="flex items-center gap-2 text-sm font-medium">
+            <YdMorphIcon name="search" :size="16" />
+            未接管的站点配置（{{ scanResult?.sites.length || 0 }}）
+          </div>
+          <FaButton variant="ghost" size="icon-sm" @click="scanVisible = false">
+            <FaIcon name="i-lucide:x" class="text-sm" />
+          </FaButton>
+        </div>
+        <div v-if="scanning" class="py-6 text-center text-sm text-muted-foreground">扫描中…</div>
+        <template v-else>
+          <div v-if="!scanResult?.sites.length" class="pb-3 text-sm text-muted-foreground">没有发现未接管的配置</div>
+          <div v-for="d in scanResult?.sites || []" :key="d.file" class="mb-2 flex flex-wrap items-center gap-3 rounded-md border px-3 py-2">
+            <span class="font-mono text-xs">{{ d.file }}</span>
+            <span class="rounded-full bg-blue-500/10 px-2 py-0.5 text-xs text-blue-600">{{ d.type === 'proxy' ? '反代' : '静态' }}</span>
+            <span class="font-mono text-xs text-muted-foreground">{{ d.domain }}</span>
+            <span v-if="d.proxyPass" class="font-mono text-xs text-muted-foreground">→ {{ d.proxyPass }}</span>
+            <FaButton class="ml-auto" size="sm" :loading="adopting === d.file" @click="adopt(d)">一键接管</FaButton>
+          </div>
+          <div v-if="scanResult?.containers.length" class="mt-3 border-t pt-3">
+            <div class="mb-2 text-xs text-muted-foreground">检测到独立 Web 服务器容器（未纳管，仅提示）：</div>
+            <div v-for="c in scanResult.containers" :key="c.name" class="mb-1 font-mono text-xs text-muted-foreground">
+              {{ c.name }} · {{ c.image }} · {{ c.ports }}
+            </div>
+          </div>
+        </template>
       </div>
     </FaPageMain>
 
