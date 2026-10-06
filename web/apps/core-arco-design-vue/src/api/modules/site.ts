@@ -50,6 +50,32 @@ export interface SiteWaf {
   burst: number
 }
 
+export interface RewriteTemplate {
+  name: string
+  content: string
+}
+
+export interface SiteExtConfig {
+  rewriteName: string
+  rewriteContent: string
+  customLocations: { comment: string, content: string }[]
+  errorPage404: string
+  cacheEnable: boolean
+  cacheDuration: string
+}
+
+export const extApi = {
+  rewriteTemplates: async () => {
+    const res = await api.get('api/v1/sites/rewrite-templates', { silent: true })
+    return res.data as RewriteTemplate[]
+  },
+  getExt: async (id: number) => {
+    const res = await api.get(`api/v1/sites/${id}/ext`, { silent: true })
+    return res.data as SiteExtConfig
+  },
+  updateExt: (id: number, ext: SiteExtConfig) => api.put(`api/v1/sites/${id}/ext`, ext),
+}
+
 export const wafApi = {
   get: async (id: number) => {
     const res = await api.get(`api/v1/sites/${id}/waf`, { silent: true })

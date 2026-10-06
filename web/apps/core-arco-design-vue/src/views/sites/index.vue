@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import type { SiteItem, DiscoveredSite } from '@/api/modules/site'
-import apiSite, { siteDiscoveryApi, wafApi } from '@/api/modules/site'
-import type { SiteWaf } from '@/api/modules/site'
+import apiSite, { siteDiscoveryApi, wafApi, extApi } from '@/api/modules/site'
+import type { SiteWaf, SiteExtConfig, RewriteTemplate } from '@/api/modules/site'
 
 defineOptions({
   name: 'SitesIndex',
@@ -96,6 +96,62 @@ async function toggle(s: SiteItem) {
   }
   catch (e: any) {
     useFaToast().error('操作失败', { description: e?.message })
+  }
+}
+
+// ---- 高级配置（伪静态/自定义 location/404/缓存）----
+const extVisible = ref(false)
+const extTarget = ref<SiteItem | null>(null)
+const extForm = ref<SiteExtConfig>({ rewriteName: '', rewriteContent: '', customLocations: [], errorPage404: '', cacheEnable: false, cacheDuration: '12h' })
+const rewriteTemplates = ref<RewriteTemplate[]>([])
+const extSaving = ref(false)
+const customLocs = ref<{ comment: string, content: string }[]>([])
+
+async function openExt(s: SiteItem) {
+  extTarget.value = s
+  try {
+    if (!rewriteTemplates.value.length) {
+      rewriteTemplates.value = await extApi.rewriteTemplates()
+    }
+    extForm.value = await extApi.getExt(s.id)
+    customLocs.value = extForm.value.customLocations?.length ? [...extForm.value.customLocations] : [{ comment: '', content: '' }]
+    extVisible.value = true
+  }
+  catch (e: any) {
+    useFaToast().error('读取高级配置失败', { description: e?.message })
+  }
+}
+
+function onRewriteTemplate() {
+  const t = rewriteTemplates.value.find(x => x.name === extForm.value.rewriteName)
+  if (t) {
+    extForm.value.rewriteContent = t.content
+  }
+  if (extForm.value.rewriteName === 'custom') {
+    extForm.value.rewriteContent = ''
+  }
+}
+
+function addCustomLoc() {
+  customLocs.value.push({ comment: '', content: 'location /path {\n    return 200 "ok";\n}' })
+}
+
+async function saveExt() {
+  if (!extTarget.value) {
+    return
+  }
+  extSaving.value = true
+  try {
+    extForm.value.customLocations = customLocs.value.filter(c => c.content.trim())
+    await extApi.updateExt(extTarget.value.id, extForm.value)
+    useFaToast().success('高级配置已保存并重载 nginx')
+    extVisible.value = false
+  }
+  catch (e: any) {
+    useFaToast().error('保存失败（已回滚）', { description: e?.message })
+  }
+  finally {
+    extSaving.value = false
   }
 }
 
@@ -368,6 +424,7 @@ onMounted(load)
                   <FaButton variant="ghost" size="sm" @click="openEditor(s)">配置</FaButton>
                   <FaButton variant="ghost" size="sm" @click="openLogs(s)">日志</FaButton>
                   <FaButton variant="ghost" size="sm" @click="openWaf(s)">WAF</FaButton>
+                  <FaButton variant="ghost" size="sm" @click="openExt(s)">高级</FaButton>
                   <FaButton v-if="!s.certDomain" variant="ghost" size="sm" @click="issueCert(s)">证书</FaButton>
                   <FaButton variant="outline" size="sm" @click="toggle(s)">{{ s.enabled ? '禁用' : '启用' }}</FaButton>
                   <FaButton variant="outline" size="sm" class="text-red-500!" @click="remove(s)">删除</FaButton>
@@ -469,6 +526,77 @@ onMounted(load)
       <template #footer>
         <FaButton variant="outline" @click="createVisible = false">取消</FaButton>
         <FaButton :loading="creating" @click="doCreate">创建</FaButton>
+      </template>
+    </FaModal>
+
+    <!-- 高级配置 -->
+    <FaModal v-model="extVisible" :title="`高级配置：${extTarget?.name || ''}`" class="max-w-3xl!" :destroy-on-close="true">
+      <div class="flex flex-col gap-4">
+        <div class="rounded-md border p-3">
+          <div class="mb-2 text-sm font-medium">伪静态</div>
+          <select v-model="extForm.rewriteName" class="mb-2 h-9 w-48 rounded-md border border-input bg-background px-2 text-sm outline-none" @change="onRewriteTemplate">
+            <option value="">无</option>
+            <option value="custom">自定义</option>
+            <option v-for="t in rewriteTemplates" :key="t.name" :value="t.name">{{ t.name }}</option>
+          </select>
+          <textarea
+            v-if="extForm.rewriteName === 'custom'"
+            v-model="extForm.rewriteContent"
+            class="h-24 w-full rounded-md border border-input bg-background p-2 font-mono text-xs outline-none focus:ring-1 focus:ring-primary"
+            spellcheck="false"
+            placeholder="location / { ... }"
+          />
+          <pre v-else-if="extForm.rewriteContent" class="max-h-32 overflow-auto rounded-md bg-muted/50 p-2 font-mono text-xs">{{ extForm.rewriteContent }}</pre>
+        </div>
+
+        <div class="rounded-md border p-3">
+          <div class="mb-2 flex items-center justify-between">
+            <span class="text-sm font-medium">自定义 location</span>
+            <FaButton variant="outline" size="sm" @click="addCustomLoc">
+              <FaIcon name="i-lucide:plus" class="mr-1" /> 加一条
+            </FaButton>
+          </div>
+          <div v-for="(cl, idx) in customLocs" :key="idx" class="mb-2">
+            <div class="mb-1 flex items-center gap-2">
+              <FaInput v-model="cl.comment" placeholder="备注" class="w-40" />
+              <FaButton v-if="customLocs.length > 1" variant="ghost" size="icon-sm" @click="customLocs.splice(idx, 1)">
+                <FaIcon name="i-lucide:trash" class="text-sm" />
+              </FaButton>
+            </div>
+            <textarea
+              v-model="cl.content"
+              class="h-20 w-full rounded-md border border-input bg-background p-2 font-mono text-xs outline-none focus:ring-1 focus:ring-primary"
+              spellcheck="false"
+              placeholder="location /healthz { return 200 'ok'; }"
+            />
+          </div>
+        </div>
+
+        <div class="rounded-md border p-3">
+          <div class="mb-2 text-sm font-medium">自定义 404 页面</div>
+          <FaInput v-model="extForm.errorPage404" placeholder="如 /404.html（相对站点根目录，仅静态站）" class="w-full" />
+        </div>
+
+        <div class="rounded-md border p-3">
+          <label class="flex cursor-pointer items-center gap-2 text-sm font-medium">
+            <input v-model="extForm.cacheEnable" type="checkbox">
+            反代缓存（proxy_cache）
+          </label>
+          <div v-if="extForm.cacheEnable" class="mt-2 flex items-center gap-3">
+            <span class="w-24 text-sm text-muted-foreground">缓存有效期</span>
+            <select v-model="extForm.cacheDuration" class="h-9 rounded-md border border-input bg-background px-2 text-sm outline-none">
+              <option value="1h">1 小时</option>
+              <option value="12h">12 小时</option>
+              <option value="1d">1 天</option>
+              <option value="7d">7 天</option>
+            </select>
+            <span class="text-xs text-muted-foreground">响应带 X-Cache-Status 头（MISS/HIT）</span>
+          </div>
+        </div>
+      </div>
+      <template #footer>
+        <FaButton variant="outline" @click="extVisible = false">取消</FaButton>
+        <FaButton :loading="extSaving" @click="saveExt">保存并重载</FaButton>
       </template>
     </FaModal>
 

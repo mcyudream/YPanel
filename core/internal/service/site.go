@@ -63,6 +63,7 @@ func nginxComposeTemplate() string {
       - /opt/ypanel/nginx/certs:/etc/nginx/certs
       - /opt/ypanel/nginx/www:/var/www
       - /opt/ypanel/nginx/logs:/var/log/nginx
+      - /opt/ypanel/nginx/cache:/var/cache/nginx
     restart: unless-stopped
 `
 }
@@ -148,27 +149,44 @@ type ProxyRule struct {
 	WebSocket bool  `json:"ws"`
 }
 
-// siteMeta 站点生成期元数据（多域名/规则/日志）。
+// siteMeta 站点生成期元数据（多域名/规则/日志/伪静态/缓存/自定义 location）。
 type siteMeta struct {
-	ExtraDomains []string     `json:"extraDomains,omitempty"`
-	ProxyRules   []ProxyRule  `json:"proxyRules,omitempty"`
-	IndexFiles   string       `json:"indexFiles,omitempty"`
-	LogsEnabled  bool         `json:"logsEnabled"`
+	ExtraDomains    []string        `json:"extraDomains,omitempty"`
+	ProxyRules      []ProxyRule     `json:"proxyRules,omitempty"`
+	IndexFiles      string          `json:"indexFiles,omitempty"`
+	LogsEnabled     bool            `json:"logsEnabled"`
+	RewriteName     string          `json:"rewriteName,omitempty"`
+	RewriteContent  string          `json:"rewriteContent,omitempty"`
+	CustomLocations []CustomLocation `json:"customLocations,omitempty"`
+	ErrorPage404    string          `json:"errorPage404,omitempty"`
+	CacheEnable     bool            `json:"cacheEnable"`
+	CacheDuration   string          `json:"cacheDuration,omitempty"`
 }
 
 // parseSiteMeta 解析站点附加元数据（兼容旧数据：仅主域名 + 默认规则）。
 func parseSiteMeta(site *model.Site) siteMeta {
-	m := siteMeta{IndexFiles: "index.html", LogsEnabled: true}
+	m := siteMeta{IndexFiles: "index.html", LogsEnabled: site.LogsEnabled}
 	if site.IndexFiles != "" {
 		m.IndexFiles = site.IndexFiles
 	}
-	m.LogsEnabled = site.LogsEnabled
 	if site.Domains != "" {
 		_ = json.Unmarshal([]byte(site.Domains), &m.ExtraDomains)
 	}
 	if site.ProxyRules != "" {
 		_ = json.Unmarshal([]byte(site.ProxyRules), &m.ProxyRules)
 	}
+	if site.RewriteName != "" {
+		m.RewriteName = site.RewriteName
+	}
+	if site.RewriteContent != "" {
+		m.RewriteContent = site.RewriteContent
+	}
+	if site.CustomLocations != "" {
+		_ = json.Unmarshal([]byte(site.CustomLocations), &m.CustomLocations)
+	}
+	m.ErrorPage404 = site.ErrorPage404
+	m.CacheEnable = site.CacheEnable
+	m.CacheDuration = site.CacheDuration
 	// 兼容：旧数据默认规则 = 主域名 "/" -> ProxyPass
 	if len(m.ProxyRules) == 0 && site.ProxyPass != "" && site.Type == "proxy" {
 		m.ProxyRules = []ProxyRule{{Prefix: "/", Target: site.ProxyPass}}
@@ -310,6 +328,23 @@ func confTemplate(site *model.Site, ssl bool, waf SiteWaf) string {
 	names := append([]string{site.Domain}, meta.ExtraDomains...)
 	serverNames := strings.Join(names, " ")
 
+	// 反代缓存 zone（conf.d 顶层 = http 上下文，目录挂载于 cache 卷）
+	if meta.CacheEnable && site.Type == "proxy" {
+		dur := meta.CacheDuration
+		if dur == "" {
+			dur = "12h"
+		}
+		fmt.Fprintf(&b, "proxy_cache_path /var/cache/nginx/%s levels=1:2 keys_zone=cache_%s:10m inactive=%s max_size=1g;\n", site.Name, site.Name, dur)
+	}
+
+	// 伪静态（模板或自定义）
+	rewriteContent := meta.RewriteContent
+	if meta.RewriteName != "" && meta.RewriteName != "custom" && meta.RewriteName != "none" {
+		if t, err := ResolveRewrite(meta.RewriteName); err == nil {
+			rewriteContent = t
+		}
+	}
+
 	// 有证书：80 跳 443 + 443 主段
 	if site.CertDomain != "" {
 		fmt.Fprintf(&b, "# ypanel-site:%d\nserver {\n    listen 80;\n    server_name %s;\n    return 301 https://$host$request_uri;\n}\n\n", site.ID, serverNames)
@@ -324,14 +359,33 @@ func confTemplate(site *model.Site, ssl bool, waf SiteWaf) string {
 	}
 
 	b.WriteString(wafServer)
+
+	// 自定义 404 页（static 类型）
+	if site.Type == "static" && meta.ErrorPage404 != "" {
+		fmt.Fprintf(&b, "    error_page 404 %s;\n", meta.ErrorPage404)
+	}
+
+	// 反代缓存指令开关（proxy location 生成时注入）
+	cacheOn := meta.CacheEnable && site.Type == "proxy"
+
 	switch site.Type {
 	case "static":
 		index := meta.IndexFiles
 		if index == "" {
 			index = "index.html"
 		}
-		fmt.Fprintf(&b, "    root /var/www/sites/%s;\n    index %s;\n", site.Name, index)
-		b.WriteString("    location / { try_files $uri $uri/ =404; }\n")
+		fmt.Fprintf(&b, "    root /var/www/sites/%s;\n", site.Name)
+		if index != "" {
+			fmt.Fprintf(&b, "    index %s;\n", index)
+		}
+		// 伪静态含 location / 时替代默认块（SPA 前端路由场景）
+		if strings.Contains(rewriteContent, "location /") {
+			b.WriteString(rewriteContent)
+			b.WriteString("\n")
+			rewriteContent = ""
+		} else {
+			b.WriteString("    location / { try_files $uri $uri/ =404; }\n")
+		}
 	case "proxy":
 		for _, r := range meta.ProxyRules {
 			prefix := r.Prefix
@@ -350,9 +404,34 @@ func confTemplate(site *model.Site, ssl bool, waf SiteWaf) string {
 				b.WriteString("        proxy_set_header Connection \"upgrade\";\n")
 				b.WriteString("        proxy_read_timeout 300s;\n")
 			}
+			if cacheOn {
+				dur := meta.CacheDuration
+				if dur == "" {
+					dur = "12h"
+				}
+				b.WriteString("        proxy_cache cache_" + site.Name + ";\n")
+				b.WriteString("        proxy_cache_valid 200 " + dur + ";\n")
+				b.WriteString("        add_header X-Cache-Status $upstream_cache_status;\n")
+			}
 			b.WriteString("    }\n")
 		}
 	}
+
+	// 伪静态 / 自定义 location（server 段尾部）
+	if rewriteContent != "" {
+		b.WriteString(rewriteContent)
+		b.WriteString("\n")
+	}
+	for _, cl := range meta.CustomLocations {
+		if strings.TrimSpace(cl.Content) != "" {
+			if cl.Comment != "" {
+				b.WriteString("    # " + cl.Comment + "\n")
+			}
+			b.WriteString(cl.Content)
+			b.WriteString("\n")
+		}
+	}
+
 	b.WriteString("}\n")
 	return b.String()
 }
@@ -442,6 +521,67 @@ func (s *SiteService) selfSign(ctx context.Context, domain string, _ any) error 
 		return errs.Wrapc(errs.CodeFileOpFailed, "自签证书生成失败: "+firstLine(out.Output))
 	}
 	return nil
+}
+
+// SiteExtConfig 站点增强配置（M15 聚合读写）。
+type SiteExtConfig struct {
+	RewriteName     string           `json:"rewriteName"`
+	RewriteContent  string           `json:"rewriteContent"`
+	CustomLocations []CustomLocation `json:"customLocations"`
+	ErrorPage404    string           `json:"errorPage404"`
+	CacheEnable     bool             `json:"cacheEnable"`
+	CacheDuration   string           `json:"cacheDuration"`
+}
+
+// GetExt 读取增强配置。
+func (s *SiteService) GetExt(id uint) (SiteExtConfig, error) {
+	site, err := s.siteByID(id)
+	if err != nil {
+		return SiteExtConfig{}, err
+	}
+	m := parseSiteMeta(site)
+	return SiteExtConfig{
+		RewriteName: m.RewriteName, RewriteContent: m.RewriteContent,
+		CustomLocations: m.CustomLocations, ErrorPage404: m.ErrorPage404,
+		CacheEnable: m.CacheEnable, CacheDuration: m.CacheDuration,
+	}, nil
+}
+
+// UpdateExt 更新增强配置并重写 conf（校验回滚链路）。
+func (s *SiteService) UpdateExt(ctx context.Context, id uint, ext SiteExtConfig) error {
+	site, err := s.siteByID(id)
+	if err != nil {
+		return err
+	}
+	if err := validateCustomLocations(ext.CustomLocations); err != nil {
+		return err
+	}
+	if ext.CacheDuration == "" {
+		ext.CacheDuration = "12h"
+	}
+	meta := parseSiteMeta(site)
+	meta.RewriteName = ext.RewriteName
+	meta.RewriteContent = ext.RewriteContent
+	meta.CustomLocations = ext.CustomLocations
+	meta.ErrorPage404 = ext.ErrorPage404
+	meta.CacheEnable = ext.CacheEnable
+	meta.CacheDuration = ext.CacheDuration
+
+	// 持久化
+	clJSON := ""
+	if len(ext.CustomLocations) > 0 {
+		b, _ := json.Marshal(ext.CustomLocations)
+		clJSON = string(b)
+	}
+	updates := map[string]any{
+		"rewrite_name": ext.RewriteName, "rewrite_content": ext.RewriteContent,
+		"custom_locations": clJSON, "error_page404": ext.ErrorPage404,
+		"cache_enable": ext.CacheEnable, "cache_duration": ext.CacheDuration,
+	}
+	if err := s.db.Model(site).Updates(updates).Error; err != nil {
+		return err
+	}
+	return s.writeConf(ctx, site, confTemplate(site, site.CertDomain != "", parseWaf(site)))
 }
 
 // GetWaf 读取站点 WAF 配置。

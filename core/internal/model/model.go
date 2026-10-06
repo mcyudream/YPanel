@@ -128,6 +128,12 @@ type Site struct {
 	ProxyRules  string    `gorm:"type:text" json:"proxyRules"` // 反代规则 JSON 数组 [{prefix,target,ws}]
 	IndexFiles  string    `gorm:"size:255" json:"indexFiles"`  // 默认文档
 	LogsEnabled bool      `gorm:"not null;default:true" json:"logsEnabled"`
+	RewriteName string    `gorm:"size:32" json:"rewriteName"`         // 伪静态模板名（空=无）
+	RewriteContent string `gorm:"type:text" json:"rewriteContent"`   // 自定义伪静态文本
+	CustomLocations string `gorm:"type:text" json:"customLocations"` // 自定义 location JSON 数组 [{comment,content}]
+	ErrorPage404   string `gorm:"size:255" json:"errorPage404"`      // 自定义 404 路径（相对站点 root）
+	CacheEnable    bool   `gorm:"not null;default:false" json:"cacheEnable"`
+	CacheDuration  string `gorm:"size:16" json:"cacheDuration"`      // 如 12h / 1d
 	CertDomain  string    `gorm:"size:255" json:"certDomain"` // 非空 = 已启用 SSL
 	OriginFile  string    `gorm:"size:255" json:"originFile"` // 接管来源 conf（站点识别）
 	WafJSON     string    `gorm:"type:text" json:"wafJson"`   // WAF 配置（service.SiteWaf 序列化）

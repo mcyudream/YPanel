@@ -178,6 +178,44 @@ func (a *SiteAPI) Adopt(c *gin.Context) {
 	respOK(c, site)
 }
 
+// RewriteTemplates GET /api/v1/sites/rewrite-templates
+func (a *SiteAPI) RewriteTemplates(c *gin.Context) {
+	respOK(c, service.ListRewriteTemplates())
+}
+
+// GetExt GET /api/v1/sites/:id/ext
+func (a *SiteAPI) GetExt(c *gin.Context) {
+	id, err := idParam(c)
+	if err != nil {
+		respErr(c, err)
+		return
+	}
+	out, err := a.Sites.GetExt(id)
+	if err != nil {
+		respErr(c, err)
+		return
+	}
+	respOK(c, out)
+}
+
+// UpdateExt PUT /api/v1/sites/:id/ext
+func (a *SiteAPI) UpdateExt(c *gin.Context) {
+	id, err := idParam(c)
+	if err != nil {
+		respErr(c, err)
+		return
+	}
+	req, ok := bind[service.SiteExtConfig](c)
+	if !ok {
+		return
+	}
+	if err := a.Sites.UpdateExt(c.Request.Context(), id, *req); err != nil {
+		respErr(c, err)
+		return
+	}
+	respOK(c, struct{}{})
+}
+
 // GetWaf GET /api/v1/sites/:id/waf
 func (a *SiteAPI) GetWaf(c *gin.Context) {
 	id, err := idParam(c)
