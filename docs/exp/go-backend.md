@@ -69,3 +69,16 @@
 - **根因**：md5-crypt 有三处极易错的细节：① 输出编码前 16 字节要按 (12,6,0)(13,7,1)(14,8,2)(15,9,3)(5,10,4)(11) 重排（passlib _transpose_map）；② "weird 循环"里 final 变量指向的是**当时**的摘要（MD5(pw+salt+pw)），且部分实现 memset 时机不同导致首字节是 0 还是 db[0] 各版本歧义；③ 1000 轮 update 顺序按 i%2/3/7 组合。手写对照记忆写，三处全对才算对。
 - **规避/解决**：**不要手写**。htpasswd 生成走容器内 `openssl passwd -apr1 -salt <salt> -stdin`（密码经 base64 中转防 shell 引号注入），与 nginx 天然兼容；openssl 已因自签证书存在于 nginx 容器，零新增依赖。注意 `openssl passwd` 不加 `-stdin` 时不读管道（打印 Password: 提示）。
 - **来源**：2026-10-06，S20 Basic 认证（三轮错误实现后改为 openssl 通道，一次通过）。
+
+### acme.sh 续签控制与证书探测的非显然语义（B23 证书库）
+
+- **现象**：证书库要支持"按证书开关自动续签"，但 acme.sh 的续签模型是全局 cron 对**所有**已 install 的证书统一续期，没有 `--no-renew` 单证书开关；同时用 Go 解析 `openssl x509 -enddate` 输出按常规 `"Jan 2 15:04:05 2006 MST"` 布局解析失败。
+- **根因**：① acme.sh 单证书退出续签的唯一途径是 `acme.sh --remove -d <domain> --ecc`——它只把证书从续签列表移除，**证书文件保留**，语义正好可复用为"关闭自动续签"；重新挂回靠 `--install-cert`（reloadcmd 钩子会一并恢复）。② openssl 的日期输出日/月之间是**两个空格**，Go 布局必须用 `Jan _2 15:04:05 2006 MST`（`_2` 带空格填充）。
+- **规避/解决**：关闭续签 → `--remove`；开启续签 → 重放 `--install-cert ... --reloadcmd 'docker exec ypanel-nginx nginx -s reload'`。手动续签用 `--renew -d x --ecc --force`（不带 `--force` 60 天内会跳过）。证书过期时间探测统一 `openssl x509 -in crt -noout -enddate -issuer` 后按 `_2` 布局解析；上传证书的"证书-私钥配对校验"用 `openssl x509 -pubkey | openssl md5` 与 `openssl pkey -pubout | openssl md5` 比对（EC/RSA 通吃，x509 的 `-modulus` 只支持 RSA）。
+- **来源**：2026-10-07 B23 证书库（core/internal/service/cert.go、cert_issuing.go）
+
+### 1Panel v2 站点 conf 生成的可借鉴要点（2026-10 实测 v2.3.2）
+
+- Web 服务器是 **OpenResty**（应用商店安装），站点 conf 由面板生成（`/www/sites/<域名>/{index,ssl,log}` 目录约定），面板"配置文件"页可直接编辑整段 server 块并"保存并重载"。
+- 生成的 server 块固定带：敏感文件 `location ~ ^/(\.user.ini|\.htaccess|\.git|\.env|...)` return 404、`^~ /.well-known/acme-challenge` 放行、`ssl_protocols TLSv1.3 TLSv1.2`、`ssl_prefer_server_ciphers off`、`ssl_session_cache shared:SSL:10m`、`error_page 497 https://$host$request_uri`（HTTP 打到 443 时重定向）、启用 HSTS 时 `add_header Strict-Transport-Security "max-age=31536000" always`。YPanel B23 的 sslServer 段（site.go confTemplate）已对齐其中协议版本/套件/会话缓存/HSTS；497 与 acme-challenge 放行暂未加，后续补。
+- **来源**：2026-10-07 对照用户在用 1Panel（yudream 实例）B23 网站增强批次

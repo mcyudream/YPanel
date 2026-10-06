@@ -2,6 +2,7 @@
 // AI 网关（B18 v2）：统一入口——对话 / 供应商配置 / 知识库 / 工作空间。
 import type { AIProvider } from '@/api/modules/ai'
 import aiApi from '@/api/modules/ai'
+import { providerPresets } from '@/api/modules/ai'
 import api from '@/api'
 import MessageList from '@/components/YdAiChat/MessageList.vue'
 import Sender from '@/components/YdAiChat/Sender.vue'
@@ -50,6 +51,20 @@ const presets = ref<AIProvider[]>([])
 const provVisible = ref(false)
 const provSaving = ref(false)
 const provForm = ref<AIProvider>({ id: 0, name: '', apiType: 'openai', baseURL: '', apiKey: '', model: '', isDefault: false })
+
+function iconFor(name: string): string | undefined {
+  return providerPresets.find(p => p.name === name || name.includes(p.name.split(' ')[0]))?.icon
+}
+
+function openProvFromPreset(preset: AIProvider) {
+  const existing = providers.value.find(x => x.name === preset.name)
+  if (existing) {
+    openProv(existing)
+    return
+  }
+  provForm.value = { id: 0, name: preset.name, apiType: preset.apiType, baseURL: preset.baseURL, apiKey: '', model: preset.model, isDefault: providers.value.length === 0 }
+  provVisible.value = true
+}
 
 function openProv(p?: AIProvider) {
   provForm.value = p ? { ...p, apiKey: '' } : { id: 0, name: '', apiType: 'openai', baseURL: '', apiKey: '', model: '', isDefault: false }
@@ -272,33 +287,64 @@ onMounted(() => {
         />
       </div>
 
-      <!-- 供应商 -->
-      <div v-show="tab === 'providers'" class="space-y-4">
-        <div class="flex justify-end">
-          <FaButton size="sm" @click="openProv()">
-            <FaIcon name="i-lucide:plus" class="mr-1" /> 新增供应商
-          </FaButton>
-        </div>
-        <div v-if="!providers.length" class="rounded-lg border p-8 text-center text-sm text-muted-foreground">
-          暂无供应商，点击右上角新增（可从内置预设快速填充）
-        </div>
-        <div v-for="p in providers" :key="p.id" class="flex items-center justify-between rounded-lg border p-4">
-          <div>
-            <div class="flex items-center gap-2 text-sm font-medium">
-              {{ p.name }}
-              <span v-if="p.isDefault" class="rounded-full bg-emerald-500/10 px-2 py-0.5 text-xs text-emerald-600">默认</span>
+      <!-- 供应商（LobeHub 风格：预设网格 + 已配置列表） -->
+      <div v-show="tab === 'providers'" class="space-y-5">
+        <!-- 已配置 -->
+        <div v-if="providers.length" class="space-y-2">
+          <div class="text-sm font-medium">
+            已配置（{{ providers.length }}）
+          </div>
+          <div v-for="p in providers" :key="p.id" class="flex items-center justify-between rounded-lg border p-3">
+            <div class="flex items-center gap-3">
+              <img v-if="iconFor(p.name)" :src="iconFor(p.name)" class="size-6">
+              <FaIcon v-else name="i-lucide:box" class="size-5 text-muted-foreground" />
+              <div>
+                <div class="flex items-center gap-2 text-sm font-medium">
+                  {{ p.name }}
+                  <span v-if="p.isDefault" class="rounded-full bg-emerald-500/10 px-2 py-0.5 text-xs text-emerald-600">默认</span>
+                </div>
+                <div class="font-mono text-xs text-muted-foreground">
+                  {{ p.baseURL }} · {{ p.model }}
+                </div>
+              </div>
             </div>
-            <div class="mt-1 font-mono text-xs text-muted-foreground">
-              {{ p.baseURL }} · {{ p.model }} · {{ p.apiType }}
+            <div class="flex gap-1">
+              <FaButton variant="ghost" size="sm" @click="openProv(p)">
+                编辑
+              </FaButton>
+              <FaButton variant="ghost" size="sm" class="text-red-500!" @click="removeProv(p.id)">
+                删除
+              </FaButton>
             </div>
           </div>
-          <div class="flex gap-1">
-            <FaButton variant="ghost" size="sm" @click="openProv(p)">
-              编辑
-            </FaButton>
-            <FaButton variant="ghost" size="sm" class="text-red-500!" @click="removeProv(p.id)">
-              删除
-            </FaButton>
+        </div>
+
+        <!-- 可添加的供应商（LobeHub 风格网格卡片） -->
+        <div class="space-y-2">
+          <div class="text-sm font-medium">
+            添加供应商
+          </div>
+          <div class="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+            <button
+              v-for="preset in providerPresets"
+              :key="preset.name"
+              type="button"
+              class="flex cursor-pointer items-center gap-3 rounded-lg border p-3 text-left transition-colors hover:border-primary hover:bg-accent/30"
+              :class="providers.some(x => x.name === preset.name) ? 'op-50' : ''"
+              @click="openProvFromPreset(preset)"
+            >
+              <img v-if="preset.icon" :src="preset.icon" class="size-7 shrink-0">
+              <span v-else class="flex size-7 items-center justify-center rounded bg-muted">
+                <FaIcon name="i-lucide:box" class="text-sm" />
+              </span>
+              <span class="min-w-0">
+                <span class="block truncate text-sm">{{ preset.name }}</span>
+                <span class="block truncate font-mono text-[11px] text-muted-foreground">{{ preset.model }}</span>
+              </span>
+              <span v-if="providers.some(x => x.name === preset.name)" class="ml-auto shrink-0 rounded-full bg-emerald-500/10 px-1.5 py-0.5 text-[10px] text-emerald-600">
+                已配置
+              </span>
+            </button>
           </div>
         </div>
       </div>

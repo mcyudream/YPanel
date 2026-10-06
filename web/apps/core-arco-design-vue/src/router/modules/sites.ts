@@ -18,8 +18,7 @@ const routes: RouteRecordRaw = {
       name: 'sitesIndex',
       component: () => import('@/views/sites/index.vue'),
       meta: {
-        title: '网站',
-        menu: false,
+        title: '网站列表',
       },
     },
     {

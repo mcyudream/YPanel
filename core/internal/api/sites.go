@@ -57,6 +57,59 @@ func (a *SiteAPI) IssueACME(c *gin.Context) {
 	respOK(c, out)
 }
 
+// UpdateMeta PUT /api/v1/sites/:id/meta {groupId?, remark?}（B23 分组/备注）
+func (a *SiteAPI) UpdateMeta(c *gin.Context) {
+	id, err := strconv.ParseUint(c.Param("id"), 10, 64)
+	if err != nil || id == 0 {
+		respErr(c, errBadRequest("站点 ID 不合法"))
+		return
+	}
+	req, ok := bind[service.SiteMetaInput](c)
+	if !ok {
+		return
+	}
+	if err := a.Sites.UpdateMeta(uint(id), *req); err != nil {
+		respErr(c, err)
+		return
+	}
+	respOK(c, struct{}{})
+}
+
+// GetRunDir GET /api/v1/sites/:id/conf/rundir（B23 网站目录）
+func (a *SiteAPI) GetRunDir(c *gin.Context) {
+	id, err := strconv.ParseUint(c.Param("id"), 10, 64)
+	if err != nil || id == 0 {
+		respErr(c, errBadRequest("站点 ID 不合法"))
+		return
+	}
+	out, err := a.Sites.GetRunDir(c.Request.Context(), uint(id))
+	if err != nil {
+		respErr(c, err)
+		return
+	}
+	respOK(c, out)
+}
+
+// UpdateRunDir PUT /api/v1/sites/:id/conf/rundir {runDir}（B23 保存并重载）
+func (a *SiteAPI) UpdateRunDir(c *gin.Context) {
+	id, err := strconv.ParseUint(c.Param("id"), 10, 64)
+	if err != nil || id == 0 {
+		respErr(c, errBadRequest("站点 ID 不合法"))
+		return
+	}
+	req, ok := bind[struct {
+		RunDir string `json:"runDir"`
+	}](c)
+	if !ok {
+		return
+	}
+	if err := a.Sites.UpdateRunDir(c.Request.Context(), uint(id), req.RunDir); err != nil {
+		respErr(c, err)
+		return
+	}
+	respOK(c, struct{}{})
+}
+
 // GetSite GET /api/v1/sites/:id/detail// GetSite GET /api/v1/sites/:id/detail（F8 单条端点）
 func (a *SiteAPI) GetSite(c *gin.Context) {
 	id, err := strconv.ParseUint(c.Param("id"), 10, 64)

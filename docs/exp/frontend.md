@@ -137,3 +137,24 @@
 - **根因**：v0.1.15 中 `tools.Tool` 是**接口**（Name/Description/Call 三方法）而非 struct；system 消息用 `llms.TextParts(llms.ChatMessageTypeSystem, text)`（无 SystemMessageContent 辅助）；chains 流式用 `chains.WithStreamingFunc`（非 WithLLMOptions）。
 - **规避/解决**：自定义工具写成实现接口的小 struct；以 GOMODCACHE 内实际源码为准逐 API 核对，勿凭记忆/旧示例。另：Bash heredoc 会吃一层反斜杠——写含 `\n` 的 Go 源码用 Edit 工具或 python chr() 构造，别在 heredoc python 里硬写。
 - **来源**：2026-10-07，AI v2 工具循环（core/internal/service/aichat.go）。
+
+### reka-ui Slot 转发（FaContextMenu 包裹）会丢掉子元素上的 @click
+
+- **现象**：文件树行按钮（`<FaContextMenu><button @click=…>`）渲染正常但左键点击毫无反应，右键菜单正常；`btn.__vueParentComponent.vnode.props` 里只有 reka 的 `onContextmenu/onPointerdown/data-state…`，**onClick 消失**；无论合成派发还是 CDP 真实点击都无效。
+- **根因**：FaContextMenu → reka ContextMenuTrigger（Primitive/Slot）用 cloneVNode 把 trigger 自身 props 合并进插槽子元素，本例中合并结果把子元素 @click 覆盖丢失（reka 2.10.5）。编辑器文件树（M20）与容器/终端文件树同构同病。
+- **规避/解决**：不要把可交互处理绑在被 FaContextMenu 包裹的元素上——在外层再包一个普通元素绑 @click（`<span @click=…><FaContextMenu>…</FaContextMenu></span>`，点击冒泡触发）。排查此类"渲染正常但点击死"的问题时，直接检查 `__vueParentComponent.vnode.props` 里有没有自己的 onClick。
+- **来源**：2026-10-07，M22 文件树行点击失效排查（YdFileTreeNode + editor/FileTreeRow 同步修复）。
+
+### store 驱动的弹窗组件只在挂载它的页面上渲染：跨页调用 open() 不出现弹窗
+
+- **现象**：容器页「终端」按钮调用 `fileEditorStore.openWorkspace(...)`，pinia 里 `visible=true`、`currentContainer` 正确，但界面毫无变化、无任何报错。
+- **根因**：文件编辑工作台弹窗组件（FileEditorWorkspace）只写在 file_management 页面模板里；store 是全局的，组件实例不是——不在挂载页上调用自然没有渲染载体。
+- **规避/解决**：需要跨页触发的弹窗，要么把组件挂到布局层（全局单实例），要么在每个触发页都挂一份组件（本项目容器页选择后者：`<FileEditorWorkspace />`）。排查时先看 pinia 状态是否正确，再查"组件实例在哪"。
+- **来源**：2026-10-07，M22 容器终端接入文件管理弹窗。
+
+### dev 长会话 + 边改边验：旧 chunk 动态 import 失效会造成"整页白屏/视图错乱"的假故障
+
+- **现象**：验证中反复出现切换标签后内容区空白、路由视图错乱、异步组件加载失败，表现得像路由/keep-alive 层面的 bug；重启 dev 或硬刷新后消失。
+- **根因**：长时间运行的 Vite dev 会话在源码多次变更后，已加载页面的旧 chunk 再去懒加载新 hash 的异步组件时会失败（或模块图失效），叠加 fa 多标签 keep-alive 后表现为整页级错乱。
+- **规避/解决**：验证类操作前先硬刷新一次；出现"不可能的空白"先怀疑 dev 会话陈旧而非代码缺陷，用生产构建（部署产物）做最终判定。
+- **来源**：2026-10-07，M21/M22 浏览器验证过程中的多次误判。

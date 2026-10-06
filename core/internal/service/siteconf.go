@@ -214,11 +214,19 @@ func (s *SiteService) UpdateRewriteConf(ctx context.Context, id uint, conf SiteR
 
 // ---- 域：https HTTPS 管理 ----
 
-// SiteHTTPSConf HTTPS 配置视图。
+// SiteHTTPSConf HTTPS 配置视图（B23 扩展：HTTP 模式/HSTS/TLS 版本/加密算法/HTTP2/证书库绑定）。
 type SiteHTTPSConf struct {
-	Enable       bool   `json:"enable"`
-	CertDomain   string `json:"certDomain"`
-	HTTPRedirect bool   `json:"httpRedirect"` // 当前实现固定 true（80 → 301 443）
+	Enable     bool   `json:"enable"`
+	CertDomain string `json:"certDomain"`
+	CertID     uint   `json:"certId"`
+
+	// 高级设置（存 Site.HTTPSJSON）
+	HTTPMode      string   `json:"httpMode"`      // redirect / both / deny
+	HSTS          bool     `json:"hsts"`
+	HSTSSubdomain bool     `json:"hstsSubdomain"`
+	TLSVersions   []string `json:"tlsVersions"`
+	Ciphers       string   `json:"ciphers"`
+	HTTP2         bool     `json:"http2"`
 }
 
 // GetHTTPSConf 读取。
@@ -227,10 +235,89 @@ func (s *SiteService) GetHTTPSConf(id uint) (SiteHTTPSConf, error) {
 	if err != nil {
 		return SiteHTTPSConf{}, err
 	}
-	return SiteHTTPSConf{Enable: site.CertDomain != "", CertDomain: site.CertDomain, HTTPRedirect: site.CertDomain != ""}, nil
+	cfg := parseHTTPS(site)
+	return SiteHTTPSConf{
+		Enable: site.CertDomain != "", CertDomain: site.CertDomain, CertID: site.CertID,
+		HTTPMode: cfg.HTTPMode, HSTS: cfg.HSTS, HSTSSubdomain: cfg.HSTSSubdomain,
+		TLSVersions: cfg.TLSVersions, Ciphers: cfg.Ciphers, HTTP2: cfg.HTTP2,
+	}, nil
 }
 
-// EnableHTTPS 为站点启用 HTTPS（自签证书；ACME 就绪后扩展证书来源）。
+// SiteHTTPSUpdateInput HTTPS 更新输入：certID 与 selfsigned 二选一（都空=仅更新高级设置）。
+type SiteHTTPSUpdateInput struct {
+	CertID        uint     `json:"certId"`        // 从证书库选择
+	SelfSigned    bool     `json:"selfSigned"`    // 自签
+	Disable       bool     `json:"disable"`       // 停用 HTTPS
+	HTTPMode      string   `json:"httpMode"`
+	HSTS          bool     `json:"hsts"`
+	HSTSSubdomain bool     `json:"hstsSubdomain"`
+	TLSVersions   []string `json:"tlsVersions"`
+	Ciphers       string   `json:"ciphers"`
+	HTTP2         bool     `json:"http2"`
+}
+
+// UpdateHTTPSConf 更新 HTTPS 配置（证书绑定 / 停用 / 高级设置，统一校验回滚链路）。
+func (s *SiteService) UpdateHTTPSConf(ctx context.Context, id uint, in SiteHTTPSUpdateInput) (SiteHTTPSConf, error) {
+	site, err := s.siteByID(id)
+	if err != nil {
+		return SiteHTTPSConf{}, err
+	}
+
+	// 1) 证书来源变更
+	if in.Disable {
+		if site.CertDomain != "" {
+			if err := s.db.Model(site).Updates(map[string]any{"cert_domain": "", "cert_id": 0}).Error; err != nil {
+				return SiteHTTPSConf{}, err
+			}
+			if err := s.writeConf(ctx, site, confTemplate(site, false, parseWaf(site))); err != nil {
+				return SiteHTTPSConf{}, err
+			}
+		}
+	} else if in.CertID != 0 {
+		var cert model.Certificate
+		if err := s.db.First(&cert, in.CertID).Error; err != nil {
+			return SiteHTTPSConf{}, errs.Wrap(errs.ErrBadRequest, "所选证书不存在")
+		}
+		if site.CertID != in.CertID {
+			if err := s.ApplyCert(ctx, site, cert.ID, cert.CertName); err != nil {
+				return SiteHTTPSConf{}, err
+			}
+		}
+	} else if in.SelfSigned && site.CertDomain == "" {
+		if err := s.IssueSelfSigned(ctx, id); err != nil {
+			return SiteHTTPSConf{}, err
+		}
+	}
+
+	// 2) 高级设置持久化
+	site, err = s.siteByID(id) // 回读（证书可能已变更）
+	if err != nil {
+		return SiteHTTPSConf{}, err
+	}
+	cfg := SiteHTTPSCfg{
+		HTTPMode: in.HTTPMode, HSTS: in.HSTS, HSTSSubdomain: in.HSTSSubdomain,
+		TLSVersions: in.TLSVersions, Ciphers: strings.TrimSpace(in.Ciphers), HTTP2: in.HTTP2,
+	}
+	if cfg.HTTPMode == "" {
+		cfg.HTTPMode = "redirect"
+	}
+	if cfg.Ciphers == "" {
+		cfg.Ciphers = ""
+	}
+	b, _ := json.Marshal(cfg)
+	if err := s.db.Model(site).Update("https_json", string(b)).Error; err != nil {
+		return SiteHTTPSConf{}, err
+	}
+	// 启用状态下重写 conf 生效
+	if site.CertDomain != "" {
+		if err := s.writeConf(ctx, site, confTemplate(site, true, parseWaf(site))); err != nil {
+			return SiteHTTPSConf{}, err
+		}
+	}
+	return s.GetHTTPSConf(id)
+}
+
+// EnableHTTPS 为站点启用 HTTPS（自签证书；兼容旧端点）。
 func (s *SiteService) EnableHTTPS(ctx context.Context, id uint) (SiteHTTPSConf, error) {
 	if err := s.IssueSelfSigned(ctx, id); err != nil {
 		return SiteHTTPSConf{}, err
@@ -238,7 +325,7 @@ func (s *SiteService) EnableHTTPS(ctx context.Context, id uint) (SiteHTTPSConf, 
 	return s.GetHTTPSConf(id)
 }
 
-// DisableHTTPS 停用 HTTPS（清证书域名并重写 conf）。
+// DisableHTTPS 停用 HTTPS（清证书域名并重写 conf；兼容旧端点）。
 func (s *SiteService) DisableHTTPS(ctx context.Context, id uint) (SiteHTTPSConf, error) {
 	site, err := s.siteByID(id)
 	if err != nil {
@@ -247,7 +334,7 @@ func (s *SiteService) DisableHTTPS(ctx context.Context, id uint) (SiteHTTPSConf,
 	if site.CertDomain == "" {
 		return s.GetHTTPSConf(id)
 	}
-	if err := s.db.Model(site).Update("cert_domain", "").Error; err != nil {
+	if err := s.db.Model(site).Updates(map[string]any{"cert_domain": "", "cert_id": 0}).Error; err != nil {
 		return SiteHTTPSConf{}, err
 	}
 	if err := s.writeConf(ctx, site, confTemplate(site, false, parseWaf(site))); err != nil {

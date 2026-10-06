@@ -54,10 +54,11 @@ func (m *Manager) ContainerFileList(ctx context.Context, id, dir string) ([]dto.
 		if err != nil {
 			return nil, errs.Wrapc(errs.CodeFileOpFailed, "解析容器目录失败: "+err.Error())
 		}
-		name := strings.TrimPrefix(strings.TrimPrefix(h.Name, "./"), "/")
+		// 归一化：剥 "./"、前导与尾部 "/"（docker 的目录条目名带尾部斜杠）
+		name := strings.Trim(strings.TrimPrefix(strings.TrimPrefix(h.Name, "./"), "/"), "/")
 		if rootPrefix == "" {
 			// 首个条目即所请求目录本身，确定 tar 内前缀
-			rootPrefix = strings.TrimSuffix(name, "/")
+			rootPrefix = name
 			continue
 		}
 		rel := name

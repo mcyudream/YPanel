@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import type { NodeItem } from '@/api/modules/node'
-import type { TerminalConnState, TerminalEngine } from './types'
+import type { TerminalConnState } from './types'
 import YdTerminal from './index.vue'
 import StatusBar from './StatusBar.vue'
 
@@ -24,13 +24,10 @@ const emits = defineEmits<{
   'toggle-monitor': []
 }>()
 
-const DEFAULT_ENGINE_KEY = 'ypanel.terminal.engine'
-
 interface TermTab {
   id: number
   title: string
   node: string
-  engine: TerminalEngine
   state: TerminalConnState
   stateText?: string
   size: { cols: number, rows: number }
@@ -62,12 +59,10 @@ function nodeLabel(id: string) {
 
 function createTab() {
   uid++
-  const engine = (localStorage.getItem(DEFAULT_ENGINE_KEY) as TerminalEngine) || 'vwt'
   tabs.value.push({
     id: uid,
     title: `终端 ${uid}`,
     node: props.node,
-    engine,
     state: 'connecting',
     size: { cols: 80, rows: 24 },
   })
@@ -87,15 +82,6 @@ function closeTab(id: number) {
   if (!tabs.value.length) {
     createTab()
   }
-}
-
-function switchEngine() {
-  const t = activeTab.value
-  if (!t) {
-    return
-  }
-  t.engine = t.engine === 'vwt' ? 'xterm' : 'vwt'
-  localStorage.setItem(DEFAULT_ENGINE_KEY, t.engine)
 }
 
 // 同步输入：任一会话键入广播到全部会话
@@ -160,7 +146,7 @@ onMounted(() => createTab())
           type="button"
           class="group inline-flex shrink-0 cursor-pointer items-center gap-1 rounded px-2 py-0.5 transition-colors"
           :class="activeId === t.id ? 'bg-primary/10 text-foreground' : 'text-muted-foreground hover:bg-accent/50'"
-          :title="`${nodeLabel(t.node)} · ${t.engine}`"
+          :title="nodeLabel(t.node)"
           @click="activeId = t.id"
         >
           <YdMorphIcon name="square-terminal" :size="12" />
@@ -181,9 +167,6 @@ onMounted(() => createTab())
           <input v-model="syncInput" type="checkbox" class="size-3">
           同步
         </label>
-        <FaButton variant="ghost" size="sm" class="h-5! px-1.5! text-[11px]" title="切换终端引擎（vwt 行模式 / xterm 全仿真）" @click="switchEngine">
-          {{ activeTab?.engine === 'xterm' ? 'xterm' : 'vwt' }}
-        </FaButton>
         <FaButton variant="ghost" size="icon-sm" class="size-5!" :title="props.treeVisible ? '收起文件树' : '展开文件树'" @click="emits('toggle-tree')">
           <FaIcon :name="props.treeVisible ? 'i-lucide:panel-left-close' : 'i-lucide:panel-left'" class="text-xs" />
         </FaButton>
@@ -204,7 +187,6 @@ onMounted(() => createTab())
         <YdTerminal
           :ref="setRef(t.id)"
           :endpoint="{ kind: 'host', node: t.node }"
-          :engine="t.engine"
           :active="activeId === t.id"
           @input="onTabInput(t.id, $event)"
           @size="(c: number, r: number) => onTabSize(t.id, c, r)"
@@ -218,7 +200,6 @@ onMounted(() => createTab())
       :state="activeTab?.state ?? 'closed'"
       :state-text="activeTab?.stateText"
       :node-label="activeTab ? nodeLabel(activeTab.node) : props.node"
-      :engine="activeTab?.engine ?? 'vwt'"
       :size="activeTab?.size"
     />
   </div>

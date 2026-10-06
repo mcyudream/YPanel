@@ -1,23 +1,10 @@
-import type { TerminalElementInfo, TerminalMessageClass, TerminalMessageType } from 'vue-web-terminal'
-
-// YdTerminal：双引擎（vwt=vue-web-terminal 行模式 / xterm=全仿真）+ 双协议（host=JSON 控制帧 / exec=裸文本帧）。
-
-export type TerminalEngine = 'vwt' | 'xterm'
+// YdTerminal：xterm 引擎 + 双协议（host=JSON 控制帧 / exec=容器 exec 裸文本帧）。
 
 export type TerminalConnState = 'connecting' | 'connected' | 'closed' | 'error'
 
 export type TerminalEndpoint =
   | { kind: 'host', node?: string }
   | { kind: 'exec', containerId: string, cmd?: string }
-
-export type VwtMessage = {
-  type?: TerminalMessageType
-  content: string | number | object | Array<any>
-  class?: TerminalMessageClass
-  tag?: string
-}
-
-export type VwtElementInfo = TerminalElementInfo
 
 function wsBase() {
   return (import.meta.env.DEV && import.meta.env.VITE_ENABLE_PROXY) ? '/proxy' : ''

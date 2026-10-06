@@ -2,6 +2,7 @@
 import type { SiteItem } from '@/api/modules/site'
 import apiSite from '@/api/modules/site'
 import DomainConf from './conf/DomainConf.vue'
+import DirConf from './conf/DirConf.vue'
 import DefaultsConf from './conf/DefaultsConf.vue'
 import ProxyConf from './conf/ProxyConf.vue'
 import RewriteConf from './conf/RewriteConf.vue'
@@ -49,6 +50,7 @@ const typeLabel: Record<string, string> = { static: '静态', proxy: '反代', p
 const tabs = computed(() => {
   const base = [
     { key: 'domain', label: '域名', icon: 'i-lucide:globe', comp: DomainConf },
+    { key: 'dir', label: '网站目录', icon: 'i-lucide:folder', comp: DirConf },
     { key: 'defaults', label: '默认文档', icon: 'i-lucide:file-text', comp: DefaultsConf },
     { key: 'rewrite', label: '伪静态', icon: 'i-lucide:repeat', comp: RewriteConf },
     { key: 'redirect', label: '重定向', icon: 'i-lucide:corner-up-right', comp: RedirectConf },

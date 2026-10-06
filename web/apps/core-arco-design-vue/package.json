@@ -18,6 +18,7 @@
     "@fantastic-admin/hotkeys": "workspace:*",
     "@fantastic-admin/settings": "workspace:*",
     "@fantastic-admin/types": "workspace:*",
+    "@lobehub/icons-static-svg": "catalog:",
     "@vee-validate/zod": "catalog:",
     "@vueuse/core": "catalog:",
     "@vueuse/integrations": "catalog:",
@@ -53,7 +54,6 @@
     "vee-validate": "catalog:",
     "vue": "catalog:",
     "vue-router": "catalog:",
-    "vue-web-terminal": "catalog:",
     "zod": "catalog:"
   },
   "devDependencies": {

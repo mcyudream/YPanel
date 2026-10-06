@@ -128,6 +128,7 @@ func run(ctx context.Context, cfg *config.Config) error {
 	alertSvc.Start(ctx)
 	histSvc := service.NewHistoryRecorder(gdb, nodes)
 	histSvc.Start(ctx)
+	revSvc := service.NewRevisionService(gdb, nodes)
 
 	if os.Getenv("GIN_MODE") == "" {
 		gin.SetMode(gin.ReleaseMode)
@@ -138,7 +139,7 @@ func run(ctx context.Context, cfg *config.Config) error {
 		Market: marketSvc, FW: fwSvc, Alerts: alertSvc,
 		Notif: notifSvc, PanelBP: service.NewPanelBackupService(nodes), Hist: histSvc,
 		F2B: f2bSvc, DBAdmin: dbAdminSvc, SU: suSvc, MarketStore: marketStoreSvc, RT: rtSvc,
-		DockerExt: dockerExtSvc, Sec: secSvc, Version: version,
+		DockerExt: dockerExtSvc, Sec: secSvc, Rev: revSvc, Version: version,
 	})
 	if err != nil {
 		return err

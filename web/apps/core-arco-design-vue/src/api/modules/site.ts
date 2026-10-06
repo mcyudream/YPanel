@@ -17,6 +17,12 @@ export interface SiteItem {
   indexFiles: string
   logsEnabled: boolean
   certDomain: string
+  certId: number
+  certNotAfter: string | null
+  groupId: number
+  groupName: string
+  remark: string
+  runDir: string
   enabled: boolean
   onDisk: boolean
   nginxRunning: boolean
@@ -102,8 +108,9 @@ export default {
     const res = await api.get(`api/v1/sites/${id}/logs?type=${type}&tail=${tail}`, { silent: true })
     return (res.data as { content: string }).content
   },
-  create: (data: { name: string, type: string, domain: string, extraDomains?: string[], port?: number, proxyRules?: ProxyRule[], proxyPass?: string, indexFiles?: string, runtimeId?: number }) =>
+  create: (data: { name: string, type: string, domain: string, extraDomains?: string[], port?: number, proxyRules?: ProxyRule[], proxyPass?: string, indexFiles?: string, runtimeId?: number, groupId?: number, remark?: string, runDir?: string }) =>
     api.post('api/v1/sites', data),
+  updateMeta: (id: number, data: { groupId?: number, remark?: string }) => api.put(`api/v1/sites/${id}/meta`, data),
   remove: (id: number, purge: boolean) => api.delete(`api/v1/sites/${id}?purge=${purge}`),
   enable: (id: number) => api.post(`api/v1/sites/${id}/enable`),
   disable: (id: number) => api.post(`api/v1/sites/${id}/disable`),

@@ -84,6 +84,7 @@ onBeforeUnmount(() => {
     v-model="store.visible"
     :header="false"
     :footer="false"
+    :closable="false"
     :close-on-press-escape="false"
     :close-on-click-overlay="false"
     :border="false"

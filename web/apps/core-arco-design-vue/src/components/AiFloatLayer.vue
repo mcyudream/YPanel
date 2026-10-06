@@ -38,7 +38,7 @@ const suggestions = computed(() => {
     <button
       v-if="!open"
       type="button"
-      class="fixed bottom-6 right-6 z-1500 flex size-12 cursor-pointer items-center justify-center rounded-full bg-primary text-primary-foreground shadow-lg transition-transform hover:scale-105"
+      class="fixed bottom-6 right-6 z-1600 flex size-12 cursor-pointer items-center justify-center rounded-full bg-primary text-primary-foreground shadow-lg transition-transform hover:scale-105"
       title="AI 助手"
       @click="open = true"
     >

@@ -1,12 +1,11 @@
 <script setup lang="ts">
-import type { TerminalConnState, TerminalEngine } from './types'
+import type { TerminalConnState } from './types'
 
-// 终端状态栏：连接状态 / 节点 / 引擎 / 尺寸，VS Code 式纤细单行。
+// 终端状态栏：连接状态 / 节点 / 尺寸，VS Code 式纤细单行。
 const props = defineProps<{
   state: TerminalConnState
   stateText?: string
   nodeLabel: string
-  engine: TerminalEngine
   size?: { cols: number, rows: number }
   extra?: string
 }>()
@@ -34,10 +33,6 @@ const stateMeta = computed(() => {
     <span class="inline-flex items-center gap-1">
       <YdMorphIcon name="server" :size="11" />
       {{ nodeLabel }}
-    </span>
-    <span class="inline-flex items-center gap-1">
-      <YdMorphIcon name="terminal" :size="11" />
-      {{ engine === 'vwt' ? 'vwt 行模式' : 'xterm 全仿真' }}
     </span>
     <span v-if="size" class="tabular-nums">
       {{ size.cols }}×{{ size.rows }}

@@ -2,7 +2,7 @@
 import * as z from 'zod'
 import type { ContainerCreateReq, ContainerItem } from '@/api/modules/container'
 import apiContainer from '@/api/modules/container'
-import YdTerminalModal from '@/components/YdTerminal/Modal.vue'
+import FileEditorWorkspace from '@/views/file_management/editor/Workspace.vue'
 
 defineOptions({
   name: 'ContainerIndex',
@@ -156,17 +156,12 @@ async function submitCreate() {
   }
 }
 
-// ---- exec 终端（YdTerminalModal 承载） ----
-const execVisible = ref(false)
-const execTarget = ref<ContainerItem | null>(null)
-
-function wsBase() {
-  return (import.meta.env.DEV && import.meta.env.VITE_ENABLE_PROXY) ? '/proxy' : ''
-}
+// ---- 终端：复用文件管理弹窗（容器模式：左侧容器文件树 + 编辑器 + exec 终端面板） ----
+const fileEditorStore = useFileEditorStore()
 
 function openExec(c: ContainerItem) {
-  execTarget.value = c
-  execVisible.value = true
+  fileEditorStore.openWorkspace(undefined, 'local', c.id)
+  fileEditorStore.layout.terminalVisible = true
 }
 
 // ---- 详情 ----
@@ -224,6 +219,10 @@ async function openLogs(c: ContainerItem) {
   logsContent.value = ''
   logsVisible.value = true
   loadLogs(c, false)
+}
+
+function wsBase() {
+  return (import.meta.env.DEV && import.meta.env.VITE_ENABLE_PROXY) ? '/proxy' : ''
 }
 
 async function loadLogs(c: ContainerItem, follow: boolean) {
@@ -520,13 +519,6 @@ onBeforeUnmount(() => {
       </template>
     </FaModal>
 
-    <!-- exec 终端（YdTerminalModal：双引擎，默认 xterm） -->
-    <YdTerminalModal
-      v-model:open="execVisible"
-      :title="`容器终端：${execTarget?.name || ''}`"
-      :container-id="execTarget?.id || ''"
-    />
-
     <!-- 详情 -->
     <FaModal
       v-model="inspectVisible"
@@ -582,5 +574,8 @@ onBeforeUnmount(() => {
         </FaButton>
       </template>
     </FaModal>
+
+    <!-- 文件管理弹窗（容器模式：终端按钮打开，承载容器文件树/编辑器/exec 终端） -->
+    <FileEditorWorkspace />
   </div>
 </template>

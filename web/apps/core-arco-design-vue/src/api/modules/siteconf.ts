@@ -32,7 +32,32 @@ export interface SiteRewriteConf {
 export interface SiteHTTPSConf {
   enable: boolean
   certDomain: string
-  httpRedirect: boolean
+  certId: number
+  httpMode: 'redirect' | 'both' | 'deny'
+  hsts: boolean
+  hstsSubdomain: boolean
+  tlsVersions: string[]
+  ciphers: string
+  http2: boolean
+}
+
+export interface SiteHTTPSUpdate {
+  certId?: number
+  selfSigned?: boolean
+  disable?: boolean
+  httpMode: 'redirect' | 'both' | 'deny'
+  hsts: boolean
+  hstsSubdomain: boolean
+  tlsVersions: string[]
+  ciphers: string
+  http2: boolean
+}
+
+export interface SiteRunDirConf {
+  root: string
+  hostRoot: string
+  runDir: string
+  subdirs: string[]
 }
 
 function base(id: number | string, domain: string) {
@@ -76,6 +101,18 @@ export const siteConfApi = {
     const res = await api.get(base(id, 'https'), { silent: true })
     return res.data as SiteHTTPSConf
   },
+  updateHTTPS: async (id: number | string, conf: SiteHTTPSUpdate) => {
+    const res = await api.put(base(id, 'https'), conf)
+    return res.data as SiteHTTPSConf
+  },
+  // B23 网站目录（运行目录）
+  getRunDir: async (id: number | string) => {
+    const res = await api.get(base(id, 'rundir'), { silent: true })
+    return res.data as SiteRunDirConf
+  },
+  updateRunDir: async (id: number | string, runDir: string) => {
+    await api.put(base(id, 'rundir'), { runDir })
+  },
   enableHTTPS: async (id: number | string) => {
     const res = await api.post(base(id, 'https'))
     return res.data as SiteHTTPSConf
@@ -83,11 +120,6 @@ export const siteConfApi = {
   disableHTTPS: async (id: number | string) => {
     const res = await api.delete(base(id, 'https'))
     return res.data as SiteHTTPSConf
-  },
-  // B1：ACME 签发（DNS API 验证）
-  issueACME: async (id: number | string, domain: string) => {
-    const res = await api.post(`api/v1/sites/${id}/cert/acme`, { domain }, { timeout: 600000 })
-    return res.data as { domain: string, certDomain: string, issuer: string }
   },
 }
 

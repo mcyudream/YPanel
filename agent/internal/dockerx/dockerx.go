@@ -149,7 +149,7 @@ func (m *Manager) Action(ctx context.Context, id, action string) error {
 }
 
 // Logs 读取容器日志。follow 时持续写入 w 直到 ctx 取消。
-func (m *Manager) Logs(ctx context.Context, id string, tail string, follow bool, w io.Writer) error {
+func (m *Manager) Logs(ctx context.Context, id, tail string, follow, timestamps bool, w io.Writer) error {
 	cli, err := m.getClient()
 	if err != nil {
 		return err
@@ -159,7 +159,7 @@ func (m *Manager) Logs(ctx context.Context, id string, tail string, follow bool,
 		ShowStderr: true,
 		Follow:     follow,
 		Tail:       tail,
-		Timestamps: true,
+		Timestamps: timestamps,
 	}
 	reader, err := cli.ContainerLogs(ctx, id, opts)
 	if err != nil {

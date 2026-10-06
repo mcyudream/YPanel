@@ -291,3 +291,15 @@ type CronTaskLog struct {
 	Success    bool       `json:"success"`
 	Output     string     `gorm:"type:text" json:"output"`
 }
+
+// ConfigRevision 受管配置版本快照（M23）：面板写盘前自动快照旧内容。
+// Scope 形如 "local:/opt/ypanel/compose/app/docker-compose.yml"（node:path）。
+type ConfigRevision struct {
+	ID        uint      `gorm:"primaryKey" json:"id"`
+	Scope     string    `gorm:"size:255;index:idx_rev_scope,priority:1;not null" json:"scope"`
+	CreatedAt time.Time `gorm:"index:idx_rev_scope,priority:2" json:"createdAt"`
+	Content   string    `gorm:"type:text" json:"content"`
+	Trigger   string    `gorm:"size:16;not null;default:save" json:"trigger"` // save / rollback
+	Note      string    `gorm:"size:255" json:"note"`
+	Author    string    `gorm:"size:32" json:"author"`
+}

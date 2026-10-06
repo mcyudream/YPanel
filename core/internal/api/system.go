@@ -7,6 +7,7 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"github.com/ypanel/core/internal/agentclient"
+	"github.com/ypanel/core/internal/middleware"
 	"github.com/ypanel/core/internal/service"
 	"github.com/ypanel/shared/dto"
 )
@@ -45,6 +46,7 @@ func (s *SystemAPI) History(c *gin.Context) {
 // FileAPI 文件管理接口（代理 agent）。
 type FileAPI struct {
 	Nodes *service.NodeService
+	Rev   *service.RevisionService // 受管路径写盘前自动快照（M23），可空
 }
 
 func (f *FileAPI) client(c *gin.Context) *agentclient.Client {
@@ -84,6 +86,10 @@ func (f *FileAPI) Write(c *gin.Context) {
 	req, ok := bind[dto.FileWriteReq](c)
 	if !ok {
 		return
+	}
+	node := c.DefaultQuery("node", "local")
+	if f.Rev != nil && service.ScopeFor(node, req.Path) != "" {
+		f.Rev.SnapshotBefore(c.Request.Context(), node, req.Path, "save", c.GetString(middleware.CtxUsername))
 	}
 	if _, err := agentclient.DoJSON[dto.FileWriteReq, struct{}](f.client(c), c.Request.Context(), http.MethodPost, "/agent/v1/files/write", req); err != nil {
 		respErr(c, err)
@@ -260,9 +266,9 @@ func (d *DockerAPI) Action(c *gin.Context) {
 	respOK(c, struct{}{})
 }
 
-// Logs GET /api/v1/docker/containers/:id/logs?tail=&follow=
+// Logs GET /api/v1/docker/containers/:id/logs?tail=&follow=&timestamps=
 func (d *DockerAPI) Logs(c *gin.Context) {
-	path := "/agent/v1/docker/containers/" + c.Param("id") + "/logs?tail=" + c.DefaultQuery("tail", "500") + "&follow=" + c.DefaultQuery("follow", "0")
+	path := "/agent/v1/docker/containers/" + c.Param("id") + "/logs?tail=" + c.DefaultQuery("tail", "500") + "&follow=" + c.DefaultQuery("follow", "0") + "&timestamps=" + c.DefaultQuery("timestamps", "1")
 	req, err := d.client(c).NewRequest(c.Request.Context(), http.MethodGet, path, nil)
 	if err != nil {
 		respErr(c, err)

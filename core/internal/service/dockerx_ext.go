@@ -235,6 +235,14 @@ type ExtContainerCreateReq struct {
 	Mounts  []string     `json:"mounts"`
 	Restart string       `json:"restart"`
 	Network string       `json:"network"`
+	// M23 扩展（结构化创建表单）
+	Entrypoint []string          `json:"entrypoint"`
+	Workdir    string            `json:"workdir"`
+	Tty        bool              `json:"tty"`
+	Labels     map[string]string `json:"labels"`
+	Privileged bool              `json:"privileged"`
+	MemoryMB   int64             `json:"memoryMB"`
+	Cpus       float64           `json:"cpus"`
 }
 
 // ContainerCreate 创建并启动容器（返回容器 ID）。

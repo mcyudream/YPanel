@@ -3,6 +3,7 @@ import type { RouteRecordRaw } from 'vue-router'
 import ComposeRoutes from './modules/compose'
 import DatabaseRoutes from './modules/database'
 import SitesRoutes from './modules/sites'
+import CertsRoutes from './modules/certs'
 import ContainerRoutes from './modules/container'
 import CronRoutes from './modules/cron'
 import FileRoutes from './modules/file'
@@ -92,7 +93,10 @@ const single = (title: string, icon: string, mod: RouteRecordRaw) => ({
 })
 
 const asyncRoutes: RouteRecordMainRaw[] = [
-  single('网站', 'yd:globe', SitesRoutes),
+{
+    meta: { title: '网站', icon: 'yd:globe' },
+    children: [SitesRoutes, CertsRoutes],
+  },
   single('智能', 'yd:sparkles', AIRoutes),
   {
     meta: {

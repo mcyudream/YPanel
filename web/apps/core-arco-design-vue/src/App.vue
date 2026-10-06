@@ -3,6 +3,7 @@ import { useEventBus } from '@/composables/useEventBus'
 import dayjs from '@/utils/dayjs'
 import { ua } from '@/utils/ua'
 import Provider from './ui/provider/index.vue'
+import AiFloatLayer from '@/components/AiFloatLayer.vue'
 import 'dayjs/locale/zh-cn'
 
 const route = useRoute()
@@ -73,6 +74,8 @@ onMounted(() => {
       <AppNotAllowed v-else />
     </RouterView>
     <AppBackToTop />
+    <!-- B18：全局 AI 浮层（登录后任意页面可用） -->
+    <AiFloatLayer v-if="isAuth" />
     <FaToast :theme="appSettingsStore.currentColorScheme" />
     <AppSystemInfo />
   </Provider>

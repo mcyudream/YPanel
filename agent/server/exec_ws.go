@@ -2,6 +2,7 @@
 package server
 
 import (
+	"encoding/json"
 	"io"
 	"net/http"
 
@@ -58,16 +59,26 @@ func (s *Server) handleDockerExecWS(w http.ResponseWriter, r *http.Request) {
 		}
 	}()
 
-	// 下行：WS 文本帧 → 容器 stdin
+	// 下行：WS 文本帧 → 容器 stdin；JSON resize 控制帧 → 调整 exec TTY 尺寸
 	for {
 		mt, payload, err := ws.ReadMessage()
 		if err != nil {
 			return
 		}
-		if mt == websocket.TextMessage {
-			if _, werr := writer.Write(payload); werr != nil {
-				return
-			}
+		if mt != websocket.TextMessage {
+			continue
+		}
+		var ctl struct {
+			Type string `json:"type"`
+			Cols uint16 `json:"cols"`
+			Rows uint16 `json:"rows"`
+		}
+		if json.Unmarshal(payload, &ctl) == nil && ctl.Type == "resize" {
+			_ = s.dock.ExecResize(r.Context(), execID, ctl.Cols, ctl.Rows)
+			continue
+		}
+		if _, werr := writer.Write(payload); werr != nil {
+			return
 		}
 	}
 }

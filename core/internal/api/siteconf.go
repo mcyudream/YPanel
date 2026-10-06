@@ -224,6 +224,11 @@ func (a *SiteConfAPI) EnableHTTPS(c *gin.Context) {
 	respOK(c, out)
 }
 
+// UpdateHTTPS PUT /api/v1/sites/:id/conf/https（B23：证书绑定/停用/HTTP 模式/HSTS/TLS 版本/加密算法）
+func (a *SiteConfAPI) UpdateHTTPS(c *gin.Context) {
+	confPut(c, a.Sites.UpdateHTTPSConf)
+}
+
 // DisableHTTPS DELETE /api/v1/sites/:id/conf/https
 func (a *SiteConfAPI) DisableHTTPS(c *gin.Context) {
 	id, err := siteIDParam(c)

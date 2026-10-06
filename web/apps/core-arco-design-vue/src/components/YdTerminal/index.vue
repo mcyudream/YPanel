@@ -1,21 +1,18 @@
 <script setup lang="ts">
-import type { TerminalConnState, TerminalEngine, TerminalEndpoint } from './types'
+import type { TerminalConnState, TerminalEndpoint } from './types'
 import { useReconnectingWs } from '@/composables/useReconnectingWs'
 import { defaultRetries, buildTerminalWSURL } from './types'
-import VwtEngine from './VwtEngine.vue'
 import XtermEngine from './XtermEngine.vue'
 
-// YdTerminal 核心：双引擎 + 双协议的终端会话组件。
+// YdTerminal 终端会话组件（xterm 引擎）：
 // - host 协议：入站 JSON {type:input|resize}，出站 binary（pty 原始输出），支持 resize；
 // - exec 协议（容器 exec）：双向裸文本帧，无 resize；
-// - 断线自动重开新会话（PTY 不保活），重连后清空引擎并重新握手尺寸。
+// - 断线自动重开新会话（host 重试 3 次；exec 会话结束即终止），重连后清空并重新握手尺寸。
 const props = withDefaults(defineProps<{
   endpoint: TerminalEndpoint
-  engine?: TerminalEngine
   /** 是否聚焦（切换标签时置 true） */
   active?: boolean
 }>(), {
-  engine: 'vwt',
   active: true,
 })
 
@@ -43,7 +40,7 @@ function setState(state: TerminalConnState, text?: string) {
 }
 
 function sendResize() {
-  if (props.endpoint.kind !== 'host' || !conn) {
+  if (!conn) {
     return
   }
   conn.send(JSON.stringify({ type: 'resize', cols: lastSize.cols, rows: lastSize.rows }))
@@ -92,14 +89,6 @@ function connect() {
   })
 }
 
-// 引擎切换 = 重开会话（两端状态一致）
-watch(() => props.engine, () => {
-  connectedOnce = false
-  conn?.close()
-  conn = null
-  nextTick(connect)
-})
-
 // endpoint 变化（如容器切换/shell 切换）= 重开会话。
 // 注意按序列化 key 比较：父组件模板常内联新对象字面量，按引用观察会导致渲染即重连的死循环。
 const endpointKey = computed(() => props.endpoint.kind === 'exec'
@@ -143,8 +132,7 @@ defineExpose({
 
 <template>
   <div class="relative size-full min-h-0 min-w-0 overflow-hidden bg-background">
-    <component
-      :is="props.engine === 'vwt' ? VwtEngine : XtermEngine"
+    <XtermEngine
       ref="engine"
       :theme="theme"
       @input="onEngineInput"

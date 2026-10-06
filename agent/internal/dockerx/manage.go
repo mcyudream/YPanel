@@ -348,9 +348,24 @@ func (m *Manager) ExecAttach(ctx context.Context, execID string) (io.Reader, io.
 	return resp.Reader, resp.Conn, nil
 }
 
-var containerNamePattern = regexp.MustCompile(`^[a-z][a-z0-9-]{1,30}[a-z0-9]$`)
+// ExecResize 调整 exec TTY 尺寸（终端面板拖拽高度后由前端下发）。
+func (m *Manager) ExecResize(ctx context.Context, execID string, cols, rows uint16) error {
+	cli, err := m.getClient()
+	if err != nil {
+		return err
+	}
+	if cols == 0 || rows == 0 {
+		return nil
+	}
+	if _, err := cli.ExecResize(ctx, execID, client.ExecResizeOptions{Width: uint(cols), Height: uint(rows)}); err != nil {
+		return errs.Wrapc(errs.CodeFileOpFailed, "exec resize 失败: "+err.Error())
+	}
+	return nil
+}
 
-// ContainerCreateReq 容器创建参数（常用子集）。
+var containerNamePattern = regexp.MustCompile(`^[a-z0-9][a-z0-9_.-]{0,62}$`)
+
+// ContainerCreateReq 容器创建参数。
 type ContainerCreateReq struct {
 	Name    string   `json:"name"`
 	Image   string   `json:"image"`
@@ -360,6 +375,14 @@ type ContainerCreateReq struct {
 	Mounts  []string `json:"mounts"`
 	Restart string   `json:"restart"`
 	Network string   `json:"network"`
+	// M23 扩展（结构化创建表单）
+	Entrypoint []string          `json:"entrypoint"`
+	Workdir    string            `json:"workdir"`
+	Tty        bool              `json:"tty"`
+	Labels     map[string]string `json:"labels"`
+	Privileged bool              `json:"privileged"`
+	MemoryMB   int64             `json:"memoryMB"` // 内存上限（MB），0=不限
+	Cpus       float64           `json:"cpus"`     // CPU 核数上限，0=不限
 }
 
 // PortMap 端口映射。
@@ -381,10 +404,20 @@ func (m *Manager) ContainerCreate(ctx context.Context, r ContainerCreateReq) (st
 	if !containerNamePattern.MatchString(r.Name) {
 		return "", errs.Wrap(errs.ErrBadRequest, "容器名不合法（小写字母/数字/中划线）")
 	}
-	cc := container.Config{Image: r.Image, Cmd: r.Cmd, Env: r.Env}
-	hc := container.HostConfig{}
+	cc := container.Config{
+		Image: r.Image, Cmd: r.Cmd, Env: r.Env,
+		Entrypoint: r.Entrypoint, WorkingDir: r.Workdir,
+		Tty: r.Tty, OpenStdin: r.Tty, Labels: r.Labels,
+	}
+	hc := container.HostConfig{PortBindings: network.PortMap{}, Privileged: r.Privileged}
 	if r.Restart != "" {
 		hc.RestartPolicy = container.RestartPolicy{Name: container.RestartPolicyMode(r.Restart)}
+	}
+	if r.MemoryMB > 0 {
+		hc.Memory = r.MemoryMB * 1024 * 1024
+	}
+	if r.Cpus > 0 {
+		hc.NanoCPUs = int64(r.Cpus * 1e9)
 	}
 	for _, pm := range r.Ports {
 		proto := pm.Proto

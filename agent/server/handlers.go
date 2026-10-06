@@ -226,19 +226,20 @@ func (s *Server) handleDockerLogs(w http.ResponseWriter, r *http.Request) {
 	if tail == "" {
 		tail = "500"
 	}
+	timestamps := qParam(r, "timestamps") != "0"
 	if follow {
 		// 持续推送：chunked 文本流
 		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 		w.Header().Set("X-Accel-Buffering", "no")
 		flusher, _ := w.(http.Flusher)
-		err := s.dock.Logs(r.Context(), id, tail, true, writeFlush{w, flusher})
+		err := s.dock.Logs(r.Context(), id, tail, true, timestamps, writeFlush{w, flusher})
 		if err != nil && r.Context().Err() == nil && !errors.Is(err, context.Canceled) {
 			slog.Warn("docker follow logs failed", "err", err)
 		}
 		return
 	}
 	var sb bufferedWriter
-	if err := s.dock.Logs(r.Context(), id, tail, false, &sb); err != nil {
+	if err := s.dock.Logs(r.Context(), id, tail, false, timestamps, &sb); err != nil {
 		writeErr(w, err)
 		return
 	}

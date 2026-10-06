@@ -40,6 +40,7 @@ type Deps struct {
 	MarketStore *service.MarketStoreService
 	RT       *service.RuntimeService
 	DockerExt *service.DockerExtService
+	Rev       *service.RevisionService
 	Sec      *service.SecuritySettingsService
 	Version  string
 }
@@ -57,7 +58,7 @@ func Setup(d *Deps) (*gin.Engine, error) {
 	userAPI := &api.UserAPI{DB: d.Auth.DB()}
 	sysAPI := &api.SystemAPI{Nodes: d.Nodes}
 	sysManageAPI := &api.SysManageAPI{Nodes: d.Nodes}
-	fileAPI := &api.FileAPI{Nodes: d.Nodes}
+	fileAPI := &api.FileAPI{Nodes: d.Nodes, Rev: d.Rev}
 	dockerAPI := &api.DockerAPI{Nodes: d.Nodes}
 	termAPI := &api.TerminalAPI{Nodes: d.Nodes}
 	setAPI := &api.SettingsAPI{Settings: d.Settings}
@@ -83,6 +84,7 @@ func Setup(d *Deps) (*gin.Engine, error) {
 	procProxy := &api.ProcProxy{Nodes: d.Nodes}
 	dockerExtAPI := &api.DockerExtAPI{Ext: d.DockerExt}
 	containerFileAPI := &api.ContainerFileAPI{Nodes: d.Nodes}
+	revisionAPI := &api.RevisionAPI{Rev: d.Rev}
 	pbAPI := &api.PanelBackupAPI{BP: d.PanelBP}
 	auditAPI := &api.AuditAPI{DB: d.CronDB(), Hist: d.Hist}
 
@@ -348,6 +350,11 @@ func Setup(d *Deps) (*gin.Engine, error) {
 			authed.DELETE("/docker/registry", dockerExtAPI.RegistryRemove)
 			authed.GET("/docker/daemon-config", dockerExtAPI.DaemonConfig)
 			authed.PUT("/docker/daemon-config", dockerExtAPI.UpdateDaemonConfig)
+
+			// 受管配置版本快照（M23）
+			authed.GET("/config-revisions", revisionAPI.List)
+			authed.GET("/config-revisions/:id", revisionAPI.Get)
+			authed.POST("/config-revisions/:id/restore", revisionAPI.Restore)
 
 			admin.POST("/nodes/exec", procExecAPI.Exec)
 			authed.GET("/processes", procProxy.Processes)

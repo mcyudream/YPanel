@@ -24,30 +24,32 @@ const matched = computed(() => {
 
 <template>
   <template v-if="matched">
-    <FaContextMenu :items="tree.menuItems(node)">
-      <button
-        type="button"
-        class="flex w-full cursor-pointer items-center gap-1 rounded px-1 py-[3px] text-left text-[13px] transition-colors hover:bg-accent/50"
-        :style="{ paddingLeft: `${depth * 14 + 6}px` }"
-        :title="node.entry.target ? `${node.entry.path} → ${node.entry.target}` : node.entry.path"
-        @click="node.entry.isDir ? tree.toggle(node) : tree.openFile(node)"
-      >
-        <FaIcon
-          v-if="node.entry.isDir"
-          :name="node.expanded ? 'i-lucide:chevron-down' : 'i-lucide:chevron-right'"
-          class="w-3.5 shrink-0 text-xs text-muted-foreground"
-        />
-        <span v-else class="w-3.5 shrink-0" />
-        <YdMorphIcon
-          :name="node.entry.isDir ? (node.expanded ? 'folder-open' : 'folder') : 'file'"
-          :size="14"
-          class="shrink-0"
-          :class="node.entry.isDir ? 'text-amber-500' : 'text-muted-foreground'"
-        />
-        <span class="truncate">{{ node.entry.name }}</span>
-        <span v-if="node.loading" class="text-[10px] text-muted-foreground">…</span>
-      </button>
-    </FaContextMenu>
+    <!-- 点击绑在外层包裹上：FaContextMenu(reka Slot) 转发会把行按钮的 onClick 丢弃 -->
+    <span class="block" @click="node.entry.isDir ? tree.toggle(node) : tree.openFile(node)">
+      <FaContextMenu :items="tree.menuItems(node)">
+        <button
+          type="button"
+          class="flex w-full cursor-pointer items-center gap-1 rounded px-1 py-[3px] text-left text-[13px] transition-colors hover:bg-accent/50"
+          :style="{ paddingLeft: `${depth * 14 + 6}px` }"
+          :title="node.entry.target ? `${node.entry.path} → ${node.entry.target}` : node.entry.path"
+        >
+          <FaIcon
+            v-if="node.entry.isDir"
+            :name="node.expanded ? 'i-lucide:chevron-down' : 'i-lucide:chevron-right'"
+            class="w-3.5 shrink-0 text-xs text-muted-foreground"
+          />
+          <span v-else class="w-3.5 shrink-0" />
+          <YdMorphIcon
+            :name="node.entry.isDir ? (node.expanded ? 'folder-open' : 'folder') : 'file'"
+            :size="14"
+            class="shrink-0"
+            :class="node.entry.isDir ? 'text-amber-500' : 'text-muted-foreground'"
+          />
+          <span class="truncate">{{ node.entry.name }}</span>
+          <span v-if="node.loading" class="text-[10px] text-muted-foreground">…</span>
+        </button>
+      </FaContextMenu>
+    </span>
 
     <div v-if="node.entry.isDir && node.expanded && node.children">
       <FileTreeRow
