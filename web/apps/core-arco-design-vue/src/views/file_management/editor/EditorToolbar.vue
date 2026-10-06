@@ -1,12 +1,6 @@
 <script setup lang="ts">
-// 顶部工具栏：节点选择 | 撤销重做/查找/格式化 | 保存/全存 | 切分/侧栏/底栏 | 关闭
+// 顶部工具栏：撤销重做/查找/格式化 | 保存/全存 | 切分/侧栏/底栏 | 关闭（节点选择在文件树头部）
 const store = useFileEditorStore()
-
-const nodeOptions = computed(() => store.nodes.map(n => ({
-  label: n.hostname ? `${n.hostname}${n.online ? '' : '（离线）'}` : n.id,
-  value: n.id,
-  disabled: !n.online,
-})))
 
 function closeWorkspace() {
   if (store.requestClose() === 'confirm') {
@@ -16,6 +10,7 @@ function closeWorkspace() {
       onConfirm: async () => {
         await store.saveAll()
         store.visible = false
+        store.editorOpened = false
       },
     })
   }
@@ -26,16 +21,6 @@ const tbtn = 'size-7!'
 
 <template>
   <div class="flex h-9 shrink-0 items-center gap-1 border-b bg-muted/30 px-2">
-    <!-- 节点 -->
-    <FaSelect
-      v-model="store.currentNode"
-      :options="nodeOptions"
-      class="w-40!"
-      :disabled="!nodeOptions.length"
-    />
-
-    <div class="mx-1 h-5 w-px bg-border" />
-
     <!-- 编辑动作 -->
     <FaButton variant="ghost" size="icon-sm" :class="tbtn" title="撤销" :disabled="!store.activeTab" @click="store.runActiveAction('undo')">
       <FaIcon name="i-lucide:undo-2" class="text-sm" />

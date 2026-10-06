@@ -91,6 +91,8 @@ onBeforeUnmount(() => {
     class="h-[94vh]! max-h-[94vh]! w-[97vw]! max-w-[97vw]! sm:top-[3vh]!"
     content-class="p-0! min-h-0! flex-1 overflow-hidden"
     :destroy-on-close="true"
+    @opened="store.editorOpened = true"
+    @close="store.editorOpened = false"
   >
     <div class="flex h-full flex-col overflow-hidden bg-background text-foreground">
       <EditorToolbar />

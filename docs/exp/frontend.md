@@ -88,3 +88,45 @@
 - **根因**：vite 默认 watch 项目根，`dist/`（此前构建产物）被外部进程触碰（杀毒/索引/其它构建）即触发 reload。
 - **规避/解决**：`server.watch.ignored: ['**/dist/**', '**/dist-*/**']`；跑长链路浏览器验证时把整个流程压进单次 evaluate（工具/协议有 ~30s 上限），或避开有人在用的共享环境。
 - **来源**：2026-10-07，M20 验收期间 dev 环境反复 reload。
+
+### monaco 在 v-show 隐藏容器里挂载后视图 0 行：watch 必须用 flush: 'post' 再调 layout()
+
+- **现象**：生产环境首次打开文件编辑器，monaco 外壳/状态栏正常、模型已挂载且 `getValue()` 内容完整（`getLayoutInfo` 也能取到），但 `.view-lines` 0×0、0 行，`execCommand` 插入无显示；dev 模式不复现（时序不同）。`automaticLayout: true` 也救不了。
+- **根因**：编辑器在 `v-show="activeTab"` 为 false（display:none）的容器里创建，随后 model 由异步 open 流程填充。model 的 watch 默认 `flush: 'pre'`，在 **Vue DOM 补丁之前**执行 `editor.layout()`——此刻容器仍 display:none，monaco 量到 0 高并固定；之后容器尺寸 0→516 虽有变化，monaco 内部 automaticLayout 的 RO 触发时序在此场景下不再纠正（实测 4s 不恢复）。
+- **规避/解决**：model watch 加 `{ flush: 'post' }`（DOM 补丁后 v-show 已可见，layout() 量到真实高度即渲染）；诊断手法：把 editor 实例挂到 `window.__ydEditor`，生产包里直接 `getValue()/getLayoutInfo()` + 手动 `layout()` 看行数变化（0→1 即为此症）。
+- **来源**：2026-10-07，M20 文件编辑器 prod 首开空白排查。
+
+### vite dev 代理转发 WebSocket 必须显式 `ws: true`，否则终端类页面握手挂起/失败
+
+- **现象**：dev（`VITE_ENABLE_PROXY`）下终端页 WS 停在"连接中"，页面直探 `ws://localhost:9000/proxy/api/v1/terminal` 无 `ws:true` 时 8s 无响应（挂起），加 `ws:true` 后变成 `error + close 1006`（未带合法 token 被拒）——两种表象都是代理层问题。
+- **根因**：vite `server.proxy` 底层 http-proxy 默认**不转发 upgrade 事件**；不配 `ws:true` 时 WS 握手既不成功也不立刻失败。后端本身（192.168.100.142:8880）直连 WS 正常。
+- **规避/解决**：`vite.config.ts` 的 `'/proxy'` 代理加 `ws: true`（终端/容器 exec/日志流全靠它）；排查 WS 问题时用真实 token 分别探"直连后端"与"经代理"两条路，快速二分定位。
+- **来源**：2026-10-07，M21 终端工作台 dev 联调。
+
+### vue-web-terminal 对接真实 PTY 的四个坑（ANSI 过滤、测量标尺、输入行、内联对象重连）
+
+- **现象**：① 终端输出出现 `]0;root@host: /opt/xx`、`□K` 等乱码；② aria 快照/textContent 里出现 `aaaaaaaaaa你你你你你你你你你你`；③ 直接给输入 textarea set value + dispatch input 事件不生效；④ 父组件模板内联 `:endpoint="{...}"` 对象 + 子组件 `watch(..., {deep:true})` 导致 WS 在 open→close 死循环重连。
+- **根因**：① vwt 的 ANSI 解析**只翻译 SGR 着色码**，OSC（窗口标题 `\x1b]0;…\x07`）和其余 CSI（`\e[K` 擦行、`\e[?2004h` 括号粘贴）原样漏成可见文本；② 那是 vwt 内部的中英字符宽度测量标尺（`terminalEnFlagRef/terminalCnFlagRef`，span.t-cmd-line-content），恒在 DOM 里；③ vwt 输入行走自维护 cursorConf 的逐键 keydown 渲染，不走 v-model；④ 内联对象字面量每次渲染都是新引用，deep watch 按引用比较必触发。
+- **规避/解决**：① 写入前清洗：`去 OSC → CSI 仅保留 …m（SGR）→ 去除 \x00-\x08\x0b-\x1f\x7f`（保留 \t\n）；② 测量标尺是正常现象别误判；③ 自动化驱动 vwt 输入要用逐键真实 keydown（Enter 需 keydown+keyup 都发）；④ 组件对外部对象 prop 的重连监听一律用**序列化 key**（如 `host:${node}`、`exec:${id}:${cmd}`）而非 deep watch 对象引用。
+- **来源**：2026-10-07，M21 YdTerminal（components/YdTerminal/VwtEngine.vue）。
+
+### xterm.js 默认前景色是白色：浅色主题只改 background 会"白字白底"假性白屏
+
+- **现象**：xterm 实例已挂载（`.xterm` 存在、`fit` 报出正常 cols/rows、`.xterm-rows` 里提示符文本完好），但屏幕看上去全白"没输出"。
+- **根因**：xterm 默认 theme `{ foreground: '#ffffff', background: '#000000' }`；只覆写 `background: '#ffffff'` 不给 `foreground` → 白字白底。旧版 `views/terminal/index.vue`、容器 exec 弹窗、编辑器 TerminalPanel 都有此潜在问题（仅浅色模式触发）。
+- **规避/解决**：自定义主题时 background/foreground/cursor/cursorAccent 成对显式给出；排查"白屏"先用 `.xterm-rows` textContent 确认数据链路（有文本=纯配色问题），再查渲染层。
+- **来源**：2026-10-07，M21 XtermEngine（components/YdTerminal/XtermEngine.vue），并顺带修掉旧页面的同款问题。
+
+### fantastic-admin 多标签的"恢复上次激活页"会改写 hash，自动化验证路由时别信初始 hash
+
+- **现象**：脚本 `location.hash = '#/xxx'` 后 reload，页面落在了另一个路由；或 reload 后 DOM 探针按预期路由查不到元素，误判为"视图切换卡死/组件没渲染"。
+- **根因**：fa 多标签持久化了"最后激活页"，应用启动时按存储恢复路由，覆盖脚本预设的 hash；另外引擎切换类状态存 localStorage（如 `ypanel.terminal.engine`），探针选择器要跟引擎状态对齐（vwt 引擎下查 `.xterm` 恒为 false，反之亦然）。
+- **规避/解决**：自动化验证路由类功能：reload 后先断言 `location.hash` 再探测 DOM；用截图做最终判据，DOM 探针选择器必须与持久化状态一致。
+- **来源**：2026-10-07，M21 终端工作台浏览器验证。
+
+### xterm.css 给 `.xterm-viewport` 硬编码黑底：滚动条槽露出"黑框"
+
+- **现象**：xterm 终端（容器终端弹窗最明显）右侧有一条 ~14px 纵向黑边，看起来像终端外面套了层黑框；亮色主题下尤其扎眼。
+- **根因**：`@xterm/xterm/css/xterm.css` 写死 `.xterm .xterm-viewport { background-color: #000000 }`（官方注释：macOS 滚动条需要不透明背景）。viewport 层比文字层宽出一个滚动条槽（14px），主题背景在 v6 DOM 渲染器下**不再以内联样式写回 viewport**，于是槽位永远露出这条 CSS 黑底。
+- **规避/解决**：宿主样式按命名空间覆盖为透明（`.yd-xterm .xterm .xterm-viewport { background-color: transparent }`，选择器三级压过库样式且随明暗主题自适应）；排查思路是对比 viewport 与 screen 的 `getBoundingClientRect` 宽度差 = 滚动条槽宽，再看 viewport 计算背景色是否被库 CSS 写死。
+- **来源**：2026-10-07，M21 容器终端黑框排查（components/YdTerminal/XtermEngine.vue）。

@@ -62,7 +62,7 @@ func Setup(d *Deps) (*gin.Engine, error) {
 	composeAPI := &api.ComposeAPI{Nodes: d.Nodes}
 	cronAPI := &api.CronAPI{DB: d.CronDB(), Cron: d.Cron}
 	scriptAPI := &api.ScriptAPI{Scripts: d.Scripts}
-	aiAPI := &api.AIAPI{AI: d.AI}
+	aiAPI := &api.AIAPI{AI: d.AI, Nodes: d.Nodes}
 	dbAPI := &api.DatabaseAPI{DBS: d.DBS}
 	siteAPI := &api.SiteAPI{Sites: d.Sites, Acme: d.Acme}
 	siteConfAPI := &api.SiteConfAPI{Sites: d.Sites}
@@ -79,6 +79,7 @@ func Setup(d *Deps) (*gin.Engine, error) {
 	procExecAPI := &api.NodeExecAPI{Nodes: d.Nodes}
 	procProxy := &api.ProcProxy{Nodes: d.Nodes}
 	dockerExtAPI := &api.DockerExtAPI{Ext: d.DockerExt}
+	containerFileAPI := &api.ContainerFileAPI{Nodes: d.Nodes}
 	pbAPI := &api.PanelBackupAPI{BP: d.PanelBP}
 	auditAPI := &api.AuditAPI{DB: d.CronDB(), Hist: d.Hist}
 
@@ -145,6 +146,11 @@ func Setup(d *Deps) (*gin.Engine, error) {
 			authed.POST("/ai/providers", aiAPI.SaveProvider)
 			authed.DELETE("/ai/providers/:id", aiAPI.DeleteProvider)
 			authed.POST("/ai/chat", aiAPI.Chat)
+			authed.GET("/ai/knowledge", aiAPI.ListKnowledge)
+			authed.POST("/ai/knowledge", aiAPI.SaveKnowledge)
+			authed.DELETE("/ai/knowledge/:id", aiAPI.DeleteKnowledge)
+			authed.GET("/ai/workspace", aiAPI.WorkspaceList)
+			authed.POST("/ai/workspace/run", aiAPI.WorkspaceRun)
 			authed.GET("/scripts", scriptAPI.List)
 			authed.POST("/scripts", scriptAPI.Create)
 			authed.PUT("/scripts/:id", scriptAPI.Update)
@@ -298,6 +304,16 @@ func Setup(d *Deps) (*gin.Engine, error) {
 			authed.GET("/docker/containers/:id/exec", dockerExtAPI.ContainerExecWS)
 			authed.POST("/docker/containers", dockerExtAPI.ContainerCreate)
 			authed.DELETE("/docker/containers/:id", dockerExtAPI.ContainerRemove)
+			// 容器内文件管理（tar 归档 + 容器内 exec）
+			authed.GET("/docker/containers/:id/files/list", containerFileAPI.List)
+			authed.GET("/docker/containers/:id/files/read", containerFileAPI.Read)
+			authed.GET("/docker/containers/:id/files/download", containerFileAPI.Download)
+			authed.POST("/docker/containers/:id/files/write", containerFileAPI.Write)
+			authed.POST("/docker/containers/:id/files/mkdir", containerFileAPI.Mkdir)
+			authed.POST("/docker/containers/:id/files/rename", containerFileAPI.Rename)
+			authed.POST("/docker/containers/:id/files/delete", containerFileAPI.Delete)
+			authed.POST("/docker/containers/:id/files/chmod", containerFileAPI.Chmod)
+			authed.POST("/docker/containers/:id/files/upload", containerFileAPI.Upload)
 			authed.GET("/docker/registry", dockerExtAPI.RegistryList)
 			authed.PUT("/docker/registry", dockerExtAPI.RegistrySet)
 			authed.DELETE("/docker/registry", dockerExtAPI.RegistryRemove)

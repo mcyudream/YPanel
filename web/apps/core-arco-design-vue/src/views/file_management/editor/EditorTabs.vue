@@ -106,6 +106,11 @@ function onDragOver(e: DragEvent, tabId: string) {
     >
       <YdMorphIcon name="file" :size="13" class="shrink-0 text-muted-foreground" />
       <span class="truncate">{{ tabOf(tabId)?.name }}</span>
+      <span
+        v-if="tabOf(tabId) && tabOf(tabId)!.node !== 'local'"
+        class="shrink-0 rounded bg-primary/10 px-1 text-[10px] leading-4 text-primary"
+        :title="`来自节点 ${tabOf(tabId)!.node}`"
+      >@{{ tabOf(tabId)!.node }}</span>
       <span v-if="tabOf(tabId)?.dirty" class="text-primary" title="未保存">●</span>
       <span
         class="inline-flex size-4 shrink-0 cursor-pointer items-center justify-center rounded-full opacity-0 transition-opacity group-hover:opacity-60 hover:!opacity-100 hover:bg-accent"

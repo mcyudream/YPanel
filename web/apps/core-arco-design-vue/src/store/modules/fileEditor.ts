@@ -4,6 +4,7 @@ import type * as Monaco from 'monaco-editor'
 import type { MonacoNamespace } from '@/utils/monacoLoader'
 import { defineStore } from 'pinia'
 import apiFile from '@/api/modules/file'
+import apiCFile from '@/api/modules/cfile'
 import apiNode from '@/api/modules/node'
 import type { NodeItem } from '@/api/modules/node'
 import { pushFileHistory } from '@/composables/useFileHistory'
@@ -11,10 +12,12 @@ import { b64ToBytes, decodeWith, detectEol, detectEncoding, languageOf } from '@
 import { loadMonaco } from '@/utils/monacoLoader'
 
 export interface FileEditorTab {
-  /** `${node}::${path}` */
+  /** 宿主：`${node}::${path}`；容器：`c:${containerId}::${node}::${path}` */
   id: string
   path: string
   node: string
+  /** 容器来源（存在时读写走容器文件 API，暂仅 UTF-8） */
+  containerId?: string
   name: string
   encoding: string
   eol: 'lf' | 'crlf'
@@ -95,8 +98,24 @@ async function ensureMonaco(): Promise<MonacoNamespace> {
 export const useFileEditorStore = defineStore('fileEditor', () => {
   // ---- 弹窗与节点 ----
   const visible = ref(false)
+  /** 弹窗动画结束（opened 或可见后 350ms 兜底）后置 true：monaco 等需要真实容器尺寸的子组件此时才挂载 */
+  const editorOpened = ref(false)
+  watch(visible, (v) => {
+    if (!v) {
+      editorOpened.value = false
+      return
+    }
+    // FaModal 定制尺寸下 @opened 可能不触发，用动画时长兜底
+    setTimeout(() => {
+      if (visible.value) {
+        editorOpened.value = true
+      }
+    }, 350)
+  })
   const nodes = ref<NodeItem[]>([])
   const currentNode = ref('local')
+  /** 容器来源（openWorkspace 传入）：非空时编辑器打开/保存走容器文件 API */
+  const currentContainer = ref('')
 
   // ---- tab / 组 ----
   const tabs = ref<Record<string, FileEditorTab>>({})
@@ -170,9 +189,10 @@ export const useFileEditorStore = defineStore('fileEditor', () => {
   }
 
   // ---- 打开文件 ----
-  async function open(path: string, node?: string) {
+  async function open(path: string, node?: string, containerId?: string) {
     const nodeId = node ?? currentNode.value
-    const id = `${nodeId}::${path}`
+    const cid = containerId ?? currentContainer.value
+    const id = cid ? `c:${cid}::${nodeId}::${path}` : `${nodeId}::${path}`
     // 已打开 → 激活
     for (const g of groups.value) {
       if (g.tabIds.includes(id)) {
@@ -182,7 +202,9 @@ export const useFileEditorStore = defineStore('fileEditor', () => {
     }
     const name = path.slice(path.lastIndexOf('/') + 1)
     try {
-      const res = await apiFile.read(path, nodeId, { raw: true })
+      const res = cid
+        ? await apiCFile.read(cid, path, { raw: true })
+        : await apiFile.read(path, nodeId, { raw: true })
       if (res.isBinary) {
         useFaToast().warning('二进制文件不支持编辑', { description: path })
         return
@@ -199,7 +221,7 @@ export const useFileEditorStore = defineStore('fileEditor', () => {
       const m = await ensureMonaco()
       let model = modelRegistry.get(id)
       if (!model) {
-        const uri = m.Uri.parse(`ypanel:///${nodeId}${path}`)
+        const uri = m.Uri.parse(`ypanel:///${cid ? `c-${cid}` : nodeId}${path}`)
         model = m.editor.getModel(uri) ?? m.editor.createModel(text, lang, uri)
         modelRegistry.set(id, model)
         model.onDidChangeContent(() => {
@@ -216,6 +238,7 @@ export const useFileEditorStore = defineStore('fileEditor', () => {
         id,
         path,
         node: nodeId,
+        containerId: cid || undefined,
         name,
         encoding,
         eol,
@@ -231,6 +254,7 @@ export const useFileEditorStore = defineStore('fileEditor', () => {
       activeGroupId.value = g.id
     }
     catch (e: unknown) {
+      ;(window as unknown as Record<string, unknown>).__openErr = String(e)
       useFaToast().error('打开文件失败', { description: errMsg(e) })
     }
   }
@@ -292,7 +316,17 @@ export const useFileEditorStore = defineStore('fileEditor', () => {
     tab.saving = true
     try {
       const content = model.getValue()
-      await apiFile.write(tab.path, content, tab.node, tab.encoding === 'utf-8' ? undefined : tab.encoding)
+      if (tab.containerId) {
+        // 容器文件：直存 UTF-8（后端 tar 写回，暂不支持转码）
+        if (tab.encoding !== 'utf-8') {
+          useFaToast().error('容器文件暂仅支持 UTF-8 编码保存')
+          return
+        }
+        await apiCFile.write(tab.containerId, tab.path, content)
+      }
+      else {
+        await apiFile.write(tab.path, content, tab.node, tab.encoding === 'utf-8' ? undefined : tab.encoding)
+      }
       tab.dirty = false
       await pushFileHistory({ key: tabId, content, encoding: tab.encoding, eol: tab.eol, size: content.length })
       useFaToast().success(tab.encoding === 'utf-8' ? '已保存' : `已以 ${tab.encoding} 编码保存`)
@@ -414,8 +448,9 @@ export const useFileEditorStore = defineStore('fileEditor', () => {
   }
 
   // ---- 工作台开关 ----
-  async function openWorkspace(path?: string, node?: string) {
+  async function openWorkspace(path?: string, node?: string, containerId?: string) {
     visible.value = true
+    currentContainer.value = containerId ?? ''
     if (node) {
       currentNode.value = node
     }
@@ -423,7 +458,7 @@ export const useFileEditorStore = defineStore('fileEditor', () => {
       await loadNodes()
     }
     if (path) {
-      await open(path, node)
+      await open(path, node, containerId)
     }
   }
 
@@ -433,6 +468,7 @@ export const useFileEditorStore = defineStore('fileEditor', () => {
       return 'confirm'
     }
     visible.value = false
+    editorOpened.value = false
     return 'closed'
   }
 
@@ -448,8 +484,10 @@ export const useFileEditorStore = defineStore('fileEditor', () => {
 
   return {
     visible,
+    editorOpened,
     nodes,
     currentNode,
+    currentContainer,
     tabs,
     groups,
     activeGroupId,

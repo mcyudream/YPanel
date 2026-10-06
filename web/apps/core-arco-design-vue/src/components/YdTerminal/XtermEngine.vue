@@ -21,9 +21,10 @@ let ro: ResizeObserver | null = null
 let roRaf = 0
 
 function termTheme() {
+  // xterm 默认前景为白色：浅色背景必须显式给深色前景，否则白字白底
   return props.theme === 'dark'
-    ? { background: '#1c1c1a' }
-    : { background: '#ffffff' }
+    ? { background: '#1c1c1a', foreground: '#d4d4d4', cursor: '#d4d4d4', cursorAccent: '#1c1c1a' }
+    : { background: '#ffffff', foreground: '#1f2328', cursor: '#1f2328', cursorAccent: '#ffffff' }
 }
 
 onMounted(() => {
@@ -101,5 +102,13 @@ defineExpose({ write, note, reset, focus })
 </script>
 
 <template>
-  <div ref="host" class="size-full min-h-0 min-w-0 p-0.5" />
+  <div ref="host" class="yd-xterm size-full min-h-0 min-w-0 p-0.5" />
 </template>
+
+<style>
+/* xterm.css 给 .xterm-viewport 硬编码黑底（macOS 滚动条兼容），v6 DOM 渲染器不再以
+   内联主题色覆盖，滚动条槽会露出黑底形成"黑框"：透明化，随宿主背景自适应明暗 */
+.yd-xterm .xterm .xterm-viewport {
+  background-color: transparent;
+}
+</style>

@@ -135,8 +135,9 @@ async function doDelete() {
 }
 
 // ---- 编辑器（VS Code 式工作台弹窗） ----
+// 本页仅浏览 local 节点，显式传 node 防止工作台残留的节点选择影响打开目标
 async function openEditor(entry: FileEntry) {
-  await fileEditorStore.openWorkspace(entry.path)
+  await fileEditorStore.openWorkspace(entry.path, 'local')
 }
 
 // ---- 上传 / 下载 ----

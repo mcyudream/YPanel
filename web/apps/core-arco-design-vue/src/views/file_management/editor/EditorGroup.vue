@@ -84,7 +84,7 @@ function onDropToBody(e: DragEvent) {
       文件较大，仅加载前 1 MiB；保存将覆盖整个文件，请谨慎操作。
     </div>
 
-    <!-- 编辑器 / 欢迎页 -->
+    <!-- 编辑器 / 欢迎页（编辑器等弹窗动画结束再挂载，保证 monaco 首测尺寸真实） -->
     <div
       v-show="activeTab"
       class="min-h-0 flex-1"
@@ -92,6 +92,7 @@ function onDropToBody(e: DragEvent) {
       @drop="onDropToBody"
     >
       <YdCodeEditor
+        v-if="store.editorOpened"
         ref="codeEditor"
         :model="activeModel"
         :word-wrap="store.layout.wordWrap"

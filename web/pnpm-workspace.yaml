@@ -117,6 +117,7 @@ catalog:
   vue-web-terminal: ^3.4.2
   vue-tsc: ^3.3.11
   zod: ^4.6.5
+  marked: ^18.1.0
 
 catalogs:
   arco-design-vue:

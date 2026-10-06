@@ -209,6 +209,15 @@ type AIProvider struct {
 	UpdatedAt time.Time `json:"updatedAt"`
 }
 
+// AIKnowledge AI 知识库条目（B18：对话时关键词检索注入）。
+type AIKnowledge struct {
+	ID        uint      `gorm:"primaryKey" json:"id"`
+	Title     string    `gorm:"size:128;not null" json:"title"`
+	Body      string    `gorm:"type:text;not null" json:"body"`
+	CreatedAt time.Time `json:"createdAt"`
+	UpdatedAt time.Time `json:"updatedAt"`
+}
+
 // Script 脚本库（B13：计划任务可引用）。
 type Script struct {
 	ID        uint      `gorm:"primaryKey" json:"id"`

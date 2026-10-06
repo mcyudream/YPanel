@@ -11,6 +11,7 @@ declare global {
   const EffectScope: typeof import('vue').EffectScope
   const FILE_ENCODINGS: typeof import('../composables/useTextEncoding').FILE_ENCODINGS
   const acceptHMRUpdate: typeof import('pinia').acceptHMRUpdate
+  const aiSceneBody: typeof import('../composables/useAiChat').aiSceneBody
   const b64ToBytes: typeof import('../composables/useTextEncoding').b64ToBytes
   const bytesToB64: typeof import('../composables/useTextEncoding').bytesToB64
   const computed: typeof import('vue').computed
@@ -79,6 +80,7 @@ declare global {
   const toValue: typeof import('vue').toValue
   const triggerRef: typeof import('vue').triggerRef
   const unref: typeof import('vue').unref
+  const useAiChat: typeof import('../composables/useAiChat').useAiChat
   const useAppAccountStore: typeof import('../store/modules/app/account').useAppAccountStore
   const useAppAuth: typeof import('../composables/app/auth').useAppAuth
   const useAppKeepAliveStore: typeof import('../store/modules/app/keepAlive').useAppKeepAliveStore
@@ -125,6 +127,9 @@ declare global {
   // @ts-ignore
   export type { FileEditorTab, FileEditorGroup, FileEditorLayout, FileEditorCursor } from '../store/modules/fileEditor'
   import('../store/modules/fileEditor')
+  // @ts-ignore
+  export type { AiChatMessage, AiSceneData } from '../composables/useAiChat'
+  import('../composables/useAiChat')
   // @ts-ignore
   export type { BusEvent } from '../composables/useEventBus'
   import('../composables/useEventBus')
