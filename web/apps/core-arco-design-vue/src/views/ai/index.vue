@@ -492,12 +492,6 @@ onMounted(() => {
           </div>
           <template v-else>
             <div v-for="m in messages" :key="m.id" class="space-y-1">
-              <div v-if="m.steps?.length" class="ml-9 space-y-0.5 text-xs text-muted-foreground">
-                <div v-for="(st, si) in m.steps" :key="si" class="flex items-center gap-1">
-                  <FaIcon name="i-lucide:wrench" class="text-[10px]" />
-                  {{ st }}
-                </div>
-              </div>
               <YdAiBubble
                 :role="m.role"
                 :content="m.content"

@@ -207,3 +207,17 @@
 - **根因**：另一并行流程（Temp 下 ypanel-master-check 副本环境）周期性把副本里的编译产物同步回真仓库 src。**同名 .js 的存在本身就让 TS 的 paths 别名解析报 TS2307**（受控实验：仅改名 `dayjs.js` → App.vue 全部 TS2307 消失）。本项目 `vue-tsc -b` 本身不 emit（受控实验前后 .js 数量/时间戳不变），不是它的锅。
 - **规避/解决**：`find src -name "*.js" ! -path "*monaco-workers*" -delete` 清掉后**立即竞速发起** vue-tsc/vite build（模块解析发生在进程启动期，中途 .js 再生不影响已启动的解析）；monaco-workers 下 5 个 .js 是源码要排除。构建用独立 outDir 绕开 dist 竞争；Go 侧被对方半成品挡住编译时用 `git worktree add <tmp> HEAD` 隔离构建（HEAD 后端 + 本地新前端产物）。部署后 `curl /health` 看版本串 + 浏览器 `performance.getEntriesByType('resource')` 看 chunk hash，确认服务器跑的真是自己的产物（本次就被并行会话 0830 的部署覆盖过一次）。
 - **来源**：2026-10-07，历史监控修复期间的并行构建互踩。
+
+### useAiChat.send() 把刚 push 的 user 消息当 assistant 累积器：回答/思考/步骤全部灌进用户气泡
+
+- **现象**：AI 回答以**用户气泡样式**（右对齐、纯文本、user 图标）显示，且用户问题和 AI 回答拼在同一条里；深度思考块、步骤时间线、Markdown 渲染全部不出现（YdAiReasoning/YdAiProcess 的 `role==='assistant'` 分支永远不成立）。一次对话数组里只有 1 条消息而不是 2 条。
+- **根因**：已提交代码里 send() 写的是 `const assistant = messages.value[messages.value.length - 1]`——此时数组最后一条是**刚 push 的 user 消息**（"响应式断裂修复"提交时把 addAssistant() 删了却没补占位消息），SSE 的 content/reasoning/step 全部累积到 user 消息上。注释写着"流式更新最后一条 assistant"，代码语义却是"复用最后一条消息"。
+- **规避/解决**：send() 内 push 完 user 消息后**必须补一条 assistant 占位消息**（`{role:'assistant', content:'', pending:true, steps:[]}`）再经数组索引取 proxy 引用（保留原"索引取 proxy 保响应式"的意图）；回归验证时数一下消息条数：一次 send 应产生 user+assistant 两条。
+- **来源**：2026-10-07，AI 浮层对话气泡全变用户样式（composables/useAiChat.ts，d454e9b 引入）。
+
+### 同源 hash 导航不重载文档：验证新前端时浏览器可能一直跑旧 bundle
+
+- **现象**：部署新前端后，浏览器里修掉的 bug（如步骤显示原始 JSON）依然复现；`tab.goto('同源/#/其它页')` 前后页面表现毫无变化，一度误判"修复没生效/部署没成功"。
+- **根因**：`http://host/#/a` → `http://host/` → `http://host/#/b` 全程是**同文档 hash 导航**，不会重新拉 index.html 和新 hash 的 JS bundle；`reload()` 也可能命中 index.html 的 HTTP 缓存继续用旧产物。之前"修复后仍有问题"的两次假象都是旧 bundle 在跑。
+- **规避/解决**：验证新前端前先断言 bundle 版本——`performance.getEntriesByType('resource').map(e=>e.name).filter(n=>n.includes('index-'))` 与服务器 `curl / | grep -o "assets/index-[^\"]*\.js"` 的 hash 比对；不一致就 `reload()` 后复查。DOM 统计消息数时注意别用会命中嵌套组件根节点的宽泛选择器（如 `.space-y-1` 会把 YdAiProcess 步骤时间线也数成一条消息）。
+- **来源**：2026-10-07，AI 浮层修复验证期两次假阴性（浏览器自动化 + 部署验证流程）。

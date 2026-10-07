@@ -138,3 +138,31 @@
 - **根因**：两个因素叠加。① core 拼 agent URL 时把第一个 query 参数用 `&` 拼接（`q := "/agent/v1/processes"; q += "&sort=cpu"`），没有 `?`，`&sort=...` 成了**路径**的一部分，agent 的 Go 1.22 mux 匹配不到 → 404；② agentclient 的 `doResp` 不检查 HTTP 状态码直接把 body 当 `{code,message,data}` 信封解，而 Go mux 404 body 是 `404 page not found`——JSON 解析器读出第一个 token 是数字 `404`，与 struct 类型不符报 "cannot unmarshal **number**"，完全没提 404。
 - **规避/解决**：① 拼 query 一律用 `url.Values` + `v.Encode()`（`?` 由 `Encode` 所在分支保证），禁止手写 `+= "&"`；② `doResp` 已加固：非 2xx 先拦截并报 `agent HTTP <状态码>: <body 前 256 字节>`（agent 业务错误是 200+信封，不受影响）。判别技巧：看到 "cannot unmarshal number into Go value of type struct{Code...}" 先 curl 目标 URL 看原始 body，多半是 404/502 文本而非 JSON。
 - **来源**：2026-10-07，M25 进程代理 query 拼接失误 + agentclient 无状态码检查，线上进程页全挂定位。
+
+### GORM `Select` 部分列 + 内存过滤：没查出的字段恒为零值，过滤条件静默吞掉全部行
+
+- **现象**：应用商店分类聚合接口返回永远为空数组，但应用列表正常、卡片上分类标签也有值。
+- **根因**：`Tags()` 为省流量写了 `db.Select("tags").Find(&rows)`，随后用 `enabled[r.SourceID]` 过滤启用源——`source_id` 不在 Select 里，查回的行该字段恒为 0，map 里没有 key 0，**所有行被 continue，且无任何报错**。
+- **规避/解决**：`Select` 部分列时，必须把**后续内存过滤/分组用到的每一列**都列全（`Select("source_id", "tags")`）；或者改用 `Omit`（排除大字段）而不是 `Select`（白名单列），Omit 语义下漏列只会多查数据不会丢数据。此类 bug 无报错、列表页正常，只在某个聚合接口显形，排查时应先打印中间行数。
+- **来源**：2026-10-07 部署实测分类栏为空（core/internal/service/store.go Tags()）
+
+### GORM Save 空/nil 切片报 "empty slice found"：列表页空数据直接 500
+
+- **现象**：证书库一条记录都没有时，打开证书列表必然返回「系统内部错误」；有证书时一切正常。日志 `api internal error err="empty slice found"`。
+- **根因**：GORM v2 `db.Save(slice)` 在 slice 长度为 0（含 nil 切片）时直接返回 `ErrEmptySlice`，不执行 SQL。`Find` 空表不报错、返回空切片，紧随其后的 `Save` 回写探测结果就在空库上炸了。列表接口常见的「查出来 → 内存加工 → Save 回写」模式都会踩：功能在有数据的开发/验收期永远正常，数据被清空后才暴露。
+- **规避/解决**：Save 切片前必须 `len(x) > 0` 判空。顺带范式：回写仅为刷新派生字段时，先浅拷贝原值、加工后逐字段比较（`*time.Time` 指针字段用 `.Equal` 按值比），只 Save 实际变化的行——既避开空切片，也把「每次开列表页全表写 SQLite」的写锁竞争降到仅变更行。
+- **来源**：2026-10-07，B23 证书库空库 500（core/internal/service/cert.go List）。
+
+### langchaingo v0.1.15 流式回调三种 chunk 形态：content 是原始文本、tool_calls 是 JSON 数组、reasoning 只走专用回调
+
+- **现象**：AI 对话 SSE 只有 scene/step/done 事件，正文 content 一条都没有；思考过程（reasoning）也永远是空。后端无任何报错。
+- **根因**：langchaingo v0.1.15 openai 客户端（`internal/openaiclient/chat.go`）传给流式回调的 chunk **不是 SSE 原始 JSON**：① content delta 被剥成**原始文本字节**（`[]byte(choice.Delta.Content)`），拿它 `json.Unmarshal` 到 `{"choices":[...]}` 必然失败——回调里"解析失败静默 return nil"就把正文全丢了；② tool_calls delta 是**累积后 marshal 的 JSON 数组**（元素含 `function` 键）；③ `reasoning_content` **只**经 `llms.WithStreamingReasoningFunc(ctx, reasoningChunk, chunk)` 透出，普通 `WithStreamingFunc` 收到的 reasoning chunk 恒为空字节——普通回调永远拿不到思考过程。
+- **规避/解决**：改用 `WithStreamingReasoningFunc` 一个回调通吃：`reasoning` 非空即透出思考事件；`chunk` 先按"JSON 数组且首元素含 function 键"过滤掉 tool_calls 参数片段，其余按**原始文本**直接透出正文。深度思考型模型（deepseek-flash/reasoner 等）必须走这条路，否则"思考过程展示"无从谈起。
+- **来源**：2026-10-07，B18 AI 流式无正文根因（core/internal/service/aichat.go + tmp/airepro 最小复现）。
+
+### deepseek-flash 是思考型模型：先吐 reasoning_content 再吐 content，模型名以实测为准
+
+- **现象**：`curl api.deepseek.com /chat/completions model=deepseek-flash` 返回 `content` 为空、`reasoning_content` 有值（`finish_reason=length` 时全部 token 被思考吃掉）。
+- **根因**：deepseek-flash 并非无效模型名，而是思考型（对齐 deepseek-reasoner 行为）；工具循环每轮都会先流出一串思考 delta。给思考型模型配工具时，轮次耗时大头在思考阶段，前端"没有输出"的观感多半是思考在进行。
+- **规避/解决**：模型能力判断以直连 API 实测为准（各配一个小 curl），不凭名字或旧文档下结论；UI 侧思考过程块（可折叠+字数）正好消化这段等待。
+- **来源**：2026-10-07，B18 切换 DeepSeek 供应商（用户指定 deepseek-flash）。

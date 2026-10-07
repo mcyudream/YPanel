@@ -1,5 +1,6 @@
-// AI 对话（B18 v3）：工具循环（上下文重注入模式）+ 场景感知 + 知识库/技能注入 + SSE。
-// 每轮独立生成，工具结果并入 system 重新生成；无 tool_calls 的纯文本即最终回答。
+// AI 对话（B18 v4）：标准 function calling 工具循环（多轮 tool 消息对）+ SSE。
+// GLM/DeepSeek/OpenAI 兼容层均原生支持 tool_calls + tool_call_id 格式；
+// reasoning_content（思考过程）经 llms.WithStreamingReasoningFunc 透出（deepseek-flash 等思考型模型）。
 package service
 
 import (
@@ -17,7 +18,8 @@ import (
 const maxToolRounds = 6
 
 const aiSystemPrompt = "你是 YPanel 服务器管理面板的运维助手。用简洁中文回答服务器运维问题。" +
-	"优先调用提供的工具获取面板实时数据再回答；容器启停等破坏性操作前先向用户确认。"
+	"优先调用提供的工具获取面板实时数据再回答；容器启停等破坏性操作前先向用户确认。" +
+	"回答使用 Markdown 格式。"
 
 // buildLLM 按供应商配置构造 langchaingo 模型。
 func buildLLM(p *model.AIProvider) (llms.Model, error) {
@@ -31,8 +33,8 @@ func buildLLM(p *model.AIProvider) (llms.Model, error) {
 	return openai.New(opts...)
 }
 
-// StreamAgentChat 工具循环 + SSE 输出。
-// 事件：data: {"scene":{...}} / {"step":{...}} / {"content":"..."} / [DONE]
+// StreamAgentChat 标准 function calling 工具循环 + SSE 流式输出。
+// 事件：data: {"scene":{...}} / {"step":{...}} / {"reasoning":"..."} / {"content":"..."} / [DONE]
 func (s *AIService) StreamAgentChat(
 	ctx context.Context,
 	w http.ResponseWriter,
@@ -88,13 +90,13 @@ func (s *AIService) StreamAgentChat(
 	}
 	sys += "\n\n" + s.buildSceneSummary(ctx, scenePath)
 
-	// 基础消息（system + 历史）
-	baseMsgs := []llms.MessageContent{llms.TextParts(llms.ChatMessageTypeSystem, sys)}
+	// 消息链（标准 function calling 多轮格式）
+	msgs := []llms.MessageContent{llms.TextParts(llms.ChatMessageTypeSystem, sys)}
 	for _, m := range history {
 		if m.Role == "user" {
-			baseMsgs = append(baseMsgs, llms.TextParts(llms.ChatMessageTypeHuman, m.Content))
+			msgs = append(msgs, llms.TextParts(llms.ChatMessageTypeHuman, m.Content))
 		} else {
-			baseMsgs = append(baseMsgs, llms.TextParts(llms.ChatMessageTypeAI, m.Content))
+			msgs = append(msgs, llms.TextParts(llms.ChatMessageTypeAI, m.Content))
 		}
 	}
 
@@ -118,18 +120,32 @@ func (s *AIService) StreamAgentChat(
 		}}
 	}
 
-	// 工具循环：每轮独立生成，工具结果摘要并入 system 重新生成
-	var toolResults []string
+	// 标准多轮 function calling 循环：
+	// 每轮 GenerateContent → 如果返回 tool_calls → 执行 → 追加 AI+Tool 消息 → 重新生成
 	for round := 0; round < maxToolRounds; round++ {
-		roundSys := sys
-		if round > 0 && len(toolResults) > 0 {
-			roundSys += "\n\n[工具执行结果]\n" + strings.Join(toolResults, "\n")
-		}
-		roundMsgs := append([]llms.MessageContent{}, baseMsgs...)
-		roundMsgs[0] = llms.TextParts(llms.ChatMessageTypeSystem, roundSys)
-
-		resp, err := llm.GenerateContent(ctx, roundMsgs,
-			llms.WithTools(toolList))
+		resp, err := llm.GenerateContent(ctx, msgs,
+			llms.WithTools(toolList),
+			// langchaingo v0.1.15 流式回调形态（openaiclient/chat.go）：
+			// - reasoning_content 只经 StreamingReasoningFunc 透出，普通 StreamingFunc 永远收不到；
+			// - content delta 是原始文本字节（非 JSON），tool_calls delta 是累积 JSON 数组（元素含 function 键）。
+			llms.WithStreamingReasoningFunc(func(_ context.Context, reasoning, chunk []byte) error {
+				if len(reasoning) > 0 {
+					emitJSON(map[string]string{"reasoning": string(reasoning)})
+				}
+				if len(chunk) == 0 {
+					return nil
+				}
+				if chunk[0] == '[' {
+					var probe []struct {
+						Function *json.RawMessage `json:"function"`
+					}
+					if json.Unmarshal(chunk, &probe) == nil && len(probe) > 0 && probe[0].Function != nil {
+						return nil
+					}
+				}
+				emitContent(string(chunk))
+				return nil
+			}))
 		if err != nil {
 			return err
 		}
@@ -137,14 +153,20 @@ func (s *AIService) StreamAgentChat(
 			break
 		}
 		choice := resp.Choices[0]
-		// 纯文本回答 = 最终结果
+		// 无 tool_calls = 最终文本回答（已流式透出）
 		if len(choice.ToolCalls) == 0 {
-			if choice.Content != "" {
-				emitContent(choice.Content)
-			}
 			break
 		}
-		// 有 tool_calls：执行工具，结果并入下轮上下文
+		// 有 tool_calls：执行工具并追加 AI + Tool 消息对，继续循环
+		aiParts := []llms.ContentPart{}
+		if choice.Content != "" {
+			aiParts = append(aiParts, llms.TextContent{Text: choice.Content})
+		}
+		for _, tc := range choice.ToolCalls {
+			aiParts = append(aiParts, tc)
+		}
+		msgs = append(msgs, llms.MessageContent{Role: llms.ChatMessageTypeAI, Parts: aiParts})
+
 		for _, tc := range choice.ToolCalls {
 			emitJSON(map[string]any{"step": map[string]string{
 				"type": "tool", "name": tc.FunctionCall.Name,
@@ -161,8 +183,14 @@ func (s *AIService) StreamAgentChat(
 					break
 				}
 			}
-			toolResults = append(toolResults,
-				fmt.Sprintf("%s(%s) = %s", tc.FunctionCall.Name, tc.FunctionCall.Arguments, result))
+			msgs = append(msgs, llms.MessageContent{
+				Role: llms.ChatMessageTypeTool,
+				Parts: []llms.ContentPart{llms.ToolCallResponse{
+					ToolCallID: tc.ID,
+					Name:       tc.FunctionCall.Name,
+					Content:    result,
+				}},
+			})
 		}
 	}
 	emitJSON(map[string]string{"done": "1"})

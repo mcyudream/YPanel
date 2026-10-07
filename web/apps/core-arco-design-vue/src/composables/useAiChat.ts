@@ -47,7 +47,9 @@ export function useAiChat(options?: { scenePath?: () => string, providerId?: () 
     if (!lastUser) {
       return
     }
-    // 通过 reactive 数组索引获取 proxy 引用（确保后续修改触发响应式）
+    // 新建 assistant 占位消息，并经 reactive 数组索引取 proxy 引用（后续流式修改触发更新）。
+    // 注意：不能取 length-1 复用 user 消息——role 必须是 assistant，思考块/步骤时间线/Markdown 都按它分支
+    messages.value.push({ id: nextId(), role: 'assistant', content: '', pending: true, steps: [] })
     const assistant = messages.value[messages.value.length - 1]
     streaming.value = true
     const controller = new AbortController()

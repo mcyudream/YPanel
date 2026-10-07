@@ -36,7 +36,8 @@ const lastIdx = computed(() => props.steps.length - 1)
     <div v-for="(s, i) in steps" :key="i" class="flex items-start gap-1.5">
       <FaIcon :name="icon(s)" class="mt-0.5 text-[10px]" :class="i === lastIdx && streaming ? 'animate-pulse' : ''" />
       <span class="min-w-0 flex-1 truncate">
-        <template v-if="s.name && s.type === 'tool_result'">{{ s.name }}：{{ s.detail }}</template>
+        <template v-if="s.type === 'scene'">{{ label(s) }}：{{ s.detail }}</template>
+        <template v-else-if="s.name && s.type === 'tool_result'">{{ s.name }}：{{ s.detail }}</template>
         <template v-else-if="s.name">{{ label(s) }}：{{ s.name }}</template>
         <template v-else>{{ label(s) }}{{ s.detail ? '：' + s.detail : '' }}</template>
       </span>
