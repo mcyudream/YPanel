@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"sort"
 	"strings"
 
 	"github.com/tmc/langchaingo/tools"
@@ -316,6 +317,79 @@ func errWrapAI(msg string) error {
 	return fmt.Errorf("AI: %s", msg)
 }
 
+// ---- 列表类工具的可选入参：搜索/排序/分页（模型按需取页，避免一次性回传全量撑爆上下文） ----
+
+type listQuery struct {
+	Search   string `json:"search"`
+	State    string `json:"state"` // 容器专用：running / stopped 等
+	Sort     string `json:"sort"`
+	Order    string `json:"order"` // asc / desc
+	Page     int    `json:"page"`
+	PageSize int    `json:"pageSize"`
+}
+
+func parseListQuery(input string) listQuery {
+	q := listQuery{Page: 1, PageSize: 20, Order: "asc"}
+	s := strings.TrimSpace(input)
+	_ = json.Unmarshal([]byte(s), &q)
+	// langchaingo 未设 Parameters schema 时模型会把参数包成 {"input":"<json 字符串>"}，需解包
+	var wrapper struct {
+		Input string `json:"input"`
+	}
+	if json.Unmarshal([]byte(s), &wrapper) == nil && wrapper.Input != "" {
+		_ = json.Unmarshal([]byte(wrapper.Input), &q)
+	}
+	if q.Page < 1 {
+		q.Page = 1
+	}
+	if q.PageSize < 1 {
+		q.PageSize = 20
+	}
+	if q.PageSize > 100 {
+		q.PageSize = 100
+	}
+	if q.Order != "desc" {
+		q.Order = "asc"
+	}
+	return q
+}
+
+// paginateList 过滤后的切片按 q 排序（less 为 nil 保持原序）并切页，返回当前页与总数。
+func paginateList[T any](items []T, q listQuery, less func(a, b T) bool) ([]T, int) {
+	if less != nil {
+		sort.SliceStable(items, func(i, j int) bool {
+			if q.Order == "desc" {
+				return less(items[j], items[i])
+			}
+			return less(items[i], items[j])
+		})
+	}
+	total := len(items)
+	start := (q.Page - 1) * q.PageSize
+	if start >= total {
+		return []T{}, total
+	}
+	end := start + q.PageSize
+	if end > total {
+		end = total
+	}
+	return items[start:end], total
+}
+
+// matchAny 关键词命中任一字段即真（空关键词恒真，大小写不敏感）。
+func matchAny(kw string, fields ...string) bool {
+	if kw == "" {
+		return true
+	}
+	kw = strings.ToLower(kw)
+	for _, f := range fields {
+		if strings.Contains(strings.ToLower(f), kw) {
+			return true
+		}
+	}
+	return false
+}
+
 // aiTool 单个工具（实现 langchaingo tools.Tool 接口）。
 type aiTool struct {
 	name        string
@@ -377,8 +451,8 @@ func (s *AIService) builtinTools(ctx context.Context) []tools.Tool {
 		},
 		&aiTool{
 			name:        "list_containers",
-			description: "列出全部 Docker 容器（名称/镜像/状态/端口）。无参数，input 传空。",
-			fn: func(_ context.Context, _ string) (string, error) {
+			description: "列出 Docker 容器（分页，勿假设一次返回全部）。input 可选 JSON：{\"search\":\"名称/镜像/ID 关键词\",\"state\":\"running 或 stopped\",\"sort\":\"name|state|image|created\",\"order\":\"asc|desc\",\"page\":1,\"pageSize\":20}，全部可省略（默认第 1 页 20 条，按名称排序）。返回 {total,page,pageSize,items}；total 超过当前页时按需翻页或加 search 收窄。",
+			fn: func(_ context.Context, input string) (string, error) {
 				node, nerr := s.nodes.ByID("local")
 				if nerr != nil {
 					return "", nerr
@@ -388,7 +462,34 @@ func (s *AIService) builtinTools(ctx context.Context) []tools.Tool {
 				if err != nil {
 					return "", err
 				}
-				b, _ := json.Marshal(out)
+				items := []dto.ContainerItem{}
+				if out != nil {
+					items = *out
+				}
+				q := parseListQuery(input)
+				filtered := make([]dto.ContainerItem, 0, len(items))
+				for _, c := range items {
+					if !matchAny(q.Search, c.Name, c.Image, c.ID) {
+						continue
+					}
+					if q.State != "" && c.State != q.State {
+						continue
+					}
+					filtered = append(filtered, c)
+				}
+				var less func(a, b dto.ContainerItem) bool
+				switch q.Sort {
+				case "state":
+					less = func(a, b dto.ContainerItem) bool { return a.State < b.State }
+				case "image":
+					less = func(a, b dto.ContainerItem) bool { return a.Image < b.Image }
+				case "created":
+					less = func(a, b dto.ContainerItem) bool { return a.Created.Before(b.Created) }
+				default:
+					less = func(a, b dto.ContainerItem) bool { return a.Name < b.Name }
+				}
+				pageItems, total := paginateList(filtered, q, less)
+				b, _ := json.Marshal(map[string]any{"total": total, "page": q.Page, "pageSize": q.PageSize, "items": pageItems})
 				return string(b), nil
 			},
 		},
@@ -411,13 +512,30 @@ func (s *AIService) builtinTools(ctx context.Context) []tools.Tool {
 		},
 		&aiTool{
 			name:        "list_sites",
-			description: "列出全部网站站点（名称/域名/类型/启用状态）。无参数，input 传空。",
-			fn: func(_ context.Context, _ string) (string, error) {
+			description: "列出网站站点（分页/搜索）。input 可选 JSON：{\"search\":\"站点名/域名关键词\",\"sort\":\"name|type|domain\",\"order\":\"asc|desc\",\"page\":1,\"pageSize\":20}，全部可省略。返回 {total,page,pageSize,items}。",
+			fn: func(_ context.Context, input string) (string, error) {
 				sites := []model.Site{}
 				if err := s.db.Find(&sites).Error; err != nil {
 					return "", err
 				}
-				b, _ := json.Marshal(sites)
+				q := parseListQuery(input)
+				filtered := make([]model.Site, 0, len(sites))
+				for _, st := range sites {
+					if matchAny(q.Search, st.Name, st.Domain, st.Domains) {
+						filtered = append(filtered, st)
+					}
+				}
+				var less func(a, b model.Site) bool
+				switch q.Sort {
+				case "type":
+					less = func(a, b model.Site) bool { return a.Type < b.Type }
+				case "domain":
+					less = func(a, b model.Site) bool { return a.Domain < b.Domain }
+				default:
+					less = func(a, b model.Site) bool { return a.Name < b.Name }
+				}
+				pageItems, total := paginateList(filtered, q, less)
+				b, _ := json.Marshal(map[string]any{"total": total, "page": q.Page, "pageSize": q.PageSize, "items": pageItems})
 				return string(b), nil
 			},
 		},
@@ -445,13 +563,28 @@ func (s *AIService) builtinTools(ctx context.Context) []tools.Tool {
 		},
 		&aiTool{
 			name:        "list_database_instances",
-			description: "列出面板管理的全部数据库实例（id/类型/端口）。无参数，input 传空。",
-			fn: func(_ context.Context, _ string) (string, error) {
+			description: "列出面板管理的数据库实例（分页/搜索）。input 可选 JSON：{\"search\":\"名称/类型/备注关键词\",\"sort\":\"name|type\",\"order\":\"asc|desc\",\"page\":1,\"pageSize\":20}，全部可省略。返回 {total,page,pageSize,items}；实例 ID 用于 query_database。",
+			fn: func(_ context.Context, input string) (string, error) {
 				out, err := s.dbSvc.List(ctx)
 				if err != nil {
 					return "", err
 				}
-				b, _ := json.Marshal(out)
+				q := parseListQuery(input)
+				filtered := make([]map[string]any, 0, len(out))
+				for _, row := range out {
+					if matchAny(q.Search, fmt.Sprint(row["name"]), fmt.Sprint(row["type"]), fmt.Sprint(row["remark"]), fmt.Sprint(row["host"])) {
+						filtered = append(filtered, row)
+					}
+				}
+				var less func(a, b map[string]any) bool
+				switch q.Sort {
+				case "type":
+					less = func(a, b map[string]any) bool { return fmt.Sprint(a["type"]) < fmt.Sprint(b["type"]) }
+				default:
+					less = func(a, b map[string]any) bool { return fmt.Sprint(a["name"]) < fmt.Sprint(b["name"]) }
+				}
+				pageItems, total := paginateList(filtered, q, less)
+				b, _ := json.Marshal(map[string]any{"total": total, "page": q.Page, "pageSize": q.PageSize, "items": pageItems})
 				return string(b), nil
 			},
 		},
