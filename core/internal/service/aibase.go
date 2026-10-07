@@ -37,10 +37,17 @@ type AIKnowledge struct {
 
 // ChatMessage 对话消息。
 type ChatMessage struct {
-	Role      string     `json:"role"`
-	Content   string     `json:"content"`
-	Reasoning string     `json:"reasoning,omitempty"`
-	Steps     []ChatStep `json:"steps,omitempty"`
+	Role      string          `json:"role"`
+	Content   string          `json:"content"`
+	Reasoning string          `json:"reasoning,omitempty"`
+	Steps     []ChatStep      `json:"steps,omitempty"`
+	Knowledge []ChatKnowledge `json:"knowledge,omitempty"`
+}
+
+// ChatKnowledge 回答引用的知识库条目（随会话持久化）。
+type ChatKnowledge struct {
+	Title string `json:"title"`
+	Body  string `json:"body,omitempty"`
 }
 
 // ChatStep 过程步骤（工具/场景，随会话持久化）。
@@ -219,9 +226,7 @@ func (s *AIService) searchKnowledge(query string) []model.AIKnowledge {
 	if len(all) == 0 {
 		return nil
 	}
-	words := strings.FieldsFunc(strings.ToLower(query), func(r rune) bool {
-		return !((r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') || r > 127)
-	})
+	words := tokenizeKnowledgeQuery(query)
 	if len(words) == 0 {
 		return nil
 	}

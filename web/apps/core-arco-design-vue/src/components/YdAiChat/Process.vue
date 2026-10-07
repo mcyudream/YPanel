@@ -1,6 +1,8 @@
 <script setup lang="ts">
 // YdAiProcess：工具/步骤流程时间线（竖向连线 + 状态节点 + 工具卡片）。
 // 每张卡片三态：执行中（spinner，蓝）/ 完成（✓，绿）/ 失败（✗，红）；工具按名称单独设计图标与文案。
+// 点击卡片展开完整入参与结果详情。
+import { ref } from 'vue'
 import type { AiChatStep } from '@/composables/useAiChat'
 
 const props = withDefaults(defineProps<{
@@ -9,6 +11,20 @@ const props = withDefaults(defineProps<{
 }>(), {
   streaming: false,
 })
+
+// 展开详情的卡片（索引集合）
+const expanded = ref(new Set<number>())
+
+function toggle(i: number) {
+  const next = new Set(expanded.value)
+  if (next.has(i)) {
+    next.delete(i)
+  }
+  else {
+    next.add(i)
+  }
+  expanded.value = next
+}
 
 // 内置工具的展示元数据（MCP 工具回退 wrench + 原名）
 const toolMeta: Record<string, { label: string, icon: string }> = {
@@ -89,20 +105,41 @@ const stateTextClass: Record<StepState, string> = {
         <FaIcon v-else-if="state(s) === 'done'" name="i-lucide:check" />
         <FaIcon v-else name="i-lucide:minus" />
       </span>
-      <!-- 工具卡片 -->
-      <div class="min-w-0 flex-1">
+      <!-- 工具卡片（点击展开详情） -->
+      <div
+        class="min-w-0 flex-1 cursor-pointer rounded-md transition-colors hover:bg-accent/30"
+        @click="toggle(i)"
+      >
         <div class="flex items-center gap-1.5 text-xs">
           <FaIcon :name="meta(s).icon" class="text-[11px] text-muted-foreground" />
           <span class="font-medium">{{ meta(s).label }}</span>
           <span class="ml-auto shrink-0 text-[10px]" :class="stateTextClass[state(s)]">
             {{ stateLabel[state(s)] }}
           </span>
+          <FaIcon
+            :name="expanded.has(i) ? 'i-lucide:chevron-up' : 'i-lucide:chevron-down'"
+            class="shrink-0 text-[10px] text-muted-foreground"
+          />
         </div>
-        <div v-if="s.detail" class="mt-0.5 truncate text-[11px] text-muted-foreground" :title="s.detail">
+        <div v-if="s.detail && !expanded.has(i)" class="mt-0.5 truncate text-[11px] text-muted-foreground" :title="s.detail">
           {{ s.detail }}
         </div>
-        <div v-if="s.summary" class="truncate text-[11px] text-muted-foreground/80" :class="s.detail ? '' : 'mt-0.5'" :title="s.summary">
+        <div v-if="s.summary && !expanded.has(i)" class="truncate text-[11px] text-muted-foreground/80" :class="s.detail ? '' : 'mt-0.5'" :title="s.summary">
           {{ s.summary }}
+        </div>
+        <!-- 展开态：完整入参与结果 -->
+        <div v-if="expanded.has(i)" class="mt-1 space-y-1.5">
+          <div v-if="s.detail">
+            <div class="text-[10px] font-medium text-muted-foreground/70">入参</div>
+            <div class="mt-0.5 max-h-40 overflow-y-auto whitespace-pre-wrap break-words rounded bg-background/60 px-2 py-1.5 text-[11px] leading-relaxed text-muted-foreground">{{ s.detail }}</div>
+          </div>
+          <div v-if="s.summary">
+            <div class="text-[10px] font-medium" :class="s.status === '失败' ? 'text-red-500' : 'text-emerald-600'">结果（{{ s.status || '已结束' }}）</div>
+            <div class="mt-0.5 max-h-60 overflow-y-auto whitespace-pre-wrap break-words rounded bg-background/60 px-2 py-1.5 text-[11px] leading-relaxed text-muted-foreground">{{ s.summary }}</div>
+          </div>
+          <div v-if="!s.detail && !s.summary" class="text-[11px] text-muted-foreground/60">
+            （无详情）
+          </div>
         </div>
       </div>
     </div>

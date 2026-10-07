@@ -89,6 +89,7 @@ const suggestions = computed(() => {
               :pending="m.pending"
               :reasoning="m.reasoning || ''"
               :steps="m.steps || []"
+              :knowledge="m.knowledge || []"
               show-actions
               @regenerate="() => {}"
             />

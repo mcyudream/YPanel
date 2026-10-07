@@ -4,6 +4,7 @@ import { computed } from 'vue'
 import { marked } from 'marked'
 import YdAiProcess from '@/components/YdAiChat/Process.vue'
 import YdAiReasoning from '@/components/YdAiChat/Reasoning.vue'
+import YdAiCitations from '@/components/YdAiChat/Citations.vue'
 
 const props = withDefaults(defineProps<{
   role: 'user' | 'assistant'
@@ -12,11 +13,13 @@ const props = withDefaults(defineProps<{
   showActions?: boolean
   reasoning?: string
   steps?: Array<{ type: string, name?: string, detail?: string }>
+  knowledge?: Array<{ title: string, body?: string }>
 }>(), {
   pending: false,
   showActions: false,
   reasoning: '',
   steps: () => [],
+  knowledge: () => [],
 })
 
 const emit = defineEmits<{ regenerate: [] }>()
@@ -85,6 +88,12 @@ defineExpose({ copyText })
           {{ content }}
         </template>
       </div>
+      <!-- 知识库引用来源（回答正文下方，可展开正文） -->
+      <YdAiCitations
+        v-if="role === 'assistant' && knowledge.length"
+        class="w-full"
+        :knowledge="knowledge"
+      />
       <!-- 操作栏 -->
       <div v-if="showActions && !loading && content" class="mt-1 flex items-center gap-3 text-xs text-muted-foreground">
         <button type="button" class="cursor-pointer hover:text-foreground" @click="copyText">

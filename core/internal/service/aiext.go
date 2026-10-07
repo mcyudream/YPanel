@@ -189,6 +189,41 @@ func (s *AIService) DeleteConversation(id uint) error {
 	return s.db.Delete(&model.AIConversation{}, id).Error
 }
 
+// tokenizeKnowledgeQuery 检索分词：ASCII 字母数字成词，CJK 逐字（去重）。
+// 原实现用 FieldsFunc 且保留所有 >127 字符，整句中文（含标点）会连成一个词，永远无法命中。
+func tokenizeKnowledgeQuery(query string) []string {
+	seen := map[string]bool{}
+	var words []string
+	var ascii strings.Builder
+	flush := func() {
+		if ascii.Len() > 0 {
+			w := strings.ToLower(ascii.String())
+			if !seen[w] {
+				seen[w] = true
+				words = append(words, w)
+			}
+			ascii.Reset()
+		}
+	}
+	for _, r := range query {
+		switch {
+		case (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9'):
+			ascii.WriteRune(r)
+		case r > 127:
+			flush()
+			w := string(r)
+			if !seen[w] {
+				seen[w] = true
+				words = append(words, w)
+			}
+		default:
+			flush()
+		}
+	}
+	flush()
+	return words
+}
+
 func firstUserSnippet(messages []ChatMessage) string {
 	for _, m := range messages {
 		if m.Role == "user" {

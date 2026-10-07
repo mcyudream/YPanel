@@ -13,6 +13,11 @@ export interface AiChatStep {
   done?: boolean
 }
 
+export interface AiKnowledgeRef {
+  title: string
+  body?: string
+}
+
 export interface AiChatMessage {
   id: string
   role: 'user' | 'assistant'
@@ -23,6 +28,8 @@ export interface AiChatMessage {
   reasoning?: string
   /** 工具/步骤链 */
   steps: AiChatStep[]
+  /** 引用的知识库条目 */
+  knowledge?: AiKnowledgeRef[]
 }
 
 export interface AiSceneData {
@@ -62,6 +69,7 @@ export function useAiChat(options?: {
       content: m.content,
       reasoning: m.reasoning || '',
       steps: m.steps || [],
+      knowledge: m.knowledge || [],
     }))
     try {
       const res = await conversationApi.save(conversationId.value, '', msgs as any)
@@ -184,6 +192,9 @@ export function useAiChat(options?: {
           }
           if (ev.tool) {
             assistant.steps.push({ type: 'action', name: typeof ev.tool === 'string' ? ev.tool : ev.tool.name || '', done: true })
+          }
+          if (ev.knowledge) {
+            assistant.knowledge = ev.knowledge
           }
           if (ev.content) {
             assistant.content += ev.content

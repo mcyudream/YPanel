@@ -206,6 +206,7 @@ async function openConversation(id: number) {
       content: m.content,
       reasoning: (m as any).reasoning || '',
       steps: (m as any).steps || [],
+      knowledge: (m as any).knowledge || [],
     }))
     conversationId.value = id
   }
@@ -501,6 +502,7 @@ onMounted(() => {
                 :pending="m.pending"
                 :reasoning="m.reasoning || ''"
                 :steps="m.steps || []"
+                :knowledge="m.knowledge || []"
                 show-actions
               />
             </div>

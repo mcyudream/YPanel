@@ -75,18 +75,23 @@ func (s *AIService) StreamAgentChat(
 	if sk := s.skills.EnabledBodies(ctx); len(sk) > 0 {
 		sys += "\n\n可用技能（用户提问匹配技能用途时，按技能正文执行）：\n" + strings.Join(sk, "\n---\n")
 	}
-	if ks := s.searchKnowledge(strings.Join(func() []string {
+	kbHits := s.searchKnowledge(strings.Join(func() []string {
 		msgs := []string{scenePath}
 		for _, m := range history {
 			msgs = append(msgs, m.Content)
 		}
 		return msgs
-	}(), " ")); len(ks) > 0 {
+	}(), " "))
+	if len(kbHits) > 0 {
 		var parts []string
-		for _, item := range ks {
+		cits := make([]map[string]string, 0, len(kbHits))
+		for _, item := range kbHits {
 			parts = append(parts, "["+item.Title+"]"+item.Body)
+			cits = append(cits, map[string]string{"title": item.Title, "body": item.Body})
 		}
 		sys += "\n\n相关知识库条目：\n" + strings.Join(parts, "\n---\n")
+		// 引用来源事件：前端在回答下方展示来源（点击可展开正文）
+		emitJSON(map[string]any{"knowledge": cits})
 	}
 	sys += "\n\n" + s.buildSceneSummary(ctx, scenePath)
 
@@ -189,8 +194,8 @@ func (s *AIService) StreamAgentChat(
 				status = "失败"
 			}
 			summary := strings.ReplaceAll(strings.TrimSpace(result), "\n", " ")
-			if len(summary) > 120 {
-				summary = summary[:120] + "…"
+			if len(summary) > 400 {
+				summary = summary[:400] + "…"
 			}
 			emitJSON(map[string]any{"step_result": map[string]string{
 				"name": tc.FunctionCall.Name, "status": status, "detail": summary,
