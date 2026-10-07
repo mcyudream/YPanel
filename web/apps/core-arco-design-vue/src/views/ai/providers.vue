@@ -54,14 +54,24 @@ function iconFor(name: string): string | undefined {
   return providerPresets.find(p => p.name === name || name.includes(p.name.split(' ')[0]))?.icon
 }
 
+// 同一供应商支持多实例（不同 key/别名）：预设卡每次都开新建表单，同名自动编号，用户可改
 function openProvFromPreset(preset: AIProvider) {
-  const existing = providers.value.find(x => x.name === preset.name)
-  if (existing) {
-    openProv(existing)
-    return
+  const count = providers.value.filter(x => x.name === preset.name).length
+  provForm.value = {
+    id: 0,
+    name: count ? `${preset.name}-${count + 1}` : preset.name,
+    apiType: preset.apiType,
+    baseURL: preset.baseURL,
+    apiKey: '',
+    model: preset.model,
+    models: '',
+    isDefault: providers.value.length === 0,
   }
-  provForm.value = { id: 0, name: preset.name, apiType: preset.apiType, baseURL: preset.baseURL, apiKey: '', model: preset.model, isDefault: providers.value.length === 0 }
   provVisible.value = true
+}
+
+function presetCount(name: string) {
+  return providers.value.filter(x => x.name === name).length
 }
 
 function openProv(p?: AIProvider) {
@@ -151,11 +161,23 @@ onActivated(loadProviders)
           </div>
           <div class="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
             <button
+              type="button"
+              class="flex cursor-pointer items-center gap-3 rounded-lg border border-dashed p-3 text-left transition-colors hover:border-primary hover:bg-accent/30"
+              @click="openProv()"
+            >
+              <span class="flex size-7 items-center justify-center rounded bg-muted">
+                <FaIcon name="i-lucide:plus" class="text-sm" />
+              </span>
+              <span class="min-w-0">
+                <span class="block text-sm">自定义供应商</span>
+                <span class="block truncate text-[11px] text-muted-foreground">任意 OpenAI 兼容 / Anthropic 端点</span>
+              </span>
+            </button>
+            <button
               v-for="preset in providerPresets"
               :key="preset.name"
               type="button"
               class="flex cursor-pointer items-center gap-3 rounded-lg border p-3 text-left transition-colors hover:border-primary hover:bg-accent/30"
-              :class="providers.some(x => x.name === preset.name) ? 'op-50' : ''"
               @click="openProvFromPreset(preset)"
             >
               <img v-if="preset.icon" :src="preset.icon" class="size-7 shrink-0">
@@ -166,8 +188,8 @@ onActivated(loadProviders)
                 <span class="block truncate text-sm">{{ preset.name }}</span>
                 <span class="block truncate font-mono text-[11px] text-muted-foreground">{{ preset.model }}</span>
               </span>
-              <span v-if="providers.some(x => x.name === preset.name)" class="ml-auto shrink-0 rounded-full bg-emerald-500/10 px-1.5 py-0.5 text-[10px] text-emerald-600">
-                已配置
+              <span v-if="presetCount(preset.name)" class="ml-auto shrink-0 rounded-full bg-emerald-500/10 px-1.5 py-0.5 text-[10px] text-emerald-600">
+                已配置 ×{{ presetCount(preset.name) }}
               </span>
             </button>
           </div>

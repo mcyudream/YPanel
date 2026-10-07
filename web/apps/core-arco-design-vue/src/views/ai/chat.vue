@@ -49,6 +49,22 @@ watch(modelOptions, (list) => {
   }
 })
 
+// 同名多实例（同一供应商建多个）：下拉文本补模型/ID 区分
+const dupProviderNames = computed(() => {
+  const count = new Map<string, number>()
+  for (const p of providers.value) {
+    count.set(p.name, (count.get(p.name) || 0) + 1)
+  }
+  return new Set([...count.entries()].filter(([, n]) => n > 1).map(([n]) => n))
+})
+
+function providerLabel(p: AIProvider) {
+  if (!dupProviderNames.value.has(p.name)) {
+    return p.name
+  }
+  return `${p.name} · ${modelOptions.value[0] || p.model} (#${p.id})`
+}
+
 function sendChat(t: string) {
   // Sender 组件经 emit('send', text) 传入文本（其内部 v-model 管理输入）
   const text = (t || '').trim()
@@ -166,9 +182,9 @@ onActivated(() => {
         <div class="flex min-w-0 flex-1 flex-col rounded-lg border">
           <div class="flex items-center gap-2 border-b px-4 py-2 text-sm">
             <span class="text-muted-foreground">供应商</span>
-            <select v-model="providerId" class="h-8 rounded-md border bg-background px-2 outline-none">
+            <select v-model="providerId" class="h-8 max-w-44 rounded-md border bg-background px-2 outline-none">
               <option v-for="p in providers" :key="p.id" :value="p.id">
-                {{ p.name }}
+                {{ providerLabel(p) }}
               </option>
             </select>
             <select v-if="modelOptions.length > 1" v-model="model" class="h-8 rounded-md border bg-background px-2 font-mono text-xs outline-none">
