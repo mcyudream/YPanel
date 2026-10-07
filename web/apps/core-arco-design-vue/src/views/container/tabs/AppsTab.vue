@@ -1,18 +1,23 @@
 <script setup lang="ts">
 import type { ComposeProject } from '@/api/modules/compose'
+import type { ContainerItem } from '@/api/modules/container'
 import apiCompose from '@/api/modules/compose'
+import apiContainer, { LabelComposeProject, LabelComposeService } from '@/api/modules/container'
 import apiFile from '@/api/modules/file'
 import { storeApi, type StoreAppItem, type StoreInstall } from '@/api/modules/store'
 import FileEditorWorkspace from '@/views/file_management/editor/Workspace.vue'
 
-// 应用 tab（M23，开发者默认视角）：compose 项目 + 商店安装聚合为应用卡片。
+// 应用 tab（M23，开发者默认视角）：compose 项目 + 商店安装聚合为应用卡片；
+// 卡片内直接平铺子容器（服务），支持电源下拉（启动/重启/停止/重建）、日志、终端。
 const router = useRouter()
 const toast = useFaToast()
 const fileEditorStore = useFileEditorStore()
+const appAccountStore = useAppAccountStore()
 
 const projects = ref<ComposeProject[]>([])
 const installs = ref<StoreInstall[]>([])
 const storeApps = ref<StoreAppItem[]>([])
+const containers = ref<ContainerItem[]>([])
 const loading = ref(false)
 const dockerDisabled = ref(false)
 const dockerMsg = ref('')
@@ -21,12 +26,14 @@ const acting = ref('')
 async function load() {
   loading.value = true
   try {
-    const [ps, inst] = await Promise.all([
+    const [ps, inst, cs] = await Promise.all([
       apiCompose.list(),
       storeApi.installed().catch(() => [] as StoreInstall[]),
+      apiContainer.list().catch(() => [] as ContainerItem[]),
     ])
     projects.value = ps
     installs.value = inst
+    containers.value = cs
     if (inst.length && !storeApps.value.length) {
       const res = await storeApi.list({ pageSize: 500 }).catch(() => null)
       storeApps.value = res?.items || []
@@ -45,6 +52,123 @@ async function load() {
   finally {
     loading.value = false
   }
+}
+
+function containersOf(projectName: string): ContainerItem[] {
+  return containers.value.filter(c => c.labels?.[LabelComposeProject] === projectName)
+}
+
+function containerOf(projectName: string, service: string): ContainerItem | undefined {
+  const list = containersOf(projectName)
+  // compose 服务名（label）与展示名（容器名）可能不同，两级匹配
+  return list.find(c => c.labels?.[LabelComposeService] === service)
+    || list.find(c => c.name === service || c.name === `${projectName}-${service}` || c.name.startsWith(`${projectName}_${service}`))
+}
+
+// ---- 卡片内子容器（服务）操作：电源下拉 / 日志 / 终端 ----
+async function serviceAction(p: ComposeProject, service: string, action: 'start' | 'stop' | 'restart' | 'up') {
+  const key = `svc-${p.name}-${service}-${action}`
+  acting.value = key
+  try {
+    await apiCompose.serviceAction(p.name, service, action, p.managed ? '' : p.dir)
+    const label = action === 'up' ? '重建' : action === 'start' ? '启动' : action === 'stop' ? '停止' : '重启'
+    toast.success(`已${label}服务 ${service}`)
+    await load()
+  }
+  catch (e: any) {
+    toast.error(`服务 ${service} ${action} 失败`, { description: e?.message })
+  }
+  finally {
+    acting.value = ''
+  }
+}
+
+function dropdownItems(p: ComposeProject, service: string) {
+  const c = containerOf(p.name, service)
+  const running = c?.state === 'running'
+  return [[
+    ...(running ? [] : [{ label: '启动', icon: 'i-lucide:play', handle: () => serviceAction(p, service, 'start') }]),
+    ...(running ? [{ label: '重启', icon: 'i-lucide:rotate-cw', handle: () => serviceAction(p, service, 'restart') }] : []),
+    ...(running ? [{ label: '停止', icon: 'i-lucide:square', handle: () => serviceAction(p, service, 'stop') }] : []),
+    { label: '重建（按编排定义）', icon: 'i-lucide:hammer', handle: () => serviceAction(p, service, 'up') },
+  ]]
+}
+
+function openServiceTerminal(p: ComposeProject, service: string) {
+  const c = containerOf(p.name, service)
+  if (!c) {
+    toast.warning(`服务 ${service} 当前没有容器`)
+    return
+  }
+  fileEditorStore.openWorkspace(undefined, 'local', c.id)
+  fileEditorStore.layout.terminalVisible = true
+}
+
+// ---- 服务日志弹窗（compose logs 按服务流式） ----
+const svcLogsVisible = ref(false)
+const svcLogsProject = ref<ComposeProject | null>(null)
+const svcLogsTarget = ref('')
+const svcLogsContent = ref('')
+const svcLogsFollowing = ref(false)
+let svcLogsAbort: AbortController | null = null
+
+function openServiceLogs(p: ComposeProject, service: string) {
+  svcLogsProject.value = p
+  svcLogsTarget.value = service
+  svcLogsContent.value = ''
+  svcLogsVisible.value = true
+  loadServiceLogs(p, service, false)
+}
+
+function wsBase() {
+  return (import.meta.env.DEV && import.meta.env.VITE_ENABLE_PROXY) ? '/proxy' : ''
+}
+
+async function loadServiceLogs(p: ComposeProject, service: string, follow: boolean) {
+  svcLogsAbort?.abort()
+  svcLogsAbort = new AbortController()
+  svcLogsFollowing.value = follow
+  try {
+    const token = appAccountStore.token
+    const url = `${wsBase()}/${apiCompose.logsURL(p.name, p.managed ? '' : p.dir, token, 1000, follow, service)}`
+    const resp = await fetch(url, {
+      headers: { Authorization: `Bearer ${token}` },
+      signal: svcLogsAbort.signal,
+    })
+    if (!resp.ok || !resp.body) {
+      throw new Error(`HTTP ${resp.status}`)
+    }
+    const reader = resp.body.getReader()
+    const decoder = new TextDecoder()
+    for (;;) {
+      const { done, value } = await reader.read()
+      if (done) {
+        break
+      }
+      svcLogsContent.value += decoder.decode(value, { stream: true })
+      if (svcLogsContent.value.length > 2_000_000) {
+        svcLogsContent.value = svcLogsContent.value.slice(-1_000_000)
+      }
+      await nextTick()
+      const el = document.getElementById('svc-logs-box')
+      if (el) {
+        el.scrollTop = el.scrollHeight
+      }
+    }
+  }
+  catch (e: any) {
+    if (e?.name !== 'AbortError') {
+      svcLogsContent.value += `\n[日志流错误] ${e?.message || e}`
+    }
+  }
+  finally {
+    svcLogsFollowing.value = false
+  }
+}
+
+function closeServiceLogs() {
+  svcLogsAbort?.abort()
+  svcLogsVisible.value = false
 }
 
 interface AppCard {
@@ -274,16 +398,44 @@ onBeforeUnmount(() => {
           </span>
         </div>
 
-        <div v-if="c.project.services.length" class="mt-3 flex flex-wrap gap-1.5">
-          <span
-            v-for="s in c.project.services"
-            :key="s.name"
-            class="inline-flex items-center gap-1 rounded-md border px-1.5 py-0.5 text-xs"
-            :title="`${s.image} · ${s.state}`"
-          >
-            <span class="inline-block size-1.5 rounded-full" :class="s.state === 'running' ? 'bg-emerald-500' : 'bg-muted-foreground/40'" />
-            {{ s.name }}
-          </span>
+        <!-- 子容器（服务）行：状态 + 电源下拉 + 日志/终端/详情 -->
+        <div v-if="(c.project.services || []).length" class="mt-3 divide-y rounded-md border bg-muted/20" @click.stop>
+          <div v-for="s in (c.project.services || [])" :key="s.name" class="flex items-center gap-2 px-2.5 py-1.5">
+            <span
+              class="inline-block size-1.5 shrink-0 rounded-full"
+              :class="s.state === 'running' ? 'animate-pulse bg-emerald-500' : 'bg-muted-foreground/40'"
+              :title="s.state"
+            />
+            <div class="min-w-0 flex-1 leading-tight">
+              <div class="truncate font-mono text-xs font-medium">
+                {{ s.name }}
+              </div>
+              <div class="truncate text-[11px] text-muted-foreground" :title="`${s.image} · ${s.state}`">
+                {{ containerOf(c.project.name, s.name)?.name || '—' }} · {{ s.state }}
+              </div>
+            </div>
+            <FaButton variant="ghost" size="icon-sm" title="服务日志" @click="openServiceLogs(c.project, s.name)">
+              <FaIcon name="i-lucide:scroll-text" class="text-sm" />
+            </FaButton>
+            <FaButton variant="ghost" size="icon-sm" title="进入终端" @click="openServiceTerminal(c.project, s.name)">
+              <FaIcon name="i-lucide:square-terminal" class="text-sm" />
+            </FaButton>
+            <FaButton
+              v-if="containerOf(c.project.name, s.name)" variant="ghost" size="icon-sm" title="容器详情"
+              @click="router.push(`/container/detail/${containerOf(c.project.name, s.name)!.id}`)"
+            >
+              <FaIcon name="i-lucide:info" class="text-sm" />
+            </FaButton>
+            <FaDropdown :items="dropdownItems(c.project, s.name)">
+              <FaButton
+                variant="ghost" size="icon-sm"
+                :loading="acting === `svc-${c.project.name}-${s.name}-start` || acting === `svc-${c.project.name}-${s.name}-restart` || acting === `svc-${c.project.name}-${s.name}-stop` || acting === `svc-${c.project.name}-${s.name}-up`"
+                title="电源操作"
+              >
+                <FaIcon name="i-lucide:power" class="text-sm" />
+              </FaButton>
+            </FaDropdown>
+          </div>
         </div>
 
         <div class="mt-3 flex flex-wrap items-center gap-1.5 border-t pt-3" @click.stop>
@@ -298,6 +450,9 @@ onBeforeUnmount(() => {
               停止
             </FaButton>
           </template>
+          <FaButton variant="ghost" size="sm" @click="router.push(`/container/app/${c.project.name}`)">
+            详情
+          </FaButton>
           <FaButton v-if="c.project.managed" variant="ghost" size="sm" @click="openEdit(c.project)">
             <FaIcon name="i-lucide:pen-line" class="mr-1" /> 编辑配置
           </FaButton>
@@ -336,6 +491,34 @@ onBeforeUnmount(() => {
       v-if="revisionPath" v-model="revisionVisible"
       node="local" :path="revisionPath" @restored="load()"
     />
+
+    <!-- 服务日志 -->
+    <FaModal
+      v-model="svcLogsVisible"
+      :title="`服务日志：${svcLogsTarget}`"
+      class="max-w-5xl!"
+      :destroy-on-close="true"
+      @close="closeServiceLogs"
+    >
+      <div class="mb-2 flex items-center gap-2">
+        <FaButton size="sm" :variant="svcLogsFollowing ? 'default' : 'outline'" @click="svcLogsProject && loadServiceLogs(svcLogsProject, svcLogsTarget, !svcLogsFollowing)">
+          <FaIcon name="i-lucide:radio" class="mr-1" :class="svcLogsFollowing ? 'animate-pulse' : ''" />
+          {{ svcLogsFollowing ? '跟踪中（点击停止）' : '跟踪日志' }}
+        </FaButton>
+        <FaButton variant="outline" size="sm" @click="svcLogsProject && loadServiceLogs(svcLogsProject, svcLogsTarget, false)">
+          刷新
+        </FaButton>
+        <span v-if="svcLogsProject && containerOf(svcLogsProject.name, svcLogsTarget)" class="text-xs text-muted-foreground">
+          容器：{{ containerOf(svcLogsProject.name, svcLogsTarget)!.name }} · {{ containerOf(svcLogsProject.name, svcLogsTarget)!.state }}
+        </span>
+      </div>
+      <pre id="svc-logs-box" class="h-96 overflow-auto rounded-md bg-muted/60 p-3 font-mono text-xs leading-relaxed">{{ svcLogsContent || '暂无日志' }}</pre>
+      <template #footer>
+        <FaButton variant="outline" @click="closeServiceLogs">
+          关闭
+        </FaButton>
+      </template>
+    </FaModal>
 
     <FileEditorWorkspace />
   </div>

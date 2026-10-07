@@ -3,12 +3,15 @@ import { fmtBytes } from '@/utils/format'
 import echarts from '@/utils/echarts'
 import type { SystemOverview } from '@/api/modules/system'
 import apiSystem from '@/api/modules/system'
+import { useNotificationCenterStore } from '@/store/modules/notificationCenter'
 
 const router = useRouter()
 
 defineOptions({
   name: 'OverviewIndex',
 })
+
+const notificationCenter = useNotificationCenterStore()
 
 const overview = ref<SystemOverview>()
 const loading = ref(true)
@@ -204,6 +207,29 @@ const stateCards = computed(() => {
             <span class="w-40 text-right text-xs tabular-nums text-muted-foreground">
               {{ fmtBytes(d.used) }} / {{ fmtBytes(d.total) }} ({{ d.usagePercent }}%)
             </span>
+          </div>
+        </div>
+      </div>
+      <!-- 最近通知 -->
+      <div v-if="overview?.recentNotifications?.length" class="mt-4 rounded-lg border bg-background p-4">
+        <div class="mb-3 flex items-center justify-between text-sm font-medium">
+          <div class="flex items-center gap-2">
+            <YdMorphIcon name="bell" :size="16" />
+            最近通知
+          </div>
+          <FaButton variant="ghost" size="sm" @click="notificationCenter.open()">
+            查看全部
+          </FaButton>
+        </div>
+        <div class="flex flex-col gap-2">
+          <div v-for="n in overview.recentNotifications.slice(0, 5)" :key="n.id" class="flex items-start gap-2 text-sm">
+            <span
+              class="mt-1.5 inline-block size-1.5 shrink-0 rounded-full"
+              :class="n.level === 'error' ? 'bg-red-500' : n.level === 'warning' ? 'bg-orange-400' : n.level === 'success' ? 'bg-emerald-500' : 'bg-blue-400'"
+            />
+            <span class="shrink-0" :class="n.read ? 'opacity-60' : 'font-medium'">{{ n.title }}</span>
+            <span class="min-w-0 flex-1 truncate text-xs text-muted-foreground" :title="n.content">{{ n.content }}</span>
+            <span class="shrink-0 text-xs text-muted-foreground">{{ new Date(n.createdAt).toLocaleString('zh-CN', { hour12: false }) }}</span>
           </div>
         </div>
       </div>

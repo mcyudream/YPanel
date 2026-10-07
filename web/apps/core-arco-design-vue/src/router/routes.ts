@@ -17,7 +17,6 @@ import NodesDetailRoutes from './modules/nodes-detail'
 import FirewallRoutes from './modules/firewall'
 import NatRoutes from './modules/nat'
 import AlertRoutes from './modules/alert'
-import NotificationRoutes from './modules/notifications'
 import ProcessesRoutes from './modules/processes'
 import DbAdminRoutes from './modules/dbadmin'
 import StoreRoutes from './modules/store'
@@ -44,27 +43,6 @@ const constantRoutes: RouteRecordRaw[] = [
       title: '桌面工作台',
       breadcrumb: false,
     },
-  },
-  {
-    // 任务中心：仅顶栏入口（全屏按钮前），不进侧边菜单
-    path: '/tasks',
-    name: 'tasks',
-    component: () => import('@/layouts/index.vue'),
-    meta: {
-      title: '任务中心',
-      breadcrumb: false,
-    },
-    children: [
-      {
-        path: '',
-        name: 'tasksIndex',
-        component: () => import('@/views/tasks/index.vue'),
-        meta: {
-          title: '任务中心',
-          menu: false,
-        },
-      },
-    ],
   },
   {
     path: '/:all(.*)*',
@@ -178,7 +156,6 @@ const asyncRoutes: RouteRecordMainRaw[] = [
     children: [
       AlertRoutes,
       MonitorsRoutes,
-      NotificationRoutes,
     ],
   },
   {

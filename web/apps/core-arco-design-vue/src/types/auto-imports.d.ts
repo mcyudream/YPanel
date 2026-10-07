@@ -103,12 +103,14 @@ declare global {
   const useId: typeof import('vue').useId
   const useLink: typeof import('vue-router').useLink
   const useModel: typeof import('vue').useModel
+  const useNotificationCenterStore: typeof import('../store/modules/notificationCenter').useNotificationCenterStore
   const usePagination: typeof import('../composables/usePagination').usePagination
   const usePolling: typeof import('../composables/usePolling').usePolling
   const useReconnectingWs: typeof import('../composables/useReconnectingWs').useReconnectingWs
   const useRoute: typeof import('vue-router').useRoute
   const useRouter: typeof import('vue-router').useRouter
   const useSlots: typeof import('vue').useSlots
+  const useTaskCenterStore: typeof import('../store/modules/taskCenter').useTaskCenterStore
   const useTemplateRef: typeof import('vue').useTemplateRef
   const useWorkbenchStore: typeof import('../store/modules/app/workbench').useWorkbenchStore
   const watch: typeof import('vue').watch

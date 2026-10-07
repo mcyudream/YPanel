@@ -32,6 +32,10 @@ async function load() {
       storeApi.installed().catch(() => [] as StoreInstall[]),
     ])
     info.value = projects.find(p => p.name === project.value) || null
+    if (info.value) {
+      // services 可能为 null（新装/无服务项目），归一防御
+      info.value = { ...info.value, services: info.value.services || [] }
+    }
     install.value = installs.find(i => i.composeProject === project.value) || null
     if (install.value) {
       const res = await storeApi.list({ pageSize: 500 }).catch(() => null)

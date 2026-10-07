@@ -129,8 +129,7 @@ func (m *Manager) ServiceAction(ctx context.Context, project, service, action st
 	args := []string{"--project-name", project}
 	if action == "up" {
 		args = append(args, "up", "-d", service)
-	}
-	else {
+	} else {
 		args = append(args, action, service)
 	}
 	out, code, err := runDocker(ctx, composeArgs(cfg, args...)...)

@@ -4,11 +4,14 @@ import type { AppTask } from '@/api/modules/task'
 import { marked } from 'marked'
 import { isPortField, storeApi } from '@/api/modules/store'
 import { taskApi } from '@/api/modules/task'
+import { useTaskCenterStore } from '@/store/modules/taskCenter'
 import YdLogViewer from '@/components/YdLogViewer/index.vue'
 
 defineOptions({
   name: 'StoreIndex',
 })
+
+const taskCenter = useTaskCenterStore()
 
 type TabKey = 'all' | 'installed' | 'notInstalled' | 'upgradable' | 'sources'
 
@@ -769,7 +772,10 @@ function statusText(s: StoreSource) {
           <span class="rounded-full px-2 py-0.5 text-xs" :class="installTask?.status === 'success' ? 'bg-emerald-500/10 text-emerald-600' : installTask?.status === 'failed' ? 'bg-red-500/10 text-red-600' : 'bg-blue-500/10 text-blue-600'">
             {{ installTask?.status === 'success' ? '安装成功' : installTask?.status === 'failed' ? '安装失败' : '进行中' }}
           </span>
-          <span class="text-xs text-muted-foreground">任务 #{{ installTaskId }} · 也可在「任务中心」查看</span>
+          <span class="text-xs text-muted-foreground">任务 #{{ installTaskId }}</span>
+          <FaButton variant="link" size="sm" @click="taskCenter.open(installTaskId)">
+            在任务中心打开
+          </FaButton>
         </div>
         <YdLogViewer :logs="installTask?.logText || ''" height="320px" :loading="installLogLoading" />
       </div>

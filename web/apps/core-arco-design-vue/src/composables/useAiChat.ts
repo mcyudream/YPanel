@@ -1,5 +1,5 @@
 // useAiChat：AI 对话状态管理（对接 /api/v1/ai/chat SSE，含工具调用过程展示）。
-import { computed, ref } from 'vue'
+import { ref } from 'vue'
 
 export interface AiChatStep {
   type: string
@@ -35,33 +35,23 @@ export function useAiChat(options?: { scenePath?: () => string, providerId?: () 
   const streaming = ref(false)
   const abort = ref<AbortController | null>(null)
 
-  const canSend = computed(() => !streaming.value && messages.value.some(m => m.role === 'user' ? false : true) || messages.value.length === 0 || true)
-
-  function addUser(text: string) {
-    messages.value.push({ id: nextId(), role: 'user', content: text, steps: [] })
-  }
-
-  function addAssistant(): AiChatMessage {
-    const m: AiChatMessage = { id: nextId(), role: 'assistant', content: '', pending: true, steps: [] }
-    messages.value.push(m)
-    return m
-  }
-
-  /** 发送一轮对话：取最后一条用户消息为输入，流式更新最后一条 assistant。 */
+  /** 发送一轮对话：流式更新最后一条 assistant（通过 reactive proxy 操作确保响应式）。 */
   async function send(text: string) {
     if (streaming.value) {
       return
     }
     if (text.trim()) {
-      addUser(text.trim())
+      messages.value.push({ id: nextId(), role: 'user', content: text.trim(), steps: [] })
     }
     const lastUser = [...messages.value].reverse().find(m => m.role === 'user')
     if (!lastUser) {
       return
     }
-    const assistant = addAssistant()
+    // 通过 reactive 数组索引获取 proxy 引用（确保后续修改触发响应式）
+    const assistant = messages.value[messages.value.length - 1]
     streaming.value = true
-    abort.value = new AbortController()
+    const controller = new AbortController()
+    abort.value = controller
     const token = localStorage.getItem('token') || ''
     const history = messages.value
       .filter(m => !m.pending && m.content && !m.error)
@@ -72,13 +62,12 @@ export function useAiChat(options?: { scenePath?: () => string, providerId?: () 
       const resp = await fetch(`api/v1/ai/chat?scene=${encodeURIComponent(options?.scenePath?.() || '/')}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-        signal: abort.value.signal,
+        signal: controller.signal,
         body: JSON.stringify({
           providerId: options?.providerId?.(),
           messages: history,
         }),
       })
-      // 后端业务错误（非 SSE）
       if (!resp.ok && !resp.headers.get('content-type')?.includes('event-stream')) {
         let msg = `HTTP ${resp.status}`
         try {
@@ -176,7 +165,6 @@ export function useAiChat(options?: { scenePath?: () => string, providerId?: () 
     messages.value = []
   }
 
-  void canSend
   return { messages, streaming, send, stop, regenerate, clear }
 }
 
@@ -184,4 +172,3 @@ export function useAiChat(options?: { scenePath?: () => string, providerId?: () 
 export function aiSceneBody(scenePath?: string, extra?: Record<string, any>) {
   return { scene: scenePath, ...extra }
 }
-

@@ -2,6 +2,7 @@
 // 顶栏通知中心：铃铛 + 未读角标 + SSE 实时推送 + Popover 最近通知。
 import type { NotificationItem } from '@/api/modules/ops'
 import { notificationApi } from '@/api/modules/ops'
+import { useNotificationCenterStore } from '@/store/modules/notificationCenter'
 
 defineOptions({
   name: 'ToolbarNotificationCenter',
@@ -9,7 +10,6 @@ defineOptions({
 
 const appSettingsStore = useAppSettingsStore()
 const appAccountStore = useAppAccountStore()
-const router = useRouter()
 
 const unread = ref(0)
 const recent = ref<NotificationItem[]>([])
@@ -63,6 +63,10 @@ function connect() {
       }
       else if (data.type === 'notification') {
         unread.value++
+        historyUnread.value++
+        if (modalVisible.value) {
+          history.value = [{ id: data.id!, level: data.level!, title: data.title!, content: data.content!, read: false, createdAt: data.createdAt! }, ...history.value]
+        }
         recent.value = [{
           id: data.id!, level: data.level!, title: data.title!, content: data.content!,
           read: false, createdAt: data.createdAt!,
@@ -102,8 +106,83 @@ async function markAll() {
 
 function goAll() {
   popVisible.value = false
-  router.push('/notifications')
+  modalVisible.value = true
+  void loadHistory()
 }
+
+// ---------- 历史弹窗 ----------
+const notificationCenter = useNotificationCenterStore()
+const modalVisible = computed({
+  get: () => notificationCenter.visible,
+  set: v => (notificationCenter.visible = v),
+})
+const history = ref<NotificationItem[]>([])
+const historyUnread = ref(0)
+const historyLoading = ref(false)
+const historyKeyword = ref('')
+
+const historyFiltered = computed(() => {
+  const kw = historyKeyword.value.trim().toLowerCase()
+  if (!kw) {
+    return history.value
+  }
+  return history.value.filter(n =>
+    (n.title || '').toLowerCase().includes(kw) || (n.content || '').toLowerCase().includes(kw))
+})
+
+async function loadHistory() {
+  historyLoading.value = true
+  try {
+    const [list, count] = await Promise.all([notificationApi.list(100), notificationApi.unread()])
+    history.value = list
+    historyUnread.value = count
+  }
+  catch (e: any) {
+    useFaToast().error('加载通知失败', { description: e?.message })
+  }
+  finally {
+    historyLoading.value = false
+  }
+}
+
+async function markAllHistory() {
+  await notificationApi.markRead()
+  await loadHistory()
+  void loadInitial()
+}
+
+async function markOne(n: NotificationItem) {
+  if (n.read) {
+    return
+  }
+  await notificationApi.markRead(n.id)
+  n.read = true
+  historyUnread.value = Math.max(0, historyUnread.value - 1)
+  const local = recent.value.find(x => x.id === n.id)
+  if (local) {
+    local.read = true
+  }
+  void loadInitial()
+}
+
+const historyLevelStyle: Record<string, string> = {
+  info: 'bg-blue-500/10 text-blue-600',
+  success: 'bg-emerald-500/10 text-emerald-600',
+  warning: 'bg-amber-500/10 text-amber-600',
+  error: 'bg-red-500/10 text-red-600',
+}
+
+// 打开弹窗 / 外部 refreshTick 触发刷新
+watch(modalVisible, (v) => {
+  if (v) {
+    void loadHistory()
+  }
+})
+watch(() => notificationCenter.refreshTick, () => {
+  if (modalVisible.value) {
+    void loadHistory()
+  }
+})
 
 function fmtTime(t: string) {
   const d = new Date(t)
@@ -173,5 +252,50 @@ onBeforeUnmount(() => {
         </div>
       </template>
     </FaPopover>
+
+    <!-- 通知历史弹窗（全局，概览页「查看全部」同样唤起） -->
+    <FaModal v-model="modalVisible" title="通知中心" class="max-w-2xl!" :close-on-click-modal="false">
+      <div class="flex flex-col gap-3">
+        <div class="flex flex-wrap items-center gap-2">
+          <span v-if="historyUnread" class="rounded-full bg-red-500/10 px-2 py-0.5 text-xs text-red-600">{{ historyUnread }} 未读</span>
+          <FaInput v-model="historyKeyword" placeholder="搜索通知…" class="w-44!" />
+          <FaButton class="ml-auto" variant="outline" size="sm" :disabled="!historyUnread" @click="markAllHistory">
+            全部已读
+          </FaButton>
+        </div>
+        <div class="max-h-[55vh] overflow-y-auto rounded-lg border">
+          <div v-if="historyLoading && !history.length" class="p-8 text-center text-sm text-muted-foreground">
+            加载中…
+          </div>
+          <div v-else-if="!historyFiltered.length" class="p-8 text-center text-sm text-muted-foreground">
+            暂无通知
+          </div>
+          <div
+            v-for="n in historyFiltered"
+            :key="n.id"
+            class="flex cursor-pointer items-start gap-3 border-t px-4 py-3 transition-colors first:border-t-0 hover:bg-accent/30"
+            :class="n.read ? 'opacity-60' : ''"
+            @click="markOne(n)"
+          >
+            <span class="mt-0.5 shrink-0 rounded-full px-2 py-0.5 text-xs" :class="historyLevelStyle[n.level] || historyLevelStyle.info">
+              {{ n.level }}
+            </span>
+            <div class="min-w-0 flex-1">
+              <div class="text-sm" :class="n.read ? '' : 'font-medium'">
+                <span v-if="!n.read" class="mr-1.5 inline-block size-1.5 rounded-full bg-red-500 align-middle" />
+                {{ n.title }}
+              </div>
+              <div class="mt-0.5 break-all text-xs text-muted-foreground">
+                {{ n.content }}
+              </div>
+            </div>
+            <span class="shrink-0 text-xs tabular-nums text-muted-foreground">{{ new Date(n.createdAt).toLocaleString('zh-CN', { hour12: false }) }}</span>
+          </div>
+        </div>
+        <div class="text-xs text-muted-foreground">
+          点击未读通知即标记已读
+        </div>
+      </div>
+    </FaModal>
   </div>
 </template>
