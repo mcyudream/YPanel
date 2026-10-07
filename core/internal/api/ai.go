@@ -48,13 +48,28 @@ func (a *AIAPI) SaveProvider(c *gin.Context) {
 	}
 	row := model.AIProvider{
 		ID: req.ID, Name: req.Name, APIType: req.APIType, BaseURL: req.BaseURL,
-		APIKey: req.APIKey, Model: req.Model, IsDefault: req.IsDefault,
+		APIKey: req.APIKey, Model: req.Model, Models: req.Models, IsDefault: req.IsDefault,
 	}
 	if err := a.AI.SaveProvider(&row); err != nil {
 		respErr(c, err)
 		return
 	}
 	respOK(c, a.AI.ListProviders())
+}
+
+// ProviderModels GET /api/v1/ai/providers/:id/models（经供应商 API 拉取可用模型）
+func (a *AIAPI) ProviderModels(c *gin.Context) {
+	id, err := strconv.ParseUint(c.Param("id"), 10, 64)
+	if err != nil || id == 0 {
+		respErr(c, errBadRequest("供应商 ID 不合法"))
+		return
+	}
+	models, err := a.AI.ProviderModels(uint(id))
+	if err != nil {
+		respErr(c, err)
+		return
+	}
+	respOK(c, models)
 }
 
 // DeleteProvider DELETE /api/v1/ai/providers/:id
@@ -69,10 +84,11 @@ func (a *AIAPI) DeleteProvider(c *gin.Context) {
 	respOK(c, struct{}{})
 }
 
-// Chat POST /api/v1/ai/chat {providerId?, messages:[{role,content}]}（SSE 流式）
+// Chat POST /api/v1/ai/chat {providerId?, model?, messages:[{role,content}]}（SSE 流式）
 func (a *AIAPI) Chat(c *gin.Context) {
 	req, ok := bind[struct {
 		ProviderID uint                  `json:"providerId"`
+		Model      string                `json:"model"`
 		Messages   []service.ChatMessage `json:"messages"`
 	}](c)
 	if !ok {
@@ -88,6 +104,12 @@ func (a *AIAPI) Chat(c *gin.Context) {
 	if err != nil {
 		respErr(c, err)
 		return
+	}
+	// 同一供应商多模型：请求可指定模型覆盖供应商默认值
+	if req.Model != "" {
+		cp := *provider
+		cp.Model = req.Model
+		provider = &cp
 	}
 	if err := a.AI.StreamAgentChat(c.Request.Context(), c.Writer, provider, req.Messages, c.Query("scene")); err != nil {
 		c.SSEvent("error", gin.H{"message": err.Error()})

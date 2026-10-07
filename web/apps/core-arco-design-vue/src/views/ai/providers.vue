@@ -13,7 +13,42 @@ const toast = useFaToast()
 const providers = ref<AIProvider[]>([])
 const provVisible = ref(false)
 const provSaving = ref(false)
-const provForm = ref<AIProvider>({ id: 0, name: '', apiType: 'openai', baseURL: '', apiKey: '', model: '', isDefault: false })
+const provForm = ref<AIProvider>({ id: 0, name: '', apiType: 'openai', baseURL: '', apiKey: '', model: '', models: '', isDefault: false })
+const fetchingModels = ref(false)
+
+async function fetchModels() {
+  if (!provForm.value.id) {
+    toast.warning('请先保存供应商（需已存 API Key）再拉取模型列表')
+    return
+  }
+  fetchingModels.value = true
+  try {
+    const list = await aiApi.providerModels(provForm.value.id)
+    if (!list.length) {
+      toast.warning('供应商未返回模型列表')
+      return
+    }
+    provForm.value.models = list.join(',')
+    if (!provForm.value.model || !list.includes(provForm.value.model)) {
+      provForm.value.model = list[0]
+    }
+    toast.success(`已拉取 ${list.length} 个模型`)
+  }
+  catch (e: any) {
+    toast.error('拉取失败', { description: e?.message })
+  }
+  finally {
+    fetchingModels.value = false
+  }
+}
+
+function modelsFor(p: AIProvider): string[] {
+  const list = (p.models || '').split(',').map(m => m.trim()).filter(Boolean)
+  if (!list.includes(p.model)) {
+    list.unshift(p.model)
+  }
+  return list
+}
 
 function iconFor(name: string): string | undefined {
   return providerPresets.find(p => p.name === name || name.includes(p.name.split(' ')[0]))?.icon
@@ -30,7 +65,7 @@ function openProvFromPreset(preset: AIProvider) {
 }
 
 function openProv(p?: AIProvider) {
-  provForm.value = p ? { ...p, apiKey: '' } : { id: 0, name: '', apiType: 'openai', baseURL: '', apiKey: '', model: '', isDefault: false }
+  provForm.value = p ? { ...p, apiKey: '' } : { id: 0, name: '', apiType: 'openai', baseURL: '', apiKey: '', model: '', models: '', isDefault: false }
   provVisible.value = true
 }
 
@@ -77,15 +112,6 @@ onActivated(loadProviders)
 
 <template>
   <div>
-    <FaPageHeader>
-      <template #title>
-        AI 供应商
-      </template>
-      <template #description>
-        内置多家预设与自定义接入，支持 OpenAI 兼容（智谱/DeepSeek/Ollama 等）与 Anthropic
-      </template>
-    </FaPageHeader>
-
     <FaPageMain>
       <div class="space-y-5">
         <!-- 已配置 -->
@@ -103,7 +129,7 @@ onActivated(loadProviders)
                   <span v-if="p.isDefault" class="rounded-full bg-emerald-500/10 px-2 py-0.5 text-xs text-emerald-600">默认</span>
                 </div>
                 <div class="font-mono text-xs text-muted-foreground">
-                  {{ p.baseURL }} · {{ p.model }}
+                  {{ p.baseURL }} · {{ modelsFor(p).join(' / ') }}
                 </div>
               </div>
             </div>
@@ -180,8 +206,29 @@ onActivated(loadProviders)
           <FaInput v-model="provForm.baseURL" class="flex-1" />
         </div>
         <div class="flex items-center gap-3">
-          <span class="w-24 shrink-0 text-muted-foreground">模型</span>
+          <span class="w-24 shrink-0 text-muted-foreground">默认模型</span>
           <FaInput v-model="provForm.model" class="flex-1" />
+        </div>
+        <div class="flex items-start gap-3">
+          <span class="w-24 shrink-0 pt-1.5 text-muted-foreground">可用模型</span>
+          <div class="min-w-0 flex-1 space-y-1">
+            <FaInput
+              v-model="provForm.models"
+              placeholder="逗号分隔，如 deepseek-chat,deepseek-reasoner,deepseek-flash"
+            />
+            <div class="flex items-center gap-2 text-xs text-muted-foreground">
+              <span>对话页可从这些模型中切换；留空则只有默认模型</span>
+              <FaButton
+                variant="ghost"
+                size="sm"
+                :loading="fetchingModels"
+                :title="provForm.id ? '从供应商 API 拉取模型列表' : '先保存供应商后才能拉取'"
+                @click="fetchModels"
+              >
+                <FaIcon name="i-lucide:refresh-cw" class="mr-1" /> 从 API 拉取
+              </FaButton>
+            </div>
+          </div>
         </div>
         <div class="flex items-center gap-3">
           <span class="w-24 shrink-0 text-muted-foreground">API Key</span>

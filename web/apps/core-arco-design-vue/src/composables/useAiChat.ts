@@ -46,6 +46,8 @@ function nextId() {
 export function useAiChat(options?: {
   scenePath?: () => string
   providerId?: () => number | undefined
+  /** 模型覆盖（同一供应商多模型） */
+  model?: () => string | undefined
   autoSave?: boolean
   /** 每轮自动保存成功后的回调（如刷新会话列表） */
   onSaved?: () => void
@@ -127,6 +129,7 @@ export function useAiChat(options?: {
         signal: controller.signal,
         body: JSON.stringify({
           providerId: options?.providerId?.(),
+          model: options?.model?.() || undefined,
           messages: history,
         }),
       })

@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net/http"
 	"sort"
 	"strings"
 
@@ -26,6 +27,7 @@ type AIProvider struct {
 	BaseURL   string `json:"baseURL"`
 	APIKey    string `json:"apiKey"`
 	Model     string `json:"model"`
+	Models    string `json:"models"` // 可用模型列表（逗号分隔）；空 = 仅 Model 一个
 	IsDefault bool   `json:"isDefault"`
 }
 
@@ -103,7 +105,7 @@ func NewAIService(db *gorm.DB, nodes *NodeService, dbSvc *DatabaseService, admin
 // ---- 供应商 CRUD ----
 
 func (s *AIService) toOut(p *model.AIProvider, withKey bool) AIProvider {
-	out := AIProvider{ID: p.ID, Name: p.Name, APIType: p.APIType, BaseURL: p.BaseURL, Model: p.Model, IsDefault: p.IsDefault}
+	out := AIProvider{ID: p.ID, Name: p.Name, APIType: p.APIType, BaseURL: p.BaseURL, Model: p.Model, Models: p.Models, IsDefault: p.IsDefault}
 	if withKey {
 		out.APIKey = p.APIKey
 	}
@@ -160,10 +162,51 @@ func (s *AIService) SaveProvider(p *model.AIProvider) error {
 	if p.ID == 0 {
 		return s.db.Create(p).Error
 	}
-	return s.db.Model(p).Updates(map[string]any{
+	updates := map[string]any{
 		"name": p.Name, "api_type": p.APIType, "base_url": p.BaseURL,
-		"api_key": p.APIKey, "model": p.Model, "is_default": p.IsDefault,
-	}).Error
+		"model": p.Model, "models": p.Models, "is_default": p.IsDefault,
+	}
+	// apiKey 为空表示沿用已存密钥（前端编辑弹窗「留空不修改」）
+	if p.APIKey != "" {
+		updates["api_key"] = p.APIKey
+	}
+	return s.db.Model(p).Updates(updates).Error
+}
+
+// ProviderModels 拉取供应商可用模型列表（openai 兼容 GET {baseURL}/models）。
+func (s *AIService) ProviderModels(id uint) ([]string, error) {
+	p, err := s.ProviderByID(id)
+	if err != nil {
+		return nil, err
+	}
+	req, err := http.NewRequest(http.MethodGet, strings.TrimRight(p.BaseURL, "/")+"/models", nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Authorization", "Bearer "+p.APIKey)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return nil, errWrapAI(fmt.Sprintf("模型列表拉取失败: HTTP %d", resp.StatusCode))
+	}
+	var out struct {
+		Data []struct {
+			ID string `json:"id"`
+		} `json:"data"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		return nil, err
+	}
+	models := make([]string, 0, len(out.Data))
+	for _, m := range out.Data {
+		if m.ID != "" {
+			models = append(models, m.ID)
+		}
+	}
+	return models, nil
 }
 
 // DeleteProvider 删除。

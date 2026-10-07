@@ -18,10 +18,35 @@ const providerId = ref<number>(0)
 const providers = ref<AIProvider[]>([])
 
 // ---- 对话 ----
+const model = ref('')
+
 const { messages, streaming, send, clear, conversationId } = useAiChat({
   scenePath: () => '/',
   providerId: () => providerId.value || undefined,
+  model: () => model.value || undefined,
   onSaved: () => loadConversations(),
+})
+
+// 当前供应商可用模型（未配置列表则只有默认 model 一个）
+const modelOptions = computed(() => {
+  const p = providers.value.find(x => x.id === providerId.value)
+  if (!p) {
+    return []
+  }
+  const list = (p.models || '').split(',').map(m => m.trim()).filter(Boolean)
+  if (!list.includes(p.model)) {
+    list.unshift(p.model)
+  }
+  return list
+})
+
+watch(providerId, () => {
+  model.value = modelOptions.value[0] || ''
+})
+watch(modelOptions, (list) => {
+  if (!list.includes(model.value)) {
+    model.value = list[0] || ''
+  }
 })
 
 function sendChat(t: string) {
@@ -116,18 +141,6 @@ onActivated(() => {
 
 <template>
   <div>
-    <FaPageHeader>
-      <template #title>
-        <div class="flex items-center gap-2">
-          <YdMorphIcon name="sparkles" :size="24" />
-          <span>AI 对话</span>
-        </div>
-      </template>
-      <template #description>
-        选择供应商开始对话；任何页面也可通过右下角浮层直接对话
-      </template>
-    </FaPageHeader>
-
     <FaPageMain>
       <div class="flex h-[calc(100vh-320px)] gap-3">
         <div class="w-52 shrink-0 overflow-y-auto">
@@ -155,9 +168,17 @@ onActivated(() => {
             <span class="text-muted-foreground">供应商</span>
             <select v-model="providerId" class="h-8 rounded-md border bg-background px-2 outline-none">
               <option v-for="p in providers" :key="p.id" :value="p.id">
-                {{ p.name }}（{{ p.model }}）
+                {{ p.name }}
               </option>
             </select>
+            <select v-if="modelOptions.length > 1" v-model="model" class="h-8 rounded-md border bg-background px-2 font-mono text-xs outline-none">
+              <option v-for="m in modelOptions" :key="m" :value="m">
+                {{ m }}
+              </option>
+            </select>
+            <span v-else class="font-mono text-xs text-muted-foreground">
+              {{ model }}
+            </span>
             <button type="button" class="text-xs text-muted-foreground hover:text-foreground" @click="router.push('/ai/providers')">
               + 新增
             </button>

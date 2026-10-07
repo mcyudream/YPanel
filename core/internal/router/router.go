@@ -153,6 +153,7 @@ func Setup(d *Deps) (*gin.Engine, error) {
 			authed.GET("/ai/providers", aiAPI.ListProviders)
 			authed.GET("/ai/presets", aiAPI.Presets)
 			authed.POST("/ai/providers", aiAPI.SaveProvider)
+			authed.GET("/ai/providers/:id/models", aiAPI.ProviderModels)
 			authed.DELETE("/ai/providers/:id", aiAPI.DeleteProvider)
 			authed.POST("/ai/chat", aiAPI.Chat)
 			authed.GET("/ai/conversations", aiAPI.ListConversations)

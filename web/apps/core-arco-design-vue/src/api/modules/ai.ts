@@ -7,6 +7,8 @@ export interface AIProvider {
   baseURL: string
   apiKey?: string
   model: string
+  /** 可用模型列表（逗号分隔）；空 = 仅 model 一个 */
+  models?: string
   isDefault: boolean
 }
 
@@ -31,6 +33,10 @@ export default {
     return res.data as AIProvider[]
   },
   saveProvider: (p: AIProvider) => api.post('api/v1/ai/providers', p),
+  providerModels: async (id: number) => {
+    const res = await api.get(`api/v1/ai/providers/${id}/models`, { timeout: 30000 })
+    return res.data as string[]
+  },
   removeProvider: (id: number) => api.delete(`api/v1/ai/providers/${id}`),
 
   // 系统工具开关

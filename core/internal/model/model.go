@@ -315,6 +315,7 @@ type AIProvider struct {
 	BaseURL   string    `gorm:"size:255;not null" json:"baseURL"`
 	APIKey    string    `gorm:"type:text;not null" json:"apiKey"`
 	Model     string    `gorm:"size:64;not null" json:"model"`
+	Models    string    `gorm:"type:text" json:"models"` // 可用模型列表（逗号分隔）；空 = 仅 Model 一个
 	IsDefault bool      `gorm:"not null;default:false" json:"isDefault"`
 	CreatedAt time.Time `json:"createdAt"`
 	UpdatedAt time.Time `json:"updatedAt"`
