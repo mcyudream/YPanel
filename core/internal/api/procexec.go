@@ -1,6 +1,7 @@
 package api
 
 import (
+	"net/url"
 	"sync"
 
 	"github.com/gin-gonic/gin"
@@ -71,9 +72,19 @@ func (p *ProcProxy) client(c *gin.Context) *agentclient.Client {
 	return agentclient.New(node.BaseURL, node.Token)
 }
 
-// Processes GET /api/v1/processes
+// Processes GET /api/v1/processes?node=&sort=&order=&limit=
 func (p *ProcProxy) Processes(c *gin.Context) {
-	out, err := agentclient.GetJSON[[]dto.ProcessItem](p.client(c), c.Request.Context(), "/agent/v1/processes")
+	v := url.Values{}
+	for _, k := range []string{"sort", "order", "limit"} {
+		if s := c.Query(k); s != "" {
+			v.Set(k, s)
+		}
+	}
+	q := "/agent/v1/processes"
+	if len(v) > 0 {
+		q += "?" + v.Encode()
+	}
+	out, err := agentclient.GetJSON[[]dto.ProcessItem](p.client(c), c.Request.Context(), q)
 	if err != nil {
 		respErr(c, err)
 		return

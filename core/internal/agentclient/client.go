@@ -77,6 +77,13 @@ func doResp[Resp any](c *Client, req *http.Request) (*Resp, error) {
 		return nil, errs.Wrap(errs.ErrAgentUnreach, err.Error())
 	}
 	defer func() { _ = resp.Body.Close() }()
+	// agent 业务错误返回 200 + 信封；非 2xx 一定是传输/路由层问题（404/502 等），
+	// body 也不是 JSON（如 Go mux 的 "404 page not found"，会被解成误导性的
+	// "cannot unmarshal number"），先按状态码拦截并带 body 摘要。
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		head, _ := io.ReadAll(io.LimitReader(resp.Body, 256))
+		return nil, errs.Wrap(errs.ErrAgentUnreach, fmt.Sprintf("agent HTTP %d: %s", resp.StatusCode, strings.TrimSpace(string(head))))
+	}
 	// 先解信封再解 data：agent 返回业务错误时 data 可能为空对象/空值，直接解目标类型会失败
 	var env struct {
 		Code    int             `json:"code"`

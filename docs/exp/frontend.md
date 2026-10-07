@@ -172,3 +172,38 @@
 - **根因**：多个会话在同一 git 工作区并行开发，构建是全仓级的，任何人保留未完成的编辑都会挡住所有人的产物构建。
 - **规避/解决**：① 类型检查用 `vue-tsc -b | grep -v <对方文件>` 隔离自己的范围，先保证**自己改动零错误**；② 不代改对方活跃文件（保存即冲突），等对方合流提交（git log 出现合流 commit）后重试构建；③ 自己的调用点主动适配对方已落地的新签名（如 store 分页返回 `.items`），比要求对方兼容旧签名更稳。
 - **来源**：2026-10-07，M23 容器套件与商店多源/AI v2 会话并行期间。
+
+### FaModal 插槽里的组件用 defineModel 接 visible 会断链：关闭态已挂载，打开时收不到更新
+
+- **现象**：`<FaModal v-model="open"><MyComp v-model:visible="open" /></FaModal>`（MyComp 靠 watch(visible) 加载数据）：弹窗能正常开关，但 MyComp 的 visible 永远是初始 false——打开时数据不加载，界面永远显示空态/旧态。
+- **根因**：FaModal（reka Dialog）默认插槽内容在**关闭态就已挂载**（未 destroy 或首次挂载先于打开），此时 visible=false；用户点击打开后外层 ref 变 true，但插槽内容经过 reka Primitive/Slot 的 cloneVNode 合并链，**defineModel 的更新没有传导到深层组件**（同 exp「reka Slot 转发丢 @click」的家族问题，这次丢的是 prop 更新）。
+- **规避/解决**：把弹窗做进组件内部（组件自身持 FaModal + defineModel 控制开关），内容面板用子组件承载且随 `destroy-on-close` 的打开时机**重建**——onMounted 必然触发加载；需要内嵌在别处时给组件加 `bare` prop 只渲染面板。忌讳「外部弹窗 + 传 visible 驱动加载」的组合。
+- **来源**：2026-10-07，M23 YdRevisionHistory 版本历史弹窗空白排查（弹窗开、请求零发）。
+
+### 后台/遮挡状态的 Chromium 里验收 fa 页面：rAF 冻结导致 RouterView Transition out-in 永久卡在旧组件
+
+- **现象**：浏览器自动化（IAB webview 被遮挡）里 `router.push` 后 hash/面包屑都变了，内容区却停留在旧页面；`#app-content` 子元素常年挂着 `fade-leave-from fade-leave-active`。截图 capture 也超时。硬导航（整页 goto）一切正常。
+- **根因**：fa Layout 用 `<Transition mode="out-in">` 包 RouterView。out-in 要等旧组件 leave 完成——Vue 的 nextFrame 依赖 requestAnimationFrame，Chromium 对 occluded/后台渲染进程**暂停 rAF**（`document.visibilityState==='visible'` 也会发生，按窗口遮挡判定），leave 永不完成，新组件永不挂载。同理 xterm/echarts 的画布渲染（内部 rAF）在后台也不出图，但数据链路正常。
+- **规避/解决**：后台自动化验收一律用**硬导航 + 组件内事件派发**（tab 类 reka 组件要派发完整指针序列 pointerdown/mousedown/pointerup/mouseup/click，仅 `el.click()` 不触发）；弹窗类组件不受影响（teleport 到 body，不走 RouterView Transition）。真实用户窗口可见时无此问题，非代码缺陷。
+- **来源**：2026-10-07，M23 验收（hash 变内容不变的两小时弯路）。
+
+### 前端 API 模块的 node 查询串拼接：nodeQ 产生 `&node=` 前缀，GET 无既有 query 时拼出坏 URL
+
+- **现象**：给原本无 query 的 GET 接口加节点参数时，若直接 `api.get(\`api/v1/services${nodeQ(node)}\`)`，node 非 local 时会拼出 `api/v1/services&node=2`——`&` 开头的 query 被忽略，参数悄悄丢失（请求本身不报错，数据"看似正常"实为本机数据）。
+- **根因**：`file.ts`/`system.ts` 的 `nodeQ()` 助手返回的是 `&node=xxx`（为追加在既有 query 后设计），只有调用方自己保证前面已有 `?`。
+- **规避/解决**：无既有 query 的 GET 用 `?1=1` 占位（system.ts overview 的写法：`api/v1/system/overview?1=1${nodeQ(node)}`），或统一改用 nodeexec.ts 新增的 `nodeQS()`（内部以 `1=1` 起始并合并额外参数）；POST 类用 `nodeQ2()`（返回 `?node=xxx` 或空串）。新增带 node 参数的接口一律走这三个助手，不再手拼。
+- **来源**：2026-10-07，M25 进程/服务与文件管理多节点化。
+
+### 模板 ref 与 setup 变量同名：SFC 编译器劫持为变量引用，useTemplateRef 生产环境失效（dev 正常）
+
+- **现象**：历史监控页生产环境 summary 卡片有值、图表容器 div 尺寸正常，但 echarts 永远不 init、canvas 数 0、**控制台零报错**；dev 环境一切正常。切时间范围、等 DOM、加 nextTick 都无效。
+- **根因**：`script setup` 里有 `let cpuChart = null`（echarts 实例容器），模板又写了 `ref="cpuChart"`。生产构建的 SFC 编译产物把该 ref 编译成**对同名 setup 变量的引用**（`ref_key:'cpuChart', ref: <cpuChart变量>`），而非字符串 ref——运行时该变量是 `null`（非 RefImpl/函数），元素永远写不回，`useTemplateRef('cpuChart')` 的字符串桥接也彻底断掉。dev 产物却是字符串 `ref: "cpuChart"`（静态提升），故 dev 复现不了。
+- **规避/解决**：模板 ref 的名字**不得与任何 setup 顶级绑定同名**——echarts 实例容器等变量一律加后缀（如 `cpuChartInstance`），`ref="cpuChart"` 只留给 `useTemplateRef`。排查此类"生产空白、dev 正常、零报错"问题：直接解剖生产 chunk（grep `ref:` 与 `useTemplateRef`），dev 编译产物用 `curl http://localhost:端口/src/xx.vue` 直接拿。
+- **来源**：2026-10-07，历史监控图表空白（views/manage/monitor.vue）。
+
+### 并行构建/检查流程把 .js 产物同步进 src：全仓 TS2307 成片误报 + vite 模块解析劫持
+
+- **现象**：`src/**` 下出现与 .ts 成对的未跟踪 `.js`（同秒批量写入，删后几分钟内再生）；`vue-tsc` 全仓成片报 `TS2307: Cannot find module '@/utils/xxx'`（连基础模块都"找不到"）；vite 构建的模块解析**优先命中 .js**（resolve extensions 里 .js 在 .ts 前），可能吃进过期转译物。
+- **根因**：另一并行流程（Temp 下 ypanel-master-check 副本环境）周期性把副本里的编译产物同步回真仓库 src。**同名 .js 的存在本身就让 TS 的 paths 别名解析报 TS2307**（受控实验：仅改名 `dayjs.js` → App.vue 全部 TS2307 消失）。本项目 `vue-tsc -b` 本身不 emit（受控实验前后 .js 数量/时间戳不变），不是它的锅。
+- **规避/解决**：`find src -name "*.js" ! -path "*monaco-workers*" -delete` 清掉后**立即竞速发起** vue-tsc/vite build（模块解析发生在进程启动期，中途 .js 再生不影响已启动的解析）；monaco-workers 下 5 个 .js 是源码要排除。构建用独立 outDir 绕开 dist 竞争；Go 侧被对方半成品挡住编译时用 `git worktree add <tmp> HEAD` 隔离构建（HEAD 后端 + 本地新前端产物）。部署后 `curl /health` 看版本串 + 浏览器 `performance.getEntriesByType('resource')` 看 chunk hash，确认服务器跑的真是自己的产物（本次就被并行会话 0830 的部署覆盖过一次）。
+- **来源**：2026-10-07，历史监控修复期间的并行构建互踩。

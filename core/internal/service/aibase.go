@@ -431,7 +431,12 @@ func (s *AIService) toolsFor(ctx context.Context) []tools.Tool {
 			name:        "list_database_instances",
 			description: "列出面板管理的全部数据库实例（id/类型/端口）。无参数，input 传空。",
 			fn: func(_ context.Context, _ string) (string, error) {
-				return s.listDatabaseInstances(ctx)
+				out, err := s.dbSvc.List(ctx)
+				if err != nil {
+					return "", err
+				}
+				b, _ := json.Marshal(out)
+				return string(b), nil
 			},
 		},
 		&aiTool{

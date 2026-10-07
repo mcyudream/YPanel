@@ -1,14 +1,22 @@
 // useAiChat：AI 对话状态管理（对接 /api/v1/ai/chat SSE，含工具调用过程展示）。
 import { computed, ref } from 'vue'
 
+export interface AiChatStep {
+  type: string
+  name?: string
+  detail?: string
+}
+
 export interface AiChatMessage {
   id: string
   role: 'user' | 'assistant'
   content: string
   pending?: boolean
   error?: boolean
-  /** 工具调用过程行（ChatProcess 风格） */
-  steps: string[]
+  /** 深度思考（reasoning 流式拼接） */
+  reasoning?: string
+  /** 工具/步骤链 */
+  steps: AiChatStep[]
 }
 
 export interface AiSceneData {
@@ -111,10 +119,16 @@ export function useAiChat(options?: { scenePath?: () => string, providerId?: () 
             continue
           }
           if (ev.scene) {
-            assistant.steps.push(`已读取场景数据：${ev.scene.page || ''}`)
+            assistant.steps.push({ type: 'scene', name: '读取页面数据', detail: ev.scene.page || '' })
+          }
+          if (ev.reasoning) {
+            assistant.reasoning = (assistant.reasoning || '') + ev.reasoning
+          }
+          if (ev.step) {
+            assistant.steps.push({ type: ev.step.type, name: ev.step.name, detail: ev.step.detail })
           }
           if (ev.tool) {
-            assistant.steps.push(`调用工具：${typeof ev.tool === 'string' ? ev.tool : ev.tool.name || ''}`)
+            assistant.steps.push({ type: 'action', name: typeof ev.tool === 'string' ? ev.tool : ev.tool.name || '' })
           }
           if (ev.content) {
             assistant.content += ev.content

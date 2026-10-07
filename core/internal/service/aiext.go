@@ -48,7 +48,7 @@ func (s *AIService) listDatabaseInstances(ctx context.Context) (string, error) {
 	if s.dbSvc == nil {
 		return "", fmt.Errorf("数据库服务未就绪")
 	}
-	out, err := s.adminSvc.Instances(ctx)
+	out, err := s.dbSvc.List(ctx)
 	if err != nil {
 		return "", err
 	}
@@ -63,7 +63,12 @@ func (s *AIService) aiDatabaseTools(ctx context.Context) []aiTool {
 			name:        "list_database_instances",
 			description: "列出面板管理的全部数据库实例（id/类型/端口）。无参数，input 传空。",
 			fn: func(_ context.Context, _ string) (string, error) {
-				return s.listDatabaseInstances(ctx)
+				out, err := s.dbSvc.List(ctx)
+				if err != nil {
+					return "", err
+				}
+				b, _ := json.Marshal(out)
+				return string(b), nil
 			},
 		},
 		{

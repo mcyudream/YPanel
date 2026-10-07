@@ -9,25 +9,41 @@ defineOptions({
   name: 'NodesIndex',
 })
 
-const nodes = ref<NodeItem[]>([])
-const loading = ref(false)
-// B11：聚合监控
-const metrics = ref<any[]>([])
-const metricsLoading = ref(false)
+const router = useRouter()
 
-async function loadMetrics() {
-  metricsLoading.value = true
-  try {
-    const res = await api.get('api/v1/nodes/metrics', { silent: true })
-    metrics.value = res.data as any[]
-  }
-  catch {}
-  finally {
-    metricsLoading.value = false
-  }
+interface MetricEntry {
+  id: string
+  online: boolean
+  cpu?: number
+  mem?: number
+  rxSpeed?: number
+  txSpeed?: number
+  load1?: number
+  uptime?: number
+  error?: string
 }
 
-function fmtSpeed(n: number) {
+const nodes = ref<NodeItem[]>([])
+const metrics = ref<MetricEntry[]>([])
+const loading = ref(false)
+
+// 基础信息 + 实时指标合并为单卡片数据
+const cards = computed(() => {
+  return nodes.value.map((n) => {
+    const m = metrics.value.find(x => x.id === n.id)
+    return { ...n, metric: m }
+  })
+})
+
+async function loadMetrics() {
+  try {
+    const res = await api.get('api/v1/nodes/metrics', { silent: true })
+    metrics.value = res.data as MetricEntry[]
+  }
+  catch {}
+}
+
+function fmtSpeed(n?: number) {
   if (!n) return '0 B/s'
   const u = ['B/s', 'KB/s', 'MB/s', 'GB/s']
   let i = 0
@@ -35,6 +51,14 @@ function fmtSpeed(n: number) {
   while (v >= 1024 && i < u.length - 1) { v /= 1024; i++ }
   return `${v.toFixed(1)} ${u[i]}`
 }
+
+function fmtUptime(sec?: number) {
+  if (!sec) return '—'
+  const d = Math.floor(sec / 86400)
+  const h = Math.floor((sec % 86400) / 3600)
+  return d > 0 ? `${d} 天 ${h} 小时` : `${h} 小时 ${Math.floor((sec % 3600) / 60)} 分钟`
+}
+
 const pairVisible = ref(false)
 const pairCode = ref('')
 const pairCommand = ref('')
@@ -111,10 +135,23 @@ function remove(n: NodeItem) {
   })
 }
 
+function goDetail(id: string) {
+  router.push(`/nodes/detail/${id}`)
+}
+function goFiles(id: string) {
+  router.push(id === 'local' ? '/file_management' : `/file_management?node=${id}`)
+}
+function goProcs(id: string) {
+  router.push(id === 'local' ? '/processes' : `/processes?node=${id}`)
+}
+
 loadMetrics()
 onMounted(() => {
   load()
-  timer = setInterval(load, 10000)
+  timer = setInterval(() => {
+    load()
+    loadMetrics()
+  }, 10000)
 })
 
 onBeforeUnmount(() => {
@@ -147,41 +184,12 @@ onBeforeUnmount(() => {
     </FaPageHeader>
 
     <FaPageMain>
-      <!-- B11：节点聚合监控 -->
-      <div v-if="metrics.length" class="mb-4 grid gap-3 md:grid-cols-2 xl:grid-cols-3">
-        <div
-          v-for="m in metrics"
-          :key="m.id"
-          class="rounded-lg border p-3"
-          :class="m.online ? '' : 'opacity-60'"
-        >
-          <div class="flex items-center justify-between text-sm font-medium">
-            <span>{{ m.name }}</span>
-            <span
-              class="rounded-full px-2 py-0.5 text-xs"
-              :class="m.online ? 'bg-emerald-500/10 text-emerald-600' : 'bg-red-500/10 text-red-600'"
-            >
-              {{ m.online ? '在线' : '离线' }}
-            </span>
-          </div>
-          <div v-if="m.online" class="mt-2 grid grid-cols-2 gap-x-4 gap-y-1 text-xs text-muted-foreground">
-            <span>CPU {{ m.cpu?.toFixed?.(1) ?? m.cpu }}%</span>
-            <span>内存 {{ m.mem?.toFixed?.(1) ?? m.mem }}%</span>
-            <span>↓ {{ fmtSpeed(m.rxSpeed) }}</span>
-            <span>↑ {{ fmtSpeed(m.txSpeed) }}</span>
-            <span>负载 {{ m.load1 }}</span>
-          </div>
-          <div v-else class="mt-1 text-xs text-red-500">
-            {{ m.error || '不可达' }}
-          </div>
-        </div>
-      </div>
-
       <div class="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
         <div
-          v-for="n in nodes"
+          v-for="n in cards"
           :key="n.id"
-          class="rounded-lg border bg-background p-4 transition-shadow hover:shadow-md"
+          class="cursor-pointer rounded-lg border bg-background p-4 transition-shadow hover:shadow-md"
+          @click="goDetail(n.id)"
         >
           <div class="flex items-start justify-between">
             <div class="flex items-center gap-2">
@@ -199,11 +207,36 @@ onBeforeUnmount(() => {
               {{ n.online ? '在线' : '离线' }}
             </span>
           </div>
-          <div v-if="n.remote" class="mt-3 flex items-center justify-between border-t pt-3">
+
+          <!-- 实时指标 -->
+          <div v-if="n.online && n.metric" class="mt-3 grid grid-cols-3 gap-x-4 gap-y-1.5 text-xs text-muted-foreground">
+            <span>CPU <b class="font-mono tabular-nums text-foreground">{{ n.metric.cpu?.toFixed(1) ?? '—' }}%</b></span>
+            <span>内存 <b class="font-mono tabular-nums text-foreground">{{ n.metric.mem?.toFixed(1) ?? '—' }}%</b></span>
+            <span>负载 <b class="font-mono tabular-nums text-foreground">{{ n.metric.load1?.toFixed(2) ?? '—' }}</b></span>
+            <span>↓ {{ fmtSpeed(n.metric.rxSpeed) }}</span>
+            <span>↑ {{ fmtSpeed(n.metric.txSpeed) }}</span>
+            <span>运行 {{ fmtUptime(n.metric.uptime) }}</span>
+          </div>
+          <div v-else-if="!n.online" class="mt-3 text-xs text-red-500">
+            {{ n.metric?.error || '不可达' }}
+          </div>
+
+          <!-- 系统信息 + 快捷入口 -->
+          <div class="mt-3 flex items-center justify-between border-t pt-3">
             <span class="text-xs text-muted-foreground">
               {{ [n.os, n.arch, n.version].filter(Boolean).join(' · ') || '—' }}
             </span>
-            <FaButton variant="outline" size="sm" @click="remove(n)">删除</FaButton>
+            <div class="flex items-center gap-1">
+              <FaButton variant="ghost" size="icon-sm" title="文件管理" @click.stop="goFiles(n.id)">
+                <FaIcon name="i-lucide:folder-open" class="text-sm" />
+              </FaButton>
+              <FaButton variant="ghost" size="icon-sm" title="进程与服务" @click.stop="goProcs(n.id)">
+                <FaIcon name="i-lucide:cpu" class="text-sm" />
+              </FaButton>
+              <FaButton v-if="n.remote" variant="ghost" size="icon-sm" title="删除节点" @click.stop="remove(n)">
+                <FaIcon name="i-lucide:trash-2" class="text-sm" />
+              </FaButton>
+            </div>
           </div>
         </div>
       </div>

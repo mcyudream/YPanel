@@ -113,13 +113,14 @@ func run(ctx context.Context, cfg *config.Config) error {
 		return fmt.Errorf("启动计划任务调度失败: %w", err)
 	}
 	defer cronSvc.Stop()
-	storeSvc := service.NewStoreService(gdb, nodes, siteSvc, cfg.DataDir)
+	taskSvc := service.NewTaskService(gdb)
+	storeSvc := service.NewStoreService(gdb, nodes, siteSvc, taskSvc, cfg.DataDir)
 	fwSvc := service.NewFirewallService(nodes, cfg.Port)
 	f2bSvc := service.NewFail2banService(nodes)
 	dbAdminSvc := service.NewDBAdminService(gdb, dbSvc)
 	aiSvc := service.NewAIService(gdb, nodes, dbSvc, dbAdminSvc, settings, service.NewSkillsManager(nodes, settings))
 	rtSvc := service.NewRuntimeService(gdb, nodes)
-	dockerExtSvc := service.NewDockerExtService(nodes)
+	dockerExtSvc := service.NewDockerExtService(nodes, taskSvc)
 	suSvc := service.NewSelfUpdateService(nodes, version)
 	notifSvc := service.NewNotificationService(gdb)
 	secSvc := service.NewSecuritySettingsService(settings)
@@ -149,7 +150,7 @@ func run(ctx context.Context, cfg *config.Config) error {
 		Scripts: scriptSvc, DBSvc: dbSvc, Acme: acmeSvc, AI: aiSvc,
 		FW: fwSvc, Alerts: alertSvc,
 		Notif: notifSvc, PanelBP: service.NewPanelBackupService(nodes), Hist: histSvc,
-		F2B: f2bSvc, DBAdmin: dbAdminSvc, SU: suSvc, Store: storeSvc, RT: rtSvc,
+		F2B: f2bSvc, DBAdmin: dbAdminSvc, SU: suSvc, Store: storeSvc, Tasks: taskSvc, RT: rtSvc,
 		DockerExt: dockerExtSvc, Sec: secSvc, Rev: revSvc, NatF: natSvc, Version: version,
 	})
 	if err != nil {

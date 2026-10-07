@@ -16,8 +16,9 @@ const appSettingsStore = useAppSettingsStore()
 
 const toolbarTools = {
   'left-side': ['breadcrumb'],
-  'right-side': ['menuSearch', 'fullscreen', 'pageReload', 'colorScheme'],
-} satisfies Record<typeof props.mode, (keyof ToolbarSettings)[]>
+  // taskCenter 非设置开关项，固定显示（红点由组件内部控制）
+  'right-side': ['menuSearch', 'taskCenter', 'notificationCenter', 'fullscreen', 'pageReload', 'colorScheme'],
+} satisfies Record<typeof props.mode, string[]>
 
 const tools = computed(() => toolbarTools[props.mode])
 
@@ -34,6 +35,9 @@ function checkVisible(item: boolean | { enable: boolean }) {
 
 <template>
   <template v-for="item in tools" :key="item">
-    <Component :is="modules[`./${pascalCase(item)}/index.vue`]" v-if="checkVisible(appSettingsStore.settings.toolbar[item])" />
+    <Component
+      :is="modules[`./${pascalCase(item)}/index.vue`]"
+      v-if="item === 'taskCenter' || checkVisible(appSettingsStore.settings.toolbar[item as keyof ToolbarSettings])"
+    />
   </template>
 </template>

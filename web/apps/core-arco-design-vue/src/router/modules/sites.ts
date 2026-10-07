@@ -18,7 +18,9 @@ const routes: RouteRecordRaw = {
       name: 'sitesIndex',
       component: () => import('@/views/sites/index.vue'),
       meta: {
-        title: '网站列表',
+        title: '网站',
+        // fa 单页约定：主导航平铺直达，无二级展开
+        menu: false,
       },
     },
     {

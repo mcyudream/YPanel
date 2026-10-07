@@ -1,7 +1,11 @@
 package api
 
 import (
+	"encoding/json"
+	"fmt"
+	"net/http"
 	"strconv"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
@@ -13,7 +17,59 @@ import (
 
 // NotificationAPI 通知中心接口。
 type NotificationAPI struct {
-	Notif *service.NotificationService
+	Notif      *service.NotificationService
+	ParseToken func(string) error // SSE query token 校验（EventSource 无法带 header）
+}
+
+// Stream GET /api/v1/notifications/stream?token=（SSE 实时推送：notification / unread 两类事件，25s 心跳）。
+func (a *NotificationAPI) Stream(c *gin.Context) {
+	if a.ParseToken == nil {
+		c.AbortWithStatus(http.StatusUnauthorized)
+		return
+	}
+	if err := a.ParseToken(c.Query("token")); err != nil {
+		c.AbortWithStatus(http.StatusUnauthorized)
+		return
+	}
+	flusher, ok := c.Writer.(http.Flusher)
+	if !ok {
+		c.AbortWithStatus(http.StatusInternalServerError)
+		return
+	}
+	ch := a.Notif.Subscribe()
+	defer a.Notif.Unsubscribe(ch)
+	h := c.Writer.Header()
+	h.Set("Content-Type", "text/event-stream")
+	h.Set("Cache-Control", "no-cache")
+	h.Set("Connection", "keep-alive")
+	h.Set("X-Accel-Buffering", "no")
+	c.Status(http.StatusOK)
+	// 连接建立即推送当前未读数
+	if b, err := json.Marshal(map[string]any{"type": "unread", "count": a.Notif.UnreadCount()}); err == nil {
+		_, _ = fmt.Fprintf(c.Writer, "data: %s\n\n", b)
+		flusher.Flush()
+	}
+	ticker := time.NewTicker(25 * time.Second)
+	defer ticker.Stop()
+	for {
+		select {
+		case msg, ok := <-ch:
+			if !ok {
+				return
+			}
+			if _, err := fmt.Fprintf(c.Writer, "data: %s\n\n", msg); err != nil {
+				return
+			}
+			flusher.Flush()
+		case <-ticker.C:
+			if _, err := fmt.Fprint(c.Writer, ": ping\n\n"); err != nil {
+				return
+			}
+			flusher.Flush()
+		case <-c.Request.Context().Done():
+			return
+		}
+	}
 }
 
 // List GET /api/v1/notifications?limit=
@@ -99,8 +155,8 @@ func (a *AuditAPI) List(c *gin.Context) {
 	respOK(c, dto.NewPageResp(total, rows))
 }
 
-// HistoryDB GET /api/v1/system/history/persisted?seconds=（历史监控持久化查询）
+// HistoryDB GET /api/v1/system/history/persisted?seconds=&node=（历史监控持久化查询，全节点）
 func (a *AuditAPI) History(c *gin.Context) {
 	seconds, _ := strconv.Atoi(c.DefaultQuery("seconds", "3600"))
-	respOK(c, a.Hist.Query(c.Request.Context(), seconds))
+	respOK(c, a.Hist.Query(c.Request.Context(), seconds, c.DefaultQuery("node", "local")))
 }

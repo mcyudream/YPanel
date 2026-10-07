@@ -135,17 +135,22 @@ func (m *Manager) Action(ctx context.Context, id, action string) error {
 	stopTimeoutSecs := 30
 	switch action {
 	case "start":
-		_, err := cli.ContainerStart(ctx, id, client.ContainerStartOptions{})
-		return err
+		if _, err := cli.ContainerStart(ctx, id, client.ContainerStartOptions{}); err != nil {
+			// 保留 daemon 原始错误细节（如挂载缺失/端口冲突），前端直接展示
+			return errs.Wrapc(errs.CodeFileOpFailed, "启动容器失败: "+err.Error())
+		}
 	case "stop":
-		_, err := cli.ContainerStop(ctx, id, client.ContainerStopOptions{Timeout: &stopTimeoutSecs})
-		return err
+		if _, err := cli.ContainerStop(ctx, id, client.ContainerStopOptions{Timeout: &stopTimeoutSecs}); err != nil {
+			return errs.Wrapc(errs.CodeFileOpFailed, "停止容器失败: "+err.Error())
+		}
 	case "restart":
-		_, err := cli.ContainerRestart(ctx, id, client.ContainerRestartOptions{Timeout: &stopTimeoutSecs})
-		return err
+		if _, err := cli.ContainerRestart(ctx, id, client.ContainerRestartOptions{Timeout: &stopTimeoutSecs}); err != nil {
+			return errs.Wrapc(errs.CodeFileOpFailed, "重启容器失败: "+err.Error())
+		}
 	default:
 		return errs.ErrBadRequest
 	}
+	return nil
 }
 
 // Logs 读取容器日志。follow 时持续写入 w 直到 ctx 取消。

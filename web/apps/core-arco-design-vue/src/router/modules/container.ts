@@ -10,7 +10,7 @@ const routes: RouteRecordRaw = {
   name: 'container',
   meta: {
     title: '容器',
-    icon: 'i-logos:docker-icon',
+    icon: 'i-tabler:brand-docker',
   },
   children: [
     {
@@ -19,26 +19,12 @@ const routes: RouteRecordRaw = {
       component: () => import('@/views/container/index.vue'),
       meta: {
         title: '容器',
-      },
-    },
-    {
-      path: 'detail/:id',
-      name: 'containerDetail',
-      component: () => import('@/views/container/detail.vue'),
-      meta: {
-        title: '容器详情',
+        // fa 单页约定（同 ai.ts）：子页 menu:false，主导航点击直达，无二级菜单
         menu: false,
       },
     },
-    {
-      path: 'app/:project',
-      name: 'containerAppDetail',
-      component: () => import('@/views/container/app-detail.vue'),
-      meta: {
-        title: '应用详情',
-        menu: false,
-      },
-    },
+    // 详情页走独立顶级模块（container-detail.ts / container-app.ts），
+    // 避免 fa 多标签下同父兄弟子路由切换不渲染的问题
   ],
 }
 

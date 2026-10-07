@@ -189,9 +189,10 @@ func (a *StoreAPI) Install(c *gin.Context) {
 
 // Uninstall DELETE /api/v1/store/install/:project
 func (a *StoreAPI) Uninstall(c *gin.Context) {
-	if err := a.Store.Uninstall(c.Request.Context(), c.Param("project")); err != nil {
+	out, err := a.Store.Uninstall(c.Request.Context(), c.Param("project"))
+	if err != nil {
 		respErr(c, err)
 		return
 	}
-	respOK(c, struct{}{})
+	respOK(c, out)
 }

@@ -33,7 +33,7 @@ func (a *DockerExtAPI) Images(c *gin.Context) {
 	respOK(c, json2any(out))
 }
 
-// ImagePull POST /api/v1/docker/images/pull {ref}
+// ImagePull POST /api/v1/docker/images/pull {ref}（任务化：返回 taskId，日志在任务中心轮询）
 func (a *DockerExtAPI) ImagePull(c *gin.Context) {
 	req, ok := bind[struct {
 		Ref string `json:"ref" binding:"required"`
@@ -41,12 +41,12 @@ func (a *DockerExtAPI) ImagePull(c *gin.Context) {
 	if !ok {
 		return
 	}
-	out, err := a.Ext.ImagePull(c.Request.Context(), req.Ref)
+	out, err := a.Ext.ImagePullTask(req.Ref)
 	if err != nil {
 		respErr(c, err)
 		return
 	}
-	respOK(c, gin.H{"output": out})
+	respOK(c, out)
 }
 
 // ImageRemove DELETE /api/v1/docker/images/:id

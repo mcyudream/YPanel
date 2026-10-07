@@ -94,6 +94,10 @@ const suggestions = computed(() => {
               :role="m.role"
               :content="m.content"
               :pending="m.pending"
+              :reasoning="m.reasoning || ''"
+              :steps="m.steps || []"
+              show-actions
+              @regenerate="() => {}"
             />
           </div>
         </template>

@@ -108,7 +108,7 @@ func runDocker(ctx context.Context, args ...string) (string, int, error) {
 }
 
 
-// ServiceAction 单服务操作（start/stop/restart/restart 前先 pull 可选）。
+// ServiceAction 单服务操作（start/stop/restart/pull；up=按当前编排定义重建该服务）。
 func (m *Manager) ServiceAction(ctx context.Context, project, service, action string) (string, error) {
 	if err := ValidateName(project); err != nil {
 		return "", err
@@ -117,7 +117,7 @@ func (m *Manager) ServiceAction(ctx context.Context, project, service, action st
 		return "", err
 	}
 	switch action {
-	case "start", "stop", "restart", "pull":
+	case "start", "stop", "restart", "pull", "up":
 	default:
 		return "", errs.ErrBadRequest
 	}
@@ -126,12 +126,19 @@ func (m *Manager) ServiceAction(ctx context.Context, project, service, action st
 	if !ok {
 		return "", errs.Wrap(errs.ErrNotFound, "未在 "+workDir+" 找到 compose 配置")
 	}
-	out, code, err := runDocker(ctx, composeArgs(cfg, "--project-name", project, action, service)...)
+	args := []string{"--project-name", project}
+	if action == "up" {
+		args = append(args, "up", "-d", service)
+	}
+	else {
+		args = append(args, action, service)
+	}
+	out, code, err := runDocker(ctx, composeArgs(cfg, args...)...)
 	if err != nil {
 		return out, err
 	}
 	if code != 0 {
-		return out, errs.Wrapc(errs.CodeFileOpFailed, "compose "+action+" 失败")
+		return out, errs.Wrapc(errs.CodeFileOpFailed, "compose "+action+" 失败: "+out)
 	}
 	return out, nil
 }

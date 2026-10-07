@@ -57,15 +57,17 @@ type AuditLog struct {
 	CreatedAt time.Time `gorm:"index" json:"createdAt"`
 }
 
-// MetricRecord 历史监控（60s 聚合，保留 30 天）。
+// MetricRecord 历史监控（60s 聚合，保留 30 天，全节点）。
 type MetricRecord struct {
-	ID        uint      `gorm:"primaryKey" json:"id"`
-	At        time.Time `gorm:"index" json:"at"`
-	Cpu       float64   `json:"cpu"`
-	Mem       float64   `json:"mem"`
-	RxSpeed   float64   `json:"rxSpeed"`
-	TxSpeed   float64   `json:"txSpeed"`
-	Load1     float64   `json:"load1"`
+	ID      uint      `gorm:"primaryKey" json:"id"`
+	NodeId  string    `gorm:"size:32;index:idx_metric_node_at;default:''" json:"nodeId"` // 空串视为 local（多节点化前的历史数据）
+	At      time.Time `gorm:"index:idx_metric_node_at,priority:2" json:"at"`
+	Cpu     float64   `json:"cpu"`
+	Mem     float64   `json:"mem"`
+	Swap    float64   `json:"swap"` // swap 使用率 %（无 swap 为 0）
+	RxSpeed float64   `json:"rxSpeed"`
+	TxSpeed float64   `json:"txSpeed"`
+	Load1   float64   `json:"load1"`
 }
 
 // Runtime PHP 运行环境（容器化 php-fpm 或接管本机 fastcgi）。
@@ -78,6 +80,19 @@ type Runtime struct {
 	Remark         string    `gorm:"size:255" json:"remark"`
 	ComposeProject string    `gorm:"size:64;not null" json:"composeProject"`
 	CreatedAt      time.Time `json:"createdAt"`
+}
+
+// AppTask 统一任务记录（商店安装/卸载、镜像拉取等耗时操作）。
+type AppTask struct {
+	ID        uint      `gorm:"primaryKey" json:"id"`
+	Type      string    `gorm:"size:32;index;not null" json:"type"` // store-install / store-uninstall / image-pull / ...
+	Title     string    `gorm:"size:255;not null" json:"title"`
+	Ref       string    `gorm:"size:255;index" json:"ref"`                            // 业务引用（compose 项目名 / 镜像名）
+	Status    string    `gorm:"size:16;index;not null;default:running" json:"status"` // running / success / failed
+	LogText   string    `gorm:"type:text" json:"logText"`
+	Error     string    `gorm:"type:text" json:"error"`
+	CreatedAt time.Time `gorm:"index" json:"createdAt"`
+	UpdatedAt time.Time `json:"updatedAt"`
 }
 
 // AppStoreSource 应用源（onepanel zip / yp-url index.json / yp-git 仓库）。

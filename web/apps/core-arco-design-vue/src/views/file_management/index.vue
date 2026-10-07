@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import type { FileEntry } from '@/api/modules/file'
 import apiFile from '@/api/modules/file'
+import apiNode from '@/api/modules/node'
 import { fmtBytes } from '@/utils/format'
 import { useFaModal } from '@fantastic-admin/components'
 import FileEditorWorkspace from './editor/Workspace.vue'
@@ -12,11 +13,34 @@ defineOptions({
 const appAccountStore = useAppAccountStore()
 const fileEditorStore = useFileEditorStore()
 
+const route = useRoute()
+const router = useRouter()
+
 const cwd = ref('/')
 const entries = ref<FileEntry[]>([])
 const loading = ref(false)
 const selected = ref<Set<string>>(new Set())
 const errorMsg = ref('')
+
+// ---- 节点选择（?node= 进入指定节点，默认本机） ----
+const nodeId = ref<string>((route.query.node as string) || 'local')
+const nodes = ref<{ id: string, name: string, online: boolean }[]>([])
+
+async function loadNodes() {
+  try {
+    const list = await apiNode.list()
+    nodes.value = list.map(n => ({ id: n.id, name: n.online ? n.name : `${n.name}（离线）`, online: n.online }))
+  }
+  catch {}
+}
+
+const currentNodeName = computed(() => nodes.value.find(n => n.id === nodeId.value)?.name || '本机')
+
+function pickNode(id: string) {
+  nodeId.value = id
+  router.replace({ query: { ...route.query, node: id === 'local' ? undefined : id } })
+  load('/')
+}
 
 // ---- 格式化 ----
 
@@ -41,7 +65,7 @@ async function load(path = cwd.value) {
   loading.value = true
   errorMsg.value = ''
   try {
-    const res = await apiFile.list(path)
+    const res = await apiFile.list(path, nodeId.value)
     cwd.value = res.path
     entries.value = res.entries
     selected.value = new Set()
@@ -90,7 +114,7 @@ async function doMkdir() {
     return
   }
   const target = joinPath(cwd.value, mkdirName.value.trim())
-  await apiFile.mkdir(target)
+  await apiFile.mkdir(target, nodeId.value)
   mkdirVisible.value = false
   mkdirName.value = ''
   useFaToast().success('目录已创建')
@@ -111,7 +135,7 @@ async function doRename() {
   if (!renameTarget.value || !renameName.value.trim()) {
     return
   }
-  await apiFile.rename(renameTarget.value.path, joinPath(cwd.value, renameName.value.trim()))
+  await apiFile.rename(renameTarget.value.path, joinPath(cwd.value, renameName.value.trim()), nodeId.value)
   renameVisible.value = false
   useFaToast().success('已重命名')
   load()
@@ -127,7 +151,7 @@ async function doDelete() {
     title: '删除确认',
     content: `确认删除选中的 ${paths.length} 项？目录将递归删除，不可恢复。`,
     onConfirm: async () => {
-      await apiFile.delete(paths)
+      await apiFile.delete(paths, nodeId.value)
       useFaToast().success('已删除')
       load()
     },
@@ -135,9 +159,9 @@ async function doDelete() {
 }
 
 // ---- 编辑器（VS Code 式工作台弹窗） ----
-// 本页仅浏览 local 节点，显式传 node 防止工作台残留的节点选择影响打开目标
+// 显式传当前节点，防止工作台残留的节点选择影响打开目标
 async function openEditor(entry: FileEntry) {
-  await fileEditorStore.openWorkspace(entry.path, 'local')
+  await fileEditorStore.openWorkspace(entry.path, nodeId.value)
 }
 
 // ---- 上传 / 下载 ----
@@ -160,7 +184,7 @@ async function onUploadChange(ev: Event) {
     for (const f of Array.from(files)) {
       await apiFile.upload(cwd.value, f, (p) => {
         uploadPercent.value = p
-      })
+      }, nodeId.value)
     }
     useFaToast().success('上传完成')
     load()
@@ -176,7 +200,7 @@ async function onUploadChange(ev: Event) {
 }
 
 function downloadURL(entry: FileEntry) {
-  return apiFile.downloadURL(entry.path, appAccountStore.token)
+  return apiFile.downloadURL(entry.path, appAccountStore.token, nodeId.value)
 }
 
 function openDownload(entry: FileEntry) {
@@ -201,7 +225,7 @@ async function doChmod() {
     return
   }
   try {
-    await apiFile.chmod(chmodTarget.value.path, chmodMode.value)
+    await apiFile.chmod(chmodTarget.value.path, chmodMode.value, nodeId.value)
     chmodVisible.value = false
     useFaToast().success('权限已修改')
     load()
@@ -229,7 +253,7 @@ async function doCompress() {
   }
   compressing.value = true
   try {
-    await apiFile.compress(compressTarget.value.path, compressDest.value.trim())
+    await apiFile.compress(compressTarget.value.path, compressDest.value.trim(), nodeId.value)
     compressVisible.value = false
     useFaToast().success('压缩完成')
     load()
@@ -265,7 +289,7 @@ async function doDecompress() {
   }
   decompressing.value = true
   try {
-    await apiFile.decompress(decompressTarget.value.path, decompressDest.value.trim())
+    await apiFile.decompress(decompressTarget.value.path, decompressDest.value.trim(), nodeId.value)
     decompressVisible.value = false
     useFaToast().success('解压完成')
     load()
@@ -291,7 +315,7 @@ async function doSearch() {
   }
   searching.value = true
   try {
-    searchResults.value = await apiFile.search(cwd.value, kw)
+    searchResults.value = await apiFile.search(cwd.value, kw, nodeId.value)
     searchVisible.value = true
   }
   catch (e: any) {
@@ -309,7 +333,10 @@ function joinPath(dir: string, name: string) {
   return `${dir}/${name}`
 }
 
-onMounted(() => load('/'))
+onMounted(() => {
+  loadNodes()
+  load('/')
+})
 </script>
 
 <template>
@@ -325,6 +352,16 @@ onMounted(() => load('/'))
         <span>浏览、编辑与管理服务器文件（默认根目录为全盘）</span>
       </template>
       <div class="flex flex-wrap items-center gap-2">
+        <select
+          v-if="nodes.some(n => n.id !== 'local')"
+          :value="nodeId"
+          class="h-8 rounded-md border bg-background px-2 text-sm outline-none"
+          @change="pickNode(($event.target as HTMLSelectElement).value)"
+        >
+          <option v-for="n in nodes" :key="n.id" :value="n.id" :disabled="!n.online">
+            {{ n.id === 'local' ? `${n.name}（本机）` : n.name }}
+          </option>
+        </select>
         <div class="flex items-center gap-1">
           <FaInput
             v-model="searchKeyword"
@@ -354,6 +391,9 @@ onMounted(() => load('/'))
     <FaPageMain>
       <!-- 面包屑 -->
       <div class="mb-3 flex flex-wrap items-center gap-1 text-sm">
+        <span v-if="nodeId !== 'local'" class="mr-1 rounded-full bg-primary/10 px-2 py-0.5 text-xs text-primary">
+          {{ currentNodeName }}
+        </span>
         <template v-for="(c, i) in crumbs" :key="c.path">
           <span v-if="i" class="text-muted-foreground">/</span>
           <button

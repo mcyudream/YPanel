@@ -15,8 +15,15 @@ import (
 	"github.com/ypanel/shared/errs"
 )
 
-// List 进程列表（按 CPU 降序，截断 500 条）。
-func List(ctx context.Context) ([]dto.ProcessItem, error) {
+// ListOpts 进程列表选项。
+type ListOpts struct {
+	Sort  string // cpu|mem|rss|pid|name，默认 cpu
+	Order string // asc|desc，默认 desc
+	Limit int    // 默认 500，上限 2000
+}
+
+// List 进程列表（按指定字段排序，截断 Limit 条；截断发生在排序之后，保证排序准确）。
+func List(ctx context.Context, opts ListOpts) ([]dto.ProcessItem, error) {
 	procs, err := process.Processes()
 	if err != nil {
 		return nil, errs.Wrapc(errs.CodeFileOpFailed, err.Error())
@@ -45,11 +52,46 @@ func List(ctx context.Context) ([]dto.ProcessItem, error) {
 		}
 		out = append(out, item)
 	}
-	sort.Slice(out, func(i, j int) bool { return out[i].Cpu > out[j].Cpu })
-	if len(out) > 500 {
-		out = out[:500]
+	sortBy(out, opts.Sort, opts.Order)
+	limit := opts.Limit
+	if limit <= 0 {
+		limit = 500
+	}
+	if limit > 2000 {
+		limit = 2000
+	}
+	if len(out) > limit {
+		out = out[:limit]
 	}
 	return out, nil
+}
+
+// sortBy 按字段排序；非法字段回退 cpu。
+func sortBy(list []dto.ProcessItem, field, order string) {
+	asc := order == "asc"
+	less := func(a, b float64) bool {
+		if asc {
+			return a < b
+		}
+		return a > b
+	}
+	switch field {
+	case "mem":
+		sort.Slice(list, func(i, j int) bool { return less(list[i].Mem, list[j].Mem) })
+	case "rss":
+		sort.Slice(list, func(i, j int) bool { return less(float64(list[i].MemRSS), float64(list[j].MemRSS)) })
+	case "pid":
+		sort.Slice(list, func(i, j int) bool { return less(float64(list[i].Pid), float64(list[j].Pid)) })
+	case "name":
+		sort.Slice(list, func(i, j int) bool {
+			if asc {
+				return list[i].Name < list[j].Name
+			}
+			return list[i].Name > list[j].Name
+		})
+	default: // cpu
+		sort.Slice(list, func(i, j int) bool { return less(list[i].Cpu, list[j].Cpu) })
+	}
 }
 
 // Kill 结束进程（SIGKILL）。

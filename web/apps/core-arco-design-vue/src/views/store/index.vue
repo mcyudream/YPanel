@@ -1,7 +1,10 @@
 <script setup lang="ts">
-import type { StoreAppItem, StoreListQuery, StoreSource, StoreTag, StoreVersion } from '@/api/modules/store'
+import type { StoreAppItem, StoreFormField, StoreListQuery, StoreSource, StoreTag, StoreVersion } from '@/api/modules/store'
+import type { AppTask } from '@/api/modules/task'
 import { marked } from 'marked'
-import { storeApi } from '@/api/modules/store'
+import { isPortField, storeApi } from '@/api/modules/store'
+import { taskApi } from '@/api/modules/task'
+import YdLogViewer from '@/components/YdLogViewer/index.vue'
 
 defineOptions({
   name: 'StoreIndex',
@@ -33,6 +36,7 @@ const tags = ref<StoreTag[]>([])
 const sources = ref<StoreSource[]>([])
 const loading = ref(false)
 const syncing = ref(false)
+const upgradableCount = ref(0)
 
 async function load() {
   if (activeTab.value === 'sources') {
@@ -60,6 +64,18 @@ async function load() {
   }
   finally {
     loading.value = false
+  }
+  refreshUpgradableCount()
+}
+
+// 角标数 = 全量可升级数（借分页接口 total，pageSize=1 最轻）
+async function refreshUpgradableCount() {
+  try {
+    const out = await storeApi.list({ status: 'upgradable', page: 1, pageSize: 1 })
+    upgradableCount.value = out.total
+  }
+  catch {
+    // 角标失败不打扰主流程
   }
 }
 
@@ -149,12 +165,16 @@ async function openDetail(item: StoreAppItem) {
 // ---------- 安装向导 ----------
 const installVisible = ref(false)
 const installing = ref(false)
-const installLogs = ref('')
 const installTarget = ref<StoreAppItem | null>(null)
 const installForm = ref({ version: '', name: '', domain: '', params: {} as Record<string, string> })
-const installFields = ref<{ envKey: string, label: Record<string, string>, default?: unknown, required?: boolean, type?: string }[]>([])
+const installFields = ref<StoreFormField[]>([])
 const installProxyEnv = ref('')
 const installVersions = ref<StoreVersion[]>([])
+// 任务化安装：提交后切换为日志视图
+const installTaskId = ref(0)
+const installTask = ref<AppTask | null>(null)
+const installLogLoading = ref(false)
+let installPollTimer: ReturnType<typeof setInterval> | null = null
 
 function fieldLabel(f: { label: Record<string, string>, envKey?: string }) {
   return f.label?.zh || f.label?.en || f.envKey || ''
@@ -168,19 +188,52 @@ function applyInstallVersion(versions: StoreVersion[], versionId: string) {
   installForm.value.version = target.id
   installFields.value = (target.formFields || []).filter(f => f.envKey)
   const params: Record<string, string> = {}
-  for (const f of target.formFields || []) {
-    if (f.default !== undefined && f.default !== null) {
-      params[f.envKey] = String(f.default)
-    }
+  for (const f of installFields.value) {
+    params[f.envKey] = fieldDefault(f)
   }
   installForm.value.params = params
 }
 
+function stopInstallPolling() {
+  if (installPollTimer) {
+    clearInterval(installPollTimer)
+    installPollTimer = null
+  }
+}
+
+async function refreshInstallTask() {
+  if (!installTaskId.value) {
+    return
+  }
+  installLogLoading.value = true
+  try {
+    installTask.value = await taskApi.get(installTaskId.value)
+    if (installTask.value.status !== 'running') {
+      stopInstallPolling()
+      if (installTask.value.status === 'success') {
+        useFaToast().success(`应用 ${installTask.value.ref} 安装完成`)
+      }
+      else {
+        useFaToast().error('安装失败', { description: installTask.value.error })
+      }
+      await Promise.all([load(), loadTags()])
+    }
+  }
+  catch (e: any) {
+    useFaToast().error('任务状态读取失败', { description: e?.message })
+    stopInstallPolling()
+  }
+  finally {
+    installLogLoading.value = false
+  }
+}
+
 function openInstall(item: StoreAppItem, versionId = '') {
   installTarget.value = item
-  installLogs.value = ''
   installProxyEnv.value = item.reverseProxy
   installForm.value = { version: versionId || item.latestVersion || '', name: item.key, domain: '', params: {} }
+  installTaskId.value = 0
+  installTask.value = null
   // 优先复用详情抽屉已加载的版本；否则异步拉取
   if (detailApp.value?.sourceId === item.sourceId && detailApp.value?.key === item.key && detailVersions.value.length) {
     installVersions.value = detailVersions.value
@@ -203,7 +256,6 @@ async function doInstall() {
     return
   }
   installing.value = true
-  installLogs.value = '部署中：写入 compose 目录并启动…'
   try {
     const out = await storeApi.install({
       sourceId: target.sourceId,
@@ -213,38 +265,44 @@ async function doInstall() {
       params: installForm.value.params,
       domain: installForm.value.domain || undefined,
     })
-    installLogs.value = out.logs || '完成'
-    if (out.proxySite) {
-      useFaToast().success(`已安装并创建反代站点 ${out.proxySite}`)
-    }
-    else if (out.proxyWarning) {
-      useFaToast().warning('已安装，但反代创建失败', { description: out.proxyWarning })
-    }
-    else {
-      useFaToast().success(`应用 ${out.project} 已安装`)
-    }
-    await Promise.all([load(), loadTags()])
+    // 任务化：切换到日志视图并轮询
+    installTaskId.value = out.taskId
+    installTask.value = null
+    useFaToast().success('安装任务已创建')
+    void refreshInstallTask()
+    stopInstallPolling()
+    installPollTimer = setInterval(() => {
+      if (!installTask.value || installTask.value.status === 'running') {
+        void refreshInstallTask()
+      }
+      else {
+        stopInstallPolling()
+      }
+    }, 2000)
   }
   catch (e: any) {
-    useFaToast().error('安装失败', { description: e?.message })
-    if (e?.message) {
-      installLogs.value = e.message
-    }
+    useFaToast().error('创建安装任务失败', { description: e?.message })
   }
   finally {
     installing.value = false
   }
 }
 
+watch(installVisible, (v) => {
+  if (!v) {
+    stopInstallPolling()
+  }
+})
+
 function uninstall(p: string) {
   const modal = useFaModal()
   modal.confirm({
     title: '卸载应用',
-    content: `确认卸载 ${p}？容器与 compose 目录将被移除（数据卷保留在项目目录）。`,
+    content: `确认卸载 ${p}？容器与 compose 目录将被移除（数据卷保留在项目目录）。可在"任务中心"查看进度。`,
     onConfirm: async () => {
       try {
         await storeApi.uninstall(p)
-        useFaToast().success('已卸载')
+        useFaToast().success('卸载任务已创建，可在「任务中心」查看进度')
         await Promise.all([load(), loadTags()])
       }
       catch (e: any) {
@@ -256,6 +314,49 @@ function uninstall(p: string) {
 
 async function upgrade(item: StoreAppItem) {
   openInstall(item, item.latestVer)
+}
+
+// ---------- 安装表单控件辅助 ----------
+
+const CHARS = 'abcdefghjkmnpqrstuvwxyzABCDEFGHJKMNPQRSTUVWXYZ23456789'
+
+function randomPassword(len = 16) {
+  let s = ''
+  for (let i = 0; i < len; i++) {
+    s += CHARS[Math.floor(Math.random() * CHARS.length)]
+  }
+  return s
+}
+
+function randomPort() {
+  return String(32768 + Math.floor(Math.random() * 28231))
+}
+
+function fieldIsEditable(f: StoreFormField) {
+  return f.edit !== false && !f.disabled && f.type !== 'service' && f.type !== 'apps'
+}
+
+// 按字段语义生成默认值（密码随机 / 端口随机高位，对齐 1Panel 行为）
+function fieldDefault(f: StoreFormField) {
+  if (f.type === 'password' && f.random !== false && f.default === undefined) {
+    return randomPassword()
+  }
+  if (isPortField(f) && f.type === 'number') {
+    return randomPort()
+  }
+  if (f.default !== undefined && f.default !== null) {
+    return String(f.default)
+  }
+  return ''
+}
+
+function randomizeField(f: StoreFormField) {
+  if (f.type === 'password') {
+    installForm.value.params[f.envKey] = randomPassword()
+  }
+  else if (isPortField(f)) {
+    installForm.value.params[f.envKey] = randomPort()
+  }
 }
 
 // ---------- 源管理 ----------
@@ -377,8 +478,11 @@ function statusText(s: StoreSource) {
           @click="activeTab = t.key"
         >
           {{ t.label }}
-          <span v-if="t.key === 'upgradable'" class="ml-0.5 rounded-full bg-red-500 px-1.5 text-xs text-white">
-            {{ items.filter(i => i.upgradable).length || '' }}
+          <span
+            v-if="t.key === 'upgradable' && upgradableCount > 0"
+            class="ml-1 inline-flex h-4 min-w-4 items-center justify-center rounded-full bg-red-500 px-1 text-[10px] leading-none text-white"
+          >
+            {{ upgradableCount > 99 ? '99+' : upgradableCount }}
           </span>
         </button>
       </div>
@@ -597,39 +701,89 @@ function statusText(s: StoreSource) {
     </FaDrawer>
 
     <!-- 安装向导 -->
-    <FaModal v-model="installVisible" :title="`安装：${installTarget?.name || ''}`" class="max-w-2xl!" :destroy-on-close="true">
-      <div class="flex flex-col gap-3">
+    <FaModal v-model="installVisible" :title="installTaskId ? `安装进行中：${installTarget?.name || ''}` : `安装：${installTarget?.name || ''}`" class="max-w-2xl!" :destroy-on-close="true" :close-on-click-modal="false">
+      <!-- 阶段一：参数 -->
+      <div v-if="!installTaskId" class="flex flex-col gap-3">
         <div class="flex items-center gap-3">
-          <span class="w-24 shrink-0 text-sm text-muted-foreground">应用名</span>
+          <span class="w-28 shrink-0 text-sm text-muted-foreground">应用名</span>
           <FaInput v-model="installForm.name" placeholder="小写字母/数字/中划线" class="flex-1" />
         </div>
         <div class="flex items-center gap-3">
-          <span class="w-24 shrink-0 text-sm text-muted-foreground">版本</span>
+          <span class="w-28 shrink-0 text-sm text-muted-foreground">版本</span>
           <select v-model="installForm.version" class="h-9 flex-1 rounded-md border border-input bg-background px-2 text-sm outline-none">
             <option v-for="v in installVersions" :key="v.id" :value="v.id">{{ v.name || v.id }}</option>
           </select>
         </div>
-        <div v-for="f in installFields" :key="f.envKey" class="flex items-center gap-3">
-          <span class="w-24 shrink-0 text-sm text-muted-foreground">{{ fieldLabel(f) }}</span>
-          <FaInput
-            v-model="installForm.params[f.envKey]"
-            :type="f.type === 'number' ? 'number' : f.type === 'password' ? 'password' : 'text'"
-            :placeholder="f.required ? '必填' : '可选'"
-            class="flex-1"
-          />
-        </div>
+        <template v-for="f in installFields" :key="f.envKey">
+          <!-- 关联服务 / 复合字段（一期只读说明） -->
+          <div v-if="f.type === 'service' || f.type === 'apps'" class="flex items-center gap-3">
+            <span class="w-28 shrink-0 text-sm text-muted-foreground">{{ fieldLabel(f) }}</span>
+            <span class="flex-1 rounded-md border border-dashed px-2 py-1.5 text-xs text-muted-foreground">
+              {{ f.default ? String(f.default) : '自动关联已安装服务' }}{{ f.description ? `（${f.description}）` : '' }}
+            </span>
+          </div>
+          <div v-else class="flex items-center gap-3">
+            <span class="w-28 shrink-0 text-sm text-muted-foreground">
+              {{ fieldLabel(f) }}<span v-if="f.required" class="text-red-500">*</span>
+            </span>
+            <!-- 枚举：下拉选择 -->
+            <select
+              v-if="f.type === 'select' && f.values?.length"
+              v-model="installForm.params[f.envKey]"
+              :disabled="!fieldIsEditable(f)"
+              class="h-9 flex-1 rounded-md border border-input bg-background px-2 text-sm outline-none"
+            >
+              <option v-for="o in f.values" :key="o.value" :value="o.value">{{ o.label || o.value }}</option>
+            </select>
+            <!-- 密码 / 端口：输入 + 随机 -->
+            <div v-else class="flex flex-1 items-center gap-1.5">
+              <FaInput
+                v-model="installForm.params[f.envKey]"
+                :type="f.type === 'password' ? 'password' : f.type === 'number' ? 'number' : 'text'"
+                :disabled="!fieldIsEditable(f)"
+                :placeholder="f.required ? '必填' : '可选'"
+                class="flex-1"
+              />
+              <FaButton
+                v-if="fieldIsEditable(f) && (f.type === 'password' || isPortField(f))"
+                variant="outline" size="icon-sm" title="随机生成"
+                @click="randomizeField(f)"
+              >
+                <FaIcon name="i-lucide:dices" class="text-sm" />
+              </FaButton>
+            </div>
+          </div>
+          <div v-if="f.description" class="-mt-2 pl-31 text-xs text-muted-foreground">{{ f.description }}</div>
+        </template>
         <div v-if="installProxyEnv" class="flex items-center gap-3">
-          <span class="w-24 shrink-0 text-sm text-muted-foreground">一键反代</span>
+          <span class="w-28 shrink-0 text-sm text-muted-foreground">一键反代</span>
           <FaInput v-model="installForm.domain" placeholder="选填：安装后自动创建反代站点域名，如 app.example.com" class="flex-1" />
         </div>
         <div class="text-xs text-muted-foreground">
-          安装为 compose 项目 app-&lt;应用名&gt;，容器接入 1panel-network；卸载保留数据卷
+          安装为 compose 项目 app-&lt;应用名&gt;，容器接入 1panel-network；端口已随机避开占用（可手动修改，安装前会做占用预检）；卸载保留数据卷
         </div>
-        <pre v-if="installLogs" class="max-h-40 overflow-auto whitespace-pre-wrap rounded-md bg-muted/50 p-2 font-mono text-xs">{{ installLogs }}</pre>
+      </div>
+      <!-- 阶段二：任务日志 -->
+      <div v-else class="flex flex-col gap-3">
+        <div class="flex items-center gap-3 text-sm">
+          <span class="rounded-full px-2 py-0.5 text-xs" :class="installTask?.status === 'success' ? 'bg-emerald-500/10 text-emerald-600' : installTask?.status === 'failed' ? 'bg-red-500/10 text-red-600' : 'bg-blue-500/10 text-blue-600'">
+            {{ installTask?.status === 'success' ? '安装成功' : installTask?.status === 'failed' ? '安装失败' : '进行中' }}
+          </span>
+          <span class="text-xs text-muted-foreground">任务 #{{ installTaskId }} · 也可在「任务中心」查看</span>
+        </div>
+        <YdLogViewer :logs="installTask?.logText || ''" height="320px" :loading="installLogLoading" />
       </div>
       <template #footer>
-        <FaButton variant="outline" @click="installVisible = false">取消</FaButton>
-        <FaButton :loading="installing" @click="doInstall">安装</FaButton>
+        <template v-if="!installTaskId">
+          <FaButton variant="outline" @click="installVisible = false">取消</FaButton>
+          <FaButton :loading="installing" @click="doInstall">创建安装任务</FaButton>
+        </template>
+        <template v-else>
+          <FaButton variant="outline" @click="installVisible = false">
+            {{ installTask?.status === 'running' ? '后台运行' : '关闭' }}
+          </FaButton>
+          <FaButton v-if="installTask?.status === 'failed'" @click="installTaskId = 0">返回修改参数</FaButton>
+        </template>
       </template>
     </FaModal>
 

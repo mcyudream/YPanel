@@ -1,9 +1,10 @@
 <script setup lang="ts">
 // YdAiMessageList：消息列表容器（自动滚动到底部）。
+import type { AiChatMessage } from '@/composables/useAiChat'
 import { nextTick, ref, watch } from 'vue'
 
 const props = defineProps<{
-  messages: Array<{ id: string, role: 'user' | 'assistant', content: string, pending?: boolean, steps?: string[] }>
+  messages: AiChatMessage[]
 }>()
 
 const listRef = ref<HTMLElement>()

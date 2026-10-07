@@ -1,16 +1,22 @@
 <script setup lang="ts">
-// YdAiBubble：AI 对话气泡（参考 YDBubble 规格封装：Markdown 正文/思考中/光标/操作栏）。
+// YdAiBubble：AI 对话气泡（参考 YDBubble 规格封装：Markdown 正文/深度思考折叠/步骤时间线/光标/操作栏）。
 import { computed } from 'vue'
 import { marked } from 'marked'
+import YdAiProcess from '@/components/YdAiChat/Process.vue'
+import YdAiReasoning from '@/components/YdAiChat/Reasoning.vue'
 
 const props = withDefaults(defineProps<{
   role: 'user' | 'assistant'
   content: string
   pending?: boolean
   showActions?: boolean
+  reasoning?: string
+  steps?: Array<{ type: string, name?: string, detail?: string }>
 }>(), {
   pending: false,
   showActions: false,
+  reasoning: '',
+  steps: () => [],
 })
 
 const emit = defineEmits<{ regenerate: [] }>()
@@ -49,19 +55,42 @@ defineExpose({ copyText })
     >
       <FaIcon :name="role === 'user' ? 'i-lucide:user' : 'i-ri:sparkling-2-line'" class="text-sm" />
     </div>
-    <div
-      class="max-w-85% rounded-lg px-3 py-2 text-sm leading-relaxed"
-      :class="bubbleClass"
-    >
-      <span v-if="loading" class="text-muted-foreground">正在思考…</span>
-      <template v-else-if="role === 'assistant'">
-        <!-- eslint-disable-next-line vue/no-v-html -->
-        <div class="ai-md" v-html="html" />
-        <span v-if="pending" class="ml-0.5 inline-block h-4 w-1.5 animate-pulse bg-foreground/60 align-middle" />
-      </template>
-      <template v-else>
-        {{ content }}
-      </template>
+    <div class="min-w-0 flex-1">
+      <!-- 深度思考折叠块 -->
+      <YdAiReasoning
+        v-if="role === 'assistant' && (reasoning || pending)"
+        :reasoning="reasoning"
+        :streaming="pending && !content"
+      />
+      <!-- 工具/步骤时间线 -->
+      <YdAiProcess
+        v-if="role === 'assistant' && steps.length"
+        :steps="steps"
+        :streaming="pending && !content"
+      />
+      <div
+        class="rounded-lg px-3 py-2 text-sm leading-relaxed"
+        :class="bubbleClass"
+      >
+        <span v-if="loading" class="text-muted-foreground">正在思考…</span>
+        <template v-else-if="role === 'assistant'">
+          <!-- eslint-disable-next-line vue/no-v-html -->
+          <div class="ai-md" v-html="html" />
+          <span v-if="pending" class="ml-0.5 inline-block h-4 w-1.5 animate-pulse bg-foreground/60 align-middle" />
+        </template>
+        <template v-else>
+          {{ content }}
+        </template>
+      </div>
+      <!-- 操作栏 -->
+      <div v-if="showActions && !loading && content" class="mt-1 flex items-center gap-3 text-xs text-muted-foreground">
+        <button type="button" class="cursor-pointer hover:text-foreground" @click="copyText">
+          <FaIcon name="i-lucide:copy" class="mr-0.5" /> 复制
+        </button>
+        <button type="button" class="cursor-pointer hover:text-foreground" @click="emit('regenerate')">
+          <FaIcon name="i-lucide:refresh-cw" class="mr-0.5" /> 重新生成
+        </button>
+      </div>
     </div>
   </div>
 </template>

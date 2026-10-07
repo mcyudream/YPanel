@@ -33,6 +33,11 @@ export default {
     const res = await api.post('api/v1/compose/down', { name, dir })
     return (res.data as { output?: string }).output || ''
   },
+  // 单服务操作：start / stop / restart / pull / up（按当前编排定义重建该服务）
+  serviceAction: async (name: string, service: string, action: 'start' | 'stop' | 'restart' | 'pull' | 'up', dir?: string) => {
+    const res = await api.post('api/v1/compose/service-action', { name, service, action, dir }, { timeout: 300000 })
+    return (res.data as { output?: string }).output || ''
+  },
   logsURL: (name: string, dir: string | undefined, token: string, tail = 500, follow = false, service = '') =>
     `api/v1/compose/logs?name=${encodeURIComponent(name)}&dir=${encodeURIComponent(dir || '')}&tail=${tail}&follow=${follow ? 1 : 0}&service=${encodeURIComponent(service)}&token=${encodeURIComponent(token)}`,
 }

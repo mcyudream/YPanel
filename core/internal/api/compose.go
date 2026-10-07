@@ -152,7 +152,7 @@ func (c *ComposeAPI) ServiceAction(ctx *gin.Context) {
 	req, ok := bind[struct {
 		Project string `json:"project" binding:"required"`
 		Service string `json:"service" binding:"required"`
-		Action  string `json:"action" binding:"required,oneof=start stop restart pull"`
+		Action  string `json:"action" binding:"required,oneof=start stop restart pull up"`
 	}](ctx)
 	if !ok {
 		return

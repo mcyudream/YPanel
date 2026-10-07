@@ -125,9 +125,9 @@ async function restore(entry: FileHistoryEntry) {
       </div>
     </div>
 
-    <!-- 服务器版本（受管配置，跨设备可回滚） -->
+    <!-- 服务器版本（受管配置，跨设备可回滚；bare 内嵌面板） -->
     <div v-if="source === 'server' && managed && tab">
-      <YdRevisionHistory :node="tab.node" :path="tab.path" @restored="store.reload(tab.id)" />
+      <YdRevisionHistory bare :node="tab.node" :path="tab.path" @restored="store.reload(tab.id)" />
     </div>
 
     <template #footer>

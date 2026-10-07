@@ -8,6 +8,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strings"
+	"time"
 
 	"github.com/ypanel/core/internal/agentclient"
 	"github.com/ypanel/shared/dto"
@@ -17,11 +19,37 @@ import (
 // DockerExtService Docker 管理扩展服务。
 type DockerExtService struct {
 	nodes *NodeService
+	tasks *TaskService
 }
 
-// NewDockerExtService 创建。
-func NewDockerExtService(nodes *NodeService) *DockerExtService {
-	return &DockerExtService{nodes: nodes}
+// NewDockerExtService 创建（tasks 用于镜像拉取等耗时操作任务化，可 nil）。
+func NewDockerExtService(nodes *NodeService, tasks *TaskService) *DockerExtService {
+	return &DockerExtService{nodes: nodes, tasks: tasks}
+}
+
+// ImagePullTask 异步镜像拉取任务（返回任务 ID）。
+func (s *DockerExtService) ImagePullTask(ref string) (map[string]any, error) {
+	if s.tasks == nil {
+		return nil, errs.Wrap(errs.ErrBadRequest, "任务服务不可用")
+	}
+	task, err := s.tasks.StartTask(TaskImagePull, "拉取镜像 "+ref, ref, 60*time.Minute,
+		func(ctx context.Context, logf TaskLogf) error {
+			logf("info", "开始拉取镜像 %s", ref)
+			out, err := s.ImagePull(ctx, ref)
+			if err != nil {
+				return err
+			}
+			for _, l := range strings.Split(strings.TrimSpace(out), "\n") {
+				if l = strings.TrimSpace(l); l != "" {
+					logf("info", "%s", l)
+				}
+			}
+			return nil
+		})
+	if err != nil {
+		return nil, err
+	}
+	return map[string]any{"taskId": task.ID}, nil
 }
 
 // Client 暴露 agent 客户端（WS 代理等直连场景使用）。

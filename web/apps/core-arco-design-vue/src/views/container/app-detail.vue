@@ -11,6 +11,7 @@ const route = useRoute()
 const router = useRouter()
 const toast = useFaToast()
 const fileEditorStore = useFileEditorStore()
+const appAccountStore = useAppAccountStore()
 
 const project = computed(() => String(route.params.project || ''))
 
@@ -62,6 +63,16 @@ watch(project, () => load(), { immediate: true })
 const running = computed(() => info.value?.running || 0)
 const total = computed(() => info.value?.total || 0)
 
+// 项目主 compose 文件：目录里可能是 compose.yaml / docker-compose.yml 等命名
+const mainYaml = computed(() => {
+  if (!info.value?.managed) {
+    return ''
+  }
+  const dir = info.value.dir.replace(/\/$/, '')
+  const hit = dirFiles.value.find(f => /^compose\.ya?ml$|^docker-compose\.ya?ml$/.test(f.name))
+  return hit ? hit.path : `${dir}/docker-compose.yml`
+})
+
 async function doUp() {
   acting.value = 'up'
   try {
@@ -100,7 +111,103 @@ function confirmDown() {
 }
 
 function containerOf(service: string): ContainerItem | undefined {
+  // compose 服务名（label com.docker.compose.service）与展示名（容器名/项目约定）可能不同，两级匹配
   return containers.value.find(c => c.labels?.[LabelComposeService] === service)
+    || containers.value.find(c => c.name === service)
+}
+
+// ---- 服务级操作（容器 action + compose 服务级重建） ----
+async function serviceAction(service: string, action: 'start' | 'stop' | 'restart' | 'up') {
+  const key = `svc-${service}-${action}`
+  acting.value = key
+  try {
+    await apiCompose.serviceAction(info.value!.name, service, action, info.value!.managed ? '' : info.value!.dir)
+    const label = action === 'up' ? '重建' : action === 'start' ? '启动' : action === 'stop' ? '停止' : '重启'
+    toast.success(`已${label}服务 ${service}`)
+    await load()
+  }
+  catch (e: any) {
+    toast.error(`服务 ${action} 失败`, { description: e?.message })
+  }
+  finally {
+    acting.value = ''
+  }
+}
+
+function dropdownItems(service: string) {
+  const c = containerOf(service)
+  const running = c?.state === 'running'
+  return [[
+    ...(running ? [] : [{ label: '启动', icon: 'i-lucide:play', handle: () => serviceAction(service, 'start') }]),
+    ...(running ? [{ label: '重启', icon: 'i-lucide:rotate-cw', handle: () => serviceAction(service, 'restart') }] : []),
+    ...(running ? [{ label: '停止', icon: 'i-lucide:square', handle: () => serviceAction(service, 'stop') }] : []),
+    { label: '重建（按编排定义）', icon: 'i-lucide:hammer', handle: () => serviceAction(service, 'up') },
+  ]]
+}
+
+// ---- 服务日志弹窗（compose logs 按服务流式） ----
+const svcLogsVisible = ref(false)
+const svcLogsTarget = ref('')
+const svcLogsContent = ref('')
+const svcLogsFollowing = ref(false)
+let svcLogsAbort: AbortController | null = null
+
+function openServiceLogs(service: string) {
+  svcLogsTarget.value = service
+  svcLogsContent.value = ''
+  svcLogsVisible.value = true
+  loadServiceLogs(service, false)
+}
+
+function wsBase() {
+  return (import.meta.env.DEV && import.meta.env.VITE_ENABLE_PROXY) ? '/proxy' : ''
+}
+
+async function loadServiceLogs(service: string, follow: boolean) {
+  svcLogsAbort?.abort()
+  svcLogsAbort = new AbortController()
+  svcLogsFollowing.value = follow
+  try {
+    const token = appAccountStore.token
+    const url = `${wsBase()}/${apiCompose.logsURL(info.value!.name, info.value!.managed ? '' : info.value!.dir, token, 1000, follow, service)}`
+    const resp = await fetch(url, {
+      headers: { Authorization: `Bearer ${token}` },
+      signal: svcLogsAbort.signal,
+    })
+    if (!resp.ok || !resp.body) {
+      throw new Error(`HTTP ${resp.status}`)
+    }
+    const reader = resp.body.getReader()
+    const decoder = new TextDecoder()
+    for (;;) {
+      const { done, value } = await reader.read()
+      if (done) {
+        break
+      }
+      svcLogsContent.value += decoder.decode(value, { stream: true })
+      if (svcLogsContent.value.length > 2_000_000) {
+        svcLogsContent.value = svcLogsContent.value.slice(-1_000_000)
+      }
+      await nextTick()
+      const el = document.getElementById('svc-logs-box')
+      if (el) {
+        el.scrollTop = el.scrollHeight
+      }
+    }
+  }
+  catch (e: any) {
+    if (e?.name !== 'AbortError') {
+      svcLogsContent.value += `\n[日志流错误] ${e?.message || e}`
+    }
+  }
+  finally {
+    svcLogsFollowing.value = false
+  }
+}
+
+function closeServiceLogs() {
+  svcLogsAbort?.abort()
+  svcLogsVisible.value = false
 }
 
 function openServiceTerminal(service: string) {
@@ -183,10 +290,10 @@ onBeforeUnmount(() => {
             停止
           </FaButton>
         </template>
-        <FaButton v-if="info?.managed" variant="outline" size="sm" @click="openFile(`${info.dir.replace(/\/$/, '')}/docker-compose.yml`)">
+        <FaButton v-if="mainYaml" variant="outline" size="sm" @click="openFile(mainYaml)">
           <FaIcon name="i-lucide:pen-line" class="mr-1" /> 编辑配置
         </FaButton>
-        <FaButton v-if="info?.managed" variant="outline" size="sm" @click="revisionVisible = true">
+        <FaButton v-if="mainYaml" variant="outline" size="sm" @click="revisionVisible = true">
           <FaIcon name="i-lucide:history" class="mr-1" /> 版本历史
         </FaButton>
       </div>
@@ -239,7 +346,10 @@ onBeforeUnmount(() => {
                 </td>
                 <td class="px-3 py-2">
                   <div class="flex items-center justify-end gap-1">
-                    <FaButton variant="ghost" size="sm" title="终端 + 文件" @click="openServiceTerminal(s.name)">
+                    <FaButton variant="ghost" size="sm" title="服务日志" @click="openServiceLogs(s.name)">
+                      <FaIcon name="i-lucide:scroll-text" class="text-sm" />
+                    </FaButton>
+                    <FaButton variant="ghost" size="sm" title="进入终端" @click="openServiceTerminal(s.name)">
                       <FaIcon name="i-lucide:square-terminal" class="text-sm" />
                     </FaButton>
                     <FaButton
@@ -248,6 +358,13 @@ onBeforeUnmount(() => {
                     >
                       <FaIcon name="i-lucide:info" class="text-sm" />
                     </FaButton>
+                    <FaDropdown
+                      :items="dropdownItems(s.name)"
+                    >
+                      <FaButton variant="outline" size="sm" :loading="acting === `svc-${s.name}-start` || acting === `svc-${s.name}-restart` || acting === `svc-${s.name}-stop` || acting === `svc-${s.name}-up`" title="电源操作">
+                        <FaIcon name="i-lucide:power" class="text-sm" />
+                      </FaButton>
+                    </FaDropdown>
                   </div>
                 </td>
               </tr>
@@ -319,14 +436,35 @@ onBeforeUnmount(() => {
       </template>
     </FaPageMain>
 
-    <!-- 版本历史 -->
-    <FaModal v-model="revisionVisible" :title="`版本历史：${project} / docker-compose.yml`" class="max-w-3xl!" :destroy-on-close="true">
-      <YdRevisionHistory
-        v-if="info?.managed" v-model:visible="revisionVisible"
-        node="local" :path="`${info.dir.replace(/\/$/, '')}/docker-compose.yml`" @restored="load()"
-      />
+    <!-- 版本历史（组件自含弹窗） -->
+    <YdRevisionHistory
+      v-if="mainYaml" v-model="revisionVisible"
+      node="local" :path="mainYaml" @restored="load()"
+    />
+
+    <!-- 服务日志 -->
+    <FaModal
+      v-model="svcLogsVisible"
+      :title="`服务日志：${svcLogsTarget}`"
+      class="max-w-5xl!"
+      :destroy-on-close="true"
+      @close="closeServiceLogs"
+    >
+      <div class="mb-2 flex items-center gap-2">
+        <FaButton size="sm" :variant="svcLogsFollowing ? 'default' : 'outline'" @click="loadServiceLogs(svcLogsTarget, !svcLogsFollowing)">
+          <FaIcon name="i-lucide:radio" class="mr-1" :class="svcLogsFollowing ? 'animate-pulse' : ''" />
+          {{ svcLogsFollowing ? '跟踪中（点击停止）' : '跟踪日志' }}
+        </FaButton>
+        <FaButton variant="outline" size="sm" @click="loadServiceLogs(svcLogsTarget, false)">
+          刷新
+        </FaButton>
+        <span v-if="containerOf(svcLogsTarget)" class="text-xs text-muted-foreground">
+          容器：{{ containerOf(svcLogsTarget)!.name }} · {{ containerOf(svcLogsTarget)!.state }}
+        </span>
+      </div>
+      <pre id="svc-logs-box" class="h-96 overflow-auto rounded-md bg-muted/60 p-3 font-mono text-xs leading-relaxed">{{ svcLogsContent || '暂无日志' }}</pre>
       <template #footer>
-        <FaButton variant="outline" @click="revisionVisible = false">
+        <FaButton variant="outline" @click="closeServiceLogs">
           关闭
         </FaButton>
       </template>

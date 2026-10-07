@@ -217,3 +217,42 @@ func TestNatPortRangeHelpers(t *testing.T) {
 		t.Fatal("端口范围辅助函数语义错误")
 	}
 }
+
+// 渲染视图只取启用态且族匹配的规则（停用规则不得进内核链）。
+func TestNatEnabledViews(t *testing.T) {
+	rules := []model.NatForwardRule{
+		{ID: 1, IPFamily: 4, Protocol: "tcp", Enabled: true, ListenPort: 8080, TargetIP: "10.0.0.1", TargetPort: 80},
+		{ID: 2, IPFamily: 4, Protocol: "tcp", Enabled: false, ListenPort: 8081, TargetIP: "10.0.0.1", TargetPort: 80},
+		{ID: 3, IPFamily: 6, Protocol: "tcp", Enabled: true, ListenPort: 8082, TargetIP: "fd00::1", TargetPort: 80},
+	}
+	v4 := natEnabledViews(rules, 4)
+	if len(v4) != 1 || v4[0].ID != 1 {
+		t.Fatalf("v4 启用视图应仅含 id=1: %+v", v4)
+	}
+	v6 := natEnabledViews(rules, 6)
+	if len(v6) != 1 || v6[0].ID != 3 {
+		t.Fatalf("v6 启用视图应仅含 id=3: %+v", v6)
+	}
+	// 全停用 → 空视图（上层应改走容忍式冲刷）
+	all := natEnabledViews(rules[:2], 6)
+	if len(all) != 0 {
+		t.Fatalf("应无启用规则: %+v", all)
+	}
+}
+
+// 容忍式冲刷脚本：命令缺失静默成功、链存在判定后才冲刷、无 -A 无 sysctl。
+func TestBuildNatFlushScript(t *testing.T) {
+	s := buildNatFlushScript("ip6tables")
+	for _, want := range []string{
+		"command -v ip6tables >/dev/null 2>&1 || exit 0",
+		"ip6tables -t nat -L YPANEL_FWD -n >/dev/null 2>&1 && ip6tables -t nat -F YPANEL_FWD",
+		"ip6tables -t nat -L YPANEL_FWD_POST -n >/dev/null 2>&1 && ip6tables -t nat -F YPANEL_FWD_POST",
+	} {
+		if !strings.Contains(s, want) {
+			t.Fatalf("冲刷脚本缺少 %q:\n%s", want, s)
+		}
+	}
+	if strings.Contains(s, "-A ") || strings.Contains(s, "sysctl") {
+		t.Fatalf("冲刷脚本不应含 -A 或 sysctl:\n%s", s)
+	}
+}

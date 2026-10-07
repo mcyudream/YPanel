@@ -19,6 +19,8 @@ const routes: RouteRecordRaw = {
       component: () => import('@/views/certs/index.vue'),
       meta: {
         title: '证书',
+        // fa 单页约定：主导航平铺直达，无二级展开
+        menu: false,
       },
     },
   ],

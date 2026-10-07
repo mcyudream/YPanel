@@ -27,8 +27,8 @@ export const dockerExtApi = {
     return res.data as DockerImage[]
   },
   pull: async (ref: string) => {
-    const res = await api.post('api/v1/docker/images/pull', { ref }, { timeout: 600000 })
-    return (res.data as { output: string }).output
+    const res = await api.post('api/v1/docker/images/pull', { ref }, { timeout: 60000 })
+    return res.data as { taskId: number }
   },
   removeImage: (id: string, force = false) =>
     api.delete(`api/v1/docker/images/${encodeURIComponent(id)}?force=${force}`),

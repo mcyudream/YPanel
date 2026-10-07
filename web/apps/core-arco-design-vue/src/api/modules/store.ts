@@ -1,12 +1,23 @@
 import api from '../index'
 
+export interface StoreFormValue { label: string, value: string }
+
 export interface StoreFormField {
   envKey: string
   label: Record<string, string>
   default?: unknown
-  type?: string
-  rule?: string
+  type?: string // text / number / password / select / service / apps
+  rule?: string // paramPort / paramCommon / paramComplexity...
   required?: boolean
+  random?: boolean // 安装时随机生成（密码/名称）
+  edit?: boolean // false = 只读
+  disabled?: boolean
+  description?: string
+  values?: StoreFormValue[]
+}
+
+export function isPortField(f: StoreFormField) {
+  return f.rule === 'paramPort' || f.rule === 'paramPortRange' || (f.envKey || '').toUpperCase().includes('PORT')
 }
 
 export interface StoreVersion {
@@ -145,8 +156,11 @@ export const storeApi = {
     return res.data as StoreInstall[]
   },
   install: async (data: { sourceId: number, key: string, version: string, name: string, params: Record<string, string>, domain?: string }) => {
-    const res = await api.post('api/v1/store/install', data, { timeout: 600000 })
-    return res.data as { project: string, logs: string, proxyWarning?: string, proxySite?: string }
+    const res = await api.post('api/v1/store/install', data, { timeout: 60000 })
+    return res.data as { taskId: number, project: string }
   },
-  uninstall: (project: string) => api.delete(`api/v1/store/install/${encodeURIComponent(project)}`),
+  uninstall: async (project: string) => {
+    const res = await api.delete(`api/v1/store/install/${encodeURIComponent(project)}`)
+    return res.data as { taskId: number, project: string }
+  },
 }

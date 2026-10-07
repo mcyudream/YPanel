@@ -1,6 +1,7 @@
 package api
 
 import (
+	"encoding/json"
 	"io"
 	"net/http"
 
@@ -15,6 +16,7 @@ import (
 // SystemAPI 主机监控接口（代理 agent）。
 type SystemAPI struct {
 	Nodes *service.NodeService
+	Notif *service.NotificationService // 概览附带最近通知（可空）
 }
 
 func (s *SystemAPI) client(c *gin.Context) *agentclient.Client {
@@ -22,14 +24,24 @@ func (s *SystemAPI) client(c *gin.Context) *agentclient.Client {
 	return agentclient.New(node.BaseURL, node.Token)
 }
 
-// Overview GET /api/v1/system/overview
+// Overview GET /api/v1/system/overview（含 recentNotifications 最近 5 条）
 func (s *SystemAPI) Overview(c *gin.Context) {
 	out, err := agentclient.GetJSON[dto.SystemOverview](s.client(c), c.Request.Context(), "/agent/v1/sysinfo/overview")
 	if err != nil {
 		respErr(c, err)
 		return
 	}
-	respOK(c, out)
+	// 展开为 map 以便附加 recentNotifications 且不破坏原字段
+	var resp map[string]any
+	if b, merr := json.Marshal(out); merr == nil {
+		_ = json.Unmarshal(b, &resp)
+	} else {
+		resp = map[string]any{}
+	}
+	if s.Notif != nil {
+		resp["recentNotifications"] = s.Notif.List(5)
+	}
+	respOK(c, resp)
 }
 
 // History GET /api/v1/system/history?seconds=

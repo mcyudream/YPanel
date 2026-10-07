@@ -29,6 +29,7 @@ type Deps struct {
 	Certs    *service.CertificateService
 	Groups   *service.SiteGroupService
 	Store    *service.StoreService
+	Tasks    *service.TaskService
 	FW       *service.FirewallService
 	NatF     *service.NatForwardService
 	Alerts   *service.AlertService
@@ -56,7 +57,7 @@ func Setup(d *Deps) (*gin.Engine, error) {
 	authAPI := &api.AuthAPI{Auth: d.Auth, Sec: d.Sec, Version: d.Version}
 	securityAPI := &api.SecurityAPI{Sec: d.Sec, Auth: d.Auth}
 	userAPI := &api.UserAPI{DB: d.Auth.DB()}
-	sysAPI := &api.SystemAPI{Nodes: d.Nodes}
+	sysAPI := &api.SystemAPI{Nodes: d.Nodes, Notif: d.Notif}
 	sysManageAPI := &api.SysManageAPI{Nodes: d.Nodes}
 	fileAPI := &api.FileAPI{Nodes: d.Nodes, Rev: d.Rev}
 	dockerAPI := &api.DockerAPI{Nodes: d.Nodes}
@@ -72,6 +73,7 @@ func Setup(d *Deps) (*gin.Engine, error) {
 	certAPI := &api.CertAPI{Certs: d.Certs, Groups: d.Groups}
 	nodeAPI := &api.NodeAPI{Nodes: d.Nodes}
 	storeAPI := &api.StoreAPI{Store: d.Store}
+	taskAPI := &api.TaskAPI{Tasks: d.Tasks}
 	fwAPI := &api.FirewallAPI{FW: d.FW}
 	natAPI := &api.NatForwardAPI{NF: d.NatF}
 	alertAPI := &api.AlertAPI{Alerts: d.Alerts}
@@ -79,7 +81,7 @@ func Setup(d *Deps) (*gin.Engine, error) {
 	rtAPI := &api.RuntimeAPI{RT: d.RT}
 	dbAdminAPI := &api.DBAdminAPI{Admin: d.DBAdmin}
 	suAPI := &api.SelfUpdateAPI{SU: d.SU}
-	notifAPI := &api.NotificationAPI{Notif: d.Notif}
+	notifAPI := &api.NotificationAPI{Notif: d.Notif, ParseToken: func(t string) error { _, err := d.Auth.ParseToken(t); return err }}
 	procExecAPI := &api.NodeExecAPI{Nodes: d.Nodes}
 	procProxy := &api.ProcProxy{Nodes: d.Nodes}
 	dockerExtAPI := &api.DockerExtAPI{Ext: d.DockerExt}
@@ -100,6 +102,7 @@ func Setup(d *Deps) (*gin.Engine, error) {
 			_, err := d.Auth.ParseToken(t)
 			return err
 		}))
+	v1.GET("/notifications/stream", notifAPI.Stream) // SSE：query token 自校验（EventSource 无法带 header）
 	v1.POST("/pair", nodeAPI.Pair)
 	v1.POST("/pair/heartbeat", nodeAPI.Heartbeat)
 
@@ -302,6 +305,11 @@ func Setup(d *Deps) (*gin.Engine, error) {
 			authed.GET("/store/installed", storeAPI.Installed)
 			authed.POST("/store/install", storeAPI.Install)
 			authed.DELETE("/store/install/:project", storeAPI.Uninstall)
+
+			authed.GET("/tasks", taskAPI.List)
+			authed.GET("/tasks/:id", taskAPI.Get)
+			authed.DELETE("/tasks/:id", taskAPI.Delete)
+			authed.DELETE("/tasks", taskAPI.Clear)
 
 			authed.GET("/firewall/status", fwAPI.Status)
 			authed.POST("/firewall/allow", fwAPI.Allow)

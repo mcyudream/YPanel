@@ -24,6 +24,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -58,14 +59,31 @@ type StoreVersion struct {
 	FormFields   []StoreFormField `json:"formFields"`
 }
 
-// StoreFormField 版本参数定义。
+// StoreFormField 版本参数定义（兼容 1Panel formFields 全量形态）。
 type StoreFormField struct {
-	EnvKey   string            `json:"envKey"`
-	Label    map[string]string `json:"label"`
-	Default  interface{}       `json:"default"`
-	Type     string            `json:"type"`
-	Rule     string            `json:"rule"`
-	Required bool              `json:"required"`
+	EnvKey      string            `json:"envKey"`
+	Label       map[string]string `json:"label"`
+	Default     interface{}       `json:"default"`
+	Type        string            `json:"type"` // text / number / password / select / service / apps / ...
+	Rule        string            `json:"rule"` // paramPort / paramCommon / paramComplexity / ...
+	Required    bool              `json:"required"`
+	Random      bool              `json:"random"` // 安装时随机生成（密码/名称类）
+	Edit        *bool             `json:"edit"`   // false = 只读展示
+	Disabled    bool              `json:"disabled"`
+	Description string            `json:"description"`
+	Values      []StoreFormValue  `json:"values"` // select 选项
+}
+
+// StoreFormValue select 选项。
+type StoreFormValue struct {
+	Label string `json:"label"`
+	Value string `json:"value"`
+}
+
+// isPortField 端口类字段（预检与随机默认的依据）。
+func (f StoreFormField) isPortField() bool {
+	return f.Rule == "paramPort" || f.Rule == "paramPortRange" ||
+		strings.Contains(strings.ToUpper(f.EnvKey), "PORT")
 }
 
 // ypListDTO yp 源清单（index.json）。
@@ -137,15 +155,16 @@ type StoreService struct {
 	db    *gorm.DB
 	nodes *NodeService
 	sites *SiteService
+	tasks *TaskService
 	http  *http.Client
 	mu    sync.Mutex
 	dir   string // 源缓存目录根 <data>/store-sources
 }
 
-// NewStoreService 创建（dataDir 为面板数据目录；sites 用于一键反代，可为 nil）。
-func NewStoreService(db *gorm.DB, nodes *NodeService, sites *SiteService, dataDir string) *StoreService {
+// NewStoreService 创建（dataDir 为面板数据目录；sites 用于一键反代、tasks 用于任务中心，均可为 nil）。
+func NewStoreService(db *gorm.DB, nodes *NodeService, sites *SiteService, tasks *TaskService, dataDir string) *StoreService {
 	return &StoreService{
-		db: db, nodes: nodes, sites: sites,
+		db: db, nodes: nodes, sites: sites, tasks: tasks,
 		http: &http.Client{Timeout: 5 * time.Minute},
 		dir:  filepath.Join(dataDir, storeSourceDirName),
 	}
@@ -780,7 +799,7 @@ type StoreInstallInput struct {
 	Domain   string            `json:"domain"` // 可选：安装后一键反代域名
 }
 
-// Install 安装商店应用。
+// Install 安装商店应用（异步任务：立即返回任务 ID，日志在任务中心/向导内轮询）。
 func (s *StoreService) Install(ctx context.Context, in StoreInstallInput) (map[string]any, error) {
 	if !storeAppNamePattern.MatchString(in.Name) {
 		return nil, errs.Wrap(errs.ErrBadRequest, "应用实例名不合法（小写字母/数字/中划线）")
@@ -795,98 +814,181 @@ func (s *StoreService) Install(ctx context.Context, in StoreInstallInput) (map[s
 	if ver == nil {
 		return nil, errs.Wrap(errs.ErrBadRequest, "版本不存在")
 	}
-	// 参数合并：定义 default ∪ 用户输入
+	// 参数合并：定义 default ∪ 用户输入；random 字段缺省时后端兜底随机
 	finalParams := map[string]string{}
 	for _, f := range ver.FormFields {
 		if f.EnvKey == "" {
 			continue
 		}
 		finalParams[f.EnvKey] = sanitizeParam(fmt.Sprint(f.Default))
+		if f.Random && f.Type == "password" && (in.Params == nil || in.Params[f.EnvKey] == "") {
+			finalParams[f.EnvKey] = randomHex(12)
+		}
 	}
 	for k, v := range in.Params {
 		if !paramKeyPattern.MatchString(k) {
 			return nil, errs.Wrap(errs.ErrBadRequest, "参数名不合法: "+k)
 		}
-		finalParams[k] = sanitizeParam(v)
+		if v != "" {
+			finalParams[k] = sanitizeParam(v)
+		}
 	}
 	project := "app-" + in.Name
 	finalParams["CONTAINER_NAME"] = project
 	finalParams["CONTAINER_NAME1"] = project + "-1"
 
-	logs, err := s.deployCompose(ctx, row, *ver, in.Name, project, finalParams)
+	// 端口占用预检在任务内执行（需 agent exec）
+	input := in
+	task, err := s.tasks.StartTask(TaskStoreInstall, fmt.Sprintf("安装 %s（%s）", row.Name, project), project, 30*time.Minute,
+		func(tctx context.Context, logf TaskLogf) error {
+			return s.runInstall(tctx, logf, row, *ver, input, project, finalParams)
+		})
 	if err != nil {
-		if logs != "" {
-			return map[string]any{"logs": logs}, err
-		}
 		return nil, err
 	}
+	return map[string]any{"taskId": task.ID, "project": project}, nil
+}
+
+// runInstall 任务化安装主体：重装清理 → 端口预检 → 部署 → 记录 → 一键反代。
+func (s *StoreService) runInstall(ctx context.Context, logf TaskLogf, app model.AppStoreApp, ver StoreVersion, in StoreInstallInput, project string, params map[string]string) error {
+	ac, err := s.client()
+	if err != nil {
+		return err
+	}
+	logf("info", "开始安装 %s 版本 %s → 项目 %s", app.Name, ver.ID, project)
+
+	// 重装场景：先 down 同名项目释放端口与容器
+	if out, err := agentclient.DoJSON[dto.ExecReq, dto.ExecResp](ac, ctx, "POST", "/agent/v1/exec",
+		&dto.ExecReq{Command: fmt.Sprintf("docker compose -p %s ps --format '{{.Name}}' 2>/dev/null | grep -q . && cd /opt/ypanel/compose/%s 2>/dev/null && docker compose -p %s down || true", project, project, project), TimeoutSecs: 120}); err == nil {
+		if strings.Contains(out.Output, project) || out.ExitCode == 0 {
+			logf("info", "已停止同名旧项目（重装）")
+		}
+	}
+
+	// 端口占用预检
+	if err := s.precheckPorts(ctx, logf, params); err != nil {
+		return err
+	}
+
+	logs, err := s.deployCompose(ctx, logf, app, ver, project, params)
+	if err != nil {
+		return err
+	}
+	_ = logs
 
 	// 已装记录 upsert（同名重装=换版本）
 	var exist model.AppStoreInstall
 	if err := s.db.Where("compose_project = ?", project).First(&exist).Error; err == nil {
 		_ = s.db.Model(&exist).Updates(map[string]any{
-			"source_id": row.SourceID, "key": row.Key, "name": in.Name, "version": ver.ID,
+			"source_id": app.SourceID, "key": app.Key, "name": in.Name, "version": ver.ID,
 		}).Error
 	} else {
 		_ = s.db.Create(&model.AppStoreInstall{
-			SourceID: row.SourceID, Key: row.Key, Name: in.Name, Version: ver.ID, ComposeProject: project,
+			SourceID: app.SourceID, Key: app.Key, Name: in.Name, Version: ver.ID, ComposeProject: project,
 		}).Error
 	}
+	logf("info", "安装完成，项目 %s 已启动", project)
 
-	out := map[string]any{"project": project, "logs": logs}
-	// 一键反代（失败仅附带警告，不回滚安装）
-	if in.Domain != "" && row.ReverseProxy != "" && s.sites != nil {
-		port := finalParams[row.ReverseProxy]
+	// 一键反代（失败不回滚安装）
+	if in.Domain != "" && app.ReverseProxy != "" && s.sites != nil {
+		port := params[app.ReverseProxy]
 		if port == "" {
 			port = "80"
 		}
+		logf("info", "创建反代站点 %s → http://%s:%s", in.Domain, project, port)
 		site, perr := s.sites.Create(ctx, SiteCreateInput{
 			Name: "app-" + in.Name, Type: "proxy", Domain: in.Domain,
 			ProxyPass: "http://" + project + ":" + port,
-			Remark:    "商店应用 " + row.Name + " 反代",
+			Remark:    "商店应用 " + app.Name + " 反代",
 		})
 		if perr != nil {
-			out["proxyWarning"] = "反代创建失败: " + perr.Error()
+			logf("warn", "反代创建失败（不影响安装）: %s", perr.Error())
 		} else if site != nil {
-			out["proxySite"] = site.Domain
+			logf("info", "反代站点已创建：%s", site.Domain)
 		}
 	}
-	return out, nil
+	return nil
 }
 
-// deployCompose 两种包形态的统一部署。
-func (s *StoreService) deployCompose(ctx context.Context, app model.AppStoreApp, ver StoreVersion, name, project string, params map[string]string) (string, error) {
+// precheckPorts 端口占用预检：宿主已监听端口即冲突（compose down 后检测，本项目旧端口已释放）。
+func (s *StoreService) precheckPorts(ctx context.Context, logf TaskLogf, params map[string]string) error {
+	ports := []int{}
+	for k, v := range params {
+		if !strings.Contains(strings.ToUpper(k), "PORT") || v == "" {
+			continue
+		}
+		if n, err := strconv.Atoi(v); err == nil && n > 0 && n < 65536 {
+			ports = append(ports, n)
+		}
+	}
+	if len(ports) == 0 {
+		return nil
+	}
+	ac, err := s.client()
+	if err != nil {
+		return err
+	}
+	out, err := agentclient.DoJSON[dto.ExecReq, dto.ExecResp](ac, ctx, "POST", "/agent/v1/exec",
+		&dto.ExecReq{Command: "ss -tlnH | awk '{print $4}' | grep -oE '[0-9]+$' | sort -un", TimeoutSecs: 30})
+	if err != nil {
+		logf("warn", "端口预检跳过（ss 不可用）: %s", err.Error())
+		return nil
+	}
+	listening := map[int]bool{}
+	for _, l := range strings.Fields(out.Output) {
+		if n, err := strconv.Atoi(l); err == nil {
+			listening[n] = true
+		}
+	}
+	conflicts := []int{}
+	for _, p := range ports {
+		if listening[p] {
+			conflicts = append(conflicts, p)
+		}
+	}
+	if len(conflicts) > 0 {
+		return errs.Wrap(errs.ErrBadRequest, fmt.Sprintf("端口已被占用: %v（请修改安装参数中的端口后重试）", conflicts))
+	}
+	logf("info", "端口预检通过: %v", ports)
+	return nil
+}
+
+// deployCompose 两种包形态的统一部署（步骤日志写任务）。
+func (s *StoreService) deployCompose(ctx context.Context, logf TaskLogf, app model.AppStoreApp, ver StoreVersion, project string, params map[string]string) (string, error) {
 	ac, err := s.client()
 	if err != nil {
 		return "", err
 	}
 	dir := "/opt/ypanel/compose/" + project
 	var logs []string
-	step := func(desc, cmd string) error {
+	step := func(desc, cmd string, timeoutSecs int) error {
 		out, err := agentclient.DoJSON[dto.ExecReq, dto.ExecResp](ac, ctx, "POST", "/agent/v1/exec",
-			&dto.ExecReq{Command: cmd, TimeoutSecs: 600})
+			&dto.ExecReq{Command: cmd, TimeoutSecs: timeoutSecs})
 		if err != nil {
 			return errs.Wrapc(errs.CodeFileOpFailed, desc+" 失败: "+err.Error())
 		}
 		if out.ExitCode != 0 {
-			return errs.Wrapc(errs.CodeFileOpFailed, desc+" 失败: "+firstLine(out.Output))
+			// compose up/pull 的真实错误常在输出尾部（首行多为 Pulling 进度）
+			return errs.Wrapc(errs.CodeFileOpFailed, desc+" 失败: "+tailOutput(out.Output, 1200))
 		}
 		logs = append(logs, desc+" ✓")
+		logf("info", "%s ✓", desc)
 		return nil
 	}
-	if err := step("创建目录", fmt.Sprintf("mkdir -p %s", dir)); err != nil {
+	if err := step("创建目录", fmt.Sprintf("mkdir -p %s", dir), 60); err != nil {
 		return strings.Join(logs, "\n"), err
 	}
 	switch {
 	case ver.DownloadURL != "":
 		// 远端包：agent 端下载解压
-		if err := step("下载应用包", fmt.Sprintf("curl -sL -o %s/pkg.tar.gz '%s'", dir, ver.DownloadURL)); err != nil {
+		logf("info", "下载应用包: %s", ver.DownloadURL)
+		if err := step("下载应用包", fmt.Sprintf("curl -sSL --connect-timeout 20 -o %s/pkg.tar.gz '%s'", dir, ver.DownloadURL), 600); err != nil {
 			return strings.Join(logs, "\n"), err
 		}
-		if err := step("解压", fmt.Sprintf("cd %s && tar xzf pkg.tar.gz", dir)); err != nil {
+		if err := step("解压", fmt.Sprintf("cd %s && tar xzf pkg.tar.gz", dir), 300); err != nil {
 			return strings.Join(logs, "\n"), err
 		}
-		if err := step("定位 compose", fmt.Sprintf("cd %s && find . -name 'docker-compose.y*ml' -o -name 'compose.y*ml' | head -1 | xargs -I{} cp {} ./docker-compose.yml", dir)); err != nil {
+		if err := step("定位 compose", fmt.Sprintf("cd %s && find . -name 'docker-compose.y*ml' -o -name 'compose.y*ml' | head -1 | xargs -I{} cp {} ./docker-compose.yml", dir), 60); err != nil {
 			return strings.Join(logs, "\n"), err
 		}
 	case ver.LocalDir != "":
@@ -896,10 +998,11 @@ func (s *StoreService) deployCompose(ctx context.Context, app model.AppStoreApp,
 			return strings.Join(logs, "\n"), errs.Wrapc(errs.CodeFileOpFailed, "写入应用包失败: "+werr.Error())
 		}
 		logs = append(logs, fmt.Sprintf("写入应用包 %d 个文件 ✓", n))
+		logf("info", "写入应用包 %d 个文件 ✓", n)
 	default:
 		return strings.Join(logs, "\n"), errs.Wrap(errs.ErrBadRequest, "版本包地址缺失")
 	}
-	if err := step("创建网络", "docker network create 1panel-network 2>/dev/null; true"); err != nil {
+	if err := step("创建网络", "docker network create 1panel-network 2>/dev/null; true", 60); err != nil {
 		return strings.Join(logs, "\n"), err
 	}
 	// .env 渲染
@@ -917,7 +1020,10 @@ func (s *StoreService) deployCompose(ctx context.Context, app model.AppStoreApp,
 		return strings.Join(logs, "\n"), err
 	}
 	logs = append(logs, "写入 .env ✓")
-	if err := step("compose up", fmt.Sprintf("cd %s && docker compose -p %s up -d", dir, project)); err != nil {
+	logf("info", "写入 .env ✓")
+	// 先 pull（大镜像耗时长，进度/错误完整可读）再 up
+	_ = step("拉取镜像", fmt.Sprintf("cd %s && docker compose -p %s pull --quiet 2>&1 | tail -5; test ${PIPESTATUS[0]} -eq 0", dir, project), 1800)
+	if err := step("compose up", fmt.Sprintf("cd %s && docker compose -p %s up -d", dir, project), 600); err != nil {
 		return strings.Join(logs, "\n"), err
 	}
 	return strings.Join(logs, "\n"), nil
@@ -978,26 +1084,38 @@ func (s *StoreService) writeLocalPackage(ctx context.Context, sourceID uint, pkg
 	return count, nil
 }
 
-// Uninstall 卸载（compose down + 清目录，保留数据卷）。
-func (s *StoreService) Uninstall(ctx context.Context, project string) error {
+// Uninstall 卸载（异步任务：compose down + 清目录，保留数据卷）。
+func (s *StoreService) Uninstall(ctx context.Context, project string) (map[string]any, error) {
 	if !storeAppNamePattern.MatchString(strings.TrimPrefix(project, "app-")) {
-		return errs.ErrBadRequest
+		return nil, errs.ErrBadRequest
 	}
-	ac, err := s.client()
+	if s.tasks == nil {
+		return nil, errs.Wrap(errs.ErrBadRequest, "任务服务不可用")
+	}
+	task, err := s.tasks.StartTask(TaskStoreUninstall, fmt.Sprintf("卸载 %s", project), project, 10*time.Minute,
+		func(tctx context.Context, logf TaskLogf) error {
+			ac, aerr := s.client()
+			if aerr != nil {
+				return aerr
+			}
+			dir := "/opt/ypanel/compose/" + project
+			logf("info", "停止并移除容器（数据卷保留在项目目录）")
+			out, oerr := agentclient.DoJSON[dto.ExecReq, dto.ExecResp](ac, tctx, "POST", "/agent/v1/exec",
+				&dto.ExecReq{Command: fmt.Sprintf("cd %s 2>/dev/null && docker compose -p %s down; rm -rf %s", dir, project, dir), TimeoutSecs: 300})
+			if oerr != nil {
+				return oerr
+			}
+			if out.ExitCode != 0 {
+				return errs.Wrapc(errs.CodeFileOpFailed, "卸载失败: "+tailOutput(out.Output, 800))
+			}
+			_ = s.db.Where("compose_project = ?", project).Delete(&model.AppStoreInstall{}).Error
+			logf("info", "卸载完成")
+			return nil
+		})
 	if err != nil {
-		return err
+		return nil, err
 	}
-	dir := "/opt/ypanel/compose/" + project
-	out, err := agentclient.DoJSON[dto.ExecReq, dto.ExecResp](ac, ctx, "POST", "/agent/v1/exec",
-		&dto.ExecReq{Command: fmt.Sprintf("cd %s 2>/dev/null && docker compose -p %s down; rm -rf %s", dir, project, dir), TimeoutSecs: 300})
-	if err != nil {
-		return err
-	}
-	if out.ExitCode != 0 {
-		return errs.Wrapc(errs.CodeFileOpFailed, "卸载失败: "+firstLine(out.Output))
-	}
-	_ = s.db.Where("compose_project = ?", project).Delete(&model.AppStoreInstall{}).Error
-	return nil
+	return map[string]any{"taskId": task.ID, "project": project}, nil
 }
 
 // Installed 已装列表。
@@ -1089,6 +1207,15 @@ func truncStr(s string, n int) string {
 		return s
 	}
 	return s[:n]
+}
+
+// tailOutput 取输出尾部（compose 错误摘要在尾部而非首行）。
+func tailOutput(s string, n int) string {
+	s = strings.TrimSpace(s)
+	if len(s) <= n {
+		return s
+	}
+	return "…" + s[len(s)-n:]
 }
 
 // sanitizeParam 参数值白名单过滤（防注入 .env/shell）。

@@ -5,12 +5,15 @@ import DatabaseRoutes from './modules/database'
 import SitesRoutes from './modules/sites'
 import CertsRoutes from './modules/certs'
 import ContainerRoutes from './modules/container'
+import ContainerDetailRoutes from './modules/container-detail'
+import ContainerAppRoutes from './modules/container-app'
 import CronRoutes from './modules/cron'
 import FileRoutes from './modules/file'
 import MonitorsRoutes from './modules/monitors'
 import AIRoutes from './modules/ai'
 import ManageRoutes from './modules/manage'
 import NodesRoutes from './modules/nodes'
+import NodesDetailRoutes from './modules/nodes-detail'
 import FirewallRoutes from './modules/firewall'
 import NatRoutes from './modules/nat'
 import AlertRoutes from './modules/alert'
@@ -41,6 +44,27 @@ const constantRoutes: RouteRecordRaw[] = [
       title: '桌面工作台',
       breadcrumb: false,
     },
+  },
+  {
+    // 任务中心：仅顶栏入口（全屏按钮前），不进侧边菜单
+    path: '/tasks',
+    name: 'tasks',
+    component: () => import('@/layouts/index.vue'),
+    meta: {
+      title: '任务中心',
+      breadcrumb: false,
+    },
+    children: [
+      {
+        path: '',
+        name: 'tasksIndex',
+        component: () => import('@/views/tasks/index.vue'),
+        meta: {
+          title: '任务中心',
+          menu: false,
+        },
+      },
+    ],
   },
   {
     path: '/:all(.*)*',
@@ -93,9 +117,15 @@ const single = (title: string, icon: string, mod: RouteRecordRaw) => ({
 })
 
 const asyncRoutes: RouteRecordMainRaw[] = [
-{
-    meta: { title: '网站', icon: 'yd:globe' },
-    children: [SitesRoutes, CertsRoutes],
+  {
+    meta: {
+      title: '网站',
+      icon: 'yd:globe',
+    },
+    children: [
+      SitesRoutes,
+      CertsRoutes,
+    ],
   },
   single('智能', 'yd:sparkles', AIRoutes),
   {
@@ -111,10 +141,12 @@ const asyncRoutes: RouteRecordMainRaw[] = [
   {
     meta: {
       title: '容器',
-      icon: 'yd:container',
+      icon: 'i-tabler:brand-docker',
     },
     children: [
       ContainerRoutes,
+      ContainerDetailRoutes,
+      ContainerAppRoutes,
       ComposeRoutes,
       DockerRoutes,
     ],
@@ -162,6 +194,7 @@ const asyncRoutes: RouteRecordMainRaw[] = [
       NatRoutes,
       ProcessesRoutes,
       NodesRoutes,
+      NodesDetailRoutes,
       ManageRoutes,
       SelfUpdateRoutes,
     ],

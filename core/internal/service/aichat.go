@@ -1,5 +1,5 @@
-// AI 对话（B18 v2 终版）：native function calling 工具循环 + 场景感知 + 知识库注入 + SSE。
-// 不使用 ReAct 文本协议（GLM 等模型遵循差，会污染正文）；工具调用走模型原生 tool_calls。
+// AI 对话（B18 v3）：工具循环（上下文重注入模式）+ 场景感知 + 知识库/技能注入 + SSE。
+// 每轮独立生成，工具结果并入 system 重新生成；无 tool_calls 的纯文本即最终回答。
 package service
 
 import (
@@ -32,7 +32,7 @@ func buildLLM(p *model.AIProvider) (llms.Model, error) {
 }
 
 // StreamAgentChat 工具循环 + SSE 输出。
-// 事件：data: {"scene":{...}} / {"tool":{...}} / {"content":"..."} / [DONE]
+// 事件：data: {"scene":{...}} / {"step":{...}} / {"content":"..."} / [DONE]
 func (s *AIService) StreamAgentChat(
 	ctx context.Context,
 	w http.ResponseWriter,
@@ -88,17 +88,17 @@ func (s *AIService) StreamAgentChat(
 	}
 	sys += "\n\n" + s.buildSceneSummary(ctx, scenePath)
 
-	// 组装消息
-	msgs := []llms.MessageContent{llms.TextParts(llms.ChatMessageTypeSystem, sys)}
+	// 基础消息（system + 历史）
+	baseMsgs := []llms.MessageContent{llms.TextParts(llms.ChatMessageTypeSystem, sys)}
 	for _, m := range history {
 		if m.Role == "user" {
-			msgs = append(msgs, llms.TextParts(llms.ChatMessageTypeHuman, m.Content))
+			baseMsgs = append(baseMsgs, llms.TextParts(llms.ChatMessageTypeHuman, m.Content))
 		} else {
-			msgs = append(msgs, llms.TextParts(llms.ChatMessageTypeAI, m.Content))
+			baseMsgs = append(baseMsgs, llms.TextParts(llms.ChatMessageTypeAI, m.Content))
 		}
 	}
 
-	// 原生 function calling 工具循环（面板工具 + MCP 工具）
+	// 工具定义（面板工具 + MCP 工具）
 	toolDefs := s.toolsFor(ctx)
 	for _, mt := range s.enabledMCPTools(ctx) {
 		mt := mt
@@ -118,26 +118,18 @@ func (s *AIService) StreamAgentChat(
 		}}
 	}
 
+	// 工具循环：每轮独立生成，工具结果摘要并入 system 重新生成
+	var toolResults []string
 	for round := 0; round < maxToolRounds; round++ {
-		resp, err := llm.GenerateContent(ctx, msgs,
-			llms.WithTools(toolList),
-			llms.WithStreamingFunc(func(_ context.Context, chunk []byte) error {
-				// 只透出文本 delta：tool_call 轮的 delta 是参数 JSON 片段，不能进正文
-				var ev struct {
-					Choices []struct {
-						Delta struct {
-							Content   string          `json:"content"`
-							ToolCalls json.RawMessage `json:"tool_calls,omitempty"`
-						} `json:"delta"`
-					} `json:"choices"`
-				}
-				if json.Unmarshal(chunk, &ev) == nil && len(ev.Choices) > 0 {
-					if c := ev.Choices[0].Delta.Content; c != "" {
-						emitContent(c)
-					}
-				}
-				return nil
-			}))
+		roundSys := sys
+		if round > 0 && len(toolResults) > 0 {
+			roundSys += "\n\n[工具执行结果]\n" + strings.Join(toolResults, "\n")
+		}
+		roundMsgs := append([]llms.MessageContent{}, baseMsgs...)
+		roundMsgs[0] = llms.TextParts(llms.ChatMessageTypeSystem, roundSys)
+
+		resp, err := llm.GenerateContent(ctx, roundMsgs,
+			llms.WithTools(toolList))
 		if err != nil {
 			return err
 		}
@@ -145,20 +137,19 @@ func (s *AIService) StreamAgentChat(
 			break
 		}
 		choice := resp.Choices[0]
+		// 纯文本回答 = 最终结果
 		if len(choice.ToolCalls) == 0 {
+			if choice.Content != "" {
+				emitContent(choice.Content)
+			}
 			break
 		}
-		// 执行工具并把结果回填
-		parts := []llms.ContentPart{}
-		if choice.Content != "" {
-			parts = append(parts, llms.TextContent{Text: choice.Content})
-		}
+		// 有 tool_calls：执行工具，结果并入下轮上下文
 		for _, tc := range choice.ToolCalls {
-			parts = append(parts, tc)
-		}
-		msgs = append(msgs, llms.MessageContent{Role: llms.ChatMessageTypeAI, Parts: parts})
-		for _, tc := range choice.ToolCalls {
-			emitJSON(map[string]any{"tool": map[string]string{"name": tc.FunctionCall.Name, "input": tc.FunctionCall.Arguments}})
+			emitJSON(map[string]any{"step": map[string]string{
+				"type": "tool", "name": tc.FunctionCall.Name,
+				"detail": fmt.Sprintf("执行 %s(%s)", tc.FunctionCall.Name, tc.FunctionCall.Arguments),
+			}})
 			result := "未找到工具实现"
 			var terr error
 			for _, t := range toolDefs {
@@ -170,10 +161,8 @@ func (s *AIService) StreamAgentChat(
 					break
 				}
 			}
-			msgs = append(msgs, llms.MessageContent{
-				Role:  llms.ChatMessageTypeTool,
-				Parts: []llms.ContentPart{llms.ToolCallResponse{Name: tc.FunctionCall.Name, Content: result}},
-			})
+			toolResults = append(toolResults,
+				fmt.Sprintf("%s(%s) = %s", tc.FunctionCall.Name, tc.FunctionCall.Arguments, result))
 		}
 	}
 	emitJSON(map[string]string{"done": "1"})

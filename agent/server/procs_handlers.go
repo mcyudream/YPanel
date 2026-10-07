@@ -3,14 +3,20 @@ package server
 import (
 	"context"
 	"net/http"
+	"strconv"
 
 	"github.com/ypanel/agent/internal/procs"
 	"github.com/ypanel/shared/errs"
 )
 
-// handleProcessList GET /agent/v1/processes
-func (s *Server) handleProcessList(w http.ResponseWriter, _ *http.Request) {
-	list, err := procs.List(context.Background())
+// handleProcessList GET /agent/v1/processes?sort=&order=&limit=
+func (s *Server) handleProcessList(w http.ResponseWriter, r *http.Request) {
+	limit, _ := strconv.Atoi(qParam(r, "limit"))
+	list, err := procs.List(context.Background(), procs.ListOpts{
+		Sort:  qParam(r, "sort"),
+		Order: qParam(r, "order"),
+		Limit: limit,
+	})
 	if err != nil {
 		writeErr(w, err)
 		return

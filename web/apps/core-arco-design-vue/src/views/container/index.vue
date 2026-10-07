@@ -40,7 +40,7 @@ const activeTab = computed<string>({
     <FaPageHeader>
       <template #title>
         <div class="flex items-center gap-2.5">
-          <FaIcon name="i-logos:docker-icon" class="text-2xl" />
+          <FaIcon name="i-tabler:brand-docker" class="text-2xl" />
           <span>容器</span>
         </div>
       </template>

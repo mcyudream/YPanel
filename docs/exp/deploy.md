@@ -46,3 +46,17 @@
 - **根因**：配对码是一次性消费的；首次配对成功后凭据已落盘 `/etc/ypanel/agent.json`，再带 `-code` 启动会重新走配对流程必然失败。
 - **规避/解决**：升级时直接无参启动（`ypagent -addr 0.0.0.0:9528`），自动读取已存凭据；systemd 单元按此编写（测试机 ypagent.service 已是凭据续启模式）。另注意 sqlite3 CLI 直读运行中 GORM（WAL）库会看到混合状态，排障以 API 视角为准。
 - **来源**：2026-10-06，M19 部署（ypagent.service）。
+
+### 并行会话共用工作区时的构建互踩：dist EPERM 与 embed 竞态
+
+- **现象**：① vite build 报 `vite:prepare-out-dir EPERM ... dist/assets`（rmSync 失败），反复重试偶发成功；② deploy 出的二进制 health 正常但页面显示「前端产物未构建」（embed 里的 index.html 缺失）。
+- **根因**：多个会话同时跑 `pnpm build`/`build.sh`：① 一方构建进程或杀毒/索引扫描持有 dist 文件句柄，另一方的 emptyDir rmSync 撞 EPERM；② build.sh 的「rm -rf core/internal/web/dist → cp → go build」窗口内，另一方的 rm 清空了目录，go:embed 编译进不完整产物。
+- **规避/解决**：构建用独立输出目录绕开文件锁（`pnpm exec vite build --outDir dist-m23 --emptyOutDir`）再拷贝；go build 前用特征串验证 embed 完整（如 `grep -ac "页面特征文案" bin/ypanel`）；部署后除 /health 外再 curl 一发 `/`（应返回 `<!DOCTYPE html>`）确认前端真正可用。
+- **来源**：2026-10-07，M23 与商店多源会话并行构建期间两次互踩。
+
+### vite build 复用旧输出目录可能产出陈旧模块图：源码改了、构建成功、产物却是旧代码
+
+- **现象**：修改路由/组件后用同一输出目录（--outDir dist-m23）重新构建，进程成功（6521 modules transformed）、产物时间戳是新的，但 grep 产物发现**源码修改没体现**（meta 里没有新加的 menu:!1）；换成全新目录名构建一次就对。
+- **根因**：与 prepare-out-dir 的 EPERM 清理失败相关——输出目录清理被文件锁干扰后，rolldown/vite 的模块图或输出清单与磁盘实际状态不一致，后续构建复用了陈旧模块内容（具体缓存层未深究，现象稳定复现）。
+- **规避/解决**：① 连续构建时每次换全新 outDir（带时间戳）再拷贝进 core/internal/web/dist；② 部署前**必须 grep 产物特征串**验证本次修改真的进了二进制（如 menu:!1、新增文案），不能只看「构建成功」。
+- **来源**：2026-10-07，M23 菜单收敛（sites/certs menu:false）构建两次产物均为旧代码，换目录后一次通过。

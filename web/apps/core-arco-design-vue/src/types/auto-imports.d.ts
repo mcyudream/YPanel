@@ -128,7 +128,7 @@ declare global {
   export type { FileEditorTab, FileEditorGroup, FileEditorLayout, FileEditorCursor } from '../store/modules/fileEditor'
   import('../store/modules/fileEditor')
   // @ts-ignore
-  export type { AiChatMessage, AiSceneData } from '../composables/useAiChat'
+  export type { AiChatStep, AiChatMessage, AiSceneData } from '../composables/useAiChat'
   import('../composables/useAiChat')
   // @ts-ignore
   export type { BusEvent } from '../composables/useEventBus'

@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import type { ComposeProject } from '@/api/modules/compose'
 import apiCompose from '@/api/modules/compose'
+import apiFile from '@/api/modules/file'
 import { storeApi, type StoreAppItem, type StoreInstall } from '@/api/modules/store'
 import FileEditorWorkspace from '@/views/file_management/editor/Workspace.vue'
 
@@ -119,21 +120,41 @@ function confirmDown(p: ComposeProject) {
 }
 
 // ---- 配置编辑：统一走文件工作台（M23） ----
-function yamlPath(p: ComposeProject) {
-  return `${p.dir.replace(/\/$/, '')}/docker-compose.yml`
+// 主 compose 文件名不固定（compose.yaml / docker-compose.yml…），点击时探测目录取实际文件
+const MAIN_YAML_RE = /^compose\.ya?ml$|^docker-compose\.ya?ml$/
+
+async function mainYamlOf(p: ComposeProject): Promise<string | null> {
+  try {
+    const list = await apiFile.list(p.dir.replace(/\/$/, ''), 'local')
+    const hit = (list.entries || []).find(e => !e.isDir && MAIN_YAML_RE.test(e.name))
+    return hit ? hit.path : null
+  }
+  catch {
+    return null
+  }
 }
 
-function openEdit(p: ComposeProject) {
+async function openEdit(p: ComposeProject) {
   if (!p.managed) {
     toast.warning('外部项目不可在线编辑（可在目标机修改其配置文件）')
     return
   }
-  fileEditorStore.openWorkspace(yamlPath(p), 'local')
+  const path = await mainYamlOf(p)
+  if (!path) {
+    toast.error('未找到项目的 compose 配置文件', { description: p.dir })
+    return
+  }
+  fileEditorStore.openWorkspace(path, 'local')
 }
 
-function openRevisionHistory(p: ComposeProject) {
+async function openRevisionHistory(p: ComposeProject) {
+  const path = await mainYamlOf(p)
+  if (!path) {
+    toast.error('未找到项目的 compose 配置文件', { description: p.dir })
+    return
+  }
   revisionTarget.value = p.name
-  revisionPath.value = yamlPath(p)
+  revisionPath.value = path
   revisionVisible.value = true
 }
 
@@ -310,15 +331,11 @@ onBeforeUnmount(() => {
       </template>
     </FaModal>
 
-    <!-- 版本历史 -->
-    <FaModal v-model="revisionVisible" :title="`版本历史：${revisionTarget}`" class="max-w-3xl!" :destroy-on-close="true">
-      <YdRevisionHistory v-if="revisionPath" v-model:visible="revisionVisible" node="local" :path="revisionPath" @restored="load()" />
-      <template #footer>
-        <FaButton variant="outline" @click="revisionVisible = false">
-          关闭
-        </FaButton>
-      </template>
-    </FaModal>
+    <!-- 版本历史（组件自含弹窗） -->
+    <YdRevisionHistory
+      v-if="revisionPath" v-model="revisionVisible"
+      node="local" :path="revisionPath" @restored="load()"
+    />
 
     <FileEditorWorkspace />
   </div>

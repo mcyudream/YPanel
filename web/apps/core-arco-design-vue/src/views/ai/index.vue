@@ -498,7 +498,14 @@ onMounted(() => {
                   {{ st }}
                 </div>
               </div>
-              <YdAiBubble :role="m.role" :content="m.content" :pending="m.pending" />
+              <YdAiBubble
+                :role="m.role"
+                :content="m.content"
+                :pending="m.pending"
+                :reasoning="m.reasoning || ''"
+                :steps="m.steps || []"
+                show-actions
+              />
             </div>
           </template>
         </MessageList>

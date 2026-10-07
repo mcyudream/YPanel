@@ -24,8 +24,10 @@ const samples = ref<MetricRecord[]>([])
 
 const cpuChartRef = useTemplateRef<HTMLElement>('cpuChart')
 const netChartRef = useTemplateRef<HTMLElement>('netChart')
-let cpuChart: echarts.ECharts | null = null
-let netChart: echarts.ECharts | null = null
+// 实例变量不能与模板 ref 名（cpuChart/netChart）同名：SFC 编译器会把 ref="cpuChart"
+// 编译成对同名 setup 变量的引用而非字符串 ref，useTemplateRef 桥接随之失效（仅生产构建触发）
+let cpuChartInstance: echarts.ECharts | null = null
+let netChartInstance: echarts.ECharts | null = null
 
 
 
@@ -54,6 +56,8 @@ async function load() {
   loading.value = true
   try {
     samples.value = decimate(await apiSystem.historyPersisted(activeSeconds.value))
+    // 图表容器在 v-else 分支内，需等 DOM 更新后 ref 才存在，否则 init 被静默跳过
+    await nextTick()
     render()
   }
   catch (e: any) {
@@ -67,13 +71,13 @@ async function load() {
 function render() {
   const list = samples.value
   const times = list.map(s => timeLabel(s.at))
-  if (cpuChartRef.value && !cpuChart) {
-    cpuChart = echarts.init(cpuChartRef.value)
+  if (cpuChartRef.value && !cpuChartInstance) {
+    cpuChartInstance = echarts.init(cpuChartRef.value)
   }
-  if (netChartRef.value && !netChart) {
-    netChart = echarts.init(netChartRef.value)
+  if (netChartRef.value && !netChartInstance) {
+    netChartInstance = echarts.init(netChartRef.value)
   }
-  cpuChart?.setOption({
+  cpuChartInstance?.setOption({
     animation: false,
     grid: { left: 45, right: 20, top: 35, bottom: 25 },
     legend: { data: ['CPU %', '内存 %', '负载'], top: 0, textStyle: { fontSize: 11 } },
@@ -89,7 +93,7 @@ function render() {
       { name: '负载', type: 'line', yAxisIndex: 1, showSymbol: false, data: list.map(s => Number(s.load1.toFixed(2))), lineStyle: { width: 1 } },
     ],
   }, { notMerge: true })
-  netChart?.setOption({
+  netChartInstance?.setOption({
     animation: false,
     grid: { left: 65, right: 20, top: 35, bottom: 25 },
     legend: { data: ['下行', '上行'], top: 0, textStyle: { fontSize: 11 } },
@@ -127,8 +131,8 @@ const summary = computed(() => {
 })
 
 function handleResize() {
-  cpuChart?.resize()
-  netChart?.resize()
+  cpuChartInstance?.resize()
+  netChartInstance?.resize()
 }
 
 onMounted(() => {
@@ -138,8 +142,8 @@ onMounted(() => {
 
 onBeforeUnmount(() => {
   window.removeEventListener('resize', handleResize)
-  cpuChart?.dispose()
-  netChart?.dispose()
+  cpuChartInstance?.dispose()
+  netChartInstance?.dispose()
 })
 </script>
 

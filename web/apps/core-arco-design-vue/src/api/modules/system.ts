@@ -14,6 +14,7 @@ export interface SystemOverview {
   network: { rxTotal: number, txTotal: number, rxSpeedBps: number, txSpeedBps: number }
   load: { load1: number, load5: number, load15: number }
   collectedAt: string
+  recentNotifications?: import('./ops').NotificationItem[]
 }
 
 export interface MetricSample {
@@ -27,8 +28,10 @@ export interface MetricSample {
 
 export interface MetricRecord {
   at: string
+  nodeId?: string
   cpu: number
   mem: number
+  swap?: number
   rxSpeed: number
   txSpeed: number
   load1: number
@@ -48,9 +51,9 @@ export default {
     const res = await api.get(`api/v1/system/history?seconds=${seconds}${nodeQ(node)}`)
     return res.data as MetricSample[]
   },
-  // 历史监控持久化查询（30 天，60s 粒度）
-  historyPersisted: async (seconds = 3600) => {
-    const res = await api.get(`api/v1/system/history/persisted?seconds=${seconds}`, { silent: true })
+  // 历史监控持久化查询（全节点 30 天，60s 粒度）
+  historyPersisted: async (seconds = 3600, node?: string) => {
+    const res = await api.get(`api/v1/system/history/persisted?seconds=${seconds}${nodeQ(node)}`, { silent: true })
     return res.data as MetricRecord[]
   },
 }

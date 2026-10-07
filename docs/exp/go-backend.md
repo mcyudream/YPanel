@@ -103,3 +103,38 @@
 - **根因**：git URL 是"协议 DSL"不是纯地址；`ext::` 与 `-` 开头的参数会被 git 当作传输命令/选项。
 - **规避/解决**：URL 白名单校验（http/https/ssh/git@/file:// 前缀 + 禁 `ext::` + 禁前导 `-`）；token 用 `https://ypanel:<token>@host/path` 内嵌（argv 传递不经 shell、不落日志）；`clone --depth 1` + 已有仓库 `fetch --depth 1 && reset --hard FETCH_HEAD`；`GIT_TERMINAL_PROMPT=0` 防交互挂死。
 - **来源**：2026-10-07 应用商店 yp-git 源（core/internal/service/store.go gitCheckout）
+
+### errs.Wrap 会把基础错误的通用文案拼到用户消息尾部
+
+- **现象**：NAT 转发占用拦截返回 `映射端口...已被监听占用: xxx/tcp（sshd）: 请求参数错误`——业务消息后面拖着一句莫名其妙的"请求参数错误"。
+- **根因**：`errs.Wrap(base, context)` 的语义是 `context + ": " + base.Message`，拿 `ErrBadRequest`（Message=请求参数错误）做基底时，用户可见消息永远多出通用后缀。此模式遍布既有代码（bind 失败等），单看一条不觉得，消息里再拼明细时就很扎眼。
+- **规避/解决**：给用户看的参数类错误直接 `errs.New(errs.CodeBadRequest, "error.badRequest", 具体消息)` 构造（项目里已沉淀 `natBadReq` 范式）；`Wrap` 只用于"在通用错误上补上下文、通用文案本来就该出现"的场景。新功能评审时把"消息尾部是否拖后缀"列为检查点。
+- **来源**：2026-10-07，M24 NAT 转发真机 E2E。
+
+### 面板自建 iptables 链的"整链重建"必须覆盖零规则场景，渲染视图必须过滤停用态
+
+- **现象**：NAT 转发两处真机才暴露的缺陷：① 停用规则在链里照常生效（禁用开关形同虚设）；② 把规则全部删光/停用后，内核链里残留旧规则不冲刷。
+- **根因**：① 组装渲染视图时只按地址族过滤、漏了 enabled 过滤——重建脚本"flush 后只追加启用规则"的语义在组装层就破了；② apply 在规则数为 0 时提前 return——"删光最后一条"恰好落入该分支，flush 永远不会执行。
+- **规避/解决**：渲染视图提取成纯函数（`natEnabledViews`，过滤族+enabled）并单测；零启用规则不走"建链+挂载"脚本，改走**容忍式冲刷**脚本（`command -v iptables || exit 0`、链存在才 `-F`，不建链不挂载不碰 sysctl）——同时天然覆盖"目标机没装 iptables 但也从来没有过规则"的场景。凡是"flush + 全量重放"型管理器，删空态必须显式设计，不能当优化提前返回。
+- **来源**：2026-10-07，M24 NAT 转发（`core/internal/service/natforward.go`）。
+
+### ss 判断端口占用：同端口 v4/v6 双套接字会重复计数
+
+- **现象**：占用检测返回两条 22/tcp（进程同为 sshd），UI 重复展示。
+- **根因**：`ss -H -lntp` 对 `0.0.0.0:22` 与 `[::]:22` 各输出一行（v4/v6 各一套接字），按行解析不去重就是两条。
+- **规避/解决**：按"端口+协议"去重、保留首个非空进程信息即可（监听判定语义不受影响）；另 `Local Address:Port` 列取最后一个冒号之后可同时兼容 `0.0.0.0:22` 与 `[::]:22`。
+- **来源**：2026-10-07，M24 NAT 转发占用检测（142 真机）。
+
+### 1Panel 应用包 formFields 全量形态与 compose 错误提取（商店安装参数修复）
+
+- **现象**：按 label/default/type 基础解析 1panel.json 后，安装向导所有字段都是文本框；密码用源里固定 default（全网一致弱密码）；compose up 失败只显示 "mysql Pulling" 这类首行进度，端口被占用等真实原因看不到。
+- **根因**：① 1Panel formFields 字段远比基础形态丰富——`random:true`（密码/名称安装时随机生成，401 处）、`values`（select 选项，154 处）、`edit/disabled`（只读）、`type: service/apps`（关联已装服务的复合字段）、`rule: paramPort`（端口类，602 处，默认值直接是 3306 这类低位端口，极易撞宿主已有服务）；② `docker compose up` 失败输出首行是 Pulling 进度，真实错误（bind: address already in use 等）在尾部。
+- **规避/解决**：字段解析补全 random/values/edit/description；前端按类型渲染（select→下拉、password+随机按钮、端口字段默认随机高位 32768-61000、service/apps 一期只读）；后端安装任务化三件套——重装先 `compose down` 同名项目释放端口 → `ss -tln` 端口占用预检 → 先 `compose pull`（1800s）再 `up -d`（600s），失败返回 `tailOutput(output, 1200)` 尾部而非首行。
+- **来源**：2026-10-07 应用商店安装参数与任务中心改造（core/internal/service/store.go、task.go）
+
+### agentclient 对 404 响应报 "cannot unmarshal number"：mux 404 body 以数字开头，误导成信封格式问题
+
+- **现象**：前端报「agent 响应解析失败: json: cannot unmarshal number into Go value of type struct { Code int ... }」——看似 agent 返回了错误格式的信封，实际请求根本没到 handler。
+- **根因**：两个因素叠加。① core 拼 agent URL 时把第一个 query 参数用 `&` 拼接（`q := "/agent/v1/processes"; q += "&sort=cpu"`），没有 `?`，`&sort=...` 成了**路径**的一部分，agent 的 Go 1.22 mux 匹配不到 → 404；② agentclient 的 `doResp` 不检查 HTTP 状态码直接把 body 当 `{code,message,data}` 信封解，而 Go mux 404 body 是 `404 page not found`——JSON 解析器读出第一个 token 是数字 `404`，与 struct 类型不符报 "cannot unmarshal **number**"，完全没提 404。
+- **规避/解决**：① 拼 query 一律用 `url.Values` + `v.Encode()`（`?` 由 `Encode` 所在分支保证），禁止手写 `+= "&"`；② `doResp` 已加固：非 2xx 先拦截并报 `agent HTTP <状态码>: <body 前 256 字节>`（agent 业务错误是 200+信封，不受影响）。判别技巧：看到 "cannot unmarshal number into Go value of type struct{Code...}" 先 curl 目标 URL 看原始 body，多半是 404/502 文本而非 JSON。
+- **来源**：2026-10-07，M25 进程代理 query 拼接失误 + agentclient 无状态码检查，线上进程页全挂定位。
