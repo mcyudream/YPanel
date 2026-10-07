@@ -21,19 +21,18 @@ const providerId = ref<number>(0)
 const providers = ref<AIProvider[]>([])
 
 // ---- 对话 ----
-const { messages, streaming, send, clear } = useAiChat({
+const { messages, streaming, send, clear, conversationId } = useAiChat({
   scenePath: () => '/',
   providerId: () => providerId.value || undefined,
+  onSaved: () => loadConversations(),
 })
-const chatInput = ref('')
-
-function sendChat() {
-  const t = chatInput.value.trim()
-  if (!t || streaming.value) {
+function sendChat(t: string) {
+  // Sender 组件经 emit('send', text) 传入文本（其内部 v-model 管理输入）
+  const text = (t || '').trim()
+  if (!text || streaming.value) {
     return
   }
-  chatInput.value = ''
-  send(t)
+  send(text)
 }
 
 async function loadProviders() {
@@ -190,7 +189,6 @@ async function wsRun() {
 
 const conversations = ref<{ id: number, title: string, updatedAt: string }[]>([])
 const memories = ref<{ id: number, content: string }[]>([])
-const activeConvId = ref<number>(0)
 
 async function loadConversations() {
   try {
@@ -202,8 +200,14 @@ async function loadConversations() {
 async function openConversation(id: number) {
   try {
     const conv = await conversationApi.get(id)
-    messages.value = (conv.messages || []).map((m, i) => ({ id: `c-${id}-${i}`, role: m.role as 'user' | 'assistant', content: m.content, steps: [] }))
-    activeConvId.value = id
+    messages.value = (conv.messages || []).map((m, i) => ({
+      id: `c-${id}-${i}`,
+      role: m.role as 'user' | 'assistant',
+      content: m.content,
+      reasoning: (m as any).reasoning || '',
+      steps: (m as any).steps || [],
+    }))
+    conversationId.value = id
   }
   catch (e: any) {
     toast.error('读取会话失败', { description: e?.message })
@@ -216,8 +220,8 @@ async function saveConversation() {
   }
   const msgs = messages.value.filter(m => m.content).map(m => ({ role: m.role, content: m.content }))
   try {
-    const res = await conversationApi.save(activeConvId.value, '', msgs as any)
-    activeConvId.value = (res.data as any)?.id || activeConvId.value
+    const res = await conversationApi.save(conversationId.value, '', msgs as any)
+    conversationId.value = (res.data as any)?.id || conversationId.value
     await loadConversations()
   }
   catch (e: any) {
@@ -228,7 +232,6 @@ async function saveConversation() {
 async function newConversation() {
   await saveConversation()
   clear()
-  activeConvId.value = 0
 }
 
 async function removeConversation(id: number) {
@@ -435,15 +438,15 @@ onMounted(() => {
 
       <!-- 对话（左会话列表 + 右对话区） -->
       <div v-show="tab === 'chat'" class="flex h-[calc(100vh-320px)] gap-3">
-        <div class="w-52 shrink-0 space-y-1 overflow-y-auto">
-          <FaButton size="sm" class="w-full" @click="newConversation">
+        <div class="w-52 shrink-0 overflow-y-auto">
+          <FaButton size="sm" class="mb-2 w-full" @click="newConversation">
             <FaIcon name="i-lucide:plus" class="mr-1" /> 新会话
           </FaButton>
           <div
             v-for="c in conversations"
             :key="c.id"
-            class="group flex items-center justify-between rounded-md px-2 py-1.5 text-sm transition-colors hover:bg-accent/50"
-            :class="activeConvId === c.id ? 'bg-accent' : ''"
+            class="group mt-1 flex items-center justify-between rounded-md px-2 py-1.5 text-sm transition-colors hover:bg-accent/50"
+            :class="conversationId === c.id ? 'bg-accent' : ''"
           >
             <button type="button" class="min-w-0 flex-1 cursor-pointer truncate text-left" @click="openConversation(c.id)">
               {{ c.title }}

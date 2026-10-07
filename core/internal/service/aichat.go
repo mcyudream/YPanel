@@ -183,6 +183,18 @@ func (s *AIService) StreamAgentChat(
 					break
 				}
 			}
+			// 步骤结果事件：前端流程卡片据它把该卡片置为完成/失败并展示结果摘要
+			status := "完成"
+			if terr != nil {
+				status = "失败"
+			}
+			summary := strings.ReplaceAll(strings.TrimSpace(result), "\n", " ")
+			if len(summary) > 120 {
+				summary = summary[:120] + "…"
+			}
+			emitJSON(map[string]any{"step_result": map[string]string{
+				"name": tc.FunctionCall.Name, "status": status, "detail": summary,
+			}})
 			msgs = append(msgs, llms.MessageContent{
 				Role: llms.ChatMessageTypeTool,
 				Parts: []llms.ContentPart{llms.ToolCallResponse{

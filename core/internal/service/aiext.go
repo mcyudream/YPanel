@@ -136,16 +136,21 @@ func min5(n int) int {
 
 // ---- 会话持久化（LobeHub 式多会话） ----
 
-// SaveConversation 保存会话（upsert：有 ID 更新标题与消息）。
+// SaveConversation 保存会话（upsert：有 ID 更新标题与消息；ID 不存在时落为新建）。
 func (s *AIService) SaveConversation(ctx context.Context, id uint, title string, messages []ChatMessage) (uint, error) {
 	b, _ := json.Marshal(messages)
 	if id > 0 {
 		var row model.AIConversation
-		if err := s.db.First(&row, id).Error; err != nil {
-			return 0, err
+		if err := s.db.First(&row, id).Error; err == nil {
+			// title 为空表示沿用原标题（前端自动保存不传标题）
+			updates := map[string]any{"messages": string(b)}
+			if title != "" {
+				updates["title"] = title
+			}
+			_ = s.db.Model(&row).Updates(updates).Error
+			return id, nil
 		}
-		_ = s.db.Model(&row).Updates(map[string]any{"title": title, "messages": string(b)}).Error
-		return id, nil
+		// 会话已不存在（如被其他端删除）：落为新建
 	}
 	if title == "" {
 		title = firstUserSnippet(messages)

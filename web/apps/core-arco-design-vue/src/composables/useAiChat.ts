@@ -1,10 +1,16 @@
-// useAiChat：AI 对话状态管理（对接 /api/v1/ai/chat SSE，含工具调用过程展示）。
+// useAiChat：AI 对话状态管理（对接 /api/v1/ai/chat SSE，含工具调用过程展示；每轮结束自动持久化会话）。
 import { ref } from 'vue'
+import { conversationApi } from '@/api/modules/ai'
 
 export interface AiChatStep {
   type: string
   name?: string
   detail?: string
+  /** 结果状态：完成/失败（空 = 未结束） */
+  status?: string
+  /** 结果摘要 */
+  summary?: string
+  done?: boolean
 }
 
 export interface AiChatMessage {
@@ -30,10 +36,56 @@ function nextId() {
   return `ai-${Date.now()}-${seq}`
 }
 
-export function useAiChat(options?: { scenePath?: () => string, providerId?: () => number | undefined }) {
+export function useAiChat(options?: {
+  scenePath?: () => string
+  providerId?: () => number | undefined
+  autoSave?: boolean
+  /** 每轮自动保存成功后的回调（如刷新会话列表） */
+  onSaved?: () => void
+}) {
   const messages = ref<AiChatMessage[]>([])
   const streaming = ref(false)
   const abort = ref<AbortController | null>(null)
+  /** 当前会话 ID：首轮发送自动创建会话后回填；0 = 尚未持久化。clear() 归零 → 下一轮开新会话 */
+  const conversationId = ref(0)
+
+  /** 自动持久化：有可展示的 assistant 回复才保存（abort 半截也算，报错轮不落库）；含思考/步骤 */
+  async function persist() {
+    if (options?.autoSave === false) {
+      return
+    }
+    if (!messages.value.some(m => m.role === 'assistant' && m.content && !m.error)) {
+      return
+    }
+    const msgs = messages.value.filter(m => m.content).map(m => ({
+      role: m.role,
+      content: m.content,
+      reasoning: m.reasoning || '',
+      steps: m.steps || [],
+    }))
+    try {
+      const res = await conversationApi.save(conversationId.value, '', msgs as any)
+      conversationId.value = (res.data as any)?.id || conversationId.value
+      options?.onSaved?.()
+    }
+    catch {
+      // 会话可能已在别处（如另一标签/会话管理）被删除：归零转新建重试一次
+      if (conversationId.value > 0) {
+        conversationId.value = 0
+        try {
+          const res = await conversationApi.save(0, '', msgs as any)
+          conversationId.value = (res.data as any)?.id || 0
+          options?.onSaved?.()
+        }
+        catch (e) {
+          console.warn('[ai] 会话自动保存失败', e)
+        }
+      }
+      else {
+        console.warn('[ai] 会话自动保存失败')
+      }
+    }
+  }
 
   /** 发送一轮对话：流式更新最后一条 assistant（通过 reactive proxy 操作确保响应式）。 */
   async function send(text: string) {
@@ -110,7 +162,7 @@ export function useAiChat(options?: { scenePath?: () => string, providerId?: () 
             continue
           }
           if (ev.scene) {
-            assistant.steps.push({ type: 'scene', name: '读取页面数据', detail: ev.scene.page || '' })
+            assistant.steps.push({ type: 'scene', name: '读取页面数据', detail: ev.scene.page || '', done: true })
           }
           if (ev.reasoning) {
             assistant.reasoning = (assistant.reasoning || '') + ev.reasoning
@@ -118,8 +170,20 @@ export function useAiChat(options?: { scenePath?: () => string, providerId?: () 
           if (ev.step) {
             assistant.steps.push({ type: ev.step.type, name: ev.step.name, detail: ev.step.detail })
           }
+          if (ev.step_result) {
+            // 把同名未完成步骤置为完成/失败并附结果摘要
+            const st = [...assistant.steps].reverse().find(s => s.type === 'tool' && s.name === ev.step_result.name && !s.done)
+            if (st) {
+              st.done = true
+              st.status = ev.step_result.status || ''
+              st.summary = ev.step_result.detail || ''
+            }
+            else {
+              assistant.steps.push({ type: 'tool_result', name: ev.step_result.name, detail: ev.step_result.detail, status: ev.step_result.status, done: true })
+            }
+          }
           if (ev.tool) {
-            assistant.steps.push({ type: 'action', name: typeof ev.tool === 'string' ? ev.tool : ev.tool.name || '' })
+            assistant.steps.push({ type: 'action', name: typeof ev.tool === 'string' ? ev.tool : ev.tool.name || '', done: true })
           }
           if (ev.content) {
             assistant.content += ev.content
@@ -141,6 +205,7 @@ export function useAiChat(options?: { scenePath?: () => string, providerId?: () 
       assistant.pending = false
       streaming.value = false
       abort.value = null
+      await persist()
     }
   }
 
@@ -165,9 +230,10 @@ export function useAiChat(options?: { scenePath?: () => string, providerId?: () 
 
   function clear() {
     messages.value = []
+    conversationId.value = 0
   }
 
-  return { messages, streaming, send, stop, regenerate, clear }
+  return { messages, streaming, send, stop, regenerate, clear, conversationId }
 }
 
 /** 场景感知 SSE 请求需要 scene 路径时，随 body.scene 一起传给后端 */

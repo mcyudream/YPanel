@@ -22,9 +22,10 @@ const props = withDefaults(defineProps<{
 const emit = defineEmits<{ regenerate: [] }>()
 
 const loading = computed(() => props.pending && !props.content)
+// 用户气泡：深色实底（与助手明显区分）、自适应内容宽度、超宽换行
 const bubbleClass = computed(() => props.role === 'user'
-  ? 'bg-primary/10 whitespace-pre-wrap'
-  : 'ai-md bg-muted/50 border border-border/60 [&_pre]:overflow-auto [&_pre]:rounded [&_pre]:bg-muted/70 [&_pre]:p-2 [&_code]:text-xs [&_ul]:list-disc [&_ol]:list-decimal [&_li]:ml-4 [&_h1]:my-2 [&_h2]:my-2 [&_h3]:my-2 [&_h1]:font-medium [&_h2]:font-medium [&_h3]:font-medium [&_p]:my-1 [&_a]:text-primary [&_a]:underline [&_table]:w-full [&_th]:border [&_td]:border [&_th]:px-2 [&_td]:px-2 [&_th]:py-1 [&_td]:py-1')
+  ? 'w-fit max-w-full break-words bg-primary text-primary-foreground whitespace-pre-wrap [&_p]:my-0'
+  : 'ai-md bg-muted/50 border border-border/60 [&_pre]:overflow-auto [&_pre]:rounded [&_pre]:bg-muted/70 [&_pre]:p-2 [&_pre]:text-xs [&_code]:text-xs [&_ul]:list-disc [&_ol]:list-decimal [&_li]:ml-4 [&_h1]:my-2 [&_h2]:my-2 [&_h3]:my-2 [&_h1]:font-medium [&_h2]:font-medium [&_h3]:font-medium [&_p]:my-1 [&_a]:text-primary [&_a]:underline [&_table]:w-full [&_th]:border [&_td]:border [&_th]:px-2 [&_td]:px-2 [&_th]:py-1 [&_td]:py-1')
 
 const html = computed(() => {
   if (props.role === 'user') {
@@ -55,16 +56,18 @@ defineExpose({ copyText })
     >
       <FaIcon :name="role === 'user' ? 'i-lucide:user' : 'i-ri:sparkling-2-line'" class="text-sm" />
     </div>
-    <div class="min-w-0 flex-1">
+    <div class="min-w-0 flex-1 flex flex-col" :class="role === 'user' ? 'items-end' : 'items-start'">
       <!-- 深度思考折叠块 -->
       <YdAiReasoning
         v-if="role === 'assistant' && (reasoning || pending)"
+        class="w-full"
         :reasoning="reasoning"
         :streaming="pending && !content"
       />
       <!-- 工具/步骤时间线 -->
       <YdAiProcess
         v-if="role === 'assistant' && steps.length"
+        class="w-full"
         :steps="steps"
         :streaming="pending && !content"
       />

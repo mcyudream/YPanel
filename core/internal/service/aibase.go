@@ -37,8 +37,19 @@ type AIKnowledge struct {
 
 // ChatMessage 对话消息。
 type ChatMessage struct {
-	Role    string `json:"role"`
-	Content string `json:"content"`
+	Role      string     `json:"role"`
+	Content   string     `json:"content"`
+	Reasoning string     `json:"reasoning,omitempty"`
+	Steps     []ChatStep `json:"steps,omitempty"`
+}
+
+// ChatStep 过程步骤（工具/场景，随会话持久化）。
+type ChatStep struct {
+	Type    string `json:"type"`
+	Name    string `json:"name,omitempty"`
+	Detail  string `json:"detail,omitempty"`
+	Status  string `json:"status,omitempty"` // 失败/完成（空 = 未结束）
+	Done    bool   `json:"done,omitempty"`
 }
 
 // AIService AI 助手。

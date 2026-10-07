@@ -1,51 +1,110 @@
 <script setup lang="ts">
-// YdAiProcess：工具/步骤执行时间线（对齐 YdChatProcess 视觉：✓ 图标 + 名称 + 明细）。
+// YdAiProcess：工具/步骤流程时间线（竖向连线 + 状态节点 + 工具卡片）。
+// 每张卡片三态：执行中（spinner，蓝）/ 完成（✓，绿）/ 失败（✗，红）；工具按名称单独设计图标与文案。
+import type { AiChatStep } from '@/composables/useAiChat'
+
 const props = withDefaults(defineProps<{
-  steps: Array<{ type: string, name?: string, detail?: string }>
+  steps: AiChatStep[]
   streaming?: boolean
 }>(), {
   streaming: false,
 })
 
-const typeLabel: Record<string, string> = {
-  scene: '读取页面数据',
-  action: '调用工具',
-  tool: '执行工具',
-  tool_result: '工具结果',
-  thought: '思考',
+// 内置工具的展示元数据（MCP 工具回退 wrench + 原名）
+const toolMeta: Record<string, { label: string, icon: string }> = {
+  get_overview: { label: '服务器概览', icon: 'i-lucide:activity' },
+  list_containers: { label: '容器列表', icon: 'i-lucide:boxes' },
+  container_action: { label: '容器操作', icon: 'i-lucide:play-circle' },
+  list_sites: { label: '站点列表', icon: 'i-lucide:globe' },
+  read_file: { label: '读取文件', icon: 'i-lucide:file-text' },
+  run_in_workspace: { label: '执行命令', icon: 'i-lucide:terminal' },
+  list_database_instances: { label: '数据库实例', icon: 'i-lucide:database' },
+  query_database: { label: '执行查询', icon: 'i-lucide:database-zap' },
+  save_memory: { label: '保存记忆', icon: 'i-lucide:brain-circle' },
 }
 
-function label(s: { type: string, name?: string }) {
-  return typeLabel[s.type] || s.type
-}
-
-function icon(s: { type: string }) {
-  switch (s.type) {
-    case 'scene': return 'i-lucide:eye'
-    case 'tool_result': return 'i-lucide:check'
-    case 'thought': return 'i-lucide:brain'
-    default: return 'i-lucide:wrench'
+function meta(s: AiChatStep) {
+  if (s.type === 'scene') {
+    return { label: '读取页面数据', icon: 'i-lucide:eye' }
   }
+  if (s.type === 'tool' || s.type === 'tool_result' || s.type === 'action') {
+    return toolMeta[s.name || ''] || { label: s.name || '工具调用', icon: 'i-lucide:wrench' }
+  }
+  return { label: s.type, icon: 'i-lucide:wrench' }
 }
 
-const lastIdx = computed(() => props.steps.length - 1)
+type StepState = 'running' | 'done' | 'error' | 'stopped'
+
+function state(s: AiChatStep): StepState {
+  if (s.status === '失败') {
+    return 'error'
+  }
+  if (s.done || s.status === '完成') {
+    return 'done'
+  }
+  return props.streaming ? 'running' : 'stopped'
+}
+
+const stateLabel: Record<StepState, string> = {
+  running: '执行中',
+  done: '完成',
+  error: '失败',
+  stopped: '已中断',
+}
+
+const stateClass: Record<StepState, string> = {
+  running: 'border-primary/40 bg-primary/10 text-primary',
+  done: 'border-emerald-500/40 bg-emerald-500/10 text-emerald-600',
+  error: 'border-red-500/40 bg-red-500/10 text-red-500',
+  stopped: 'border-border bg-muted text-muted-foreground',
+}
+
+const stateTextClass: Record<StepState, string> = {
+  running: 'text-primary',
+  done: 'text-emerald-600',
+  error: 'text-red-500',
+  stopped: 'text-muted-foreground',
+}
 </script>
 
 <template>
-  <div class="mb-2 space-y-1 rounded-md bg-muted/40 px-2.5 py-1.5 text-xs text-muted-foreground">
-    <div v-for="(s, i) in steps" :key="i" class="flex items-start gap-1.5">
-      <FaIcon :name="icon(s)" class="mt-0.5 text-[10px]" :class="i === lastIdx && streaming ? 'animate-pulse' : ''" />
-      <span class="min-w-0 flex-1 truncate">
-        <template v-if="s.type === 'scene'">{{ label(s) }}：{{ s.detail }}</template>
-        <template v-else-if="s.name && s.type === 'tool_result'">{{ s.name }}：{{ s.detail }}</template>
-        <template v-else-if="s.name">{{ label(s) }}：{{ s.name }}</template>
-        <template v-else>{{ label(s) }}{{ s.detail ? '：' + s.detail : '' }}</template>
-      </span>
-      <FaIcon
-        v-if="i === lastIdx && streaming"
-        name="i-lucide:loader-circle"
-        class="mt-0.5 animate-spin text-[10px]"
+  <div class="mb-2 rounded-md border border-border/60 bg-muted/30 px-2.5 py-2">
+    <div
+      v-for="(s, i) in steps"
+      :key="i"
+      class="relative flex gap-2.5 pb-2 last:pb-0"
+    >
+      <!-- 连接线 -->
+      <span
+        v-if="i < steps.length - 1"
+        class="absolute bottom-0 left-[11px] top-7 w-px bg-border"
       />
+      <!-- 状态节点 -->
+      <span
+        class="z-1 mt-0.5 flex size-6 shrink-0 items-center justify-center rounded-full border text-[11px]"
+        :class="stateClass[state(s)]"
+      >
+        <FaIcon v-if="state(s) === 'running'" name="i-lucide:loader-circle" class="animate-spin" />
+        <FaIcon v-else-if="state(s) === 'error'" name="i-lucide:x" />
+        <FaIcon v-else-if="state(s) === 'done'" name="i-lucide:check" />
+        <FaIcon v-else name="i-lucide:minus" />
+      </span>
+      <!-- 工具卡片 -->
+      <div class="min-w-0 flex-1">
+        <div class="flex items-center gap-1.5 text-xs">
+          <FaIcon :name="meta(s).icon" class="text-[11px] text-muted-foreground" />
+          <span class="font-medium">{{ meta(s).label }}</span>
+          <span class="ml-auto shrink-0 text-[10px]" :class="stateTextClass[state(s)]">
+            {{ stateLabel[state(s)] }}
+          </span>
+        </div>
+        <div v-if="s.detail" class="mt-0.5 truncate text-[11px] text-muted-foreground" :title="s.detail">
+          {{ s.detail }}
+        </div>
+        <div v-if="s.summary" class="truncate text-[11px] text-muted-foreground/80" :class="s.detail ? '' : 'mt-0.5'" :title="s.summary">
+          {{ s.summary }}
+        </div>
+      </div>
     </div>
   </div>
 </template>
