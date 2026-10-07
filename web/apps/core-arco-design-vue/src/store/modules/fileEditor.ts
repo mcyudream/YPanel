@@ -210,11 +210,8 @@ export const useFileEditorStore = defineStore('fileEditor', () => {
         useFaToast().warning('二进制文件不支持编辑', { description: path })
         return
       }
-      if (!res.contentB64) {
-        useFaToast().error('读取失败', { description: '未收到文件内容' })
-        return
-      }
-      const bytes = b64ToBytes(res.contentB64)
+      // 空文件（0 字节）contentB64 为空串，是合法内容
+      const bytes = res.contentB64 ? b64ToBytes(res.contentB64) : new Uint8Array()
       const { encoding, text } = detectEncoding(bytes)
       const eol = detectEol(text)
       const lang = languageOf(path)

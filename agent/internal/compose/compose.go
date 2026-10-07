@@ -23,6 +23,7 @@ var managedFileNames = []string{"compose.yaml", "compose.yml", "docker-compose.y
 const (
 	composeProjectLabel     = "com.docker.compose.project"
 	composeWorkdirLabel     = "com.docker.compose.project.working_dir"
+	composeServiceLabel     = "com.docker.compose.service"
 )
 
 var namePattern = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$`)
@@ -142,7 +143,28 @@ func (m *Manager) ServiceAction(ctx context.Context, project, service, action st
 	return out, nil
 }
 
-// List 项目列表：托管目录扫描 + 容器 label 聚合（外部项目识别，对应功能清单 §3.4-20）。
+// ProjectDelete 删除托管项目：先 down（忽略失败）再移除编排目录（含其下全部数据，调用方须已确认）。
+func (m *Manager) ProjectDelete(ctx context.Context, project string) error {
+	if err := ValidateName(project); err != nil {
+		return err
+	}
+	dir := filepath.Join(m.baseDir, project)
+	if dir == m.baseDir || !strings.HasPrefix(dir, m.baseDir+string(filepath.Separator)) {
+		return errs.ErrPathInvalid
+	}
+	if _, err := os.Stat(dir); err != nil {
+		return errs.Wrapc(errs.CodeFileOpFailed, "项目目录不存在: "+dir)
+	}
+	// down 失败不阻塞（容器可能已不存在）
+	if cfg, ok := findConfig(dir); ok {
+		_, _, _ = runDocker(ctx, composeArgs(cfg, "--project-name", project, "down")...)
+	}
+	if err := os.RemoveAll(dir); err != nil {
+		return errs.Wrapc(errs.CodeFileOpFailed, "删除项目目录失败: "+err.Error())
+	}
+	return nil
+}
+
 func (m *Manager) List(ctx context.Context) ([]dto.ComposeProject, error) {
 	type agg struct {
 		dir      string
@@ -161,7 +183,12 @@ func (m *Manager) List(ctx context.Context) ([]dto.ComposeProject, error) {
 				g = &agg{dir: c.Labels[composeWorkdirLabel], services: map[string]dto.ComposeServiceState{}}
 				groups[name] = g
 			}
-			svc := strings.TrimPrefix(strings.TrimPrefix(c.Name, name), "-")
+			// service 名以 label 为准（com.docker.compose.service）；容器名砍项目名前缀仅在
+			// label 缺失时兜底——项目名与容器名相同（如 container_name 显式同名）时会砍成空串
+			svc := c.Labels[composeServiceLabel]
+			if svc == "" {
+				svc = strings.TrimPrefix(strings.TrimPrefix(c.Name, name), "-")
+			}
 			if svc == "" {
 				svc = c.Name
 			}
@@ -290,7 +317,9 @@ func (m *Manager) Logs(ctx context.Context, name, dir, tail, service string, w i
 	if tail == "" {
 		tail = "500"
 	}
-	args := composeArgs(cfg, "logs", "--tail", tail, "--no-log-prefix")
+	// 项目名必须显式传入：compose 默认取编排文件所在目录名，运行时目录（/opt/ypanel/runtime/<type>/<name>）
+	// 的目录名与项目名（rt-<type>-<name>）不一致时会静默查不到任何容器日志
+	args := composeArgs(cfg, "--project-name", name, "logs", "--tail", tail, "--no-log-prefix")
 	if service != "" {
 		args = append(args, service)
 	}
