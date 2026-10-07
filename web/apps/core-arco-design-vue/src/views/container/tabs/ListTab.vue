@@ -4,7 +4,7 @@ import { LabelComposeProject } from '@/api/modules/container'
 import apiContainer from '@/api/modules/container'
 import { dockerExtApi } from '@/api/modules/dockerext'
 import FileEditorWorkspace from '@/views/file_management/editor/Workspace.vue'
-import CreateContainerForm from '../components/CreateContainerForm.vue'
+import ContainerForm from '../components/ContainerForm.vue'
 
 // 容器列表（M23）：批量操作 / 状态与项目过滤 / 品牌 logo / 快速操作。
 const router = useRouter()
@@ -54,6 +54,14 @@ const filtered = computed(() => {
 })
 
 const allChecked = computed(() => filtered.value.length > 0 && filtered.value.every(c => selected.value.has(c.id)))
+
+// ---- 分页（筛选/搜索变化自动回第 1 页） ----
+const page = ref(1)
+const size = ref(20)
+const paged = computed(() => filtered.value.slice((page.value - 1) * size.value, page.value * size.value))
+watch([search, stateFilter, projectFilter], () => {
+  page.value = 1
+})
 
 function toggleAll() {
   if (allChecked.value) {
@@ -222,6 +230,16 @@ function fmtPorts(c: ContainerItem) {
 }
 
 const createVisible = ref(false)
+// 编辑（删除重建式）：compose 管理的容器禁用入口
+const editVisible = ref(false)
+const editId = ref('')
+
+function openEdit(c: ContainerItem) {
+  editId.value = c.id
+  editVisible.value = true
+}
+
+const isCompose = (c: ContainerItem) => !!c.labels?.[LabelComposeProject]
 
 let timer: ReturnType<typeof setInterval> | null = null
 onMounted(() => {
@@ -240,6 +258,8 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
+  <div>
+    <FaPageMain>
   <div>
     <!-- 工具条 -->
     <div class="mb-3 flex flex-wrap items-center gap-2">
@@ -333,7 +353,7 @@ onBeforeUnmount(() => {
               暂无容器
             </td>
           </tr>
-          <tr v-for="c in filtered" :key="c.id" class="border-t transition-colors hover:bg-accent/30" :class="selected.has(c.id) ? 'bg-primary/5' : ''">
+          <tr v-for="c in paged" :key="c.id" class="border-t transition-colors hover:bg-accent/30" :class="selected.has(c.id) ? 'bg-primary/5' : ''">
             <td class="px-3 py-2">
               <input type="checkbox" :checked="selected.has(c.id)" class="accent-[var(--primary)]" @change="toggle(c.id)">
             </td>
@@ -383,6 +403,14 @@ onBeforeUnmount(() => {
                 <FaButton v-if="c.state === 'running'" variant="ghost" size="icon-sm" title="终端 + 文件" @click="openExec(c)">
                   <FaIcon name="i-lucide:square-terminal" class="text-sm" />
                 </FaButton>
+                <FaButton
+                  variant="ghost" size="icon-sm"
+                  :class="isCompose(c) ? 'cursor-not-allowed opacity-40' : ''"
+                  :disabled="isCompose(c)" :title="isCompose(c) ? '由 Compose 编排管理，请在编排/应用处修改' : '编辑'"
+                  @click="!isCompose(c) && openEdit(c)"
+                >
+                  <FaIcon name="i-lucide:pencil" class="text-sm" />
+                </FaButton>
                 <FaButton variant="ghost" size="icon-sm" title="详情" @click="router.push(`/container/detail/${c.id}`)">
                   <FaIcon name="i-lucide:info" class="text-sm" />
                 </FaButton>
@@ -395,8 +423,12 @@ onBeforeUnmount(() => {
         </tbody>
       </table>
     </div>
+    <FaPagination v-model:page="page" v-model:size="size" :total="filtered.length" class="mt-3" />
 
-    <CreateContainerForm v-model="createVisible" @created="load(true)" />
+    <ContainerForm v-model="createVisible" mode="create" @created="load(true)" />
+    <ContainerForm v-model="editVisible" mode="edit" :container-id="editId" @saved="load(true)" />
     <FileEditorWorkspace />
+  </div>
+    </FaPageMain>
   </div>
 </template>

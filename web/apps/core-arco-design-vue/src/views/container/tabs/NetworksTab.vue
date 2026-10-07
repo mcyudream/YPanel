@@ -8,6 +8,11 @@ const toast = useFaToast()
 const networks = ref<DockerNetwork[]>([])
 const loading = ref(false)
 
+// ---- 分页 ----
+const page = ref(1)
+const size = ref(20)
+const paged = computed(() => networks.value.slice((page.value - 1) * size.value, page.value * size.value))
+
 async function load() {
   loading.value = true
   try {
@@ -59,6 +64,8 @@ function remove(n: DockerNetwork) {
 
 <template>
   <div>
+    <FaPageMain>
+  <div>
     <div class="mb-3 flex items-center gap-2">
       <FaButton class="ml-auto" size="sm" @click="visible = true">
         <FaIcon name="i-lucide:plus" class="mr-1" /> 创建网络
@@ -85,7 +92,7 @@ function remove(n: DockerNetwork) {
               加载中…
             </td>
           </tr>
-          <tr v-for="n in networks" :key="n.id" class="border-t transition-colors hover:bg-accent/30">
+          <tr v-for="n in paged" :key="n.id" class="border-t transition-colors hover:bg-accent/30">
             <td class="px-3 py-1.5">
               <div class="flex items-center gap-2">
                 <FaIcon name="i-lucide:network" class="text-sm text-primary opacity-60" />
@@ -114,6 +121,7 @@ function remove(n: DockerNetwork) {
         </tbody>
       </table>
     </div>
+    <FaPagination v-model:page="page" v-model:size="size" :total="networks.length" class="mt-3" />
 
     <FaModal v-model="visible" title="创建网络" :destroy-on-close="true">
       <div class="flex flex-col gap-3">
@@ -139,5 +147,7 @@ function remove(n: DockerNetwork) {
         </FaButton>
       </template>
     </FaModal>
+  </div>
+    </FaPageMain>
   </div>
 </template>

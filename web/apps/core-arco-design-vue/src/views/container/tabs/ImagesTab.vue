@@ -34,6 +34,14 @@ const filtered = computed(() => {
   return images.value.filter(img => img.tags.some(t => t.toLowerCase().includes(kw)) || img.id.toLowerCase().includes(kw))
 })
 
+// ---- 分页（搜索变化自动回第 1 页） ----
+const page = ref(1)
+const size = ref(20)
+const paged = computed(() => filtered.value.slice((page.value - 1) * size.value, page.value * size.value))
+watch(search, () => {
+  page.value = 1
+})
+
 const pullVisible = ref(false)
 const pullRef = ref('')
 const pulling = ref(false)
@@ -146,6 +154,8 @@ function fmtTime(unix: number) {
 
 <template>
   <div>
+    <FaPageMain>
+  <div>
     <div class="mb-3 flex flex-wrap items-center gap-2">
       <FaInput v-model="search" placeholder="搜索 TAG/ID…" class="h-8 w-52!" />
       <div class="ml-auto flex items-center gap-2">
@@ -183,7 +193,7 @@ function fmtTime(unix: number) {
               暂无镜像
             </td>
           </tr>
-          <tr v-for="img in filtered" :key="img.id" class="border-t transition-colors hover:bg-accent/30">
+          <tr v-for="img in paged" :key="img.id" class="border-t transition-colors hover:bg-accent/30">
             <td class="px-3 py-1.5 font-mono text-[13px]">
               <div class="flex items-center gap-2">
                 <YdAppIcon :name="img.tags[0] || img.id" :size="18" />
@@ -213,6 +223,7 @@ function fmtTime(unix: number) {
         </tbody>
       </table>
     </div>
+    <FaPagination v-model:page="page" v-model:size="size" :total="filtered.length" class="mt-3" />
 
     <FaModal v-model="pullVisible" :title="pullTaskId ? `拉取进行中：${pullRef}` : '拉取镜像'" :destroy-on-close="true" :close-on-click-modal="false">
       <div v-if="!pullTaskId" class="flex flex-col gap-2">
@@ -239,5 +250,7 @@ function fmtTime(unix: number) {
         </template>
       </template>
     </FaModal>
+  </div>
+    </FaPageMain>
   </div>
 </template>

@@ -8,6 +8,11 @@ const toast = useFaToast()
 const volumes = ref<DockerVolume[]>([])
 const loading = ref(false)
 
+// ---- 分页 ----
+const page = ref(1)
+const size = ref(20)
+const paged = computed(() => volumes.value.slice((page.value - 1) * size.value, page.value * size.value))
+
 async function load() {
   loading.value = true
   try {
@@ -70,6 +75,8 @@ async function prune() {
 
 <template>
   <div>
+    <FaPageMain>
+  <div>
     <div class="mb-3 flex items-center gap-2">
       <FaButton variant="outline" size="sm" @click="prune">
         清理未使用卷
@@ -98,7 +105,7 @@ async function prune() {
               加载中…
             </td>
           </tr>
-          <tr v-for="v in volumes" :key="v.name" class="border-t transition-colors hover:bg-accent/30">
+          <tr v-for="v in paged" :key="v.name" class="border-t transition-colors hover:bg-accent/30">
             <td class="px-3 py-1.5">
               <div class="flex items-center gap-2">
                 <FaIcon name="i-lucide:hard-drive" class="text-sm text-primary opacity-60" />
@@ -120,6 +127,7 @@ async function prune() {
         </tbody>
       </table>
     </div>
+    <FaPagination v-model:page="page" v-model:size="size" :total="volumes.length" class="mt-3" />
 
     <FaModal v-model="visible" title="创建卷" :destroy-on-close="true">
       <div class="flex items-center gap-3">
@@ -135,5 +143,7 @@ async function prune() {
         </FaButton>
       </template>
     </FaModal>
+  </div>
+    </FaPageMain>
   </div>
 </template>
