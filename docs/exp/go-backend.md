@@ -158,7 +158,7 @@
 - **现象**：AI 对话 SSE 只有 scene/step/done 事件，正文 content 一条都没有；思考过程（reasoning）也永远是空。后端无任何报错。
 - **根因**：langchaingo v0.1.15 openai 客户端（`internal/openaiclient/chat.go`）传给流式回调的 chunk **不是 SSE 原始 JSON**：① content delta 被剥成**原始文本字节**（`[]byte(choice.Delta.Content)`），拿它 `json.Unmarshal` 到 `{"choices":[...]}` 必然失败——回调里"解析失败静默 return nil"就把正文全丢了；② tool_calls delta 是**累积后 marshal 的 JSON 数组**（元素含 `function` 键）；③ `reasoning_content` **只**经 `llms.WithStreamingReasoningFunc(ctx, reasoningChunk, chunk)` 透出，普通 `WithStreamingFunc` 收到的 reasoning chunk 恒为空字节——普通回调永远拿不到思考过程。
 - **规避/解决**：改用 `WithStreamingReasoningFunc` 一个回调通吃：`reasoning` 非空即透出思考事件；`chunk` 先按"JSON 数组且首元素含 function 键"过滤掉 tool_calls 参数片段，其余按**原始文本**直接透出正文。深度思考型模型（deepseek-flash/reasoner 等）必须走这条路，否则"思考过程展示"无从谈起。
-- **来源**：2026-10-07，B18 AI 流式无正文根因（core/internal/service/aichat.go + tmp/airepro 最小复现）。
+- **来源**：2026-10-07，B18 AI 流式无正文根因（core/internal/service/aichat.go；langchaingo openaiclient/chat.go 源码 + go run 最小复现定位）。
 
 ### deepseek-flash 是思考型模型：先吐 reasoning_content 再吐 content，模型名以实测为准
 
