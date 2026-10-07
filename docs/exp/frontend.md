@@ -236,9 +236,9 @@
 - **规避/解决**：递归自引用只有两种可靠写法——模板用**文件名**（`<TreeNode>`），或顶部**显式自导入** `import YdFileTreeNode from './TreeNode.vue'`（推荐，抗重命名）。排查特征：DOM 查未知标签 `document.querySelectorAll('ydfiletreenode').length`；产物 grep `resolveComponent("组件名")`（修复后字符串应消失、编译为直接绑定）。构建/vue-tsc 对此类问题零报错，不能依赖编译期拦截。
 - **来源**：2026-10-07，终端文件树/容器文件树"无法获取文件夹子项"（YdFileTree/TreeNode.vue，组件抽取重命名时引入）。
 
-### FaSwitch 是 reka-ui Switch 封装：受控 prop 是 checked 不是 modelValue，且 el.click() 无法驱动
+### FaSwitch（reka-ui Switch）受控 prop 就是 modelValue：传 checked 会落非受控、全渲染 OFF
 
-- **现象**：`<FaSwitch v-model="x" />` 点击后 UI 状态会翻、但绑定的业务逻辑（如异步保存）从不执行；改用 `:model-value + @update:model-value` 依旧 UI 翻转、回调不触发；浏览器自动化 `el.click()` 点了完全没反应。
-- **根因**：FaSwitch 直接转发 reka-ui `SwitchRoot`，受控 prop 名是 **`checked`**（emits `update:checked`），不存在 `modelValue`——`v-model` 绑的 modelValue 进不了组件，SwitchRoot 落到**非受控态**（内部自翻转 UI），发的事件是 `update:checked` 无人接收。此外 reka 系组件在自动化里对 `el.click()` 不响应（与 FaTabs 同坑）。
-- **规避/解决**：受控写法 `:checked="x" @update:checked="v => handler(v)"`；自动化验证优先用 aria-checked 属性断言 + API 状态闭环，或直接以真实用户操作结果（API 状态变化）作为验收依据，不与合成事件较劲。
-- **来源**：2026-10-07，AI 系统工具开关页（views/ai/tools.vue），FaModal visible 断链条目的同族坑。
+- **现象**：`<FaSwitch :checked="x" />` 页面上**所有开关初始都是关的状态**（与数据不符）；点击 UI 会翻但绑定的业务回调不执行。
+- **根因**：FaSwitch 转发 reka-ui SwitchRoot，其受控 prop 是 **`modelValue`**（emits `update:modelValue`，trueValue/falseValue 默认 true/false）；`checked` 只是组件内部计算值（`modelValue === trueValue`），**不是 prop**——传 `:checked` 会作为无效 attr 落到根 button 上，SwitchRoot 因 modelValue===undefined 落非受控（passive 内部态、初始 false），UI 与数据彻底脱钩。排查时曾被「radix 旧版用 checked」的印象与 FaTabs 的 el.click() 坑带偏方向，绕了 v-model → :model-value → :checked 三轮才定位。
+- **规避/解决**：正确写法就是标准 `<FaSwitch v-model="x" @update:model-value="v => 异步保存(x)" />`；验收开关视觉态用 `aria-checked` 属性与 API 状态对照。reka 系组件受控 prop 名不统一（Switch=modelValue、Dialog=open），接新组件先读它的 props 定义再绑定。自动化环境对 reka 组件 el.click()/合成 pointer 均不可靠，交互闭环以真实用户操作或 API 状态为准。
+- **来源**：2026-10-07，AI 系统工具开关页（views/ai/tools.vue），用户反馈「开关与启用状态不对（全是关）」定位。
