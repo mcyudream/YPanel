@@ -4,6 +4,8 @@
 package service
 
 import (
+	"archive/zip"
+	"bytes"
 	"context"
 	"encoding/base64"
 	"fmt"
@@ -178,3 +180,124 @@ func (s *SkillsManager) Remove(ctx context.Context, name string) error {
 	return err
 }
 
+// UploadZip 上传技能包压缩包：解压定位 SKILL.md（zip 根或唯一一级子目录），
+// 按 frontmatter name 把整个技能目录重整为 /opt/ypanel/ai/skills/<name>/（SKILL.md 在根）。
+// 重名覆盖；防 zip slip；限制：zip ≤10MB、条目 ≤200、单文件 ≤2MB。
+func (s *SkillsManager) UploadZip(ctx context.Context, data []byte) (string, string, error) {
+	if len(data) == 0 || len(data) > 10<<20 {
+		return "", "", errs.Wrap(errs.ErrBadRequest, "压缩包为空或超过 10MB")
+	}
+	zr, err := zip.NewReader(bytes.NewReader(data), int64(len(data)))
+	if err != nil {
+		return "", "", errs.Wrap(errs.ErrBadRequest, "不是有效的 zip 压缩包")
+	}
+	if len(zr.File) > 200 {
+		return "", "", errs.Wrap(errs.ErrBadRequest, "压缩包含文件过多（上限 200）")
+	}
+	// 定位 SKILL.md 与其所在基准目录
+	base := ""
+	found := false
+	for _, f := range zr.File {
+		n := path.Clean(f.Name)
+		if n == "SKILL.md" {
+			base, found = "", true
+			break
+		}
+		if strings.HasSuffix(n, "/SKILL.md") {
+			parent := path.Dir(n)
+			if !strings.Contains(parent, "/") {
+				base, found = parent, true
+				break
+			}
+		}
+	}
+	if !found {
+		return "", "", errs.Wrap(errs.ErrBadRequest, "压缩包内未找到 SKILL.md（支持根目录或一级子目录）")
+	}
+	// 读 SKILL.md 解析 name
+	var skillMD *zip.File
+	relFiles := make([]*zip.File, 0, len(zr.File))
+	var total uint64
+	for _, f := range zr.File {
+		if f.FileInfo().IsDir() {
+			continue
+		}
+		n := path.Clean(f.Name)
+		if strings.HasPrefix(n, "__MACOSX/") || strings.HasSuffix(n, ".DS_Store") {
+			continue
+		}
+		if base != "" && !strings.HasPrefix(n, base+"/") {
+			continue
+		}
+		if f.UncompressedSize64 > 2<<20 {
+			return "", "", errs.Wrap(errs.ErrBadRequest, "单文件超过 2MB: "+n)
+		}
+		total += f.UncompressedSize64
+		if total > 20<<20 {
+			return "", "", errs.Wrap(errs.ErrBadRequest, "解压后总量超过 20MB")
+		}
+		rel := strings.TrimPrefix(n, base)
+		rel = strings.TrimPrefix(rel, "/")
+		if rel == "SKILL.md" {
+			skillMD = f
+			continue
+		}
+		if rel == "" || strings.HasPrefix(rel, "..") {
+			continue
+		}
+		relFiles = append(relFiles, f)
+	}
+	if skillMD == nil {
+		return "", "", errs.Wrap(errs.ErrBadRequest, "压缩包内未找到 SKILL.md")
+	}
+	rc, err := skillMD.Open()
+	if err != nil {
+		return "", "", err
+	}
+	mdBuf := new(bytes.Buffer)
+	if _, err := mdBuf.ReadFrom(rc); err != nil {
+		_ = rc.Close()
+		return "", "", err
+	}
+	_ = rc.Close()
+	name, desc, _ := parseSKILLMD(mdBuf.String())
+	if name == "" || strings.ContainsAny(name, "/ ;|&$<>*?~") {
+		return "", "", errs.Wrap(errs.ErrBadRequest, "SKILL.md frontmatter 缺少合法的 name 字段")
+	}
+	// 重整：先清旧目录，再写 SKILL.md + 其余文件（相对路径）
+	if err := s.Remove(ctx, name); err != nil {
+		return "", "", err
+	}
+	writeFile := func(rel, contentB64 string) error {
+		target := path.Join(skillsDir, name, rel)
+		dir := path.Dir(target)
+		out, err := s.exec(ctx, fmt.Sprintf("mkdir -p '%s' && echo %s | base64 -d > '%s'", dir, contentB64, target), 30)
+		if err != nil {
+			return err
+		}
+		if out.ExitCode != 0 {
+			return errs.New(errs.CodeFileOpFailed, "error.fileOpFailed", "写入技能文件失败: "+strings.TrimSpace(out.Output))
+		}
+		return nil
+	}
+	b64 := base64.StdEncoding.EncodeToString(mdBuf.Bytes())
+	if err := writeFile("SKILL.md", b64); err != nil {
+		return "", "", err
+	}
+	for _, f := range relFiles {
+		rc, err := f.Open()
+		if err != nil {
+			return "", "", err
+		}
+		buf := new(bytes.Buffer)
+		if _, err := buf.ReadFrom(rc); err != nil {
+			_ = rc.Close()
+			return "", "", err
+		}
+		_ = rc.Close()
+		if err := writeFile(path.Clean(strings.TrimPrefix(f.Name, base)), base64.StdEncoding.EncodeToString(buf.Bytes())); err != nil {
+			return "", "", err
+		}
+	}
+	return name, desc, nil
+}

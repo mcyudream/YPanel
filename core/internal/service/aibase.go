@@ -90,6 +90,11 @@ func (s *AIService) RemoveSkill(ctx context.Context, name string) error {
 	return s.skills.Remove(ctx, name)
 }
 
+// UploadSkillZip 上传技能包压缩包。
+func (s *AIService) UploadSkillZip(ctx context.Context, data []byte) (string, string, error) {
+	return s.skills.UploadZip(ctx, data)
+}
+
 // NewAIService 创建。
 func NewAIService(db *gorm.DB, nodes *NodeService, dbSvc *DatabaseService, adminSvc *DBAdminService, settings *SettingService, skills *SkillsManager) *AIService {
 	return &AIService{db: db, nodes: nodes, dbSvc: dbSvc, adminSvc: adminSvc, settings: settings, skills: skills}
@@ -221,31 +226,54 @@ func (s *AIService) DeleteKnowledge(id uint) error {
 	return s.db.Delete(&model.AIKnowledge{}, id).Error
 }
 
-// searchKnowledge 关键词检索（命中数最多的前 3 条）。
-func (s *AIService) searchKnowledge(query string) []model.AIKnowledge {
-	all := s.ListKnowledge()
-	if len(all) == 0 {
-		return nil
+// KnowledgeHit 知识检索命中（统一手工条目与文档分块形态）。
+type KnowledgeHit struct {
+	Title string `json:"title"`
+	Body  string `json:"body"`
+}
+
+// scoreWords 命中的分词数。
+func scoreWords(words []string, text string) int {
+	low := strings.ToLower(text)
+	n := 0
+	for _, w := range words {
+		if strings.Contains(low, w) {
+			n++
+		}
 	}
+	return n
+}
+
+// searchKnowledge 关键词检索：手工条目 + 知识文档分块统一打分，取命中数最多的前 3 条。
+func (s *AIService) searchKnowledge(query string) []KnowledgeHit {
 	words := tokenizeKnowledgeQuery(query)
 	if len(words) == 0 {
 		return nil
 	}
 	type scored struct {
-		k model.AIKnowledge
-		n int
+		hit KnowledgeHit
+		n   int
 	}
 	var ss []scored
-	for _, k := range all {
-		low := strings.ToLower(k.Title + " " + k.Body)
-		n := 0
-		for _, w := range words {
-			if strings.Contains(low, w) {
-				n++
-			}
+	for _, k := range s.ListKnowledge() {
+		if n := scoreWords(words, k.Title+" "+k.Body); n > 0 {
+			ss = append(ss, scored{KnowledgeHit{Title: "[条目] " + k.Title, Body: k.Body}, n})
 		}
-		if n > 0 {
-			ss = append(ss, scored{k, n})
+	}
+	docs := map[uint]string{}
+	docRows := []model.AIKnowledgeDoc{}
+	_ = s.db.Find(&docRows).Error
+	for _, d := range docRows {
+		docs[d.ID] = d.Title
+	}
+	chunks := []model.AIKnowledgeChunk{}
+	_ = s.db.Find(&chunks).Error
+	for _, ch := range chunks {
+		if n := scoreWords(words, ch.Heading+" "+ch.Body); n > 0 {
+			ss = append(ss, scored{KnowledgeHit{
+				Title: fmt.Sprintf("[文档] %s › %s", docs[ch.DocID], ch.Heading),
+				Body:  ch.Body,
+			}, n})
 		}
 	}
 	for i := 1; i < len(ss) && i < 3; i++ {
@@ -257,9 +285,9 @@ func (s *AIService) searchKnowledge(query string) []model.AIKnowledge {
 	if len(ss) < limit {
 		limit = len(ss)
 	}
-	out := make([]model.AIKnowledge, 0, limit)
-	for _, x := range ss[:limit] {
-		out = append(out, x.k)
+	out := make([]KnowledgeHit, 0, limit)
+	for _, it := range ss[:limit] {
+		out = append(out, it.hit)
 	}
 	return out
 }
@@ -608,6 +636,18 @@ func (s *AIService) builtinTools(ctx context.Context) []tools.Tool {
 			description: "把本次对话中值得长期记住的运维经验/用户偏好/服务器特性沉淀为记忆（下次对话自动可用）。input 为一句话记忆内容。",
 			fn: func(_ context.Context, input string) (string, error) {
 				content := strings.TrimSpace(input)
+				// 模型可能传 {"content":"..."} 或 {"input":"..."} 包装，取内层纯文本
+				var probe struct {
+					Content string `json:"content"`
+					Input   string `json:"input"`
+				}
+				if json.Unmarshal([]byte(content), &probe) == nil && (probe.Content != "" || probe.Input != "") {
+					if probe.Content != "" {
+						content = strings.TrimSpace(probe.Content)
+					} else {
+						content = strings.TrimSpace(probe.Input)
+					}
+				}
 				if content == "" {
 					return "", fmt.Errorf("记忆内容为空")
 				}
@@ -615,6 +655,56 @@ func (s *AIService) builtinTools(ctx context.Context) []tools.Tool {
 					return "", err
 				}
 				return "已记住", nil
+			},
+		},
+		&aiTool{
+			name:        "read_knowledge",
+			description: "按需深读知识库（回答引用了知识片段后如需更多上下文时使用）。input JSON 二选一：{\"search\":\"关键词\"} 返回命中的条目/文档章节清单（标题+摘要）；{\"doc\":\"文档标题关键词\"} 返回最匹配文档的全文（截断 6000 字）。",
+			fn: func(_ context.Context, input string) (string, error) {
+				var p struct {
+					Search string `json:"search"`
+					Doc    string `json:"doc"`
+				}
+				raw := strings.TrimSpace(input)
+				_ = json.Unmarshal([]byte(raw), &p)
+				var wrapper struct {
+					Input string `json:"input"`
+				}
+				if json.Unmarshal([]byte(raw), &wrapper) == nil && wrapper.Input != "" {
+					_ = json.Unmarshal([]byte(wrapper.Input), &p)
+				}
+				if p.Doc != "" {
+					docs := []model.AIKnowledgeDoc{}
+					if err := s.db.Where("title LIKE ? OR filename LIKE ?", "%"+p.Doc+"%", "%"+p.Doc+"%").Order("id desc").Find(&docs).Error; err != nil {
+						return "", err
+					}
+					if len(docs) == 0 {
+						return "未找到匹配文档：" + p.Doc, nil
+					}
+					content := docs[0].Content
+					if len(content) > 6000 {
+						content = content[:6000] + "…（已截断，全文见知识库）"
+					}
+					b, _ := json.Marshal(map[string]any{"title": docs[0].Title, "content": content})
+					return string(b), nil
+				}
+				if p.Search == "" {
+					return "需提供 search 或 doc 参数", nil
+				}
+				hits := s.searchKnowledge(p.Search)
+				if len(hits) == 0 {
+					return "知识库无命中：" + p.Search, nil
+				}
+				var sb strings.Builder
+				for _, h := range hits {
+					summary := h.Body
+					if len(summary) > 160 {
+						summary = summary[:160] + "…"
+					}
+					sb.WriteString("【" + h.Title + "】" + summary + "\n")
+				}
+				sb.WriteString("（如需某文档全文，用 {\"doc\":\"标题关键词\"} 再查）")
+				return sb.String(), nil
 			},
 		},
 	}

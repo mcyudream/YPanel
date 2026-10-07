@@ -4,6 +4,7 @@ package api
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"strconv"
 
@@ -112,6 +113,84 @@ func (a *AIAPI) SetToolFlag(c *gin.Context) {
 		return
 	}
 	respOK(c, a.AI.ListTools())
+}
+
+// UploadSkillZip POST /api/v1/ai/skills/upload（multipart file）
+func (a *AIAPI) UploadSkillZip(c *gin.Context) {
+	fh, err := c.FormFile("file")
+	if err != nil {
+		respErr(c, errBadRequest("缺少 file 字段"))
+		return
+	}
+	f, err := fh.Open()
+	if err != nil {
+		respErr(c, err)
+		return
+	}
+	defer f.Close()
+	data, err := io.ReadAll(f)
+	if err != nil {
+		respErr(c, err)
+		return
+	}
+	name, desc, err := a.AI.UploadSkillZip(c.Request.Context(), data)
+	if err != nil {
+		respErr(c, err)
+		return
+	}
+	respOK(c, gin.H{"name": name, "description": desc})
+}
+
+// ListKnowledgeDocs GET /api/v1/ai/knowledge/docs
+func (a *AIAPI) ListKnowledgeDocs(c *gin.Context) {
+	respOK(c, a.AI.ListKnowledgeDocs())
+}
+
+// SaveKnowledgeDoc POST /api/v1/ai/knowledge/doc {title?, filename, content}
+func (a *AIAPI) SaveKnowledgeDoc(c *gin.Context) {
+	req, ok := bind[struct {
+		Title    string `json:"title"`
+		Filename string `json:"filename"`
+		Content  string `json:"content"`
+	}](c)
+	if !ok {
+		return
+	}
+	doc, err := a.AI.SaveKnowledgeDoc(req.Title, req.Filename, req.Content)
+	if err != nil {
+		respErr(c, err)
+		return
+	}
+	respOK(c, doc)
+}
+
+// GetKnowledgeDoc GET /api/v1/ai/knowledge/doc/:id（全文）
+func (a *AIAPI) GetKnowledgeDoc(c *gin.Context) {
+	id, err := strconv.ParseUint(c.Param("id"), 10, 64)
+	if err != nil || id == 0 {
+		respErr(c, errBadRequest("文档 ID 不合法"))
+		return
+	}
+	out, err := a.AI.GetKnowledgeDoc(uint(id))
+	if err != nil {
+		respErr(c, err)
+		return
+	}
+	respOK(c, out)
+}
+
+// DeleteKnowledgeDoc DELETE /api/v1/ai/knowledge/doc/:id
+func (a *AIAPI) DeleteKnowledgeDoc(c *gin.Context) {
+	id, err := strconv.ParseUint(c.Param("id"), 10, 64)
+	if err != nil || id == 0 {
+		respErr(c, errBadRequest("文档 ID 不合法"))
+		return
+	}
+	if err := a.AI.DeleteKnowledgeDoc(uint(id)); err != nil {
+		respErr(c, err)
+		return
+	}
+	respOK(c, struct{}{})
 }
 
 // WorkspaceList GET /api/v1/ai/workspace（B18：工作空间文件列表）

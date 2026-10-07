@@ -158,6 +158,23 @@ export interface AIConversationMeta {
   updatedAt: string
 }
 
+// 知识文档（注入的 md/txt，分块检索）
+export interface AIKnowledgeDocMeta { id: number, title: string, filename: string, chunks: number, createdAt: string }
+
+export const knowledgeDocApi = {
+  list: async () => {
+    const res = await api.get('api/v1/ai/knowledge/docs', { silent: true })
+    return res.data as AIKnowledgeDocMeta[]
+  },
+  save: (data: { title?: string, filename: string, content: string }) =>
+    api.post('api/v1/ai/knowledge/doc', data, { timeout: 60000 }),
+  get: async (id: number) => {
+    const res = await api.get(`api/v1/ai/knowledge/doc/${id}`, { silent: true })
+    return res.data as { id: number, title: string, filename: string, content: string }
+  },
+  remove: (id: number) => api.delete(`api/v1/ai/knowledge/doc/${id}`),
+}
+
 export const conversationApi = {
   list: async () => {
     const res = await api.get('api/v1/ai/conversations', { silent: true })
@@ -196,6 +213,11 @@ export const skillApi = {
   },
   save: (data: { name: string, description: string, body: string }) =>
     api.post('api/v1/ai/skills', data),
+  uploadZip: (file: File) => {
+    const fd = new FormData()
+    fd.append('file', file)
+    return api.post('api/v1/ai/skills/upload', fd, { timeout: 120000 })
+  },
   setEnabled: (name: string, enabled: boolean) =>
     api.post(`api/v1/ai/skills/${encodeURIComponent(name)}/enable`, { enabled }),
   remove: (name: string) => api.delete(`api/v1/ai/skills/${encodeURIComponent(name)}`),

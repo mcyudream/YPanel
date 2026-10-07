@@ -1,6 +1,8 @@
 <script setup lang="ts">
 // 知识库（智能/知识库）：条目 CRUD；对话时按关键词自动检索注入并展示引用来源。
 import api from '@/api'
+import { knowledgeDocApi } from '@/api/modules/ai'
+import type { AIKnowledgeDocMeta } from '@/api/modules/ai'
 
 defineOptions({
   name: 'aiKnowledge',
@@ -54,24 +56,101 @@ async function removeKnow(id: number) {
   }
 }
 
-onMounted(loadKnowledge)
-onActivated(loadKnowledge)
+// ---- 知识文档 ----
+const docs = ref<AIKnowledgeDocMeta[]>([])
+const docInput = ref<HTMLInputElement>()
+const docUploading = ref(false)
+const docViewVisible = ref(false)
+const docView = ref<{ title: string, filename: string, content: string } | null>(null)
+
+async function loadDocs() {
+  try {
+    docs.value = await knowledgeDocApi.list()
+  }
+  catch {}
+}
+
+async function onDocFile(e: Event) {
+  const input = e.target as HTMLInputElement
+  const file = input.files?.[0]
+  input.value = ''
+  if (!file) {
+    return
+  }
+  if (file.size > 2 << 20) {
+    toast.error('文档过大（上限 2MB）')
+    return
+  }
+  docUploading.value = true
+  try {
+    const content = await file.text()
+    await knowledgeDocApi.save({ filename: file.name, content })
+    toast.success(`文档已注入：${file.name}`)
+    await loadDocs()
+  }
+  catch (e: any) {
+    toast.error('注入失败', { description: e?.message })
+  }
+  finally {
+    docUploading.value = false
+  }
+}
+
+async function viewDoc(id: number) {
+  try {
+    docView.value = await knowledgeDocApi.get(id)
+    docViewVisible.value = true
+  }
+  catch (e: any) {
+    toast.error('读取失败', { description: e?.message })
+  }
+}
+
+async function removeDoc(id: number) {
+  try {
+    await knowledgeDocApi.remove(id)
+    await loadDocs()
+    toast.success('文档已删除')
+  }
+  catch (e: any) {
+    toast.error('删除失败', { description: e?.message })
+  }
+}
+
+onMounted(() => { loadKnowledge(); loadDocs() })
+onActivated(() => { loadKnowledge(); loadDocs() })
 </script>
 
 <template>
   <div>
-    <FaPageHeader>
-      <template #title>
-        知识库
-      </template>
-      <template #description>
-        条目在对话时按关键词自动检索注入上下文，回答下方展示引用来源
-      </template>
-    </FaPageHeader>
-
     <FaPageMain>
       <div class="space-y-4">
-        <div class="flex justify-end">
+        <div class="flex items-center justify-between">
+          <div>
+            <div class="text-sm font-medium">
+              知识文档（md / txt，保存后自动分块）
+            </div>
+            <p class="mt-0.5 text-xs text-muted-foreground">
+              对话按关键词检索命中文档片段并展示引用来源；AI 可用 read_knowledge 工具按需读取全文
+            </p>
+          </div>
+          <FaButton size="sm" :loading="docUploading" @click="docInput?.click()">
+            <FaIcon name="i-lucide:file-up" class="mr-1" /> 注入文档
+          </FaButton>
+        </div>
+        <div v-if="docs.length" class="rounded-lg border">
+          <div v-for="d in docs" :key="d.id" class="flex items-center justify-between border-b px-4 py-2 text-sm last:border-b-0">
+            <button type="button" class="min-w-0 flex-1 cursor-pointer truncate text-left hover:text-primary" @click="viewDoc(d.id)">
+              {{ d.title }}
+              <span class="ml-2 font-mono text-[11px] text-muted-foreground">{{ d.filename }} · {{ d.chunks }} 块</span>
+            </button>
+            <FaButton variant="ghost" size="sm" class="text-red-500!" @click="removeDoc(d.id)">
+              删除
+            </FaButton>
+          </div>
+        </div>
+
+        <div class="flex justify-end pt-2">
           <FaButton size="sm" @click="openKnow()">
             <FaIcon name="i-lucide:plus" class="mr-1" /> 新增知识条目
           </FaButton>
@@ -123,5 +202,11 @@ onActivated(loadKnowledge)
         </FaButton>
       </template>
     </FaModal>
+
+    <FaModal v-model="docViewVisible" :title="docView ? `文档：${docView.title}` : '文档'" class="max-w-3xl!" :destroy-on-close="true">
+      <pre class="max-h-96 overflow-auto whitespace-pre-wrap break-words rounded-md bg-muted/40 p-3 font-mono text-xs">{{ docView?.content }}</pre>
+    </FaModal>
+
+    <input ref="docInput" type="file" accept=".md,.txt,.markdown" class="hidden" @change="onDocFile">
   </div>
 </template>

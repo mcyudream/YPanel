@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"strings"
 
+	"gorm.io/gorm"
+
 	"github.com/ypanel/core/internal/model"
 	"github.com/ypanel/shared/errs"
 )
@@ -73,7 +75,7 @@ func (s *AIService) aiDatabaseTools(ctx context.Context) []aiTool {
 		},
 		{
 			name:        "query_database",
-				description: "对指定数据库实例执行只读 SQL 查询（仅 SELECT/SHOW/DESC/EXPLAIN 白名单，最多 40 行）。input 为 JSON：{\"instanceId\":1,\"database\":\"库名\",\"sql\":\"SELECT ...\"}",
+			description: "对指定数据库实例执行只读 SQL 查询（仅 SELECT/SHOW/DESC/EXPLAIN 白名单，最多 40 行）。input 为 JSON：{\"instanceId\":1,\"database\":\"库名\",\"sql\":\"SELECT ...\"}",
 			fn: func(_ context.Context, input string) (string, error) {
 				var p struct {
 					InstanceID uint   `json:"instanceId"`
@@ -240,4 +242,117 @@ func firstUserSnippet(messages []ChatMessage) string {
 // DeleteAllMemories 清空全部记忆。
 func (s *AIService) DeleteAllMemories() error {
 	return s.db.Delete(&model.AIMemory{}).Error
+}
+
+// ---- 知识文档（用户注入 md/txt → 分块检索 + read_knowledge 按需深读） ----
+
+// SaveKnowledgeDoc 保存知识文档并切分入库（utf-8，≤2MB）。
+func (s *AIService) SaveKnowledgeDoc(title, filename, content string) (*model.AIKnowledgeDoc, error) {
+	content = strings.TrimSpace(content)
+	if content == "" {
+		return nil, errWrapAI("文档内容为空")
+	}
+	if len(content) > 2<<20 {
+		return nil, errWrapAI("文档过大（上限 2MB）")
+	}
+	if title == "" {
+		title = filename
+		if i := strings.LastIndex(title, "."); i > 0 {
+			title = title[:i]
+		}
+	}
+	doc := &model.AIKnowledgeDoc{Title: title, Filename: filename, Content: content}
+	chunks := chunkKnowledgeDoc(content)
+	err := s.db.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Create(doc).Error; err != nil {
+			return err
+		}
+		for i := range chunks {
+			chunks[i].DocID = doc.ID
+			chunks[i].Idx = i
+		}
+		if len(chunks) > 0 {
+			return tx.Create(&chunks).Error
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return doc, nil
+}
+
+// ListKnowledgeDocs 文档列表（不含正文）。
+func (s *AIService) ListKnowledgeDocs() []map[string]any {
+	rows := []model.AIKnowledgeDoc{}
+	_ = s.db.Order("id desc").Find(&rows).Error
+	out := make([]map[string]any, 0, len(rows))
+	for _, r := range rows {
+		var cnt int64
+		_ = s.db.Model(&model.AIKnowledgeChunk{}).Where("doc_id = ?", r.ID).Count(&cnt).Error
+		out = append(out, map[string]any{
+			"id": r.ID, "title": r.Title, "filename": r.Filename,
+			"chunks": cnt, "createdAt": r.CreatedAt,
+		})
+	}
+	return out
+}
+
+// GetKnowledgeDoc 文档全文。
+func (s *AIService) GetKnowledgeDoc(id uint) (*model.AIKnowledgeDoc, error) {
+	var row model.AIKnowledgeDoc
+	if err := s.db.First(&row, id).Error; err != nil {
+		return nil, errs.Wrap(errs.ErrNotFound, "文档不存在")
+	}
+	return &row, nil
+}
+
+// DeleteKnowledgeDoc 删除文档（级联分块）。
+func (s *AIService) DeleteKnowledgeDoc(id uint) error {
+	return s.db.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Where("doc_id = ?", id).Delete(&model.AIKnowledgeChunk{}).Error; err != nil {
+			return err
+		}
+		return tx.Delete(&model.AIKnowledgeDoc{}, id).Error
+	})
+}
+
+// chunkKnowledgeDoc 文本分块：markdown 标题行（#+）作为章节路径，段落聚合到 ~600 字成块。
+func chunkKnowledgeDoc(content string) []model.AIKnowledgeChunk {
+	type block struct {
+		heading string
+		buf     strings.Builder
+	}
+	out := []model.AIKnowledgeChunk{}
+	cur := &block{heading: ""}
+	flush := func() {
+		if strings.TrimSpace(cur.buf.String()) == "" {
+			return
+		}
+		heading := cur.heading
+		if heading == "" {
+			heading = "（开头）"
+		}
+		out = append(out, model.AIKnowledgeChunk{Heading: heading, Body: strings.TrimSpace(cur.buf.String())})
+		cur.buf.Reset()
+	}
+	for _, line := range strings.Split(content, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "#") {
+			flush()
+			cur.heading = trimmed
+			continue
+		}
+		cur.buf.WriteString(line)
+		cur.buf.WriteString("\n")
+		if cur.buf.Len() >= 600 && trimmed == "" {
+			flush()
+			continue
+		}
+		if cur.buf.Len() >= 1200 {
+			flush()
+		}
+	}
+	flush()
+	return out
 }

@@ -352,6 +352,25 @@ type AIKnowledge struct {
 	UpdatedAt time.Time `json:"updatedAt"`
 }
 
+// AIKnowledgeDoc 用户注入的知识文档（md/txt），保存时切为分块供检索。
+type AIKnowledgeDoc struct {
+	ID        uint      `gorm:"primaryKey" json:"id"`
+	Title     string    `gorm:"size:128;not null" json:"title"`
+	Filename  string    `gorm:"size:255;not null" json:"filename"`
+	Content   string    `gorm:"type:text;not null" json:"content"`
+	CreatedAt time.Time `json:"createdAt"`
+	UpdatedAt time.Time `json:"updatedAt"`
+}
+
+// AIKnowledgeChunk 知识文档分块（检索粒度；标题=所在章节路径）。
+type AIKnowledgeChunk struct {
+	ID     uint   `gorm:"primaryKey" json:"id"`
+	DocID  uint   `gorm:"index;not null" json:"docId"`
+	Idx    int    `gorm:"not null" json:"idx"`
+	Heading string `gorm:"size:255" json:"heading"`
+	Body   string `gorm:"type:text;not null" json:"body"`
+}
+
 // Script 脚本库（B13：计划任务可引用）。
 type Script struct {
 	ID        uint      `gorm:"primaryKey" json:"id"`

@@ -15,6 +15,7 @@ export const TOOL_META: Record<string, AiToolMeta> = {
   list_database_instances: { label: '数据库实例', icon: 'i-lucide:database', desc: '列出面板管理的全部数据库实例' },
   query_database: { label: '执行查询', icon: 'i-lucide:database-zap', desc: '对数据库执行只读 SQL（仅 SELECT/SHOW/DESC/EXPLAIN，最多 40 行）' },
   save_memory: { label: '保存记忆', icon: 'i-lucide:brain-circle', desc: '把对话中值得长期记住的经验沉淀为长期记忆' },
+  read_knowledge: { label: '知识库查询', icon: 'i-lucide:book-search', desc: '按需查询注入的知识文档全文或检索命中章节' },
 }
 
 export function toolMetaOf(name: string): AiToolMeta {

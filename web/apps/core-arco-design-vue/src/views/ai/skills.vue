@@ -3,6 +3,30 @@
 import type { AISkill } from '@/api/modules/ai'
 import { skillApi } from '@/api/modules/ai'
 
+const zipInput = ref<HTMLInputElement>()
+const zipUploading = ref(false)
+
+async function onZipChange(e: Event) {
+  const input = e.target as HTMLInputElement
+  const file = input.files?.[0]
+  input.value = ''
+  if (!file) {
+    return
+  }
+  zipUploading.value = true
+  try {
+    const res = await skillApi.uploadZip(file)
+    toast.success(`技能包已导入：${(res.data as any)?.name || file.name}`)
+    await loadSkills()
+  }
+  catch (e: any) {
+    toast.error('导入失败', { description: e?.message })
+  }
+  finally {
+    zipUploading.value = false
+  }
+}
+
 defineOptions({
   name: 'aiSkills',
 })
@@ -81,24 +105,20 @@ onActivated(loadSkills)
 
 <template>
   <div>
-    <FaPageHeader>
-      <template #title>
-        技能包
-      </template>
-      <template #description>
-        SKILL.md 格式（目录 /opt/ypanel/ai/skills）；启用的技能在对话时注入 AI 上下文
-      </template>
-    </FaPageHeader>
-
     <FaPageMain>
       <div class="space-y-4">
         <div class="flex items-center justify-between">
           <p class="text-xs text-muted-foreground">
             也可直接 scp 编辑 SKILL.md 文件
           </p>
-          <FaButton size="sm" @click="openSkill()">
-            <FaIcon name="i-lucide:plus" class="mr-1" /> 新增技能
-          </FaButton>
+          <div class="flex items-center gap-2">
+            <FaButton size="sm" :loading="zipUploading" @click="zipInput?.click()">
+              <FaIcon name="i-lucide:upload" class="mr-1" /> 上传技能包
+            </FaButton>
+            <FaButton size="sm" @click="openSkill()">
+              <FaIcon name="i-lucide:plus" class="mr-1" /> 新增技能
+            </FaButton>
+          </div>
         </div>
         <div v-if="!skills.length" class="rounded-lg border p-8 text-center text-sm text-muted-foreground">
           暂无技能包
@@ -165,5 +185,7 @@ onActivated(loadSkills)
         </FaButton>
       </template>
     </FaModal>
+
+    <input ref="zipInput" type="file" accept=".zip" class="hidden" @change="onZipChange">
   </div>
 </template>
