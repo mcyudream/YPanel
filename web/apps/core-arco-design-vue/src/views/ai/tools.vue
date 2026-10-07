@@ -39,16 +39,6 @@ async function setFlag(t: AiToolInfo, enabled: boolean) {
 const sortKey = ref<'label' | 'enabled'>('label')
 const sortAsc = ref(true)
 
-function toggleSort(key: 'label' | 'enabled') {
-  if (sortKey.value === key) {
-    sortAsc.value = !sortAsc.value
-  }
-  else {
-    sortKey.value = key
-    sortAsc.value = true
-  }
-}
-
 function sortMark(key: 'label' | 'enabled') {
   if (sortKey.value !== key) {
     return 'i-lucide:chevrons-up-down'
@@ -68,6 +58,22 @@ const sortedTools = computed(() => {
   })
   return arr
 })
+
+// ---- 分页 ----
+const page = ref(1)
+const size = ref(10)
+const pagedTools = computed(() => sortedTools.value.slice((page.value - 1) * size.value, page.value * size.value))
+
+function toggleSort(key: 'label' | 'enabled') {
+  if (sortKey.value === key) {
+    sortAsc.value = !sortAsc.value
+  }
+  else {
+    sortKey.value = key
+    sortAsc.value = true
+  }
+  page.value = 1
+}
 
 const enabledCount = computed(() => tools.value.filter(t => t.enabled).length)
 
@@ -121,7 +127,7 @@ onActivated(loadTools)
                   加载中…
                 </td>
               </tr>
-              <tr v-for="t in sortedTools" :key="t.name" class="border-b transition-colors last:border-b-0 hover:bg-accent/30">
+              <tr v-for="t in pagedTools" :key="t.name" class="border-b transition-colors last:border-b-0 hover:bg-accent/30">
                 <td class="px-3 py-2.5">
                   <div class="flex items-center gap-2.5">
                     <span class="flex size-8 shrink-0 items-center justify-center rounded-lg bg-muted">
@@ -165,6 +171,7 @@ onActivated(loadTools)
             </tbody>
           </table>
         </div>
+        <FaPagination v-model:page="page" v-model:size="size" :total="tools.length" class="mt-3" />
       </div>
     </FaPageMain>
   </div>
