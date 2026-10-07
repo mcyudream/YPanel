@@ -4,6 +4,7 @@
 // 点击卡片展开完整入参与结果详情。
 import { ref } from 'vue'
 import type { AiChatStep } from '@/composables/useAiChat'
+import { toolMetaOf } from '@/components/YdAiChat/toolMeta'
 
 const props = withDefaults(defineProps<{
   steps: AiChatStep[]
@@ -26,25 +27,13 @@ function toggle(i: number) {
   expanded.value = next
 }
 
-// 内置工具的展示元数据（MCP 工具回退 wrench + 原名）
-const toolMeta: Record<string, { label: string, icon: string }> = {
-  get_overview: { label: '服务器概览', icon: 'i-lucide:activity' },
-  list_containers: { label: '容器列表', icon: 'i-lucide:boxes' },
-  container_action: { label: '容器操作', icon: 'i-lucide:play-circle' },
-  list_sites: { label: '站点列表', icon: 'i-lucide:globe' },
-  read_file: { label: '读取文件', icon: 'i-lucide:file-text' },
-  run_in_workspace: { label: '执行命令', icon: 'i-lucide:terminal' },
-  list_database_instances: { label: '数据库实例', icon: 'i-lucide:database' },
-  query_database: { label: '执行查询', icon: 'i-lucide:database-zap' },
-  save_memory: { label: '保存记忆', icon: 'i-lucide:brain-circle' },
-}
-
+// 内置工具元数据由 toolMeta.ts 共享（系统工具管理页同源）
 function meta(s: AiChatStep) {
   if (s.type === 'scene') {
     return { label: '读取页面数据', icon: 'i-lucide:eye' }
   }
   if (s.type === 'tool' || s.type === 'tool_result' || s.type === 'action') {
-    return toolMeta[s.name || ''] || { label: s.name || '工具调用', icon: 'i-lucide:wrench' }
+    return toolMetaOf(s.name || '')
   }
   return { label: s.type, icon: 'i-lucide:wrench' }
 }

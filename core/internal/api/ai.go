@@ -93,6 +93,27 @@ func (a *AIAPI) Chat(c *gin.Context) {
 	}
 }
 
+// ListTools GET /api/v1/ai/tools（系统工具清单 + 开关状态）
+func (a *AIAPI) ListTools(c *gin.Context) {
+	respOK(c, a.AI.ListTools())
+}
+
+// SetToolFlag POST /api/v1/ai/tools/flag {name, enabled}
+func (a *AIAPI) SetToolFlag(c *gin.Context) {
+	req, ok := bind[struct {
+		Name    string `json:"name"`
+		Enabled bool   `json:"enabled"`
+	}](c)
+	if !ok {
+		return
+	}
+	if err := a.AI.SetToolFlag(req.Name, req.Enabled); err != nil {
+		respErr(c, err)
+		return
+	}
+	respOK(c, a.AI.ListTools())
+}
+
 // WorkspaceList GET /api/v1/ai/workspace（B18：工作空间文件列表）
 func (a *AIAPI) WorkspaceList(c *gin.Context) {
 	node, _ := a.AI.NodeLocal()

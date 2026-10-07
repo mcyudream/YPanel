@@ -329,8 +329,8 @@ func (t *aiTool) Call(ctx context.Context, input string) (string, error) {
 	return t.fn(ctx, input)
 }
 
-// toolsFor 组装工具集。
-func (s *AIService) toolsFor(ctx context.Context) []tools.Tool {
+// builtinTools 内置系统工具全集（不受开关过滤，管理页与工具循环共用）。
+func (s *AIService) builtinTools(ctx context.Context) []tools.Tool {
 	run := func(command string) (string, error) {
 		node, nerr := s.nodes.ByID("local")
 		if nerr != nil {
@@ -485,4 +485,64 @@ func (s *AIService) toolsFor(ctx context.Context) []tools.Tool {
 			},
 		},
 	}
+}
+
+// toolsFor 组装工具集：内置系统工具按开关过滤 + MCP 工具。
+func (s *AIService) toolsFor(ctx context.Context) []tools.Tool {
+	flags := s.ToolFlags()
+	out := make([]tools.Tool, 0, len(s.builtinTools(ctx)))
+	for _, t := range s.builtinTools(ctx) {
+		if enabled, ok := flags[t.Name()]; !ok || enabled {
+			out = append(out, t)
+		}
+	}
+	return out
+}
+
+// ToolFlags 工具开关表（未记录 = 启用）。
+func (s *AIService) ToolFlags() map[string]bool {
+	rows := []model.AIToolFlag{}
+	_ = s.db.Find(&rows).Error
+	m := make(map[string]bool, len(rows))
+	for _, r := range rows {
+		m[r.Name] = r.Enabled
+	}
+	return m
+}
+
+// ListTools 系统工具清单（管理页：名称/描述/开关）。
+func (s *AIService) ListTools() []map[string]any {
+	flags := s.ToolFlags()
+	builtins := s.builtinTools(context.Background())
+	out := make([]map[string]any, 0, len(builtins))
+	for _, t := range builtins {
+		enabled := true
+		if v, ok := flags[t.Name()]; ok {
+			enabled = v
+		}
+		out = append(out, map[string]any{
+			"name": t.Name(), "description": t.Description(), "enabled": enabled,
+		})
+	}
+	return out
+}
+
+// SetToolFlag 设置工具开关。
+func (s *AIService) SetToolFlag(name string, enabled bool) error {
+	known := false
+	for _, t := range s.builtinTools(context.Background()) {
+		if t.Name() == name {
+			known = true
+			break
+		}
+	}
+	if !known {
+		return errWrapAI("未知工具: " + name)
+	}
+	// 注意：GORM Save 对「设置了主键但行不存在」只执行 UPDATE（影响 0 行）且不报错，必须显式 upsert
+	row := model.AIToolFlag{Name: name}
+	if err := s.db.Where("name = ?", name).FirstOrCreate(&row).Error; err != nil {
+		return err
+	}
+	return s.db.Model(&model.AIToolFlag{}).Where("name = ?", name).Update("enabled", enabled).Error
 }

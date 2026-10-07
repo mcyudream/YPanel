@@ -65,6 +65,15 @@ const routes: RouteRecordRaw = {
       },
     },
     {
+      path: 'tools',
+      name: 'aiTools',
+      component: () => import('@/views/ai/tools.vue'),
+      meta: {
+        title: '系统工具',
+        icon: 'i-lucide:wrench',
+      },
+    },
+    {
       path: 'skills',
       name: 'aiSkills',
       component: () => import('@/views/ai/skills.vue'),

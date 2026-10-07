@@ -15,6 +15,12 @@ export interface ChatMsg {
   content: string
 }
 
+export interface AiToolInfo {
+  name: string
+  description: string
+  enabled: boolean
+}
+
 export default {
   providers: async () => {
     const res = await api.get('api/v1/ai/providers', { silent: true })
@@ -26,6 +32,16 @@ export default {
   },
   saveProvider: (p: AIProvider) => api.post('api/v1/ai/providers', p),
   removeProvider: (id: number) => api.delete(`api/v1/ai/providers/${id}`),
+
+  // 系统工具开关
+  tools: async () => {
+    const res = await api.get('api/v1/ai/tools', { silent: true })
+    return res.data as AiToolInfo[]
+  },
+  setToolFlag: async (name: string, enabled: boolean) => {
+    const res = await api.post('api/v1/ai/tools/flag', { name, enabled })
+    return res.data as AiToolInfo[]
+  },
 
   // SSE 流式对话（fetch 流解析，返回增量回调）
   chatStream: async (

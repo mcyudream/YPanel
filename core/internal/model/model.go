@@ -70,15 +70,23 @@ type MetricRecord struct {
 	Load1   float64   `json:"load1"`
 }
 
-// Runtime PHP 运行环境（容器化 php-fpm 或接管本机 fastcgi）。
+// Runtime 运行环境（容器化运行时或接管本机 fastcgi）。
 type Runtime struct {
 	ID             uint      `gorm:"primaryKey" json:"id"`
 	Name           string    `gorm:"uniqueIndex;size:32;not null" json:"name"`
-	Version        string    `gorm:"size:16;not null" json:"version"`                  // 8.2 / 8.3
+	Type           string    `gorm:"size:16;not null;default:php;index" json:"type"`   // php / node / python / java / go
+	Version        string    `gorm:"size:16;not null" json:"version"`                  // 如 8.2 / 20 / 3.12
 	Origin         string    `gorm:"size:16;not null;default:container" json:"origin"` // container / external
 	FCGIAddr       string    `gorm:"size:128" json:"fcgiAddr"`                         // external: host:port 或 unix:/path/s.sock
-	Remark         string    `gorm:"size:255" json:"remark"`
+	Image          string    `gorm:"size:128" json:"image"`                            // 构建产物镜像名（ypanel-rt/php-<name>:<ver>）
+	CodeDir        string    `gorm:"size:255" json:"codeDir"`                          // 代码运行时：宿主代码目录
+	ContainerName  string    `gorm:"size:64" json:"containerName"`
 	ComposeProject string    `gorm:"size:64;not null" json:"composeProject"`
+	Status         string    `gorm:"size:16;not null;default:running" json:"status"` // running / stopped / building / creating / error
+	Message        string    `gorm:"type:text" json:"message"`                       // 最近一次失败原因
+	EnvJSON        string    `gorm:"type:text" json:"envJson"`                       // 运行参数 JSON（extensions / 快捷设置 / 启动命令等）
+	Port           string    `gorm:"size:64" json:"port"`                            // 代码运行时宿主端口（逗号分隔）
+	Remark         string    `gorm:"size:255" json:"remark"`
 	CreatedAt      time.Time `json:"createdAt"`
 }
 
@@ -130,6 +138,9 @@ type AppStoreApp struct {
 	Arch         string    `gorm:"size:64" json:"arch"` // 逗号分隔 amd64,arm64
 	VersionsJSON string    `gorm:"type:text" json:"versionsJson"`
 	ReverseProxy string    `gorm:"size:255" json:"reverseProxy"` // 一键反代声明的端口 env key（空=不支持）
+	Website      string    `gorm:"size:512" json:"website"`      // 官网地址
+	SourceURL    string    `gorm:"size:512" json:"sourceUrl"`    // 开源社区地址（github 等）
+	Document     string    `gorm:"size:512" json:"document"`     // 文档地址
 	LatestVersion string   `gorm:"size:64" json:"latestVersion"` // 最新版本号（同步时冗余，升级判定用）
 	LastModified int64     `json:"lastModified"`
 	SyncedAt     time.Time `json:"syncedAt"`
@@ -314,6 +325,13 @@ type AIMemory struct {
 	ID        uint      `gorm:"primaryKey" json:"id"`
 	Content   string    `gorm:"type:text;not null" json:"content"`
 	CreatedAt time.Time `json:"createdAt"`
+}
+
+// AIToolFlag AI 内置系统工具启用开关（无记录 = 启用）。
+type AIToolFlag struct {
+	Name      string    `gorm:"primaryKey;size:64" json:"name"`
+	Enabled   bool      `gorm:"not null;default:true" json:"enabled"`
+	UpdatedAt time.Time `json:"updatedAt"`
 }
 
 // AIConversation AI 会话（B18：多会话持久化）。

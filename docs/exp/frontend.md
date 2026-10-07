@@ -221,3 +221,24 @@
 - **根因**：`http://host/#/a` → `http://host/` → `http://host/#/b` 全程是**同文档 hash 导航**，不会重新拉 index.html 和新 hash 的 JS bundle；`reload()` 也可能命中 index.html 的 HTTP 缓存继续用旧产物。之前"修复后仍有问题"的两次假象都是旧 bundle 在跑。
 - **规避/解决**：验证新前端前先断言 bundle 版本——`performance.getEntriesByType('resource').map(e=>e.name).filter(n=>n.includes('index-'))` 与服务器 `curl / | grep -o "assets/index-[^\"]*\.js"` 的 hash 比对；不一致就 `reload()` 后复查。DOM 统计消息数时注意别用会命中嵌套组件根节点的宽泛选择器（如 `.space-y-1` 会把 YdAiProcess 步骤时间线也数成一条消息）。
 - **来源**：2026-10-07，AI 浮层修复验证期两次假阴性（浏览器自动化 + 部署验证流程）。
+
+### fa 次侧栏的「父标题行」来自有可见子页的模块：单子页模块（子页 menu:false）才会渲染成纯叶子项
+
+- **现象**：容器域拆分二级菜单时，无论怎么设菜单标题，次侧栏顶部总有一行「容器（图标+展开箭头）」父标题，子项挂在它下面；用户要的是直接平铺叶子项。
+- **根因**：fa Menu 的 `initItems` 规则——节点 `children.some(c => c.meta?.menu !== false)` 为 true 时渲染为 **SubMenu**（父标题行 + 展开子项）；为 false（无 children 或全部 menu:false）时渲染为**叶子 item**（点击直达，title/icon 取**模块自身 meta**）。模块级 meta.menu 不参与该判断（写了也会被忽略）。
+- **规避/解决**：想要「无父标题的平铺叶子」：每个功能做一个「单子页模块」——模块 `{path, component: Layout, meta: {title, icon}}` + 子页 `{path: '', component, meta: {title, icon, menu: false}}`，子页全隐藏后模块即叶子。需要「路由可达但菜单完全不出现」的页面（如列表页由分组头直达）：挂为某模块的隐藏子页或独立 menu:false 模块（模块级 menu:false 不影响 Menu 判断，仍会渲染叶子——需要彻底不出现就从分组 children 移除该模块并另行注册路由）。
+- **来源**：2026-10-07，M23 容器域菜单平铺（应用/镜像/网络/卷/配置五叶子，容器列表由分组头直达）。
+
+### 递归组件模板名 ≠ 文件名且未导入：构建零报错，运行时静默渲染为未知元素（树"有数据不显示"）
+
+- **现象**：文件树（YdFileTree）点开目录显示「（空目录）」或毫无反应，网络面板请求全部 200 且数据完整；只有部分页面正常（文件管理页），终端工作台/容器详情全部异常。
+- **根因**：`components/YdFileTree/TreeNode.vue` 模板递归写 `<YdFileTreeNode>`，但该文件既没 import 这个名字、名字也不等于文件名（TreeNode）——Vue SFC 只支持**文件名自引用**；unplugin-vue-components 的 components.d.ts 也没有该声明（只生成了目录 index.vue 的 YdFileTree）。编译产物里落成 `resolveComponent("YdFileTreeNode")`，运行时解析失败 → 渲染为**原生未知元素** `<ydfiletreenode>`（v-for 出 188 个隐形空标签），数据、expanded 全部正常只是看不见。对比 `FileTreeRow.vue` 用 `<FileTreeRow>`（=文件名）所以一直正常。
+- **规避/解决**：递归自引用只有两种可靠写法——模板用**文件名**（`<TreeNode>`），或顶部**显式自导入** `import YdFileTreeNode from './TreeNode.vue'`（推荐，抗重命名）。排查特征：DOM 查未知标签 `document.querySelectorAll('ydfiletreenode').length`；产物 grep `resolveComponent("组件名")`（修复后字符串应消失、编译为直接绑定）。构建/vue-tsc 对此类问题零报错，不能依赖编译期拦截。
+- **来源**：2026-10-07，终端文件树/容器文件树"无法获取文件夹子项"（YdFileTree/TreeNode.vue，组件抽取重命名时引入）。
+
+### FaSwitch 是 reka-ui Switch 封装：受控 prop 是 checked 不是 modelValue，且 el.click() 无法驱动
+
+- **现象**：`<FaSwitch v-model="x" />` 点击后 UI 状态会翻、但绑定的业务逻辑（如异步保存）从不执行；改用 `:model-value + @update:model-value` 依旧 UI 翻转、回调不触发；浏览器自动化 `el.click()` 点了完全没反应。
+- **根因**：FaSwitch 直接转发 reka-ui `SwitchRoot`，受控 prop 名是 **`checked`**（emits `update:checked`），不存在 `modelValue`——`v-model` 绑的 modelValue 进不了组件，SwitchRoot 落到**非受控态**（内部自翻转 UI），发的事件是 `update:checked` 无人接收。此外 reka 系组件在自动化里对 `el.click()` 不响应（与 FaTabs 同坑）。
+- **规避/解决**：受控写法 `:checked="x" @update:checked="v => handler(v)"`；自动化验证优先用 aria-checked 属性断言 + API 状态闭环，或直接以真实用户操作结果（API 状态变化）作为验收依据，不与合成事件较劲。
+- **来源**：2026-10-07，AI 系统工具开关页（views/ai/tools.vue），FaModal visible 断链条目的同族坑。

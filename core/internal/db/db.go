@@ -32,7 +32,7 @@ func Open(dataDir string) (*gorm.DB, error) {
 			return nil, fmt.Errorf("迁移应用索引失败: %w", err)
 		}
 	}
-	if err := gdb.AutoMigrate(&model.User{}, &model.LoginLog{}, &model.Setting{}, &model.CronTask{}, &model.CronTaskLog{}, &model.DatabaseInstance{}, &model.Site{}, &model.SiteGroup{}, &model.Certificate{}, &model.DnsAccount{}, &model.AcmeAccount{}, &model.Node{}, &model.PairingCode{}, &model.AlertRule{}, &model.Notification{}, &model.AuditLog{}, &model.MetricRecord{}, &model.AppStoreSource{}, &model.AppStoreApp{}, &model.AppStoreInstall{}, &model.Runtime{}, &model.Script{}, &model.AIProvider{}, &model.AIKnowledge{}, &model.AIMemory{}, &model.AIConversation{}, &model.ConfigRevision{}, &model.NatForwardRule{}, &model.AppTask{}); err != nil {
+	if err := gdb.AutoMigrate(&model.User{}, &model.LoginLog{}, &model.Setting{}, &model.CronTask{}, &model.CronTaskLog{}, &model.DatabaseInstance{}, &model.Site{}, &model.SiteGroup{}, &model.Certificate{}, &model.DnsAccount{}, &model.AcmeAccount{}, &model.Node{}, &model.PairingCode{}, &model.AlertRule{}, &model.Notification{}, &model.AuditLog{}, &model.MetricRecord{}, &model.AppStoreSource{}, &model.AppStoreApp{}, &model.AppStoreInstall{}, &model.Runtime{}, &model.Script{}, &model.AIProvider{}, &model.AIKnowledge{}, &model.AIMemory{}, &model.AIConversation{}, &model.AIToolFlag{}, &model.ConfigRevision{}, &model.NatForwardRule{}, &model.AppTask{}); err != nil {
 		return nil, fmt.Errorf("数据库迁移失败: %w", err)
 	}
 	if err := seedStore(gdb); err != nil {
