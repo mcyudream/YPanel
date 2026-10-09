@@ -432,6 +432,7 @@ onBeforeUnmount(() => {
     </div>
 
     <div class="mb-3 flex flex-wrap items-center gap-3">
+      <YdDockerNodeSelect />
       <label class="flex items-center gap-1.5 text-xs text-muted-foreground">
         <input v-model="showUndeployed" type="checkbox" class="accent-[var(--primary)]">
         {{ $t('container.apps.showUndeployed') }}<template v-if="undeployedCount"> ({{ undeployedCount }})</template>
