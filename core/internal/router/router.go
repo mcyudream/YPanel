@@ -177,10 +177,6 @@ func Setup(d *Deps) (*gin.Engine, error) {
 			authed.GET("/files/upload", pm("file:read"), fileAPI.Upload)
 			authed.POST("/files/upload", pm("file:write"), fileAPI.Upload)
 				authed.POST("/files/copy-across", pm("file:write"), fileAPI.CopyAcross)
-				authed.GET("/nginx-mgr/status", pm("host:read"), nginxAPI.Status)
-				authed.POST("/nginx-mgr/install", pm("host:write"), nginxAPI.Install)
-				authed.POST("/nginx-mgr/power", pm("host:write"), nginxAPI.Power)
-				authed.POST("/nginx-mgr/reload", pm("host:write"), nginxAPI.Reload)
 				// 节点 nginx 管理（M57 节点化基座）——/host 前缀避开站点域 /nginx/*（同组同路径 gin 启动 panic）
 				authed.GET("/host/nginx/status", pm("host:read"), nginxAPI.Status)
 				authed.POST("/host/nginx/install", pm("host:write"), nginxAPI.Install)
