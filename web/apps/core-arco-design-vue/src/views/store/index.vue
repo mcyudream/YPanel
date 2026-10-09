@@ -945,7 +945,7 @@ function statusText(s: StoreSource) {
           >
             <div class="flex items-start gap-3">
               <YdAppIcon
-                :image="a.iconUrl || storeApi.iconUrl(a.sourceId, a.key)"
+                :image="appIconSrc(a.iconUrl) || storeApi.iconUrl(a.sourceId, a.key)"
                 :name="a.name"
                 :size="40"
                 class="mt-0.5 rounded-lg"
@@ -1040,7 +1040,7 @@ function statusText(s: StoreSource) {
       <div v-if="detailApp" class="flex flex-col gap-4">
         <div class="flex items-start gap-4">
           <YdAppIcon
-            :image="detailApp.iconUrl || storeApi.iconUrl(detailApp.sourceId, detailApp.key)"
+            :image="appIconSrc(detailApp.iconUrl) || storeApi.iconUrl(detailApp.sourceId, detailApp.key)"
             :name="detailApp.name"
             :size="64"
             class="rounded-xl border bg-background p-1"
