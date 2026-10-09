@@ -1062,7 +1062,11 @@ func (s *StoreService) Install(ctx context.Context, in StoreInstallInput) (map[s
 			finalParams[f.EnvKey] = randomHex(randomHexBytes(f.RandomLen))
 		}
 	}
+	// M55 多实例：远程节点项目名带节点后缀（local 保持 app-<name> 兼容存量）
 	project := "app-" + in.Name
+	if nid := normalizeNodeID(in.NodeID); nid != "local" {
+		project = "app-" + in.Name + "-" + nid
+	}
 	finalParams["CONTAINER_NAME"] = project
 	finalParams["CONTAINER_NAME1"] = project + "-1"
 
@@ -1130,7 +1134,7 @@ func (s *StoreService) runInstall(ctx context.Context, logf TaskLogf, app model.
 
 	// 已装记录 upsert（同名重装=换版本，参数同步落库供"参数"查看）
 	var exist model.AppStoreInstall
-	if err := s.db.Where("compose_project = ?", project).First(&exist).Error; err == nil {
+	if err := s.db.Where("compose_project = ? AND node_id = ?", project, normalizeNodeID(in.NodeID)).First(&exist).Error; err == nil {
 		_ = s.db.Model(&exist).Updates(map[string]any{
 			"source_id": app.SourceID, "key": app.Key, "name": in.Name, "version": ver.ID,
 			"params_json": marshalJSON(params), "node_id": normalizeNodeID(in.NodeID),
