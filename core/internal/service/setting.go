@@ -28,6 +28,18 @@ func randomHex(n int) string {
 	return hex.EncodeToString(b)
 }
 
+// randomHexBytes 把表单声明的随机值目标长度（字符）折算成 randomHex 的字节入参；
+// hex 编码后 2 倍长度，缺省 12 字节 = 24 字符。
+func randomHexBytes(targetLen int) int {
+	if targetLen <= 0 {
+		return 12
+	}
+	if targetLen < 24 {
+		targetLen = 24
+	}
+	return (targetLen + 1) / 2
+}
+
 // SettingService 键值设置（带进程内缓存）。
 type SettingService struct {
 	db  *gorm.DB

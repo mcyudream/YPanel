@@ -71,6 +71,7 @@ type StoreFormField struct {
 	Rule        string            `json:"rule"` // paramPort / paramCommon / paramComplexity / ...
 	Required    bool              `json:"required"`
 	Random      bool              `json:"random"` // 安装时随机生成（密码/名称类）
+	RandomLen   int               `json:"randomLen"` // 随机值目标长度（字符）；部分应用要求密钥 ≥32 字节，缺省 24
 	Edit        *bool             `json:"edit"`   // false = 只读展示
 	Disabled    bool              `json:"disabled"`
 	Description FlexString         `json:"description"`
@@ -145,12 +146,15 @@ type ypVerion struct {
 }
 
 type ypEnvItem struct {
-	Key      string      `json:"key"`
-	Label    string      `json:"label"`
-	Type     string      `json:"type"` // text / number / password / select
-	Default  interface{} `json:"default"`
-	Required bool        `json:"required"`
-	Rule     string      `json:"rule"`
+	Key         string      `json:"key"`
+	Label       string      `json:"label"`
+	Type        string      `json:"type"` // text / number / password / select
+	Default     interface{} `json:"default"`
+	Required    bool        `json:"required"`
+	Rule        string      `json:"rule"`
+	Random      bool        `json:"random"`    // 安装时随机生成（密码类）；缺失时后端不兜底随机
+	RandomLen   int         `json:"randomLen"` // 随机值目标长度（字符）
+	Description FlexString  `json:"description"`
 }
 
 type ypPortDef struct {
@@ -559,6 +563,7 @@ func (s *StoreService) syncYpManifest(src *model.AppStoreSource, raw []byte, loc
 				fields = append(fields, StoreFormField{
 					EnvKey: e.Key, Label: map[string]string{"zh": e.Label}, Default: e.Default,
 					Type: e.Type, Required: e.Required, Rule: e.Rule,
+					Random: e.Random, RandomLen: e.RandomLen, Description: e.Description,
 				})
 			}
 			for _, p := range v.Ports {
@@ -1035,9 +1040,11 @@ func (s *StoreService) Install(ctx context.Context, in StoreInstallInput) (map[s
 		if f.EnvKey == "" {
 			continue
 		}
-		finalParams[f.EnvKey] = sanitizeParam(fmt.Sprint(f.Default))
+		if f.Default != nil { // fmt.Sprint(nil) = "<nil>"，sanitize 后成 "nil" 污染参数
+			finalParams[f.EnvKey] = sanitizeParam(fmt.Sprint(f.Default))
+		}
 		if f.Random && f.Type == "password" && (in.Params == nil || stringifyParam(in.Params[f.EnvKey]) == "") {
-			finalParams[f.EnvKey] = randomHex(12)
+			finalParams[f.EnvKey] = randomHex(randomHexBytes(f.RandomLen))
 		}
 	}
 	for k, v := range in.Params {
@@ -1052,7 +1059,7 @@ func (s *StoreService) Install(ctx context.Context, in StoreInstallInput) (map[s
 	// envKey 含 PASSWORD 且最终为空一律随机生成（防 1Panel 包弱 default 泄漏后的空密码）。
 	for _, f := range ver.FormFields {
 		if f.Type == "password" && strings.Contains(strings.ToUpper(f.EnvKey), "PASSWORD") && finalParams[f.EnvKey] == "" {
-			finalParams[f.EnvKey] = randomHex(12)
+			finalParams[f.EnvKey] = randomHex(randomHexBytes(f.RandomLen))
 		}
 	}
 	project := "app-" + in.Name

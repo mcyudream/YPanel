@@ -19,6 +19,7 @@ export interface StoreFormField {
   rule?: string // paramPort / paramCommon / paramComplexity...
   required?: boolean
   random?: boolean // 安装时随机生成（密码/名称）
+  randomLen?: number // 随机值目标长度（字符），缺省 16；部分应用要求密钥 ≥32 字节
   edit?: boolean // false = 只读
   disabled?: boolean
   description?: string
