@@ -18,6 +18,9 @@ env:
 jobs:
   release:
     runs-on: ubuntu-latest
+    env:
+      # job 级注入：step 的 if 才能读到（step 自身 env 在 if 中不可见）
+      GITEE_TOKEN: ${{ secrets.GITEE_TOKEN }}
     steps:
       - uses: actions/checkout@v4
 
@@ -86,27 +89,28 @@ jobs:
             build/sha256sums.txt
           generate_release_notes: true
 
-      # 可选：镜像发布到 Gitee Release（需在 repo secrets 配置 GITEE_TOKEN，缺失时自动跳过）
+      # 可选：镜像发布到 Gitee Release（repo secrets 配置 GITEE_TOKEN 后启用；缺失时自动跳过）。
+      # 使用 GitHub 侧构建产物原样上传——发行包只出 CI 一份，双平台同源。
       - name: Mirror release to Gitee (optional)
         if: ${{ env.GITEE_TOKEN != '' }}
         continue-on-error: true
-        env:
-          GITEE_TOKEN: ${{ secrets.GITEE_TOKEN }}
         run: |
           set -e
           TAG="${GITHUB_REF_NAME}"
-          BODY=$(cat <<'EOF'
-          See GitHub release for details: https://github.com/mcyudream/YPanel/releases/tag/${TAG}
-          EOF
-          )
-          RID=$(curl -sS -X POST "https://gitee.com/api/v5/repos/mcyudream/ypanel/releases" \
-            -H "Content-Type: application/json" \
-            -d "{\"access_token\":\"${GITEE_TOKEN}\",\"tag_name\":\"${TAG}\",\"name\":\"YPanel ${TAG}\",\"body\":\"${TAG} release\",\"prerelease\":false}" \
-            | grep -o '"id":[0-9]*' | head -1 | cut -d: -f2)
+          API="https://gitee.com/api/v5/repos/mcyudream/ypanel"
+          # 幂等：已有同名 tag 的 Release 直接复用（重打 tag 重跑不重复建）
+          RID=$(curl -sS "${API}/releases/tags/${TAG}?access_token=${GITEE_TOKEN}" \
+            | grep -o '"id": *[0-9]*' | head -1 | grep -o '[0-9]*')
+          if [ -z "$RID" ]; then
+            RID=$(curl -sS -X POST "${API}/releases" \
+              -H "Content-Type: application/json" \
+              -d "{\"access_token\":\"${GITEE_TOKEN}\",\"tag_name\":\"${TAG}\",\"name\":\"YPanel ${TAG}\",\"body\":\"YPanel ${TAG}（与 GitHub Release 同源构建产物）\",\"prerelease\":false}" \
+              | grep -o '"id": *[0-9]*' | head -1 | grep -o '[0-9]*')
+          fi
           echo "gitee release id: $RID"
+          [ -n "$RID" ] || { echo "gitee release 创建失败"; exit 1; }
           for f in build/*.tar.gz build/sha256sums.txt; do
-            curl -sS -X POST "https://gitee.com/api/v5/repos/mcyudream/ypanel/releases/${RID}/attach_files" \
-              -H "Content-Type: multipart/form-data" \
+            curl -sS -X POST "${API}/releases/${RID}/attach_files" \
               -F "access_token=${GITEE_TOKEN}" \
               -F "file=@${f}" | head -c 200
             echo " <- $f"
