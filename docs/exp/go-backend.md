@@ -285,3 +285,10 @@
 - **根因**：agent 嵌在 ypanel 服务内，脚本是其子进程；`systemctl stop ypanel` 触发 systemd 杀掉整个服务 cgroup，所有子进程（含 nohup/后台化的）一并收到终止信号。与客户端断连无关——是 cgroup 级死亡。
 - **规避/解决**：用 `systemd-run --unit=<唯一名> --collect bash <script>` 把脚本放进独立瞬态单元执行，脱离 ypanel cgroup；脚本结束后单元自动回收。适用于一切「脚本会停掉自己所在服务」的场景（自升级、自恢复、自重装）。审计要点：systemd-run 返回后仅代表单元已排队，完成与否靠日志文件/健康轮询确认。
 - **来源**：2026-10-09，M48 快照恢复真机三轮返工（阻塞式→nohup→systemd-run），marker 法（基线快照→制造标记→恢复→断言标记消失）验证回滚语义。
+
+### sshd_config「首值生效」语义：Include 目录里字典序靠前的文件会静默压制后写的配置（开关永远不切换）
+
+- **现象**：SSH 管理页认证开关点击后永远弹回旧状态；API 写入成功（sshd -t 过、reload 过）但 `sshd -T` 回读值不变。M49 当时只验收了读取与密钥列表，SetConfig 漏验，问题潜伏到真机反馈才暴露。
+- **根因**：OpenSSH sshd_config 语义是 **first-value-wins**（首个读到的指令值生效，与直觉相反）。`Include /etc/ssh/sshd_config.d/*.conf` 按字典序展开，Ubuntu 云镜像预置 `50-cloud-init.conf`（`PasswordAuthentication yes`），YPanel 写的 `99-ypanel.conf` 排在后面，其 `passwordauthentication` 被**静默忽略**——写入、校验、reload 全部"成功"，生效值根本不是自己写的。
+- **规避/解决**：程序化写 sshd 配置片段一律用 **`00-` 前缀**（如 `00-ypanel.conf`，umask 077 收权限），保证字典序最先；写入成功后幂等清理旧前缀文件。改主配置 `/etc/ssh/sshd_config` 无效（Include 在文件最前，永远先读）。同类模型可推广：任何「多来源合并配置」先查合并语义（首值/末值/显式优先级）再决定写入位置。验收此类功能必须「写入→sshd -T 回读」闭环，不能只看写入返回。
+- **来源**：2026-10-09，M53 开关 bug 真机诊断（142 上 `50-cloud-init.conf` 压制 `99-ypanel.conf`，对比 sshd_config.d 目录即定位）。

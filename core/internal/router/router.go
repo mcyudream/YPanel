@@ -95,7 +95,7 @@ func Setup(d *Deps) (*gin.Engine, error) {
 	siteAPI := &api.SiteAPI{Sites: d.Sites, Acme: d.Acme, DNS: d.DNS}
 	siteConfAPI := &api.SiteConfAPI{Sites: d.Sites, DNS: d.DNS}
 	certAPI := &api.CertAPI{Certs: d.Certs, Groups: d.Groups}
-	nodeAPI := &api.NodeAPI{Nodes: d.Nodes}
+	nodeAPI := &api.NodeAPI{Nodes: d.Nodes, SU: d.SU}
 	storeAPI := &api.StoreAPI{Store: d.Store}
 	vpnAPI := &api.VpnAPI{Vpn: d.Vpn}
 	taskAPI := &api.TaskAPI{Tasks: d.Tasks}
@@ -414,6 +414,8 @@ func Setup(d *Deps) (*gin.Engine, error) {
 				authed.GET("/nodes/metrics", nodeAPI.AggregateMetrics)
 				admin.GET("/nodes", nodeAPI.List)
 				admin.POST("/nodes/pairing-code", nodeAPI.PairingCode)
+				admin.GET("/nodes/agent-update/check", nodeAPI.CheckAgentUpdate)
+				admin.POST("/nodes/:id/upgrade-agent", nodeAPI.UpgradeAgent)
 				admin.DELETE("/nodes/:id", nodeAPI.Delete)
 				admin.PUT("/nodes/:id/asset", nodeAPI.UpdateAsset)
 
@@ -692,6 +694,10 @@ func Setup(d *Deps) (*gin.Engine, error) {
 				admin.GET("/ssh/config", sshAPI.GetConfig)
 				admin.PUT("/ssh/config", sshAPI.SetConfig)
 				admin.GET("/ssh/keys", sshAPI.Keys)
+				admin.POST("/ssh/keys/generate", sshAPI.GenerateKey)
+				admin.POST("/ssh/keys/import", sshAPI.ImportKey)
+				admin.POST("/ssh/keys/delete", sshAPI.DeleteKey)
+				admin.POST("/ssh/keys/deploy", sshAPI.DeployKey)
 				admin.GET("/ssh/attempts", sshAPI.FailedAttempts)
 
 				admin.GET("/system/snapshots", sysSnapAPI.List)

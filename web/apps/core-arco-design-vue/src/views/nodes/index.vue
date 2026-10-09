@@ -79,6 +79,75 @@ async function load() {
   }
 }
 
+// ---- M54 节点 agent 更新 ----
+const latestAgentVersion = ref('')
+const upgradingId = ref('')
+
+async function loadLatest() {
+  try {
+    const res = await api.get('api/v1/system/update/check', { silent: true })
+    latestAgentVersion.value = (res.data as any)?.latest || ''
+  }
+  catch {}
+}
+
+function versionLt(a?: string, b?: string) {
+  if (!a || !b) {
+    return false
+  }
+  const pa = a.replace(/^v/, '').split('.').map(x => Number.parseInt(x) || 0)
+  const pb = b.replace(/^v/, '').split('.').map(x => Number.parseInt(x) || 0)
+  for (let i = 0; i < 3; i++) {
+    if ((pa[i] || 0) !== (pb[i] || 0)) {
+      return (pa[i] || 0) < (pb[i] || 0)
+    }
+  }
+  return false
+}
+
+function agentUpgradable(n: NodeItem) {
+  // 旧版 agent 未上报版本时也提示可更新（升级一次后恢复版本上报）
+  return Boolean(n.remote && n.online && latestAgentVersion.value && (!n.version || versionLt(n.version, latestAgentVersion.value)))
+}
+
+async function upgradeAgent(n: NodeItem) {
+  const modal = useFaModal()
+  modal.confirm({
+    title: i18n.global.t('nodes.agentUpgradeTitle'),
+    content: i18n.global.t('nodes.agentUpgradeConfirm', { name: n.name, from: n.version || '-', to: latestAgentVersion.value }),
+    onConfirm: async () => {
+      upgradingId.value = n.id
+      try {
+        const { taskId } = await apiNode.upgradeAgent(n.id)
+        useFaToast().info(i18n.global.t('nodes.agentUpgradeStarted'))
+        // 轮询任务终态（下载+推送+切换，可能数分钟）
+        for (let i = 0; i < 300; i++) {
+          await new Promise(r => setTimeout(r, 2000))
+          try {
+            const t = await api.get(`api/v1/tasks/${taskId}`, { silent: true }).then(r => r.data)
+            if (t.status === 'success') {
+              useFaToast().success(i18n.global.t('nodes.agentUpgradeDone', { version: latestAgentVersion.value }))
+              break
+            }
+            if (t.status === 'failed') {
+              useFaToast().error(i18n.global.t('nodes.agentUpgradeFailed'), { description: t.error || '' })
+              break
+            }
+          }
+          catch {}
+        }
+        await load()
+      }
+      catch (e: any) {
+        useFaToast().error(i18n.global.t('common.opFailed'), { description: e?.message })
+      }
+      finally {
+        upgradingId.value = ''
+      }
+    },
+  })
+}
+
 async function genCode() {
   try {
     const res = await apiNode.pairingCode()
@@ -211,6 +280,7 @@ function remainingValueText(n: any) {
 
 onMounted(() => {
   load()
+  loadLatest()
   timer = setInterval(() => {
     load()
     loadMetrics()
@@ -291,10 +361,21 @@ onBeforeUnmount(() => {
 
           <!-- 系统信息 + 快捷入口 -->
           <div class="mt-3 flex items-center justify-between border-t pt-3">
-            <span class="text-xs text-muted-foreground">
+            <span class="flex items-center gap-1.5 text-xs text-muted-foreground">
               {{ [n.os, n.arch, n.version].filter(Boolean).join(' · ') || '—' }}
+              <span
+                v-if="n.remote && agentUpgradable(n)"
+                class="rounded-full bg-amber-500/10 px-1.5 py-0.5 text-[10px] text-amber-600"
+                :title="$t('nodes.agentUpgradableTip', { latest: latestAgentVersion })"
+              >{{ $t('nodes.agentUpgradable') }}</span>
             </span>
             <div class="flex items-center gap-1">
+              <FaButton
+                v-if="n.remote && agentUpgradable(n)" variant="ghost" size="icon-sm"
+                :title="$t('nodes.agentUpgradeBtn')" :loading="upgradingId === n.id" @click.stop="upgradeAgent(n)"
+              >
+                <FaIcon name="i-lucide:arrow-up-circle" class="text-sm text-amber-600" />
+              </FaButton>
               <FaButton variant="ghost" size="icon-sm" :title="$t('nodes.filesTitle')" @click.stop="goFiles(n.id)">
                 <FaIcon name="i-lucide:folder-open" class="text-sm" />
               </FaButton>

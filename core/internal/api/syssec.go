@@ -69,15 +69,18 @@ func (a *FtpAPI) SetPort(c *gin.Context) {
 	respOK(c, struct{}{})
 }
 
-// SshAPI SSH 安全管理（配置/密钥）。
+// SshAPI SSH 安全管理（配置/密钥/暴力破解）。
 type SshAPI struct {
 	Ssh *service.SshGuardService
 	F2B *service.Fail2banService
 }
 
-// GetConfig GET /api/v1/ssh/config
+// nodeID 取节点参数（默认 local）。
+func nodeID(c *gin.Context) string { return c.DefaultQuery("nodeId", "local") }
+
+// GetConfig GET /api/v1/ssh/config?nodeId=
 func (a *SshAPI) GetConfig(c *gin.Context) {
-	out, err := a.Ssh.GetConfig(c.Request.Context())
+	out, err := a.Ssh.GetConfig(c.Request.Context(), nodeID(c))
 	if err != nil {
 		respErr(c, err)
 		return
@@ -85,7 +88,7 @@ func (a *SshAPI) GetConfig(c *gin.Context) {
 	respOK(c, out)
 }
 
-// SetConfig PUT /api/v1/ssh/config
+// SetConfig PUT /api/v1/ssh/config?nodeId=
 func (a *SshAPI) SetConfig(c *gin.Context) {
 	req, ok := bind[struct {
 		Port            *int    `json:"port"`
@@ -96,11 +99,12 @@ func (a *SshAPI) SetConfig(c *gin.Context) {
 	if !ok {
 		return
 	}
-	if err := a.Ssh.SetConfig(c.Request.Context(), req.Port, req.PasswordAuth, req.PubkeyAuth, req.PermitRootLogin); err != nil {
+	nid := nodeID(c)
+	if err := a.Ssh.SetConfig(c.Request.Context(), nid, req.Port, req.PasswordAuth, req.PubkeyAuth, req.PermitRootLogin); err != nil {
 		respErr(c, err)
 		return
 	}
-	out, err := a.Ssh.GetConfig(c.Request.Context())
+	out, err := a.Ssh.GetConfig(c.Request.Context(), nid)
 	if err != nil {
 		respErr(c, err)
 		return
@@ -108,9 +112,9 @@ func (a *SshAPI) SetConfig(c *gin.Context) {
 	respOK(c, out)
 }
 
-// Keys GET /api/v1/ssh/keys
+// Keys GET /api/v1/ssh/keys?nodeId=（密钥列表，含公钥内容与全节点分发状态）
 func (a *SshAPI) Keys(c *gin.Context) {
-	out, err := a.Ssh.ListKeys(c.Request.Context())
+	out, err := a.Ssh.ListKeys(c.Request.Context(), nodeID(c))
 	if err != nil {
 		respErr(c, err)
 		return
@@ -118,11 +122,83 @@ func (a *SshAPI) Keys(c *gin.Context) {
 	respOK(c, out)
 }
 
-// FailedAttempts GET /api/v1/ssh/attempts?limit=（SSH 失败登录聚合，标记已封禁）
+// GenerateKey POST /api/v1/ssh/keys/generate {nodeId,type,name,comment}
+func (a *SshAPI) GenerateKey(c *gin.Context) {
+	req, ok := bind[struct {
+		NodeId  string `json:"nodeId"`
+		Type    string `json:"type"`
+		Name    string `json:"name"`
+		Comment string `json:"comment"`
+	}](c)
+	if !ok {
+		return
+	}
+	out, err := a.Ssh.GenerateKey(c.Request.Context(), req.NodeId, req.Type, req.Name, req.Comment)
+	if err != nil {
+		respErr(c, err)
+		return
+	}
+	respOK(c, out)
+}
+
+// ImportKey POST /api/v1/ssh/keys/import {nodeId,name,publicKey}
+func (a *SshAPI) ImportKey(c *gin.Context) {
+	req, ok := bind[struct {
+		NodeId    string `json:"nodeId"`
+		Name      string `json:"name"`
+		PublicKey string `json:"publicKey" binding:"required"`
+	}](c)
+	if !ok {
+		return
+	}
+	out, err := a.Ssh.ImportKey(c.Request.Context(), req.NodeId, req.Name, req.PublicKey)
+	if err != nil {
+		respErr(c, err)
+		return
+	}
+	respOK(c, out)
+}
+
+// DeleteKey POST /api/v1/ssh/keys/delete {nodeId,name,withPrivate}
+func (a *SshAPI) DeleteKey(c *gin.Context) {
+	req, ok := bind[struct {
+		NodeId      string `json:"nodeId"`
+		Name        string `json:"name" binding:"required"`
+		WithPrivate bool   `json:"withPrivate"`
+	}](c)
+	if !ok {
+		return
+	}
+	if err := a.Ssh.DeleteKey(c.Request.Context(), req.NodeId, req.Name, req.WithPrivate); err != nil {
+		respErr(c, err)
+		return
+	}
+	respOK(c, struct{}{})
+}
+
+// DeployKey POST /api/v1/ssh/keys/deploy {keyNode,name,targetNode}
+func (a *SshAPI) DeployKey(c *gin.Context) {
+	req, ok := bind[struct {
+		KeyNode    string `json:"keyNode"`
+		Name       string `json:"name" binding:"required"`
+		TargetNode string `json:"targetNode" binding:"required"`
+	}](c)
+	if !ok {
+		return
+	}
+	result, err := a.Ssh.DeployKey(c.Request.Context(), req.KeyNode, req.Name, req.TargetNode)
+	if err != nil {
+		respErr(c, err)
+		return
+	}
+	respOK(c, gin.H{"result": result})
+}
+
+// FailedAttempts GET /api/v1/ssh/attempts?nodeId=&limit=（SSH 失败登录聚合，标记已封禁）
 func (a *SshAPI) FailedAttempts(c *gin.Context) {
 	n := 100
 	_, _ = fmt.Sscanf(c.DefaultQuery("limit", "100"), "%d", &n)
-	out, err := a.Ssh.FailedAttemptsMarked(c.Request.Context(), a.F2B, n)
+	out, err := a.Ssh.FailedAttemptsMarked(c.Request.Context(), nodeID(c), a.F2B, n)
 	if err != nil {
 		respErr(c, err)
 		return

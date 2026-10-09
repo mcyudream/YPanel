@@ -32,6 +32,7 @@ func main() {
 	token := flag.String("token", os.Getenv("YPANEL_AGENT_TOKEN"), "手工 PSK（跳过配对）")
 	addr := flag.String("addr", "0.0.0.0:9527", "监听地址")
 	dataDir := flag.String("data", defaultDataDir(), "数据目录（凭据文件位置）")
+	pairOnly := flag.Bool("pair-only", false, "仅执行配对并保存凭据后退出（供安装脚本使用）")
 	flag.Parse()
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
@@ -61,6 +62,11 @@ func main() {
 		} else {
 			slog.Info("配对成功，凭据已保存", "file", credPath)
 		}
+		if *pairOnly {
+			// 安装脚本通道：配对落凭据即退出，正式服务由 systemd 无参启动（走已存凭据）
+			slog.Info("pair-only 完成，退出")
+			return
+		}
 	default:
 		credPath := filepath.Join(*dataDir, "agent.json")
 		c, err := pair.Load(credPath)
@@ -81,7 +87,7 @@ func main() {
 
 	// 心跳（仅配对节点；手工 PSK 模式无 core 可报）
 	if cred.CoreURL != "" {
-		go pair.HeartbeatLoop(ctx, cred, 30*time.Second, func(err error) {
+		go pair.HeartbeatLoop(ctx, cred, version, 30*time.Second, func(err error) {
 			slog.Error("心跳致命错误，agent 退出", "err", err)
 			stop()
 		})

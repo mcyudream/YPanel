@@ -520,6 +520,7 @@
 
 - **补充**（遮挡 IAB 交互自动化边界条目的重要补充）：后台/遮挡窗口下不仅 rAF 冻结影响路由切换，**Playwright 高层 locator 的 click/waitFor 也可能卡在 actionability 检查上超时**——即使元素 `getBoundingClientRect` 可见且有尺寸（text/role/title 选择器全试遍均超时，count() 都没机会执行）。
 - **规避/解决**：`playwright.evaluate` 里 `querySelector` + `getBoundingClientRect` 拿中心坐标（同步返回、不受 actionability 影响）→ `tab.cua.click({x,y})` 真实点击；表单填写用「原生 value setter + 派发 input 事件」驱动 v-model（不经过 locator fill）。该路径在后台窗口稳定可复现。
+- **再补充**（2026-10-09，M53 SSH 页开关验收）：`tab.cua.click` 在遮挡窗口下**并非总有效**——本次对 reka Switch 坐标点击后事件状态无任何变化（API 侧确认请求未发出）。最稳兜底是 evaluate 内**派发完整指针序列** `pointerdown/mousedown/pointerup/mouseup/click`（PointerEvent+MouseEvent、bubbles、button:0），switch/reka 类组件一次通过；点击后用 aria-checked 等属性断言，API 侧对账确认请求真实发出。
 - **来源**：2026-10-08，AI 工作空间页面浏览器验收（text/role/title 三种 locator 全超时，CUA 兜底一次通过）。
 
 ### IAB 上传验收：DataTransfer 构造 File 塞 input.files + 派发 change 走真实上传链路

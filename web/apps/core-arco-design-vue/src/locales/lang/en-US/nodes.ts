@@ -79,4 +79,13 @@ export default {
   deleteConfirm: 'Delete node {name}? The agent must be re-paired to join again.',
   saveFailed: 'Save failed',
   historyLoadFailed: 'Failed to load monitoring history',
+    agentUpgradable: 'agent upgradable',
+    agentUpgradableTip: 'Node agent can be upgraded to v{latest}',
+    agentUpgradeBtn: 'Upgrade agent',
+    agentUpgradeTitle: 'Upgrade node agent',
+    agentUpgradeConfirm: 'Download v{to} from the release and push it to node {name} (current {from}), verify then replace and restart the agent (1-2 minutes). Continue?',
+    agentUpgradeStarted: 'Node agent upgrade task started. Check the task center for progress',
+    agentUpgradeDone: 'Node agent upgraded to v{version}',
+    agentUpgradeFailed: 'Node agent upgrade failed. Check the task log',
+
 }

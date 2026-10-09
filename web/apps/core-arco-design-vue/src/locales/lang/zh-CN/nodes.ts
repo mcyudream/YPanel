@@ -79,4 +79,13 @@ export default {
   deleteConfirm: '确认删除节点 {name}？agent 需重新配对才能接入。',
   saveFailed: '保存失败',
   historyLoadFailed: '加载历史监控失败',
+    agentUpgradable: 'agent 可更新',
+    agentUpgradableTip: '节点 agent 可更新到 v{latest}',
+    agentUpgradeBtn: '一键更新 agent',
+    agentUpgradeTitle: '更新节点 agent',
+    agentUpgradeConfirm: '将从 Release 下载 v{to} 并推送到节点 {name}（当前 {from}），校验后自动替换重启 agent（约 1~2 分钟）。确认更新？',
+    agentUpgradeStarted: '节点 agent 更新任务已启动，可在任务中心查看进度',
+    agentUpgradeDone: '节点 agent 已更新到 v{version}',
+    agentUpgradeFailed: '节点 agent 更新失败，请查看任务日志',
+
 }

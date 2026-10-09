@@ -231,7 +231,7 @@ func (s *NodeService) Pair(code, name, addr, hostname, osName, arch, version str
 }
 
 // Heartbeat 节点心跳（Bearer PSK constant-time 校验）并刷新在线时间。
-func (s *NodeService) Heartbeat(name, token string) error {
+func (s *NodeService) Heartbeat(name, token, version string) error {
 	var row model.Node
 	if err := s.db.Where("name = ?", name).First(&row).Error; err != nil {
 		return errs.Wrap(errs.ErrBadRequest, "节点未注册")
@@ -239,7 +239,12 @@ func (s *NodeService) Heartbeat(name, token string) error {
 	if subtle.ConstantTimeCompare([]byte(token), []byte(row.Token)) != 1 {
 		return errs.ErrForbidden
 	}
-	return s.db.Model(&row).Update("last_seen_at", time.Now()).Error
+	updates := map[string]any{"last_seen_at": time.Now()}
+	// M54：心跳携带 agent 版本（升级重启后首个心跳即同步新版本）；长度截断防滥用
+	if version != "" && len(version) <= 32 {
+		updates["version"] = version
+	}
+	return s.db.Model(&row).Updates(updates).Error
 }
 
 // DeleteNode 删除远程节点。

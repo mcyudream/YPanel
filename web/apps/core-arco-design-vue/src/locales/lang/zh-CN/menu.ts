@@ -44,6 +44,8 @@ export default {
   cron: '计划任务',
   dns: '内网 DNS',
   vpn: '组网',
+  ftp: 'FTP',
+  bruteForce: '暴力破解防护',
   // 监控
   monitor: '监控',
   alert: '告警通知',
@@ -58,6 +60,7 @@ export default {
   nat: 'NAT 转发',
   hosts: 'Hosts',
   processes: '进程与服务',
+  sshManage: 'SSH 管理',
   nodes: '节点管理',
   nodesDetail: '节点详情',
   manage: '系统管理',

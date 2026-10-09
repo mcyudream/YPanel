@@ -20,6 +20,7 @@ import manage from './manage'
 import monitor from './monitor'
 import logcenter from './logcenter'
 import firewall from './firewall'
+import tools from './tools'
 import nat from './nat'
 import hosts from './hosts'
 import processes from './processes'
@@ -56,6 +57,7 @@ export default {
   monitor,
   logcenter,
   firewall,
+  tools,
   nat,
   hosts,
   processes,

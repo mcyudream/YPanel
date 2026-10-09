@@ -44,6 +44,8 @@ export default {
   cron: 'Scheduled Tasks',
   dns: 'Internal DNS',
   vpn: 'Mesh VPN',
+  ftp: 'FTP',
+  bruteForce: 'Brute-force Protection',
   // Monitoring
   monitor: 'Monitoring',
   alert: 'Alerts',
@@ -58,6 +60,7 @@ export default {
   nat: 'NAT',
   hosts: 'Hosts',
   processes: 'Processes & Services',
+  sshManage: 'SSH Management',
   nodes: 'Nodes',
   nodesDetail: 'Node Detail',
   manage: 'Management',

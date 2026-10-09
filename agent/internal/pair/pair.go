@@ -132,12 +132,13 @@ func Pair(ctx context.Context, coreURL, code, name, listenAddr, version string) 
 }
 
 // HeartbeatLoop 心跳循环：成功返回（节点被删/凭据失效）时结束；网络错误重试。
-func HeartbeatLoop(ctx context.Context, cred *Credentials, interval time.Duration, onFatal func(error)) {
+// 心跳携带 agent 版本，core 侧刷新节点 Version（agent 升级重启后首个心跳即同步新版本）。
+func HeartbeatLoop(ctx context.Context, cred *Credentials, version string, interval time.Duration, onFatal func(error)) {
 	t := time.NewTicker(interval)
 	defer t.Stop()
 	exec := func() error {
 		req, err := http.NewRequestWithContext(ctx, "POST",
-			strings.TrimRight(cred.CoreURL, "/")+"/api/v1/pair/heartbeat?name="+cred.Name, nil)
+			strings.TrimRight(cred.CoreURL, "/")+"/api/v1/pair/heartbeat?name="+cred.Name+"&version="+version, nil)
 		if err != nil {
 			return err
 		}

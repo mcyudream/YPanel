@@ -1,53 +1,56 @@
 import type { RouteRecordMainRaw } from '@fantastic-admin/types'
 import type { RouteRecordRaw } from 'vue-router'
-import ComposeRoutes from './modules/compose'
-import DatabaseRoutes from './modules/database'
-import SitesRoutes from './modules/sites'
-import CertsRoutes from './modules/certs'
-import {
-  ContainerApps,
-  ContainerList,
-  ContainerImages,
-  ContainerNetworks,
-  ContainerVolumes,
-  ContainerEnvs,
-  ContainerSettings,
-  ContainerRoot,
-} from './modules/container'
-import ContainerDetailRoutes from './modules/container-detail'
-import ContainerAppRoutes from './modules/container-app'
-import CronRoutes from './modules/cron'
-import DnsRoutes from './modules/dns'
-import VpnRoutes from './modules/vpn'
-import FileRoutes from './modules/file'
-import MonitorsRoutes from './modules/monitors'
 import {
   AiChat,
-  AiProviders,
   AiKnowledge,
-  AiWorkspace,
-  AiMemory,
-  AiTools,
-  AiSkills,
   AiMcp,
+  AiMemory,
+  AiProviders,
   AiRoot,
+  AiSkills,
+  AiTools,
+  AiWorkspace,
 } from './modules/ai'
+import AlertRoutes from './modules/alert'
+import BruteRoutes from './modules/brute'
+import CertsRoutes from './modules/certs'
+import ComposeRoutes from './modules/compose'
+import {
+  ContainerApps,
+  ContainerEnvs,
+  ContainerImages,
+  ContainerList,
+  ContainerNetworks,
+  ContainerRoot,
+  ContainerSettings,
+  ContainerVolumes,
+} from './modules/container'
+import ContainerAppRoutes from './modules/container-app'
+import ContainerDetailRoutes from './modules/container-detail'
+import CronRoutes from './modules/cron'
+import DatabaseRoutes from './modules/database'
+import DbAdminRoutes from './modules/dbadmin'
+import DnsRoutes from './modules/dns'
+import DockerRoutes from './modules/docker'
+import FileRoutes from './modules/file'
+import FirewallRoutes from './modules/firewall'
+import FtpRoutes from './modules/ftp'
+import HostsRoutes from './modules/hosts'
+import LogCenterRoutes from './modules/logcenter'
 import ManageRoutes from './modules/manage'
+import MonitorsRoutes from './modules/monitors'
+import NatRoutes from './modules/nat'
 import NodesRoutes from './modules/nodes'
 import NodesDetailRoutes from './modules/nodes-detail'
-import FirewallRoutes from './modules/firewall'
-import NatRoutes from './modules/nat'
-import HostsRoutes from './modules/hosts'
-import AlertRoutes from './modules/alert'
 import ProbeRoutes from './modules/probe'
-import LogCenterRoutes from './modules/logcenter'
 import ProcessesRoutes from './modules/processes'
-import DbAdminRoutes from './modules/dbadmin'
-import StoreRoutes from './modules/store'
 import RuntimesRoutes from './modules/runtimes'
-import DockerRoutes from './modules/docker'
 import SelfUpdateRoutes from './modules/selfupdate'
+import SitesRoutes from './modules/sites'
+import SshRoutes from './modules/ssh'
+import StoreRoutes from './modules/store'
 import TerminalRoutes from './modules/terminal'
+import VpnRoutes from './modules/vpn'
 
 // 固定路由（默认路由）
 const constantRoutes: RouteRecordRaw[] = [
@@ -193,6 +196,8 @@ const asyncRoutes: RouteRecordMainRaw[] = [
       CronRoutes,
       DnsRoutes,
       VpnRoutes,
+      FtpRoutes,
+      BruteRoutes,
     ],
   },
   {
@@ -222,6 +227,7 @@ const asyncRoutes: RouteRecordMainRaw[] = [
       ProcessesRoutes,
       NodesRoutes,
       NodesDetailRoutes,
+      SshRoutes,
       ManageRoutes,
       SelfUpdateRoutes,
     ],

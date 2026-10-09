@@ -1,6 +1,7 @@
 package api
 
 import (
+	"fmt"
 	"strings"
 	"time"
 
@@ -13,6 +14,7 @@ import (
 // NodeAPI 节点管理接口。
 type NodeAPI struct {
 	Nodes *service.NodeService
+	SU    *service.SelfUpdateService
 }
 
 // List GET /api/v1/nodes
@@ -74,11 +76,42 @@ func (a *NodeAPI) Heartbeat(c *gin.Context) {
 		respErr(c, errs.ErrBadRequest)
 		return
 	}
-	if err := a.Nodes.Heartbeat(name, token); err != nil {
+	if err := a.Nodes.Heartbeat(name, token, c.Query("version")); err != nil {
 		respErr(c, err)
 		return
 	}
 	respOK(c, struct{}{})
+}
+
+// CheckAgentUpdate GET /api/v1/nodes/agent-update/check?node=（M54 节点 agent 更新检查）
+func (a *NodeAPI) CheckAgentUpdate(c *gin.Context) {
+	out, err := a.SU.CheckAgentUpdate(c.Request.Context(), c.Query("node"))
+	if err != nil {
+		respErr(c, err)
+		return
+	}
+	respOK(c, out)
+}
+
+// UpgradeAgent POST /api/v1/nodes/:id/upgrade-agent {source}（M54 一键更新节点 agent，任务化）
+func (a *NodeAPI) UpgradeAgent(c *gin.Context) {
+	id, err := idParam(c)
+	if err != nil {
+		respErr(c, err)
+		return
+	}
+	req, ok := bind[struct {
+		Source string `json:"source" binding:"required"`
+	}](c)
+	if !ok {
+		return
+	}
+	out, err := a.SU.UpgradeAgentTask(fmt.Sprintf("%d", id), req.Source)
+	if err != nil {
+		respErr(c, err)
+		return
+	}
+	respOK(c, out)
 }
 
 // UpdateAsset PUT /api/v1/nodes/:id/asset（M43 服务器资产）

@@ -55,15 +55,16 @@ type OnlineCheck struct {
 // updateChannelDir 更新通道目录（agent 主机侧）。
 const updateChannelDir = "/opt/ypanel/updates"
 
-// SelfUpdateService 自更新服务。
+// SelfUpdateService 自更新服务（面板本机 + 被管节点 agent 一键更新，任务化走 tasks）。
 type SelfUpdateService struct {
-	nodes     *NodeService
+	nodes      *NodeService
+	tasks      *TaskService
 	currentVer string
 }
 
-// NewSelfUpdateService 创建。
-func NewSelfUpdateService(nodes *NodeService, currentVersion string) *SelfUpdateService {
-	return &SelfUpdateService{nodes: nodes, currentVer: currentVersion}
+// NewSelfUpdateService 创建（tasks 可 nil——仅在线检查可用）。
+func NewSelfUpdateService(nodes *NodeService, tasks *TaskService, currentVersion string) *SelfUpdateService {
+	return &SelfUpdateService{nodes: nodes, tasks: tasks, currentVer: currentVersion}
 }
 
 func (s *SelfUpdateService) client() (*agentclient.Client, error) {

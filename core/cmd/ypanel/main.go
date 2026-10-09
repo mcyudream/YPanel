@@ -140,7 +140,7 @@ func run(ctx context.Context, cfg *config.Config) error {
 	rtSvc := service.NewRuntimeService(gdb, nodes, taskSvc)
 	dockerExtSvc := service.NewDockerExtService(nodes, taskSvc)
 	dockerInstallSvc := service.NewDockerInstallService(nodes, taskSvc)
-	suSvc := service.NewSelfUpdateService(nodes, version)
+	suSvc := service.NewSelfUpdateService(nodes, taskSvc, version)
 	notifSvc := service.NewNotificationService(gdb)
 	cronSvc.Notif = notifSvc
 	dashboardSvc := service.NewDashboardService(gdb, nodes, dockerExtSvc, notifSvc)
