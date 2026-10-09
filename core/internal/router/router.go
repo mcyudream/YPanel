@@ -174,6 +174,7 @@ func Setup(d *Deps) (*gin.Engine, error) {
 			authed.GET("/files/download", pm("file:read"), fileAPI.Download) // 下载走 ?token=
 			authed.GET("/files/upload", pm("file:read"), fileAPI.Upload)
 			authed.POST("/files/upload", pm("file:write"), fileAPI.Upload)
+				authed.POST("/files/copy-across", pm("file:write"), fileAPI.CopyAcross)
 			authed.POST("/files/write", pm("file:write"), fileAPI.Write)
 			authed.POST("/files/mkdir", pm("file:write"), fileAPI.Mkdir)
 			authed.POST("/files/rename", pm("file:write"), fileAPI.Rename)
