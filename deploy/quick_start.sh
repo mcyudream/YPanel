@@ -84,7 +84,12 @@ case "$ARCH" in
   *) err "暂不支持的架构: $ARCH（支持 x86_64 / aarch64）" ;;
 esac
 
-has_tty() { [ -e /dev/tty ] && [ -r /dev/tty ] && [ -w /dev/tty ]; }
+has_tty() {
+  if [ -t 0 ]; then return 0; fi
+  # curl|bash 场景：stdin 是管道，但调用方有 controlling terminal 时 /dev/tty 可用；
+  # paramiko/CI exec 无 controlling terminal，/dev/tty 设备存在却打不开（ENXIO）——必须实测打开
+  { printf '' >/dev/tty; } 2>/dev/null
+}
 # ask <变量名> <提示> <默认值>：从 /dev/tty 读取（curl|bash 时 stdin 被管道占用，必须走 tty）
 ask() {
   local __n="$1" __p="$2" __d="$3" __v=""
