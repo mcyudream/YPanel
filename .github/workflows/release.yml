@@ -48,31 +48,27 @@ jobs:
           test -f core/internal/web/dist/index.html
 
       - name: Build binaries (linux amd64/arm64)
+        working-directory: core
         run: |
           VER="${GITHUB_REF_NAME}"
-          mkdir -p build
+          mkdir -p "$GITHUB_WORKSPACE/build"
           for ARCH in amd64 arm64; do
-            DIR=build/ypanel-linux-${ARCH}
+            DIR="$GITHUB_WORKSPACE/build/ypanel-linux-${ARCH}"
             mkdir -p "$DIR"
             CGO_ENABLED=0 GOOS=linux GOARCH=$ARCH \
               go build -ldflags "-s -w -X main.version=$VER" -o "$DIR/ypanel" ./cmd/ypanel
-            (cd agent && CGO_ENABLED=0 GOOS=linux GOARCH=$ARCH \
-              go build -ldflags "-s -w -X main.version=$VER" -o "../$DIR/ypagent" ./cmd/agent)
-            tar -czf "build/ypanel-linux-${ARCH}.tar.gz" -C "$DIR" ypanel ypagent
+            (cd ../agent && CGO_ENABLED=0 GOOS=linux GOARCH=$ARCH \
+              go build -ldflags "-s -w -X main.version=$VER" -o "$DIR/ypagent" ./cmd/agent)
+            tar -czf "$GITHUB_WORKSPACE/build/ypanel-linux-${ARCH}.tar.gz" -C "$DIR" ypanel ypagent
           done
-          (cd build && sha256sum *.tar.gz > sha256sums.txt)
-          ls -la build/
+          (cd "$GITHUB_WORKSPACE/build" && sha256sum *.tar.gz > sha256sums.txt)
+          ls -la "$GITHUB_WORKSPACE/build/"
 
       - name: Smoke test binaries
+        working-directory: build
         run: |
-          for ARCH in amd64 arm64; do
-            DIR=build/ypanel-linux-${ARCH}
-            if [ "$ARCH" = "amd64" ]; then
-              # amd64 可直接跑：验证二进制可执行与版本注入
-              chmod +x "$DIR/ypanel" "$DIR/ypagent"
-              "$DIR/ypanel" version | grep -q "${GITHUB_REF_NAME}" || { echo "version mismatch"; exit 1; }
-            fi
-          done
+          chmod +x ypanel-linux-amd64/ypanel ypanel-linux-amd64/ypagent
+          ypanel-linux-amd64/ypanel version | grep -q "${GITHUB_REF_NAME}" || { echo "version mismatch"; exit 1; }
 
       - name: Upload build artifacts
         uses: actions/upload-artifact@v4
