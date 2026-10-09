@@ -35,6 +35,7 @@ import NodeDetailApp from './apps/NodeDetailApp.vue'
 import ProcessesApp from './apps/ProcessesApp.vue'
 import SiteDetailApp from './apps/SiteDetailApp.vue'
 import TerminalApp from './apps/TerminalApp.vue'
+import TextEditorApp from './apps/TextEditorApp.vue'
 import { YwEmbedKey } from './embed'
 import { lastFocusedWin } from './focus-scene'
 import { YwSettingsApp } from '@yudream/yudream-webos-arco'
@@ -158,6 +159,20 @@ const settingsApp: AppDefinition = {
   desktop: { show: false },
 }
 
+/** 桌面文本文件编辑器（隐藏应用）：桌面文件图标双击时经 openApp('text-editor') 承载 */
+const textEditorApp: AppDefinition = {
+  id: 'text-editor',
+  name: i18n.global.t('desktop.apps.textEditor'),
+  icon: 'i-lucide-file-text',
+  component: markRaw(TextEditorApp),
+  category: 'tool',
+  singleton: false,
+  multiInstance: true,
+  dock: { showInDock: false },
+  desktop: { show: false },
+  launchpad: { show: false },
+}
+
 /** 详情承载：隐藏应用（不进 Dock/启动台/桌面播种），multiInstance 每次开新窗、标题带实例名 */
 const detailApps: AppDefinition[] = [
   { id: 'container-detail', name: i18n.global.t('desktop.apps.container-detail'), icon: 'i-lucide-container', component: ContainerDetailApp, singleton: false, multiInstance: true, defaultSize: { width: 960, height: 640 }, dock: { showInDock: false }, launchpad: { show: false } },
@@ -238,7 +253,7 @@ const widgetComponents: Record<string, unknown> = {}
 for (const w of ypanelWidgets) {
   widgetComponents[w.id] = w.component
 }
-for (const app of [...ypanelApps, ...launcherApps, ...(isAdminAccount ? manageApps : []), ...detailApps, settingsApp]) {
+for (const app of [...ypanelApps, ...launcherApps, ...(isAdminAccount ? manageApps : []), ...detailApps, settingsApp, textEditorApp]) {
   registry.register(app)
 }
 /** M44：桌面布局导出/导入（服务器侧备份，跨浏览器/重装恢复） */

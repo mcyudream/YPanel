@@ -46,6 +46,10 @@ export function bindDesktopDrag(options: {
   setState: (s: DesktopDragState | null) => void
   /** 拖拽结束提交后回调（持久化） */
   onCommit?: (id: string) => void
+  /** 落点命中文件夹 → 返回 folderId（拖入归组，不再换位） */
+  resolveDropTarget?: (id: string, col: number, row: number) => string | null
+  /** 拖拽悬停/结束的文件夹高亮 */
+  setHoverFolder?: (id: string | null) => void
 }) {
   /** 激活前的待定起点（pointerdown 记录，超阈值才转正为拖拽） */
   let pending: { id: string, pointerId: number, startX: number, startY: number, item: DesktopItem } | null = null
@@ -91,6 +95,15 @@ export function bindDesktopDrag(options: {
     const containerRect = options.container.getBoundingClientRect()
     s.x = ev.clientX - containerRect.left - s.offsetX
     s.y = ev.clientY - containerRect.top - s.offsetY
+    // 悬停文件夹高亮
+    if (options.resolveDropTarget && options.setHoverFolder) {
+      const m = options.metrics()
+      const col = Math.floor(s.x / (m.cellWidth + m.gap))
+      const row = Math.floor(s.y / (m.cellHeight + m.gap))
+      const maxCol = Math.max(0, Math.floor((m.width + m.gap) / (m.cellWidth + m.gap)) - 1)
+      const modelCol = m.gravity === 'top-right' ? Math.max(0, maxCol - col) : Math.max(0, col)
+      options.setHoverFolder(options.resolveDropTarget(s.id, modelCol, Math.max(0, row)))
+    }
   }
 
   function onPointerUp(ev: PointerEvent) {
@@ -99,6 +112,7 @@ export function bindDesktopDrag(options: {
     if (!s || s.pointerId !== ev.pointerId) {
       return
     }
+    options.setHoverFolder?.(null)
     if (!options.container) {
       options.setState(null)
       return
@@ -109,6 +123,14 @@ export function bindDesktopDrag(options: {
     // gravity=right：视觉列 0 在最右 → 模型 col = maxCol - 视觉列
     const maxCol = Math.max(0, Math.floor((m.width + m.gap) / (m.cellWidth + m.gap)) - 1)
     const modelCol = m.gravity === 'top-right' ? Math.max(0, maxCol - col) : Math.max(0, col)
+    // 落点命中文件夹 → 移入归组（不换位）
+    const folderId = options.resolveDropTarget?.(s.id, modelCol, Math.max(0, row))
+    if (folderId) {
+      options.model?.addToFolder(folderId, s.id)
+      options.setState(null)
+      options.onCommit?.(s.id)
+      return
+    }
     options.model?.moveTo(s.id, { col: modelCol, row: Math.max(0, row) })
     options.setState(null)
     options.onCommit?.(s.id)

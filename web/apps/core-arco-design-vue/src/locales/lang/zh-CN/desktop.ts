@@ -47,6 +47,7 @@ export default {
     selfupdate: '面板设置',
     vpn: '组网',
     settings: '系统设置',
+    textEditor: '文本编辑器',
     'container-detail': '容器详情',
     'container-app-detail': '应用详情',
     'site-detail': '站点配置',

@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import type { AppDefinition } from '@yudream/yudream-webos-core'
+import { useWebOS } from '@yudream/yudream-webos-vue'
 import { computed, onMounted, ref, watch } from 'vue'
 import { useAppsStore } from '../../stores/apps'
 import YwIconTile from '../icon-tile/index.vue'
@@ -19,6 +20,7 @@ const emit = defineEmits<{
 }>()
 
 const appsStore = useAppsStore()
+const os = useWebOS()
 
 const keyword = ref('')
 const page = ref(0)
@@ -52,6 +54,26 @@ watch(filtered, () => {
 function open(app: AppDefinition) {
   appsStore.openApp(app.id)
   emit('close')
+}
+
+/** 右键：打开 / 添加到桌面（落点由 DesktopModel 自动找可见空位） */
+function onAppContextmenu(ev: MouseEvent, app: AppDefinition) {
+  ev.preventDefault()
+  os.ui.menu({
+    x: ev.clientX,
+    y: ev.clientY,
+    items: [
+      { label: '打开', icon: 'i-lucide-external-link', onSelect: () => open(app) },
+      {
+        label: '添加到桌面',
+        icon: 'i-lucide-monitor-plus',
+        onSelect: () => {
+          os.desktop.add({ type: 'app', refId: app.id, name: app.name, icon: app.icon, position: { col: 0, row: 0 } })
+          os.ui.message('success', `«${app.name}» 已添加到桌面`)
+        },
+      },
+    ],
+  })
 }
 
 const inputEl = ref<HTMLInputElement | null>(null)
@@ -92,7 +114,7 @@ function onKeydown(ev: KeyboardEvent) {
           :key="app.id"
           class="yw-launchpad-app"
           @click="open(app)"
-          @contextmenu.prevent
+          @contextmenu.prevent="onAppContextmenu($event, app)"
         >
           <YwIconTile :app-key="app.id" :icon="app.icon" :icon-bg="app.iconBg" :size="64" />
           <span class="yw-launchpad-label">{{ app.name }}</span>

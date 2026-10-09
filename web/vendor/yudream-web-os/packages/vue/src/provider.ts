@@ -224,6 +224,8 @@ export function createWebOSInstance(options: CreateWebOSOptions = {}): WebOSInst
       name: x.name,
       icon: x.icon,
       position: x.position,
+      span: x.span,
+      content: x.content,
       children: x.children,
     })))
     void reason

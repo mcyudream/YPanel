@@ -4,12 +4,13 @@
 package service
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"io"
-	"encoding/json"
 	"mime/multipart"
 	"net/http"
 	"path"
@@ -96,6 +97,10 @@ func (s *FileCrossService) runCopy(ctx context.Context, logf TaskLogf, srcNode, 
 	if err != nil {
 		return err
 	}
+	// 目标目录必须先建（校验/解包都依赖它；tar -C 不自建目录）
+	if _, code, err := execOnNode(ctx, s.nodes, dstNode, fmt.Sprintf("mkdir -p '%s'", dstDir), 15); err != nil || code != 0 {
+		return fmt.Errorf("创建目标目录失败")
+	}
 	done, skipped := 0, 0
 	for i, it := range items {
 		logf("info", "[%d/%d] %s（%s）", i+1, len(items), it.Name, mapStr(it.IsDir, "目录", "文件"))
@@ -119,6 +124,9 @@ func (s *FileCrossService) runCopy(ctx context.Context, logf TaskLogf, srcNode, 
 		out, code, err := execOnNode(ctx, s.nodes, dstNode,
 			fmt.Sprintf("cd %s && printf '%%s  %%s\\n' '%s' '%s' | sha256sum -c - >/dev/null && echo YPSUMOK", dstDir, sum, kind), 60)
 		if err != nil || code != 0 || !strings.Contains(out, "YPSUMOK") {
+			dbg, _, _ := execOnNode(ctx, s.nodes, dstNode,
+				fmt.Sprintf("cd %s && ls -la && sha256sum '%s' 2>&1", dstDir, kind), 30)
+			logf("error", "目标侧实际状态：\n%s\n（core 侧期望 sha256=%s）", tailStr(dbg, 600), sum)
 			clean := fmt.Sprintf("rm -f '%s/%s'", dstDir, kind)
 			_, _, _ = execOnNode(ctx, s.nodes, dstNode, clean, 15)
 			return fmt.Errorf("%s: 目标侧 sha256 校验失败（已清理）", it.Name)
@@ -152,53 +160,46 @@ func (s *FileCrossService) streamCopy(ctx context.Context, logf TaskLogf, src, d
 	if resp.StatusCode != http.StatusOK {
 		return "", 0, false, fmt.Errorf("源读取 HTTP %d", resp.StatusCode)
 	}
+	// agent 错误响应是 HTTP 200 + JSON 信封（writeErr）——按 Content-Type 识别，防止把错误 JSON 当文件内容拷走
+	if ct := resp.Header.Get("Content-Type"); strings.Contains(ct, "application/json") {
+		b, _ := io.ReadAll(io.LimitReader(resp.Body, 300))
+		return "", 0, false, fmt.Errorf("源文件不存在或不可读: %s", strings.TrimSpace(string(b)))
+	}
 	isTar := strings.Contains(resp.Header.Get("Content-Type"), "gzip")
+	// 远端暂存名必须与 runCopy 的校验文件名一致（isTar 时固定 tmp.tar.gz）
 	remoteName := name
 	if isTar {
-		remoteName = fmt.Sprintf("ypanel-xfer-%d.tar.gz", time.Now().UnixNano())
+		remoteName = "tmp.tar.gz"
 	}
-	pr, pw := io.Pipe()
-	var sumHex string
-	var cpErr error
-	go func() {
-		defer func() { _ = pw.Close() }()
-		h := sha256.New()
-		if _, cerr := io.Copy(io.MultiWriter(pw, h), resp.Body); cerr != nil {
-			cpErr = cerr
-		}
-		sumHex = hex.EncodeToString(h.Sum(nil))
-	}()
-	uploadPath := dstDir
-	if isTar {
-		uploadPath = "/tmp"
+	// 同步缓冲：完整读取并计算 sha256（双 pipe 并发写曾致截断体静默上传→双端 sha 不一致）
+	h := sha256.New()
+	body, err := io.ReadAll(io.TeeReader(resp.Body, h))
+	if err != nil {
+		return "", 0, isTar, fmt.Errorf("源流读取中断: %w", err)
 	}
-	if err := streamUpload(ctx, dst, uploadPath, remoteName, pr); err != nil {
+	sumHex := hex.EncodeToString(h.Sum(nil))
+	if err := streamUpload(ctx, dst, dstDir, remoteName, body); err != nil {
 		return "", 0, isTar, err
 	}
-	if cpErr != nil {
-		return "", 0, isTar, fmt.Errorf("源流读取中断: %w", cpErr)
-	}
-	return sumHex, 0, isTar, nil
+	return sumHex, int64(len(body)), isTar, nil
 }
 
-// streamUpload multipart 流式上传（边读边传，不落盘）。
-func streamUpload(ctx context.Context, dst *agentclient.Client, dir, filename string, r io.Reader) error {
-	pr, pw := io.Pipe()
-	mw := multipart.NewWriter(pw)
-	go func() {
-		defer func() { _ = pw.Close() }()
-		part, err := mw.CreateFormFile("file", filename)
-		if err != nil {
-			_ = pw.CloseWithError(err)
-			return
-		}
-		if _, err := io.Copy(part, r); err != nil {
-			_ = pw.CloseWithError(err)
-			return
-		}
-		_ = mw.Close()
-	}()
-	req, err := dst.NewRequest(ctx, http.MethodPost, "/agent/v1/files/upload?path="+escapeURL(dir), pr)
+// streamUpload multipart 上传（内容已在内存缓冲；早期 pipe 双 goroutine 版本存在
+// 截断静默上传竞态——双端 sha 不一致的根因，已改 bytes 同步写）。
+func streamUpload(ctx context.Context, dst *agentclient.Client, dir, filename string, content []byte) error {
+	var buf bytes.Buffer
+	mw := multipart.NewWriter(&buf)
+	part, err := mw.CreateFormFile("file", filename)
+	if err != nil {
+		return err
+	}
+	if _, err := part.Write(content); err != nil {
+		return err
+	}
+	if err := mw.Close(); err != nil {
+		return err
+	}
+	req, err := dst.NewRequest(ctx, http.MethodPost, "/agent/v1/files/upload?path="+escapeURL(dir), &buf)
 	if err != nil {
 		return err
 	}

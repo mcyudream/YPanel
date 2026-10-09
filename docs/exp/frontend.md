@@ -589,3 +589,24 @@
 - **现象**：直觉认为 fa 的 `meta.auth` 会拦住直连 URL 的越权访问；实测守卫（guards.ts）只做菜单过滤（menu.ts filterAsyncMenus 递归按 auth 过滤、空组自动隐藏）与「父级无 redirect 时跳第一个有权限子路由」，导航本身不校验 `to.meta.auth`——未授权用户手输 URL 仍能渲染页面，只是页面里的 API 全部 403。
 - **规避/解决**：权限模型设计时明确「meta.auth = UI 过滤，后端中间件 = 安全边界」，二者缺一不可但不可互相当作；验收越权用 curl 直调 API 断言 403，不要用页面可达性断言。fa 的 `auth()` 是 permissions 数组 some 交集（composables/app/auth.ts），`v-auth` 指令是无权限时 display:none——按钮级藏按钮够用，但同样不是边界。**另：`hasPermission` 是精确 `includes` 匹配、不认通配——后端权限集含 `*`/`模块:*` 时必须在下发前展开成具体权限点列表（rbac.Expand），否则超管所有带 auth 的菜单整组消失（「admin 看不到系统设置」即此症）**。
 - **来源**：2026-10-09，M54 RBAC P1 改造（admin/user 二值角色 → 角色权限点；fa 侧 permissions 从 ['admin']/['user'] 换成真实权限点列表）。
+
+### webos 布局持久化是字段白名单——模型加字段必须同步 provider.ts 的保存映射
+
+- **现象**：桌面项新加的 `span`（文件夹卡片/大图标多格）与 `content`（文本文件内容）在内存里一切正常，刷新/重装后丢失。
+- **根因**：`packages/vue/src/provider.ts` 的 `desktop.onChange` 持久化映射是显式字段白名单（id/type/refId/name/icon/position/children），新字段不进白名单就被剥掉——保存"成功"但存的是残缺项。
+- **规避/解决**：给 `DesktopItem` 加任何字段时，同步在 provider 的保存映射里补一行。教训：字段白名单式序列化，演进时必须两头同步。
+- **来源**：2026-10-09，桌面文件夹卡片/便签编辑器（span/content）。
+
+### webos 桌面三套网格坐标不一致——小组件占格必须显式换算注入模型
+
+- **现象**：新建图标/文件夹「消失」（其实落在小组件卡片底下）；「整理图标」救不回来（reassignCells 曾明确排除文件夹，且重排起点就在小组件地盘）。
+- **根因**：图标网格（88×96 步距、容器 inset 14/(menubar+12)）、小组件网格（92 步距、top=menubar+14）、模型坐标（gravity 镜像 col）三套坐标互不知晓；落点/换位/整理只查图标自身占用。
+- **规避/解决**：UI 层从 DOM 量测小组件卡片 rect（`.yw-widget-card.is-desktop`），把中心点落入卡片rect 的图标格换算成**模型坐标**注入 `DesktopModel.blockedCells`；落点/firstFreeCell/reassignCells 一律视其为占用。换算必须做 gravity 镜像（visual=cols-1-model）。文件夹从此参与重排。
+- **来源**：2026-10-09，桌面文件夹卡片改造（vendor yudream-web-os desktop-model/desktop/drag）。
+
+### gravity 镜像下跨格项的渲染左缘必须取「最后覆盖列」的视觉列
+
+- **现象**：3×2 文件夹卡只露出一条边（看起来是「空盒子」），2×2 大卡视觉上压住右侧相邻图标——但模型里两者并不重叠。
+- **根因**：iconGravity=top-right 时模型列向左镜像（visual=cols-1-model）。跨格项占模型列 c..c+w-1，映射到视觉列是**向左**展开；渲染若以首列视觉号作左缘向右画 width，卡就画出屏幕右缘、并盖住视觉右侧的项。模型占用检查（model 空间）完全正确，纯渲染层错位。
+- **规避/解决**：`visualLeft = (cols - col - w) * pitch`（= 最后覆盖模型列的视觉列）；1×1 退化为原公式。凡「镜像 + 跨格」的渲染都要用覆盖终点求左缘，不能拿起点当左缘。涉及处：cellStyle、浮层定位。
+- **来源**：2026-10-09，桌面文件夹卡片（vendor desktop/index.vue）。

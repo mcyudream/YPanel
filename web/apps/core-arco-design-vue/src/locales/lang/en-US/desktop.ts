@@ -47,6 +47,7 @@ export default {
     selfupdate: 'Panel Settings',
     vpn: 'Mesh VPN',
     settings: 'System Settings',
+    textEditor: 'Text Editor',
     'container-detail': 'Container Detail',
     'container-app-detail': 'App Detail',
     'site-detail': 'Site Config',
