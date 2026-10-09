@@ -72,9 +72,9 @@ func (a *SiteAPI) SetMode(c *gin.Context) {
 
 // IssueACME POST /api/v1/sites/:id/cert/acme {domain?}（B1：DNS API 挑战签发）
 func (a *SiteAPI) IssueACME(c *gin.Context) {
-	id, err := strconv.ParseUint(c.Param("id"), 10, 64)
-	if err != nil || id == 0 {
-		respErr(c, errBadRequest("站点 ID 不合法"))
+	id, err := ownedSiteID(c, a.Sites)
+	if err != nil {
+		respErr(c, err)
 		return
 	}
 	req, ok := bind[struct {
@@ -97,9 +97,9 @@ func (a *SiteAPI) IssueACME(c *gin.Context) {
 
 // UpdateMeta PUT /api/v1/sites/:id/meta {groupId?, remark?}（B23 分组/备注）
 func (a *SiteAPI) UpdateMeta(c *gin.Context) {
-	id, err := strconv.ParseUint(c.Param("id"), 10, 64)
-	if err != nil || id == 0 {
-		respErr(c, errBadRequest("站点 ID 不合法"))
+	id, err := ownedSiteID(c, a.Sites)
+	if err != nil {
+		respErr(c, err)
 		return
 	}
 	req, ok := bind[service.SiteMetaInput](c)
@@ -115,9 +115,9 @@ func (a *SiteAPI) UpdateMeta(c *gin.Context) {
 
 // GetRunDir GET /api/v1/sites/:id/conf/rundir（B23 网站目录）
 func (a *SiteAPI) GetRunDir(c *gin.Context) {
-	id, err := strconv.ParseUint(c.Param("id"), 10, 64)
-	if err != nil || id == 0 {
-		respErr(c, errBadRequest("站点 ID 不合法"))
+	id, err := ownedSiteID(c, a.Sites)
+	if err != nil {
+		respErr(c, err)
 		return
 	}
 	out, err := a.Sites.GetRunDir(c.Request.Context(), uint(id))
@@ -130,9 +130,9 @@ func (a *SiteAPI) GetRunDir(c *gin.Context) {
 
 // UpdateRunDir PUT /api/v1/sites/:id/conf/rundir {runDir}（B23 保存并重载）
 func (a *SiteAPI) UpdateRunDir(c *gin.Context) {
-	id, err := strconv.ParseUint(c.Param("id"), 10, 64)
-	if err != nil || id == 0 {
-		respErr(c, errBadRequest("站点 ID 不合法"))
+	id, err := ownedSiteID(c, a.Sites)
+	if err != nil {
+		respErr(c, err)
 		return
 	}
 	req, ok := bind[struct {
@@ -150,9 +150,9 @@ func (a *SiteAPI) UpdateRunDir(c *gin.Context) {
 
 // GetSite GET /api/v1/sites/:id/detail// GetSite GET /api/v1/sites/:id/detail（F8 单条端点）
 func (a *SiteAPI) GetSite(c *gin.Context) {
-	id, err := strconv.ParseUint(c.Param("id"), 10, 64)
-	if err != nil || id == 0 {
-		respErr(c, errBadRequest("站点 ID 不合法"))
+	id, err := ownedSiteID(c, a.Sites)
+	if err != nil {
+		respErr(c, err)
 		return
 	}
 	site, err := a.Sites.GetByIDF(uint(id))
@@ -207,7 +207,7 @@ func (a *SiteAPI) Create(c *gin.Context) {
 
 // SiteLogs GET /api/v1/sites/:id/logs?type=access|error&tail=N（M13 站点日志）
 func (a *SiteAPI) SiteLogs(c *gin.Context) {
-	id, err := idParam(c)
+	id, err := ownedSiteID(c, a.Sites)
 	if err != nil {
 		respErr(c, err)
 		return
@@ -222,7 +222,7 @@ func (a *SiteAPI) SiteLogs(c *gin.Context) {
 
 // Delete DELETE /api/v1/sites/:id?purge=
 func (a *SiteAPI) Delete(c *gin.Context) {
-	id, err := idParam(c)
+	id, err := ownedSiteID(c, a.Sites)
 	if err != nil {
 		respErr(c, err)
 		return
@@ -257,7 +257,7 @@ func (a *SiteAPI) SetEnabled(enabled bool) gin.HandlerFunc {
 
 // Config GET /api/v1/sites/:id/config
 func (a *SiteAPI) Config(c *gin.Context) {
-	id, err := idParam(c)
+	id, err := ownedSiteID(c, a.Sites)
 	if err != nil {
 		respErr(c, err)
 		return
@@ -272,7 +272,7 @@ func (a *SiteAPI) Config(c *gin.Context) {
 
 // UpdateConfig PUT /api/v1/sites/:id/config
 func (a *SiteAPI) UpdateConfig(c *gin.Context) {
-	id, err := idParam(c)
+	id, err := ownedSiteID(c, a.Sites)
 	if err != nil {
 		respErr(c, err)
 		return
@@ -327,7 +327,7 @@ func (a *SiteAPI) RewriteTemplates(c *gin.Context) {
 
 // GetExt GET /api/v1/sites/:id/ext
 func (a *SiteAPI) GetExt(c *gin.Context) {
-	id, err := idParam(c)
+	id, err := ownedSiteID(c, a.Sites)
 	if err != nil {
 		respErr(c, err)
 		return
@@ -342,7 +342,7 @@ func (a *SiteAPI) GetExt(c *gin.Context) {
 
 // UpdateExt PUT /api/v1/sites/:id/ext
 func (a *SiteAPI) UpdateExt(c *gin.Context) {
-	id, err := idParam(c)
+	id, err := ownedSiteID(c, a.Sites)
 	if err != nil {
 		respErr(c, err)
 		return
@@ -360,7 +360,7 @@ func (a *SiteAPI) UpdateExt(c *gin.Context) {
 
 // GetWaf GET /api/v1/sites/:id/waf
 func (a *SiteAPI) GetWaf(c *gin.Context) {
-	id, err := idParam(c)
+	id, err := ownedSiteID(c, a.Sites)
 	if err != nil {
 		respErr(c, err)
 		return
@@ -375,7 +375,7 @@ func (a *SiteAPI) GetWaf(c *gin.Context) {
 
 // UpdateWaf PUT /api/v1/sites/:id/waf
 func (a *SiteAPI) UpdateWaf(c *gin.Context) {
-	id, err := idParam(c)
+	id, err := ownedSiteID(c, a.Sites)
 	if err != nil {
 		respErr(c, err)
 		return
@@ -393,7 +393,7 @@ func (a *SiteAPI) UpdateWaf(c *gin.Context) {
 
 // IssueSelfSigned POST /api/v1/sites/:id/cert/selfsigned
 func (a *SiteAPI) IssueSelfSigned(c *gin.Context) {
-	id, err := idParam(c)
+	id, err := ownedSiteID(c, a.Sites)
 	if err != nil {
 		respErr(c, err)
 		return
@@ -425,7 +425,7 @@ func (a *SiteAPI) BatchOperate(c *gin.Context) {
 
 // SetDefault POST /api/v1/sites/:id/default（M39）
 func (a *SiteAPI) SetDefault(c *gin.Context) {
-	id, err := idParam(c)
+	id, err := ownedSiteID(c, a.Sites)
 	if err != nil {
 		respErr(c, err)
 		return
@@ -439,7 +439,7 @@ func (a *SiteAPI) SetDefault(c *gin.Context) {
 
 // SetExpire PUT /api/v1/sites/:id/expire {expireAt|null}（M39）
 func (a *SiteAPI) SetExpire(c *gin.Context) {
-	id, err := idParam(c)
+	id, err := ownedSiteID(c, a.Sites)
 	if err != nil {
 		respErr(c, err)
 		return

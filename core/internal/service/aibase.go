@@ -921,7 +921,7 @@ func (s *AIService) aiToolsAll(ctx context.Context) []aiToolDef {
 		fn := defs[i].Fn
 		module, risk := defs[i].Module, defs[i].Risk
 		defs[i].Fn = func(c context.Context, args string) (string, error) {
-			if err := rbac.CheckTool(c, module, risk); err != nil {
+			if err := rbac.CheckTool(c, module, risk, args); err != nil {
 				return "", err
 			}
 			return fn(c, args)

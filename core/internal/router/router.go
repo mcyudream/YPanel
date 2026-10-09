@@ -153,7 +153,7 @@ func Setup(d *Deps) (*gin.Engine, error) {
 		v1.GET("/s/:token", fileExtAPI.ShareDownload) // M38 公开分享（无鉴权，token 即凭证）
 		v1.POST("/pair/heartbeat", nodeAPI.Heartbeat)
 
-		authed := v1.Group("", middleware.Auth(d.Auth, d.RBAC), middleware.DangerLock(d.Sec), middleware.Audit(d.CronDB()))
+		authed := v1.Group("", middleware.Auth(d.Auth, d.RBAC), middleware.NodeScope(), middleware.DangerLock(d.Sec), middleware.Audit(d.CronDB()))
 		{
 			pm := middleware.Perm // M54 RBAC：路由级权限点标注
 			authed.GET("/auth/me", authAPI.Me)

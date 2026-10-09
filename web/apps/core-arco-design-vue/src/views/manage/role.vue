@@ -1,5 +1,7 @@
 <script setup lang="ts">
+import type { NodeItem } from '@/api/modules/node'
 import type { CatalogGroup, RoleItem } from '@/api/modules/role'
+import apiNode from '@/api/modules/node'
 import apiRole from '@/api/modules/role'
 import { useFaModal } from '@fantastic-admin/components'
 import { i18n } from '@/locales'
@@ -10,6 +12,7 @@ defineOptions({
 
 const roles = ref<RoleItem[]>([])
 const catalog = ref<CatalogGroup[]>([])
+const nodes = ref<NodeItem[]>([])
 const loading = ref(false)
 
 async function load() {
@@ -18,6 +21,9 @@ async function load() {
     roles.value = await apiRole.list()
     if (!catalog.value.length) {
       catalog.value = await apiRole.catalog()
+    }
+    if (!nodes.value.length) {
+      nodes.value = await apiNode.list().catch(() => [])
     }
   }
   finally {
@@ -38,23 +44,23 @@ function groupTitle(key: string) {
 // ---- 创建 / 编辑 / 复制 / 删除 ----
 const editVisible = ref(false)
 const editTarget = ref<RoleItem | null>(null) // null = 创建/复制
-const editForm = ref({ key: '', name: '', remark: '', perms: [] as string[] })
+const editForm = ref({ key: '', name: '', remark: '', perms: [] as string[], scopeAllNodes: true, nodeIds: [] as string[] })
 
 function openCreate() {
   editTarget.value = null
-  editForm.value = { key: '', name: '', remark: '', perms: [] }
+  editForm.value = { key: '', name: '', remark: '', perms: [], scopeAllNodes: true, nodeIds: [] }
   editVisible.value = true
 }
 
 function openCopy(r: RoleItem) {
   editTarget.value = null
-  editForm.value = { key: `${r.key}-copy`, name: `${r.name} 副本`, remark: r.remark, perms: [...r.perms] }
+  editForm.value = { key: `${r.key}-copy`, name: `${r.name} 副本`, remark: r.remark, perms: [...r.perms], scopeAllNodes: r.scopeAllNodes, nodeIds: [...(r.nodeIds ?? [])] }
   editVisible.value = true
 }
 
 function openEdit(r: RoleItem) {
   editTarget.value = r
-  editForm.value = { key: r.key, name: r.name, remark: r.remark, perms: [...r.perms] }
+  editForm.value = { key: r.key, name: r.name, remark: r.remark, perms: [...r.perms], scopeAllNodes: r.scopeAllNodes, nodeIds: [...(r.nodeIds ?? [])] }
   editVisible.value = true
 }
 
@@ -64,15 +70,16 @@ async function doSave() {
     return
   }
   try {
+    const scope = { scopeAllNodes: editForm.value.scopeAllNodes, nodeIds: editForm.value.scopeAllNodes ? [] : editForm.value.nodeIds }
     if (editTarget.value) {
-      await apiRole.update(editTarget.value.id, { name: editForm.value.name, remark: editForm.value.remark, perms: editForm.value.perms })
+      await apiRole.update(editTarget.value.id, { name: editForm.value.name, remark: editForm.value.remark, perms: editForm.value.perms, ...scope })
     }
     else {
       if (!editForm.value.key) {
         useFaToast().warning(i18n.global.t('manage.role.fillRequired'))
         return
       }
-      await apiRole.create({ key: editForm.value.key, name: editForm.value.name, remark: editForm.value.remark, perms: editForm.value.perms })
+      await apiRole.create({ key: editForm.value.key, name: editForm.value.name, remark: editForm.value.remark, perms: editForm.value.perms, ...scope })
     }
     useFaToast().success(i18n.global.t('manage.saved'))
     editVisible.value = false
@@ -211,7 +218,23 @@ onMounted(load)
           <span class="w-16 shrink-0 text-sm text-muted-foreground">{{ $t('manage.role.remark') }}</span>
           <FaInput v-model="editForm.remark" class="w-full!" />
         </div>
-        <div class="max-h-[46vh] overflow-y-auto rounded-md border p-3">
+        <div class="flex items-center gap-3">
+          <span class="w-16 shrink-0 text-sm text-muted-foreground">{{ $t('manage.role.nodeScope') }}</span>
+          <div class="flex flex-1 flex-col gap-1.5">
+            <label class="flex cursor-pointer items-center gap-2 text-sm">
+              <input v-model="editForm.scopeAllNodes" type="checkbox" class="accent-[var(--primary)]">
+              {{ $t('manage.role.allNodes') }}
+            </label>
+            <div v-if="!editForm.scopeAllNodes" class="flex flex-wrap gap-x-4 gap-y-1.5 pl-6">
+              <span v-if="!nodes.length" class="text-xs text-muted-foreground">{{ $t('manage.role.noNodes') }}</span>
+              <label v-for="n in nodes" :key="n.id" class="flex cursor-pointer items-center gap-1.5 text-xs text-muted-foreground">
+                <input v-model="editForm.nodeIds" type="checkbox" :value="n.id" class="accent-[var(--primary)]">
+                {{ n.name }}（{{ n.id === 'local' ? 'local' : `#${n.id}` }}）
+              </label>
+            </div>
+          </div>
+        </div>
+        <div class="max-h-[40vh] overflow-y-auto rounded-md border p-3">
           <div v-for="g in catalog" :key="g.key" class="mb-3 last:mb-0">
             <label class="flex cursor-pointer items-center gap-2 text-sm font-medium">
               <input

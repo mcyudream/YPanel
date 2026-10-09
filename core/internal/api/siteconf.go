@@ -28,7 +28,7 @@ func (a *SiteConfAPI) dnsAlignRefresh(c *gin.Context) {
 
 // confGet GET 泛型代理。
 func confGet[T any](c *gin.Context, get func(uint) (T, error)) {
-	id, err := siteIDParam(c)
+	id, err := ownedSiteID(c, a.Sites)
 	if err != nil {
 		respErr(c, err)
 		return
@@ -43,7 +43,7 @@ func confGet[T any](c *gin.Context, get func(uint) (T, error)) {
 
 // confPut PUT 泛型代理（apply 首参为 request context）。
 func confPut[Req any, Out any](c *gin.Context, apply func(context.Context, uint, Req) (Out, error)) {
-	id, err := siteIDParam(c)
+	id, err := ownedSiteID(c, a.Sites)
 	if err != nil {
 		respErr(c, err)
 		return
@@ -70,7 +70,7 @@ func siteIDParam(c *gin.Context) (uint, error) {
 
 // GetDomain GET /api/v1/sites/:id/conf/domain
 func (a *SiteConfAPI) GetDomain(c *gin.Context) {
-	id, err := siteIDParam(c)
+	id, err := ownedSiteID(c, a.Sites)
 	if err != nil {
 		respErr(c, err)
 		return
@@ -86,7 +86,7 @@ func (a *SiteConfAPI) GetDomain(c *gin.Context) {
 // UpdateDomain PUT /api/v1/sites/:id/conf/domain {domains, primary}
 // primary 为空 = 仅更新附加域名；为站点已有域名且异于当前主域名 = 切换主域名。
 func (a *SiteConfAPI) UpdateDomain(c *gin.Context) {
-	id, err := siteIDParam(c)
+	id, err := ownedSiteID(c, a.Sites)
 	if err != nil {
 		respErr(c, err)
 		return
@@ -109,7 +109,7 @@ func (a *SiteConfAPI) UpdateDomain(c *gin.Context) {
 
 // GetDefaults GET /api/v1/sites/:id/conf/defaults
 func (a *SiteConfAPI) GetDefaults(c *gin.Context) {
-	id, err := siteIDParam(c)
+	id, err := ownedSiteID(c, a.Sites)
 	if err != nil {
 		respErr(c, err)
 		return
@@ -124,7 +124,7 @@ func (a *SiteConfAPI) GetDefaults(c *gin.Context) {
 
 // UpdateDefaults PUT /api/v1/sites/:id/conf/defaults
 func (a *SiteConfAPI) UpdateDefaults(c *gin.Context) {
-	id, err := siteIDParam(c)
+	id, err := ownedSiteID(c, a.Sites)
 	if err != nil {
 		respErr(c, err)
 		return
@@ -143,7 +143,7 @@ func (a *SiteConfAPI) UpdateDefaults(c *gin.Context) {
 
 // GetProxy GET /api/v1/sites/:id/conf/proxy
 func (a *SiteConfAPI) GetProxy(c *gin.Context) {
-	id, err := siteIDParam(c)
+	id, err := ownedSiteID(c, a.Sites)
 	if err != nil {
 		respErr(c, err)
 		return
@@ -158,7 +158,7 @@ func (a *SiteConfAPI) GetProxy(c *gin.Context) {
 
 // UpdateProxy PUT /api/v1/sites/:id/conf/proxy
 func (a *SiteConfAPI) UpdateProxy(c *gin.Context) {
-	id, err := siteIDParam(c)
+	id, err := ownedSiteID(c, a.Sites)
 	if err != nil {
 		respErr(c, err)
 		return
@@ -177,7 +177,7 @@ func (a *SiteConfAPI) UpdateProxy(c *gin.Context) {
 
 // GetRewrite GET /api/v1/sites/:id/conf/rewrite
 func (a *SiteConfAPI) GetRewrite(c *gin.Context) {
-	id, err := siteIDParam(c)
+	id, err := ownedSiteID(c, a.Sites)
 	if err != nil {
 		respErr(c, err)
 		return
@@ -192,7 +192,7 @@ func (a *SiteConfAPI) GetRewrite(c *gin.Context) {
 
 // UpdateRewrite PUT /api/v1/sites/:id/conf/rewrite
 func (a *SiteConfAPI) UpdateRewrite(c *gin.Context) {
-	id, err := siteIDParam(c)
+	id, err := ownedSiteID(c, a.Sites)
 	if err != nil {
 		respErr(c, err)
 		return
@@ -211,7 +211,7 @@ func (a *SiteConfAPI) UpdateRewrite(c *gin.Context) {
 
 // GetHTTPS GET /api/v1/sites/:id/conf/https
 func (a *SiteConfAPI) GetHTTPS(c *gin.Context) {
-	id, err := siteIDParam(c)
+	id, err := ownedSiteID(c, a.Sites)
 	if err != nil {
 		respErr(c, err)
 		return
@@ -226,7 +226,7 @@ func (a *SiteConfAPI) GetHTTPS(c *gin.Context) {
 
 // EnableHTTPS POST /api/v1/sites/:id/conf/https
 func (a *SiteConfAPI) EnableHTTPS(c *gin.Context) {
-	id, err := siteIDParam(c)
+	id, err := ownedSiteID(c, a.Sites)
 	if err != nil {
 		respErr(c, err)
 		return
@@ -246,7 +246,7 @@ func (a *SiteConfAPI) UpdateHTTPS(c *gin.Context) {
 
 // DisableHTTPS DELETE /api/v1/sites/:id/conf/https
 func (a *SiteConfAPI) DisableHTTPS(c *gin.Context) {
-	id, err := siteIDParam(c)
+	id, err := ownedSiteID(c, a.Sites)
 	if err != nil {
 		respErr(c, err)
 		return

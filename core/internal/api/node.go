@@ -7,6 +7,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	"github.com/ypanel/core/internal/middleware"
 	"github.com/ypanel/core/internal/service"
 	"github.com/ypanel/shared/errs"
 )
@@ -20,11 +21,39 @@ type NodeAPI struct {
 // List GET /api/v1/nodes
 // AggregateMetrics GET /api/v1/nodes/metrics（B11 聚合监控）
 func (a *NodeAPI) AggregateMetrics(c *gin.Context) {
-	respOK(c, a.Nodes.AggregateMetrics(c.Request.Context()))
+	all, nodeSet := middleware.NodeScopeFromCtx(c)
+	out := a.Nodes.AggregateMetrics(c.Request.Context())
+	if all {
+		respOK(c, out)
+		return
+	}
+	// M54-P2：聚合监控按节点范围过滤
+	filtered := make([]map[string]any, 0, len(out))
+	for _, m := range out {
+		id, _ := m["id"].(string)
+		if _, ok := nodeSet[id]; ok {
+			filtered = append(filtered, m)
+		}
+	}
+	respOK(c, filtered)
 }
 
 func (a *NodeAPI) List(c *gin.Context) {
-	respOK(c, a.Nodes.ListNodes())
+	all, nodeSet := middleware.NodeScopeFromCtx(c)
+	nodes := a.Nodes.ListNodes()
+	if all {
+		respOK(c, nodes)
+		return
+	}
+	// M54-P2：按调用者节点范围收窄（前端各节点切换器自动只见允许节点）
+	filtered := make([]map[string]any, 0, len(nodes))
+	for _, n := range nodes {
+		id, _ := n["id"].(string)
+		if _, ok := nodeSet[id]; ok {
+			filtered = append(filtered, n)
+		}
+	}
+	respOK(c, filtered)
 }
 
 // PairingCode POST /api/v1/nodes/pairing-code（admin）

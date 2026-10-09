@@ -585,5 +585,5 @@
 ### fa 路由守卫不做 meta.auth 硬拦截：权限硬边界必须在后端，meta.auth 只管菜单观感
 
 - **现象**：直觉认为 fa 的 `meta.auth` 会拦住直连 URL 的越权访问；实测守卫（guards.ts）只做菜单过滤（menu.ts filterAsyncMenus 递归按 auth 过滤、空组自动隐藏）与「父级无 redirect 时跳第一个有权限子路由」，导航本身不校验 `to.meta.auth`——未授权用户手输 URL 仍能渲染页面，只是页面里的 API 全部 403。
-- **规避/解决**：权限模型设计时明确「meta.auth = UI 过滤，后端中间件 = 安全边界」，二者缺一不可但不可互相当作；验收越权用 curl 直调 API 断言 403，不要用页面可达性断言。fa 的 `auth()` 是 permissions 数组 some 交集（composables/app/auth.ts），`v-auth` 指令是无权限时 display:none——按钮级藏按钮够用，但同样不是边界。
+- **规避/解决**：权限模型设计时明确「meta.auth = UI 过滤，后端中间件 = 安全边界」，二者缺一不可但不可互相当作；验收越权用 curl 直调 API 断言 403，不要用页面可达性断言。fa 的 `auth()` 是 permissions 数组 some 交集（composables/app/auth.ts），`v-auth` 指令是无权限时 display:none——按钮级藏按钮够用，但同样不是边界。**另：`hasPermission` 是精确 `includes` 匹配、不认通配——后端权限集含 `*`/`模块:*` 时必须在下发前展开成具体权限点列表（rbac.Expand），否则超管所有带 auth 的菜单整组消失（「admin 看不到系统设置」即此症）**。
 - **来源**：2026-10-09，M54 RBAC P1 改造（admin/user 二值角色 → 角色权限点；fa 侧 permissions 从 ['admin']/['user'] 换成真实权限点列表）。

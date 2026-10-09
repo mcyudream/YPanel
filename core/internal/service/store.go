@@ -842,6 +842,8 @@ type StoreInstallInput struct {
 
 	// 使用已有数据库实例（M32）：识别到应用包的数据库 host 参数后，把应用装到指定纳管实例上
 	ExternalDB *StoreExternalDB `json:"externalDB,omitempty"`
+
+	OwnerID uint `json:"-"` // M54-P3 创建归属（assigned 调用者 → 自己；all → 公共），由 API 层填
 }
 
 // StoreExternalDB 安装时外接数据库实例选项。
@@ -1094,7 +1096,7 @@ func (s *StoreService) runInstall(ctx context.Context, logf TaskLogf, app model.
 	} else {
 		_ = s.db.Create(&model.AppStoreInstall{
 			SourceID: app.SourceID, Key: app.Key, Name: in.Name, Version: ver.ID,
-			ComposeProject: project, ParamsJSON: marshalJSON(params),
+			ComposeProject: project, ParamsJSON: marshalJSON(params), OwnerID: in.OwnerID,
 		}).Error
 	}
 	logf("info", "安装完成，项目 %s 已启动", project)
@@ -1419,6 +1421,35 @@ func (s *StoreService) Uninstall(ctx context.Context, project string, opts Store
 }
 
 // Installed 已装列表。
+// InstalledByProject 按编排项目名取安装记录（M54-P3 属主断言用）。
+func (s *StoreService) InstalledByProject(project string) (*model.AppStoreInstall, error) {
+	var inst model.AppStoreInstall
+	if err := s.db.Where("compose_project = ?", project).First(&inst).Error; err != nil {
+		return nil, err
+	}
+	return &inst, nil
+}
+
+// ownerFilterInstalls assigned 数据范围下仅保留 owner∈{uid,0} 的安装记录。
+func ownerFilterInstalls(ctx context.Context, installs []model.AppStoreInstall) []model.AppStoreInstall {
+	caller, ok := rbac.CallerFrom(ctx)
+	if !ok || !caller.Assigned() {
+		return installs
+	}
+	out := make([]model.AppStoreInstall, 0, len(installs))
+	for _, i := range installs {
+		if i.OwnerID == 0 || i.OwnerID == caller.UserID {
+			out = append(out, i)
+		}
+	}
+	return out
+}
+
+// SetInstallOwner 属主再分配（0=公共；仅 all 数据范围调用方可达，由 API 层把关）。
+func (s *StoreService) SetInstallOwner(project string, ownerID uint) error {
+	return s.db.Model(&model.AppStoreInstall{}).Where("compose_project = ?", project).Update("owner_id", ownerID).Error
+}
+
 func (s *StoreService) Installed() []model.AppStoreInstall {
 	out := []model.AppStoreInstall{}
 	_ = s.db.Order("id desc").Find(&out).Error
@@ -1441,12 +1472,14 @@ type StoreInstallInfo struct {
 	Running        bool              `json:"running"`
 	Ports          []int             `json:"ports"`
 	Params         map[string]string `json:"params"` // 密码类值已打码
+	OwnerID        uint              `json:"ownerId"` // M54-P3 数据范围属主（0=公共）
 	CreatedAt      time.Time         `json:"createdAt"`
 }
 
 // InstalledDetailed 已安装详情聚合（含 compose 运行状态、应用元数据与安装参数）。
 func (s *StoreService) InstalledDetailed(ctx context.Context) ([]StoreInstallInfo, error) {
 	installs := s.Installed()
+	installs = ownerFilterInstalls(ctx, installs)
 	if len(installs) == 0 {
 		return []StoreInstallInfo{}, nil
 	}
@@ -1479,7 +1512,7 @@ func (s *StoreService) InstalledDetailed(ctx context.Context) ([]StoreInstallInf
 		info := StoreInstallInfo{
 			ID: i.ID, SourceID: i.SourceID, Key: i.Key, Name: i.Name, Remark: i.Remark, Version: i.Version,
 			ComposeProject: i.ComposeProject, Running: running[i.ComposeProject],
-			CreatedAt: i.CreatedAt, Params: map[string]string{}, Ports: []int{},
+			OwnerID: i.OwnerID, CreatedAt: i.CreatedAt, Params: map[string]string{}, Ports: []int{},
 		}
 		if m, ok := metas[fmt.Sprintf("%d/%s", i.SourceID, i.Key)]; ok {
 			info.AppName = m.name

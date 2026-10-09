@@ -181,7 +181,12 @@ func (a *StoreAPI) Installed(c *gin.Context) {
 
 // InstalledAction POST /api/v1/store/installed/:project/:action（start|stop|restart|rebuild）
 func (a *StoreAPI) InstalledAction(c *gin.Context) {
-	if err := a.Store.InstalledAction(c.Request.Context(), c.Param("project"), c.Param("action")); err != nil {
+	project, err := ownedProject(c, a.Store)
+	if err != nil {
+		respErr(c, err)
+		return
+	}
+	if err := a.Store.InstalledAction(c.Request.Context(), project, c.Param("action")); err != nil {
 		respErr(c, err)
 		return
 	}
@@ -194,7 +199,12 @@ func (a *StoreAPI) InstallEnv(c *gin.Context) {
 		respErr(c, errBadRequest("仅管理员可查看安装参数"))
 		return
 	}
-	out, err := a.Store.InstallEnv(c.Request.Context(), c.Param("project"))
+	project, err := ownedProject(c, a.Store)
+	if err != nil {
+		respErr(c, err)
+		return
+	}
+	out, err := a.Store.InstallEnv(c.Request.Context(), project)
 	if err != nil {
 		respErr(c, err)
 		return
@@ -214,7 +224,12 @@ func (a *StoreAPI) SaveInstallEnv(c *gin.Context) {
 	if !ok {
 		return
 	}
-	if err := a.Store.SaveInstallEnv(c.Request.Context(), c.Param("project"), req.Content); err != nil {
+	project, err := ownedProject(c, a.Store)
+	if err != nil {
+		respErr(c, err)
+		return
+	}
+	if err := a.Store.SaveInstallEnv(c.Request.Context(), project, req.Content); err != nil {
 		respErr(c, err)
 		return
 	}
@@ -242,7 +257,12 @@ func (a *StoreAPI) Uninstall(c *gin.Context) {
 		RemoveImage: c.DefaultQuery("rmi", "false") == "true",
 		CascadeDB:   c.DefaultQuery("cascadeDB", "false") == "true",
 	}
-	out, err := a.Store.Uninstall(c.Request.Context(), c.Param("project"), opts)
+	project, err := ownedProject(c, a.Store)
+	if err != nil {
+		respErr(c, err)
+		return
+	}
+	out, err := a.Store.Uninstall(c.Request.Context(), project, opts)
 	if err != nil {
 		respErr(c, err)
 		return
@@ -272,7 +292,12 @@ func (a *StoreAPI) CheckUpgrades(c *gin.Context) {
 
 // UpgradeApp POST /api/v1/store/installed/:project/upgrade（升级到源内最新版）
 func (a *StoreAPI) UpgradeApp(c *gin.Context) {
-	out, err := a.Store.UpgradeApp(c.Request.Context(), c.Param("project"))
+	project, err := ownedProject(c, a.Store)
+	if err != nil {
+		respErr(c, err)
+		return
+	}
+	out, err := a.Store.UpgradeApp(c.Request.Context(), project)
 	if err != nil {
 		respErr(c, err)
 		return

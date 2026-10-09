@@ -30,12 +30,15 @@ func userInfoOf(u *model.User, rb *rbac.Service) dto.UserInfo {
 		}
 		// 通配展开为具体权限点：fa 前端 hasPermission 是精确 includes 匹配
 		info.Permissions = rbac.Expand(rb.PermSetForUser(u))
+		scope := rb.ScopeForUser(u)
+		info.DataScope = "all"
+		info.ScopeAllNodes = true
 		if role, err := rb.RoleByID(u.RoleID); err == nil {
 			info.DataScope = role.DataScope
 			info.ScopeAllNodes = role.ScopeAllNodes
-		} else {
-			info.DataScope = "all"
-			info.ScopeAllNodes = true
+		}
+		if !info.ScopeAllNodes {
+			info.Nodes = rbac.SortedIDs(scope.Nodes)
 		}
 	}
 	return info

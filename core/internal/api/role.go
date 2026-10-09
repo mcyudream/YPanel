@@ -40,7 +40,14 @@ func (a *RoleAPI) List(c *gin.Context) {
 			respErr(c, err)
 			return
 		}
-		items = append(items, roleItem{RoleInfo: toRoleInfo(r), Perms: perms})
+		nodeIDs, err := a.RBAC.RoleNodes(r.ID)
+		if err != nil {
+			respErr(c, err)
+			return
+		}
+		ri := toRoleInfo(r)
+		ri.NodeIDs = nodeIDs
+		items = append(items, roleItem{RoleInfo: ri, Perms: perms})
 	}
 	respOK(c, items)
 }
@@ -51,7 +58,8 @@ func (a *RoleAPI) Create(c *gin.Context) {
 	if !ok {
 		return
 	}
-	role, err := a.RBAC.CreateRole(req.Key, req.Name, req.Remark, req.DataScope, req.Perms)
+	scopeAll := req.ScopeAllNodes == nil || *req.ScopeAllNodes
+	role, err := a.RBAC.CreateRole(req.Key, req.Name, req.Remark, req.DataScope, req.Perms, scopeAll, req.NodeIDs)
 	if err != nil {
 		respErr(c, errs.New(errs.CodeBadRequest, "error.roleCreateFailed", err.Error()))
 		return
@@ -74,7 +82,11 @@ func (a *RoleAPI) Update(c *gin.Context) {
 	if req.Perms != nil {
 		perms = *req.Perms
 	}
-	role, err := a.RBAC.UpdateRole(uint(id), req.Name, req.Remark, req.DataScope, perms, req.Perms != nil)
+	var nodeIDs []string
+	if req.NodeIDs != nil {
+		nodeIDs = *req.NodeIDs
+	}
+	role, err := a.RBAC.UpdateRole(uint(id), req.Name, req.Remark, req.DataScope, perms, req.Perms != nil, req.ScopeAllNodes, nodeIDs, req.NodeIDs != nil)
 	if err != nil {
 		respErr(c, errs.New(errs.CodeBadRequest, "error.roleUpdateFailed", err.Error()))
 		return

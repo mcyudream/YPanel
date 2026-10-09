@@ -20,6 +20,7 @@ export interface RoleInfo {
   scopeAllNodes: boolean
   dataScope: 'all' | 'assigned'
   remark: string
+  nodeIds: string[]
 }
 
 export interface RoleItem extends RoleInfo {
@@ -35,9 +36,9 @@ export default {
     const res = await api.get('api/v1/rbac/roles')
     return res.data as RoleItem[]
   },
-  create: (data: { key: string, name: string, remark?: string, dataScope?: string, perms: string[] }) =>
+  create: (data: { key: string, name: string, remark?: string, dataScope?: string, perms: string[], scopeAllNodes?: boolean, nodeIds?: string[] }) =>
     api.post('api/v1/rbac/roles', data),
-  update: (id: number, data: { name?: string, remark?: string, dataScope?: string, perms?: string[] }) =>
+  update: (id: number, data: { name?: string, remark?: string, dataScope?: string, perms?: string[], scopeAllNodes?: boolean, nodeIds?: string[] }) =>
     api.put(`api/v1/rbac/roles/${id}`, data),
   remove: (id: number) => api.delete(`api/v1/rbac/roles/${id}`),
 }

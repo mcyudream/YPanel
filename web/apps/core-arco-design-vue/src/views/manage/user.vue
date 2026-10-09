@@ -67,6 +67,13 @@ function defaultRoleId() {
   return roles.value.find(r => r.key === 'operator')?.id ?? roles.value[0]?.id ?? 0
 }
 
+const roleOptions = computed(() => roles.value.map(r => ({ label: `${r.name}（${r.key}）`, value: r.id })))
+
+function openCreate() {
+  createForm.value.roleId = defaultRoleId() // 预选运维用户，与既有「默认普通角色」习惯一致
+  createVisible.value = true
+}
+
 function openEdit(u: UserInfo) {
   editTarget.value = u
   editForm.value = { nickname: u.nickname, roleId: u.roleId || defaultRoleId(), status: 1, password: '' }
@@ -137,7 +144,7 @@ onMounted(() => {
       <template #description>
         <span>{{ $t('manage.user.desc') }}</span>
       </template>
-      <FaButton size="sm" @click="createVisible = true">
+      <FaButton size="sm" @click="openCreate">
         <FaIcon name="i-lucide:user-plus" class="mr-1" /> {{ $t('manage.user.createUser') }}
       </FaButton>
     </FaPageHeader>
@@ -222,14 +229,7 @@ onMounted(() => {
         </div>
         <div class="flex items-center gap-3">
           <span class="w-16 text-sm text-muted-foreground">{{ $t('manage.user.role') }}</span>
-          <select v-model="createForm.roleId" class="h-9 flex-1 rounded-md border border-input bg-background px-2 text-sm outline-none">
-            <option :value="0" disabled>
-              {{ $t('manage.user.rolePlaceholder') }}
-            </option>
-            <option v-for="r in roles" :key="r.id" :value="r.id">
-              {{ r.name }}（{{ r.key }}）
-            </option>
-          </select>
+          <YdSelect v-model="createForm.roleId" :options="roleOptions" size="default" button-class="w-full" class="flex-1" />
         </div>
       </div>
       <template #footer>
@@ -251,11 +251,7 @@ onMounted(() => {
         </div>
         <div class="flex items-center gap-3">
           <span class="w-16 text-sm text-muted-foreground">{{ $t('manage.user.role') }}</span>
-          <select v-model="editForm.roleId" class="h-9 flex-1 rounded-md border border-input bg-background px-2 text-sm outline-none">
-            <option v-for="r in roles" :key="r.id" :value="r.id">
-              {{ r.name }}（{{ r.key }}）
-            </option>
-          </select>
+          <YdSelect v-model="editForm.roleId" :options="roleOptions" size="default" button-class="w-full" class="flex-1" />
         </div>
         <div class="flex items-center gap-3">
           <span class="w-16 text-sm text-muted-foreground">{{ $t('manage.user.newPassword') }}</span>

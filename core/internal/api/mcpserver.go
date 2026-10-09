@@ -38,15 +38,17 @@ func (a *MCPServerAPI) Handler(c *gin.Context) {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid token"})
 		return
 	}
-	// M54：MCP 不经业务路由中间件，在此按调用者权限闭合（解析失败按空权限集拒绝）
-	var permSet map[string]struct{}
+	// M54：MCP 不经业务路由中间件，在此按调用者权限/节点范围闭合（解析失败按空集拒绝）
+	permSet := map[string]struct{}{}
+	allNodes := true
+	nodeSet := map[string]struct{}{}
 	if u, err := a.Auth.ByID(claims.UID); err == nil && a.RBAC != nil {
-		permSet = a.RBAC.PermSetForUser(u)
+		scope := a.RBAC.ScopeForUser(u)
+		permSet = scope.Perms
+		allNodes = scope.AllNodes
+		nodeSet = scope.Nodes
 	}
-	if permSet == nil {
-		permSet = map[string]struct{}{}
-	}
-	ctx := rbac.WithCaller(c.Request.Context(), rbac.Caller{UserID: claims.UID, PermSet: permSet})
+	ctx := rbac.WithCaller(c.Request.Context(), rbac.Caller{UserID: claims.UID, PermSet: permSet, AllNodes: allNodes, NodeSet: nodeSet})
 	a.MCP.HTTPHandler().ServeHTTP(c.Writer, c.Request.WithContext(ctx))
 }
 

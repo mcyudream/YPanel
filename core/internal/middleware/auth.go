@@ -16,10 +16,11 @@ import (
 
 // CtxKeys gin context 键。
 const (
-	CtxUID      = "uid"
-	CtxUsername = "username"
-	CtxRole     = "role"
-	CtxRoleKey  = "roleKey"
+	CtxUID       = "uid"
+	CtxUsername  = "username"
+	CtxRole      = "role"
+	CtxRoleKey   = "roleKey"
+	CtxDataScope = "dataScope" // all / assigned（M54-P3）
 )
 
 // Auth 会话鉴权。
@@ -45,9 +46,15 @@ func Auth(auth *service.Auth, rbacSvc *rbac.Service) gin.HandlerFunc {
 		c.Set(CtxUsername, claims.Username)
 		if u, err := auth.ByID(claims.UID); err == nil {
 			c.Set(CtxRole, u.Role)
-			permSet := rbacSvc.PermSetForUser(u)
-			c.Set(CtxPerms, permSet)
+			scope := rbacSvc.ScopeForUser(u)
+			c.Set(CtxPerms, scope.Perms)
+			c.Set(CtxNodeAll, scope.AllNodes)
+			c.Set(CtxNodeSet, scope.Nodes)
+			c.Set(CtxDataScope, scope.DataScope)
 			c.Set(CtxRoleKey, rbacSvc.RoleKeyForUser(u))
+			// 调用者身份随请求 ctx 下钻：服务层 List 属主过滤（M54-P3）读取
+			caller := rbac.Caller{UserID: claims.UID, PermSet: scope.Perms, AllNodes: scope.AllNodes, NodeSet: scope.Nodes, DataScope: scope.DataScope}
+			c.Request = c.Request.WithContext(rbac.WithCaller(c.Request.Context(), caller))
 		}
 		c.Next()
 	}

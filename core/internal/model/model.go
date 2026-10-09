@@ -157,6 +157,7 @@ type AppStoreInstall struct {
 	ComposeProject string    `gorm:"size:64;not null;uniqueIndex" json:"composeProject"`
 	Remark         string    `gorm:"size:255" json:"remark"`
 	ParamsJSON     string    `gorm:"type:text" json:"paramsJson"` // 安装参数（含密码明文，仅 admin 视图返回）
+	OwnerID        uint      `gorm:"index;not null;default:0" json:"ownerId"` // M54-P3 数据范围属主（0=公共）
 	CreatedAt      time.Time `json:"createdAt"`
 }
 
@@ -213,6 +214,7 @@ type Site struct {
 	RunDir           string    `gorm:"size:128" json:"runDir"`            // 运行目录（相对 root 的二级目录，空=根）
 	GroupID          uint      `gorm:"not null;default:0" json:"groupId"` // 分组（0=默认分组）
 	Remark           string    `gorm:"size:255" json:"remark"`            // 备注
+	OwnerID          uint      `gorm:"index;not null;default:0" json:"ownerId"` // M54-P3 数据范围属主（0=公共）
 	HTTPSJSON        string    `gorm:"type:text" json:"httpsJson"`        // HTTPS 高级设置 JSON（HTTP 模式/HSTS/TLS 版本/加密算法）
 	OriginFile       string    `gorm:"size:255" json:"originFile"`        // 接管来源 conf（站点识别）
 	WafJSON          string    `gorm:"type:text" json:"wafJson"`          // WAF 配置（service.SiteWaf 序列化）
@@ -310,6 +312,7 @@ type DatabaseInstance struct {
 	PasswordEnc    string    `gorm:"type:text;not null" json:"-"`
 	Remark         string    `gorm:"size:255" json:"remark"`
 	ComposeProject string    `gorm:"size:64;not null" json:"composeProject"`
+	OwnerID        uint      `gorm:"index;not null;default:0" json:"ownerId"` // M54-P3 数据范围属主（0=公共）
 	CreatedAt      time.Time `json:"createdAt"`
 	UpdatedAt      time.Time `json:"updatedAt"`
 }

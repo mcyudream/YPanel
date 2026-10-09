@@ -1,6 +1,9 @@
 package rbac
 
-import "testing"
+import (
+	"context"
+	"testing"
+)
 
 func set(keys ...string) map[string]struct{} {
 	m := make(map[string]struct{}, len(keys))
@@ -46,21 +49,39 @@ func TestValidPermKey(t *testing.T) {
 }
 
 func TestCheckTool(t *testing.T) {
-	ctx := WithCaller(t.Context(), Caller{PermSet: set("docker:read", "terminal:access")})
-	if err := CheckTool(ctx, "docker_containers", "read"); err != nil {
+	ctx := WithCaller(t.Context(), Caller{PermSet: set("docker:read", "terminal:access"), AllNodes: true})
+	if err := CheckTool(ctx, "docker_containers", "read", "{}"); err != nil {
 		t.Errorf("docker 读应放行: %v", err)
 	}
-	if err := CheckTool(ctx, "docker_containers", "write"); err == nil {
+	if err := CheckTool(ctx, "docker_containers", "write", "{}"); err == nil {
 		t.Error("docker 写应拒绝")
 	}
-	if err := CheckTool(ctx, "exec", "danger"); err != nil {
+	if err := CheckTool(ctx, "exec", "danger", "{}"); err != nil {
 		t.Errorf("terminal:access 应放行 exec: %v", err)
 	}
-	if err := CheckTool(t.Context(), "docker_containers", "write"); err != nil {
+	if err := CheckTool(t.Context(), "docker_containers", "write", "{}"); err != nil {
 		t.Error("未注入调用者的内部链路应放行")
 	}
-	super := WithCaller(t.Context(), Caller{PermSet: set("*")})
-	if err := CheckTool(super, "databases", "danger"); err != nil {
+	super := WithCaller(t.Context(), Caller{PermSet: set("*"), AllNodes: true})
+	if err := CheckTool(super, "databases", "danger", "{}"); err != nil {
 		t.Errorf("通配应放行: %v", err)
+	}
+}
+
+func TestCheckToolNode(t *testing.T) {
+	scoped := func(args string) context.Context {
+		return WithCaller(t.Context(), Caller{PermSet: set("docker:read", "ai:use"), AllNodes: false, NodeSet: set("2")})
+	}
+	if err := CheckTool(scoped("{}"), "docker_containers", "read", `{"node":"2"}`); err != nil {
+		t.Errorf("允许节点应放行: %v", err)
+	}
+	if err := CheckTool(scoped("{}"), "docker_containers", "read", `{"node":"local"}`); err == nil {
+		t.Error("未授权节点应拒绝")
+	}
+	if err := CheckTool(scoped("{}"), "docker_containers", "read", "{}"); err == nil {
+		t.Error("缺省 local 未授权应拒绝")
+	}
+	if err := CheckTool(scoped("{}"), "panel_ai", "read", "{}"); err != nil {
+		t.Errorf("无节点语义模块应跳过节点校验: %v", err)
 	}
 }

@@ -4,6 +4,7 @@ package rbac
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"sort"
 	"strings"
@@ -197,11 +198,20 @@ var Builtins = []BuiltinRole{
 
 type ctxKey struct{}
 
-// Caller 请求调用者的授权上下文。
+// Caller 请求调用者的授权上下文（权限点 + 节点范围 + 数据范围）。
 type Caller struct {
-	UserID  uint
-	PermSet map[string]struct{}
+	UserID    uint
+	PermSet   map[string]struct{}
+	AllNodes  bool
+	NodeSet   map[string]struct{}
+	DataScope string // all / assigned（M54-P3）
 }
+
+// Assigned 数据范围是否「仅分配」（属主过滤用）。
+func (c Caller) Assigned() bool { return c.DataScope == "assigned" }
+
+// aiNodeSkipModules 无节点语义的模块（面板自身数据），不做节点范围校验。
+var aiNodeSkipModules = map[string]bool{"panel_ai": true, "meta": true, "mcp": true}
 
 // WithCaller 将调用者授权上下文挂入 ctx（AI 对话 / MCP 请求链路）。
 func WithCaller(ctx context.Context, c Caller) context.Context {
@@ -239,9 +249,9 @@ var aiModulePerm = map[string][2]string{
 	"mcp":               {"mcp:manage", "mcp:manage"},
 }
 
-// CheckTool 校验调用者是否可执行该模块该风险级的工具。
+// CheckTool 校验调用者是否可执行该模块该风险级的工具（含节点范围：args.node/nodeId，缺省 local）。
 // ctx 未携带调用者信息时放行（面板内部链路）；拒绝时返回可向模型透出的错误。
-func CheckTool(ctx context.Context, module, risk string) error {
+func CheckTool(ctx context.Context, module, risk, args string) error {
 	caller, ok := CallerFrom(ctx)
 	if !ok {
 		return nil
@@ -257,8 +267,33 @@ func CheckTool(ctx context.Context, module, risk string) error {
 			perm = "ai:admin"
 		}
 	}
-	if Match(caller.PermSet, perm) {
+	if !Match(caller.PermSet, perm) {
+		return fmt.Errorf("当前账号权限不足（缺少 %s），已拒绝执行该工具", perm)
+	}
+	// M54-P2：节点范围校验（无节点语义的模块跳过；入参未指明节点视作 local）
+	if aiNodeSkipModules[module] || caller.AllNodes {
 		return nil
 	}
-	return fmt.Errorf("当前账号权限不足（缺少 %s），已拒绝执行该工具", perm)
+	node := nodeFromArgs(args)
+	if node == "" {
+		node = "local"
+	}
+	if _, ok := caller.NodeSet[node]; ok {
+		return nil
+	}
+	return fmt.Errorf("当前账号无节点 %s 的操作权限，已拒绝执行该工具", node)
+}
+
+// nodeFromArgs 从工具入参 JSON 提取节点标识（node / nodeId；无则为空）。
+func nodeFromArgs(args string) string {
+	var m map[string]any
+	if json.Unmarshal([]byte(args), &m) != nil {
+		return ""
+	}
+	for _, k := range []string{"node", "nodeId"} {
+		if v, ok := m[k].(string); ok && v != "" {
+			return v
+		}
+	}
+	return ""
 }

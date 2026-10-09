@@ -58,30 +58,35 @@ type UserUpdateReq struct {
 
 // RoleCreateReq 创建角色。
 type RoleCreateReq struct {
-	Key       string   `json:"key" binding:"required"`
-	Name      string   `json:"name" binding:"required"`
-	Remark    string   `json:"remark"`
-	DataScope string   `json:"dataScope"`
-	Perms     []string `json:"perms"`
+	Key           string   `json:"key" binding:"required"`
+	Name          string   `json:"name" binding:"required"`
+	Remark        string   `json:"remark"`
+	DataScope     string   `json:"dataScope"`
+	Perms         []string `json:"perms"`
+	ScopeAllNodes *bool    `json:"scopeAllNodes"` // 缺省 true=不限节点
+	NodeIDs       []string `json:"nodeIds"`       // ScopeAllNodes=false 时生效（local / 远程节点 ID）
 }
 
-// RoleUpdateReq 更新角色（零值字段不更新；perms 为 nil 不动权限集）。
+// RoleUpdateReq 更新角色（零值字段不更新；perms/nodeIds 为 nil 不动对应集合）。
 type RoleUpdateReq struct {
-	Name      *string   `json:"name"`
-	Remark    *string   `json:"remark"`
-	DataScope *string   `json:"dataScope"`
-	Perms     *[]string `json:"perms"`
+	Name          *string   `json:"name"`
+	Remark        *string   `json:"remark"`
+	DataScope     *string   `json:"dataScope"`
+	Perms         *[]string `json:"perms"`
+	ScopeAllNodes *bool     `json:"scopeAllNodes"`
+	NodeIDs       *[]string `json:"nodeIds"`
 }
 
 // RoleInfo 角色信息。
 type RoleInfo struct {
-	ID            uint   `json:"id"`
-	Key           string `json:"key"`
-	Name          string `json:"name"`
-	Builtin       bool   `json:"builtin"`
-	ScopeAllNodes bool   `json:"scopeAllNodes"`
-	DataScope     string `json:"dataScope"`
-	Remark        string `json:"remark"`
+	ID            uint     `json:"id"`
+	Key           string   `json:"key"`
+	Name          string   `json:"name"`
+	Builtin       bool     `json:"builtin"`
+	ScopeAllNodes bool     `json:"scopeAllNodes"`
+	DataScope     string   `json:"dataScope"`
+	Remark        string   `json:"remark"`
+	NodeIDs       []string `json:"nodeIds"` // 节点范围（ScopeAllNodes=false 时有值）
 }
 
 // LoginLogItem 登录审计条目。

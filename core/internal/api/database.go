@@ -84,7 +84,7 @@ func (a *DatabaseAPI) Adopt(c *gin.Context) {
 
 // Delete DELETE /api/v1/database/instances/:id?purge=
 func (a *DatabaseAPI) Delete(c *gin.Context) {
-	id, err := idParam(c)
+	id, err := ownedInstanceID(c, a.DBS)
 	if err != nil {
 		respErr(c, err)
 		return
@@ -118,7 +118,7 @@ func (a *DatabaseAPI) Reveal(c *gin.Context) {
 		respErr(c, errs.ErrForbidden)
 		return
 	}
-	id, err := idParam(c)
+	id, err := ownedInstanceID(c, a.DBS)
 	if err != nil {
 		respErr(c, err)
 		return
@@ -133,7 +133,7 @@ func (a *DatabaseAPI) Reveal(c *gin.Context) {
 
 // Databases GET /api/v1/database/instances/:id/databases
 func (a *DatabaseAPI) Databases(c *gin.Context) {
-	id, err := idParam(c)
+	id, err := ownedInstanceID(c, a.DBS)
 	if err != nil {
 		respErr(c, err)
 		return
@@ -148,7 +148,7 @@ func (a *DatabaseAPI) Databases(c *gin.Context) {
 
 // CreateDatabase POST /api/v1/database/instances/:id/databases
 func (a *DatabaseAPI) CreateDatabase(c *gin.Context) {
-	id, err := idParam(c)
+	id, err := ownedInstanceID(c, a.DBS)
 	if err != nil {
 		respErr(c, err)
 		return
@@ -169,7 +169,7 @@ func (a *DatabaseAPI) CreateDatabase(c *gin.Context) {
 
 // DropDatabase DELETE /api/v1/database/instances/:id/databases/:name
 func (a *DatabaseAPI) DropDatabase(c *gin.Context) {
-	id, err := idParam(c)
+	id, err := ownedInstanceID(c, a.DBS)
 	if err != nil {
 		respErr(c, err)
 		return
@@ -183,7 +183,7 @@ func (a *DatabaseAPI) DropDatabase(c *gin.Context) {
 
 // Users GET /api/v1/database/instances/:id/users
 func (a *DatabaseAPI) Users(c *gin.Context) {
-	id, err := idParam(c)
+	id, err := ownedInstanceID(c, a.DBS)
 	if err != nil {
 		respErr(c, err)
 		return
@@ -198,7 +198,7 @@ func (a *DatabaseAPI) Users(c *gin.Context) {
 
 // CreateUser POST /api/v1/database/instances/:id/users
 func (a *DatabaseAPI) CreateUser(c *gin.Context) {
-	id, err := idParam(c)
+	id, err := ownedInstanceID(c, a.DBS)
 	if err != nil {
 		respErr(c, err)
 		return
@@ -220,7 +220,7 @@ func (a *DatabaseAPI) CreateUser(c *gin.Context) {
 
 // DropUser DELETE /api/v1/database/instances/:id/users/:name?host=
 func (a *DatabaseAPI) DropUser(c *gin.Context) {
-	id, err := idParam(c)
+	id, err := ownedInstanceID(c, a.DBS)
 	if err != nil {
 		respErr(c, err)
 		return
@@ -234,7 +234,7 @@ func (a *DatabaseAPI) DropUser(c *gin.Context) {
 
 // ChangeUserPassword PUT /api/v1/database/instances/:id/users/:name/password?host=
 func (a *DatabaseAPI) ChangeUserPassword(c *gin.Context) {
-	id, err := idParam(c)
+	id, err := ownedInstanceID(c, a.DBS)
 	if err != nil {
 		respErr(c, err)
 		return
@@ -254,9 +254,9 @@ func (a *DatabaseAPI) ChangeUserPassword(c *gin.Context) {
 
 // RemoteAccessStatus GET /api/v1/database/instances/:id/remote
 func (a *DatabaseAPI) RemoteAccessStatus(c *gin.Context) {
-	id, err := strconv.ParseUint(c.Param("id"), 10, 64)
-	if err != nil || id == 0 {
-		respErr(c, errBadRequest("实例 ID 不合法"))
+	id, err := ownedInstanceID(c, a.DBS)
+	if err != nil {
+		respErr(c, err)
 		return
 	}
 	enabled, err := a.DBS.RemoteAccessStatus(c.Request.Context(), uint(id))
@@ -269,9 +269,9 @@ func (a *DatabaseAPI) RemoteAccessStatus(c *gin.Context) {
 
 // RemoteAccess POST /api/v1/database/instances/:id/remote {enable}（B3）
 func (a *DatabaseAPI) RemoteAccess(c *gin.Context) {
-	id, err := strconv.ParseUint(c.Param("id"), 10, 64)
-	if err != nil || id == 0 {
-		respErr(c, errBadRequest("实例 ID 不合法"))
+	id, err := ownedInstanceID(c, a.DBS)
+	if err != nil {
+		respErr(c, err)
 		return
 	}
 	req, ok := bind[struct {
@@ -290,7 +290,7 @@ func (a *DatabaseAPI) RemoteAccess(c *gin.Context) {
 
 // BackupImport POST /api/v1/database/instances/:id/backups/import {filename, content(base64)}
 func (a *DatabaseAPI) BackupImport(c *gin.Context) {
-	id, err := idParam(c)
+	id, err := ownedInstanceID(c, a.DBS)
 	if err != nil {
 		respErr(c, err)
 		return
@@ -311,7 +311,7 @@ func (a *DatabaseAPI) BackupImport(c *gin.Context) {
 }
 
 func (a *DatabaseAPI) Backups(c *gin.Context) {
-	id, err := idParam(c)
+	id, err := ownedInstanceID(c, a.DBS)
 	if err != nil {
 		respErr(c, err)
 		return
@@ -326,7 +326,7 @@ func (a *DatabaseAPI) Backups(c *gin.Context) {
 
 // CreateBackup POST /api/v1/database/instances/:id/backups（body 可选 {storageAccountId,keep}）
 func (a *DatabaseAPI) CreateBackup(c *gin.Context) {
-	id, err := idParam(c)
+	id, err := ownedInstanceID(c, a.DBS)
 	if err != nil {
 		respErr(c, err)
 		return
@@ -351,7 +351,7 @@ func (a *DatabaseAPI) CreateBackup(c *gin.Context) {
 
 // DeleteBackup DELETE /api/v1/database/instances/:id/backups?file=
 func (a *DatabaseAPI) DeleteBackup(c *gin.Context) {
-	id, err := idParam(c)
+	id, err := ownedInstanceID(c, a.DBS)
 	if err != nil {
 		respErr(c, err)
 		return
@@ -365,7 +365,7 @@ func (a *DatabaseAPI) DeleteBackup(c *gin.Context) {
 
 // RestoreBackup POST /api/v1/database/instances/:id/backups/restore?file=
 func (a *DatabaseAPI) RestoreBackup(c *gin.Context) {
-	id, err := idParam(c)
+	id, err := ownedInstanceID(c, a.DBS)
 	if err != nil {
 		respErr(c, err)
 		return
@@ -381,7 +381,7 @@ func (a *DatabaseAPI) RestoreBackup(c *gin.Context) {
 
 // GrantMatrix GET /api/v1/database/instances/:id/privileges?db=
 func (a *DatabaseAPI) GrantMatrix(c *gin.Context) {
-	id, err := idParam(c)
+	id, err := ownedInstanceID(c, a.DBS)
 	if err != nil {
 		respErr(c, err)
 		return
@@ -396,7 +396,7 @@ func (a *DatabaseAPI) GrantMatrix(c *gin.Context) {
 
 // SetPrivileges PUT /api/v1/database/instances/:id/privileges {db,user,host,privs,grant}
 func (a *DatabaseAPI) SetPrivileges(c *gin.Context) {
-	id, err := idParam(c)
+	id, err := ownedInstanceID(c, a.DBS)
 	if err != nil {
 		respErr(c, err)
 		return
@@ -420,7 +420,7 @@ func (a *DatabaseAPI) SetPrivileges(c *gin.Context) {
 
 // Variables GET /api/v1/database/instances/:id/variables?filter=
 func (a *DatabaseAPI) Variables(c *gin.Context) {
-	id, err := idParam(c)
+	id, err := ownedInstanceID(c, a.DBS)
 	if err != nil {
 		respErr(c, err)
 		return
@@ -435,7 +435,7 @@ func (a *DatabaseAPI) Variables(c *gin.Context) {
 
 // SetVariable PUT /api/v1/database/instances/:id/variables {name,value}
 func (a *DatabaseAPI) SetVariable(c *gin.Context) {
-	id, err := idParam(c)
+	id, err := ownedInstanceID(c, a.DBS)
 	if err != nil {
 		respErr(c, err)
 		return
@@ -456,7 +456,7 @@ func (a *DatabaseAPI) SetVariable(c *gin.Context) {
 
 // DBStatus GET /api/v1/database/instances/:id/status
 func (a *DatabaseAPI) DBStatus(c *gin.Context) {
-	id, err := idParam(c)
+	id, err := ownedInstanceID(c, a.DBS)
 	if err != nil {
 		respErr(c, err)
 		return
