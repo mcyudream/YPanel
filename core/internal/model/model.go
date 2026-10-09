@@ -83,6 +83,7 @@ type Runtime struct {
 	CodeDir        string    `gorm:"size:255" json:"codeDir"`                          // 代码运行时：宿主代码目录
 	ContainerName  string    `gorm:"size:64" json:"containerName"`
 	ComposeProject string    `gorm:"size:64;not null" json:"composeProject"`
+	NodeID         string    `gorm:"size:32;not null;default:''" json:"nodeId"`      // M57 归属节点（空=local）
 	Status         string    `gorm:"size:16;not null;default:running" json:"status"` // running / stopped / building / creating / error
 	Message        string    `gorm:"type:text" json:"message"`                       // 最近一次失败原因
 	EnvJSON        string    `gorm:"type:text" json:"envJson"`                       // 运行参数 JSON（extensions / 快捷设置 / 启动命令等）

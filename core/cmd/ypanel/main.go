@@ -161,6 +161,7 @@ func run(ctx context.Context, cfg *config.Config) error {
 	snapSvc := service.NewSnapshotService(gdb, nodes, panelBkSvc, settings)
 	sysSnapSvc := service.NewSystemSnapshotService(nodes, taskSvc, dbSvc, gdb, panelBkSvc)
 	ftpSvc := service.NewFtpService(nodes)
+	nginxSvc := service.NewNginxService(nodes)
 	sshGSvc := service.NewSshGuardService(nodes)
 	panelBkSvc.SetPruneFn(func(keep int) int { n, _ := snapSvc.Prune(context.Background(), "local", keep); return n })
 	mcpOpSvc := service.NewMCPOperationService(gdb)
@@ -193,7 +194,7 @@ func run(ctx context.Context, cfg *config.Config) error {
 		Notif: notifSvc, PanelBP: panelBkSvc, Hist: histSvc,
 		Storage: storageSvc, BackupSrv: backupSvc,
 		DockerEnv: dockerEnvSvc, DockerImg: dockerImgSvc,
-		FileExt: fileExtSvc, FileCross: fileCrossSvc,
+		FileExt: fileExtSvc, FileCross: fileCrossSvc, Nginx: nginxSvc,
 		SysTool: sysToolSvc,
 		MCP:     mcpSvc, OpsM: mcpOpSvc,
 		Snap:    snapSvc,

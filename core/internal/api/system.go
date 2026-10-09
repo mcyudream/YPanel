@@ -484,3 +484,76 @@ func (m *SysManageAPI) Manage(c *gin.Context) {
 	}
 	respOK(c, struct{}{})
 }
+
+// NginxAPI 节点 nginx 管理接口（M57 站点体系节点化基座）。
+type NginxAPI struct {
+	Ng *service.NginxService
+}
+
+func (a *NginxAPI) svc(c *gin.Context) (*service.NginxService, error) {
+	return a.Ng.WithNode(c.DefaultQuery("node", "local"))
+}
+
+// Status GET /api/v1/nginx/status
+func (a *NginxAPI) Status(c *gin.Context) {
+	ng, err := a.svc(c)
+	if err != nil {
+		respErr(c, err)
+		return
+	}
+	out, err := ng.Status(c.Request.Context())
+	if err != nil {
+		respErr(c, err)
+		return
+	}
+	respOK(c, out)
+}
+
+// Install POST /api/v1/nginx/install
+func (a *NginxAPI) Install(c *gin.Context) {
+	ng, err := a.svc(c)
+	if err != nil {
+		respErr(c, err)
+		return
+	}
+	out, err := ng.Install(c.Request.Context())
+	if err != nil {
+		respErr(c, err)
+		return
+	}
+	respOK(c, out)
+}
+
+// Power POST /api/v1/nginx/power {action}
+func (a *NginxAPI) Power(c *gin.Context) {
+	ng, err := a.svc(c)
+	if err != nil {
+		respErr(c, err)
+		return
+	}
+	req, ok := bind[struct {
+		Action string `json:"action" binding:"required,oneof=start stop restart reload"`
+	}](c)
+	if !ok {
+		return
+	}
+	if err := ng.Power(c.Request.Context(), req.Action); err != nil {
+		respErr(c, err)
+		return
+	}
+	respOK(c, struct{}{})
+}
+
+// Reload POST /api/v1/nginx/reload
+func (a *NginxAPI) Reload(c *gin.Context) {
+	ng, err := a.svc(c)
+	if err != nil {
+		respErr(c, err)
+		return
+	}
+	if err := ng.Reload(c.Request.Context()); err != nil {
+		respErr(c, err)
+		return
+	}
+	respOK(c, struct{}{})
+}

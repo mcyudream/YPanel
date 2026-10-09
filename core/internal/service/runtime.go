@@ -127,6 +127,7 @@ type RuntimeService struct {
 	db    *gorm.DB
 	nodes *NodeService
 	tasks *TaskService
+	nodeClient *agentclient.Client // WithNode 绑定（M57 节点化）
 }
 
 // NewRuntimeService 创建。
@@ -134,7 +135,21 @@ func NewRuntimeService(db *gorm.DB, nodes *NodeService, tasks *TaskService) *Run
 	return &RuntimeService{db: db, nodes: nodes, tasks: tasks}
 }
 
+// WithNode 返回绑定目标节点的副本（M57 runtime 节点化：实例操作按归属节点路由）。
+func (s *RuntimeService) WithNode(nodeId string) (*RuntimeService, error) {
+	node, err := s.nodes.ByID(nodeId)
+	if err != nil {
+		return nil, err
+	}
+	cp := *s
+	cp.nodeClient = agentclient.New(node.BaseURL, node.Token)
+	return &cp, nil
+}
+
 func (s *RuntimeService) client() (*agentclient.Client, error) {
+	if s.nodeClient != nil {
+		return s.nodeClient, nil
+	}
 	node, err := s.nodes.ByID("local")
 	if err != nil {
 		return nil, err

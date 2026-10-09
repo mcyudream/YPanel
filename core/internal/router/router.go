@@ -59,6 +59,7 @@ type Deps struct {
 	DockerImg  *service.DockerImgService
 	FileExt    *service.FileExtService
 	FileCross  *service.FileCrossService
+	Nginx      *service.NginxService
 	SysTool    *service.SystemToolService
 	MCP        *service.MCPService
 	OpsM       *service.MCPOperationService
@@ -88,6 +89,7 @@ func Setup(d *Deps) (*gin.Engine, error) {
 	dashboardAPI := &api.DashboardAPI{Svc: d.Dashboard}
 	sysManageAPI := &api.SysManageAPI{Nodes: d.Nodes}
 	fileAPI := &api.FileAPI{Nodes: d.Nodes, Rev: d.Rev, Cross: d.FileCross}
+	nginxAPI := &api.NginxAPI{Ng: d.Nginx}
 	dockerAPI := &api.DockerAPI{Nodes: d.Nodes}
 	termAPI := &api.TerminalAPI{Nodes: d.Nodes}
 	setAPI := &api.SettingsAPI{Settings: d.Settings}
@@ -175,6 +177,10 @@ func Setup(d *Deps) (*gin.Engine, error) {
 			authed.GET("/files/upload", pm("file:read"), fileAPI.Upload)
 			authed.POST("/files/upload", pm("file:write"), fileAPI.Upload)
 				authed.POST("/files/copy-across", pm("file:write"), fileAPI.CopyAcross)
+				authed.GET("/nginx/status", pm("host:read"), nginxAPI.Status)
+				authed.POST("/nginx/install", pm("host:write"), nginxAPI.Install)
+				authed.POST("/nginx/power", pm("host:write"), nginxAPI.Power)
+				authed.POST("/nginx/reload", pm("host:write"), nginxAPI.Reload)
 			authed.POST("/files/write", pm("file:write"), fileAPI.Write)
 			authed.POST("/files/mkdir", pm("file:write"), fileAPI.Mkdir)
 			authed.POST("/files/rename", pm("file:write"), fileAPI.Rename)
