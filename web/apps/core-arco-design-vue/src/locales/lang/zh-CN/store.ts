@@ -72,7 +72,7 @@ export default {
   appName: '应用名',
   appNamePh: '小写字母/数字/中划线',
   database: '数据库',
-  dbDefault: '随包默认参数',
+  dbDefault: '应用自带（随包默认参数）',
   dbExternal: '使用已有数据库实例（自动建库建号并注入连接参数）',
   dbPickInstance: '选择数据库实例（mysql / postgres）',
   dbNamePh: '库名，默认应用 key',

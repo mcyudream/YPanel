@@ -1357,13 +1357,19 @@ func (s *SiteService) Create(ctx context.Context, req SiteCreateInput) (*model.S
 	if req.RunDir != "" && !runDirSafe(req.RunDir) {
 		return nil, errs.Wrap(errs.ErrBadRequest, "运行目录不合法（需 / 开头且不含 ..）")
 	}
+	if req.RewriteName != "" {
+		if _, err := ResolveRewrite(req.RewriteName); err != nil {
+			return nil, errs.Wrap(errs.ErrBadRequest, "伪静态模板不存在: "+req.RewriteName)
+		}
+	}
 	site := &model.Site{
 		Name: req.Name, Type: req.Type, Domain: domain, Domains: extraJSON,
 		Port: port, ProxyPass: req.ProxyPass, ProxyRules: rulesJSON,
 		IndexFiles: indexFiles, LogsEnabled: true, Enabled: true,
 		RuntimeID: req.RuntimeID, RuntimeContainer: runtimeContainer,
 		GroupID: req.GroupID, Remark: strings.TrimSpace(req.Remark), RunDir: req.RunDir,
-		NodeID: normalizeNodeID(req.NodeID),
+		RewriteName: req.RewriteName,
+		NodeID:      normalizeNodeID(req.NodeID),
 	}
 	if err := s.db.Create(site).Error; err != nil {
 		return nil, err
@@ -1435,6 +1441,7 @@ type SiteCreateInput struct {
 	ProxyRules   []ProxyRule `json:"proxyRules"`
 	IndexFiles   string      `json:"indexFiles"`
 	RuntimeID    uint        `json:"runtimeId"`
+	RewriteName  string      `json:"rewriteName"` // 伪静态模板（商店 php 应用按 app.json 声明自动套用）
 	GroupID      uint        `json:"groupId"`
 	Remark       string      `json:"remark"`
 	RunDir       string      `json:"runDir"`

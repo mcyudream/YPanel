@@ -37,11 +37,12 @@ type phpAppManifest struct {
 		Root    string `json:"root"`    // 站点入口子目录（如 public，P2）
 	} `json:"web"`
 	Database struct {
-		Engine string `json:"engine"` // mysql / pg（P2：自动建库建号）
+		Engine string `json:"engine"` // mysql / pg（声明后向导出现「数据库」下拉：应用自带或纳管实例自动建库）
 		Create bool   `json:"create"`
 	} `json:"database"`
-	Install []string `json:"install"` // 安装命令序列（运行时容器内、站点目录下执行）
-	Source  string   `json:"source"`  // 包内源码目录（相对 package，默认 source/）
+	Install  []string `json:"install"`  // 安装命令序列（运行时容器内、站点目录下执行）
+	Source   string   `json:"source"`   // 包内源码目录（相对 package，默认 source/）
+	SourceURL string  `json:"sourceUrl"` // 远端源码包（zip/tar.gz 直链，优先于包内 source/；如发行版 zip 放 Gitee/GitHub Release 资产）
 }
 
 func loadPHPManifest(path string) (*phpAppManifest, error) {
@@ -65,18 +66,34 @@ func loadPHPManifest(path string) (*phpAppManifest, error) {
 	return &m, nil
 }
 
-// phpSyntheticFields php 应用的向导合成字段（PHP 版本下拉 / 站点地址 / 端口），前端零改动渲染。
+// phpSyntheticFields php 应用的向导合成字段（PHP 版本下拉 / 站点地址 / 端口 / 数据库），前端零改动渲染。
 func phpSyntheticFields(m *phpAppManifest) []StoreFormField {
 	values := make([]StoreFormValue, 0, len(m.PHP.Versions))
 	for _, v := range m.PHP.Versions {
 		values = append(values, StoreFormValue{Label: "PHP " + v, Value: v})
 	}
-	return []StoreFormField{
+	fields := []StoreFormField{
 		{EnvKey: "PHP_VERSION", Label: map[string]string{"zh": "PHP 版本"}, Type: "select", Values: values, Default: m.PHP.Default, Required: true},
 		{EnvKey: "SITE_DOMAIN", Label: map[string]string{"zh": "站点地址（IP 或域名）"}, Type: "text", Required: true,
 			Description: FlexString("浏览器访问的主机地址；填本机 IP 可 http://IP:端口 直访")},
 		{EnvKey: "SITE_PORT", Label: map[string]string{"zh": "站点端口"}, Type: "number", Rule: "paramPort", Default: 38090, Required: true},
 	}
+	// 声明需要数据库的应用：合成连接参数键集（向导出现「数据库」下拉可选纳管实例，安装时自动建库建号注入）
+	if m.Database.Create {
+		prefix := "DATABASE"
+		port := "3306"
+		if strings.EqualFold(m.Database.Engine, "pg") || strings.EqualFold(m.Database.Engine, "postgresql") {
+			prefix, port = "PGSQL", "5432"
+		}
+		fields = append(fields,
+			StoreFormField{EnvKey: prefix + "_HOST", Label: map[string]string{"zh": "数据库地址"}, Type: "text", Default: "db"},
+			StoreFormField{EnvKey: prefix + "_PORT", Label: map[string]string{"zh": "数据库端口"}, Type: "number", Default: port},
+			StoreFormField{EnvKey: prefix + "_NAME", Label: map[string]string{"zh": "数据库名"}, Type: "text", Default: "app"},
+			StoreFormField{EnvKey: prefix + "_USER", Label: map[string]string{"zh": "数据库用户"}, Type: "text", Default: "app"},
+			StoreFormField{EnvKey: prefix + "_PASSWORD", Label: map[string]string{"zh": "数据库密码"}, Type: "password", Random: true, RandomLen: 24},
+		)
+	}
+	return fields
 }
 
 // phpExtSuperset 现有运行时扩展是否覆盖应用必需扩展（复用判定）。
@@ -142,6 +159,25 @@ func (s *StoreService) runInstallPHP(ctx context.Context, logf TaskLogf, app mod
 		return errs.Wrap(errs.ErrBadRequest, "PHP 版本不在应用声明的兼容列表内: "+phpVer)
 	}
 	need := mf.PHP.Extensions.Required
+
+	// 2.5 数据库：向导选了纳管实例 → 自动建库建号并注入连接参数（凭据记入安装参数与任务日志）
+	dbPrefix := "DATABASE"
+	if strings.EqualFold(mf.Database.Engine, "pg") || strings.EqualFold(mf.Database.Engine, "postgresql") {
+		dbPrefix = "PGSQL"
+	}
+	if in.ExternalDB != nil && mf.Database.Create {
+		if in.ExternalDB.Database == "" {
+			in.ExternalDB.Database = params[dbPrefix+"_NAME"]
+		}
+		if in.ExternalDB.User == "" {
+			in.ExternalDB.User = params[dbPrefix+"_USER"]
+		}
+		in.ExternalDB.CreateIfMissing = true
+		if err := s.applyExternalDB(ctx, logf, ver, in, params, ""); err != nil {
+			return err
+		}
+		logf("info", "数据库已就绪：%s@%s:%s（凭据见「参数」）", params[dbPrefix+"_NAME"], params[dbPrefix+"_HOST"], params[dbPrefix+"_PORT"])
+	}
 
 	// 3. 运行时复用/创建（同节点同版本扩展超集即复用）
 	var rt model.Runtime
@@ -228,43 +264,116 @@ func (s *StoreService) runInstallPHP(ctx context.Context, logf TaskLogf, app mod
 		return err
 	}
 	siteDir := "/opt/ypanel/nginx/www/sites/" + project
-	srcRoot := filepath.Join(pkgDir, filepath.FromSlash(mf.Source))
-	count := 0
-	werr := filepath.WalkDir(srcRoot, func(p string, d os.DirEntry, err error) error {
-		if err != nil {
-			return err
+	srcURL := strings.TrimSpace(mf.SourceURL)
+	usesPkg := srcURL == "" // 无远端/资产声明时使用包内 source/ 目录
+	switch {
+	case srcURL != "" && !strings.HasPrefix(srcURL, "http://") && !strings.HasPrefix(srcURL, "https://"):
+		// 仓库内资产路径（相对源仓库检出根）：zip 已随 git 分发，节点侧直接复制不经网络。
+		// 仅本机节点可用（远端节点上没有检出目录，请在 app.json 改用 http(s) 直链）。
+		checkoutRoot := filepath.Join(s.dir, fmt.Sprintf("src-%d", app.SourceID))
+		asset := filepath.Join(checkoutRoot, filepath.FromSlash(srcURL))
+		if _, err := os.Stat(asset); err != nil {
+			return errs.Wrapc(errs.CodeFileOpFailed, "源码包资产不存在于源仓库检出目录: "+srcURL)
 		}
-		if d.IsDir() {
-			return nil
+		out, oerr := agentclient.DoJSON[dto.ExecReq, dto.ExecResp](ac, ctx, "POST", "/agent/v1/exec",
+			&dto.ExecReq{Command: fmt.Sprintf("mkdir -p %s/_pkg && cp '%s' %s/_pkg/src.pkg", siteDir, asset, siteDir), TimeoutSecs: 120})
+		if oerr != nil || out.ExitCode != 0 {
+			detail := ""
+			if oerr != nil {
+				detail = oerr.Error()
+			} else {
+				detail = tailOutput(out.Output, 300)
+			}
+			return errs.Wrapc(errs.CodeFileOpFailed, "复制源码包资产失败（远端节点请改用 http(s) 直链）: "+srcURL+" | "+detail)
 		}
-		if count >= ypPkgMaxFileCount {
-			return fmt.Errorf("源码文件数超限")
+		logf("info", "源码包已随源仓库分发（%s）", srcURL)
+	case srcURL != "":
+		// http(s) 直链：节点侧下载（SSRF 面与 compose 远端包同信任级：仅管理员可配置商店源）
+		logf("info", "下载源码包: %s", srcURL)
+		out, oerr := agentclient.DoJSON[dto.ExecReq, dto.ExecResp](ac, ctx, "POST", "/agent/v1/exec",
+			&dto.ExecReq{Command: fmt.Sprintf("mkdir -p %s/_pkg && curl -sSL --connect-timeout 20 --max-time 900 -o %s/_pkg/src.pkg '%s'", siteDir, siteDir, srcURL), TimeoutSecs: 900})
+		if oerr != nil || out.ExitCode != 0 {
+			detail := ""
+			if oerr != nil {
+				detail = oerr.Error()
+			} else {
+				detail = tailOutput(out.Output, 600)
+			}
+			return errs.Wrapc(errs.CodeFileOpFailed, "源码包下载失败: "+detail)
 		}
-		info, ierr := d.Info()
-		if ierr != nil {
-			return ierr
-		}
-		if info.Size() > ypPkgMaxFileSize {
-			return fmt.Errorf("源码文件过大: %s", d.Name())
-		}
-		rel, rerr := filepath.Rel(srcRoot, p)
-		if rerr != nil {
-			return rerr
-		}
-		b, rerr := os.ReadFile(p)
-		if rerr != nil {
-			return rerr
-		}
-		if werr := s.writeViaAgent(ctx, ac, siteDir+"/"+filepath.ToSlash(rel), string(b)); werr != nil {
-			return werr
-		}
-		count++
-		return nil
-	})
-	if werr != nil {
-		return errs.Wrapc(errs.CodeFileOpFailed, "源码落盘失败: "+werr.Error())
 	}
-	logf("info", "源码已落盘 %d 个文件 → %s", count, siteDir)
+	if srcURL != "" {
+		// 解包（unzip -t 探测 zip，否则按 tar.gz）+ 整理（单层包裹目录上移；内容平铺在根则整体上移，含 dotfiles）
+		tidy := fmt.Sprintf(`set -e
+cd %s/_pkg
+if unzip -t src.pkg >/dev/null 2>&1; then unzip -qo src.pkg; else tar xzf src.pkg; fi
+rm -f src.pkg
+inner=$(find . -mindepth 1 -maxdepth 1 | head -1)
+count=$(find . -mindepth 1 -maxdepth 1 | wc -l)
+if [ -n "$inner" ] && [ -d "$inner" ] && [ "$count" -eq 1 ]; then
+  cp -a "$inner"/. . && rm -rf "$inner"
+  cd .. && rmdir _pkg
+else
+  cp -a .//. ../ && cd .. && rm -rf _pkg
+fi`, siteDir)
+		out, oerr := agentclient.DoJSON[dto.ExecReq, dto.ExecResp](ac, ctx, "POST", "/agent/v1/exec",
+			&dto.ExecReq{Command: tidy, TimeoutSecs: 600})
+		if oerr != nil || out.ExitCode != 0 {
+			detail := ""
+			if oerr != nil {
+				detail = oerr.Error()
+			} else {
+				detail = tailOutput(out.Output, 600)
+			}
+			return errs.Wrapc(errs.CodeFileOpFailed, "源码包解压失败: "+detail)
+		}
+		logf("info", "源码包已就绪 → %s", siteDir)
+	}
+	if usesPkg {
+		// 包内 source/ 目录逐文件落盘
+		srcRoot := filepath.Join(pkgDir, filepath.FromSlash(mf.Source))
+		count := 0
+		werr := filepath.WalkDir(srcRoot, func(p string, d os.DirEntry, err error) error {
+			if err != nil {
+				return err
+			}
+			if d.IsDir() {
+				return nil
+			}
+			if count >= ypPkgMaxFileCount {
+				return fmt.Errorf("源码文件数超限")
+			}
+			info, ierr := d.Info()
+			if ierr != nil {
+				return ierr
+			}
+			if info.Size() > ypPkgMaxFileSize {
+				return fmt.Errorf("源码文件过大: %s", d.Name())
+			}
+			rel, rerr := filepath.Rel(srcRoot, p)
+			if rerr != nil {
+				return rerr
+			}
+			b, rerr := os.ReadFile(p)
+			if rerr != nil {
+				return rerr
+			}
+			if werr := s.writeViaAgent(ctx, ac, siteDir+"/"+filepath.ToSlash(rel), string(b)); werr != nil {
+				return werr
+			}
+			count++
+			return nil
+		})
+		if werr != nil {
+			return errs.Wrapc(errs.CodeFileOpFailed, "源码落盘失败: "+werr.Error())
+		}
+		logf("info", "源码已落盘 %d 个文件 → %s", count, siteDir)
+	}
+	// Laravel 系应用的 Web 安装向导需要写 .env/storage：交给 php-fpm 用户（失败不阻塞）
+	if _, oerr := agentclient.DoJSON[dto.ExecReq, dto.ExecResp](ac, ctx, "POST", "/agent/v1/exec",
+		&dto.ExecReq{Command: fmt.Sprintf("docker exec %s sh -c 'chown -R www-data:www-data /var/www/sites/%s' 2>/dev/null || true", rt.ContainerName, project), TimeoutSecs: 120}); oerr != nil {
+		logf("warn", "站点目录属主调整失败（Web 向导可能无法写入配置）")
+	}
 
 	// 6. 应用安装命令（运行时容器内、站点目录下逐条执行）
 	for _, cmd := range mf.Install {

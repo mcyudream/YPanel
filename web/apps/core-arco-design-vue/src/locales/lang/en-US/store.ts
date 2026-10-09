@@ -72,7 +72,7 @@ export default {
   appName: 'App Name',
   appNamePh: 'lowercase letters / digits / hyphens',
   database: 'Database',
-  dbDefault: 'Package default params',
+  dbDefault: 'App bundled (package defaults)',
   dbExternal: 'Use existing database instance (auto-create DB & user, inject connection params)',
   dbPickInstance: 'Select a database instance (mysql / postgres)',
   dbNamePh: 'Database name, defaults to app key',
