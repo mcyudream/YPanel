@@ -42,3 +42,10 @@
 - **坑三（存量 bug）：yp 格式 `env` 的 `random/randomLen/description` 从未进过 FormFields**——`ypEnvItem` 结构体只有 key/label/type/default/required/rule，转换时全丢：后端随机兜底从未生效（空参数装出来是空密码/nil），向导骰子按钮靠前端 `random !== false` 默认真约定掩盖。已修：结构体补字段透传 + `randomLen` 新能力（后端 `randomHexBytes` 折算，前端 `randomPassword(f.randomLen ?? 16)`）。同场加映：`fmt.Sprint(nil)` 产生 `"<nil>"`，sanitize 后成 `"nil"` 写进 .env——空 default 必须加 nil 守卫。
 - **排障手法**：商店安装失败先看任务日志（`GET /api/v1/tasks/:id` 的 logText，步骤名定位阶段：override 生成挂=YAML 语法、compose up 挂=镜像/网络、容器重启循环=`docker logs`）；重装场景注意 `data/` 保留导致旧密码与新随机参数不匹配（清理 data 或沿用参数）。
 - **来源**：2026-10-10 收录 element-skin v4.0.1 五轮安装排障（YPanel-AppStore apps/element-skin + core/internal/service/store.go）
+
+### 商店 PHP 应用类型验收期：磁盘保护压制新容器 + nginx 静态 fastcgi_pass 域名缓存失效 IP
+
+- **现象一**：商店 php 应用装出的 runtime 容器启动 ~15 秒被 SIGQUIT 停掉（DB 里 runtime 状态却还是 running，站点 502/创建失败）。**根因**：142 磁盘 4.2G 低于保护阈值 5G，磁盘保护触发态的「压制」会停掉任何新拉起的容器——php:8.x 镜像 STOPSIGNAL=SIGQUIT，所以日志表现为收到 SIGQUIT。**解决**：清掉已死测试镜像（php-b20 遗留/已卸载应用的 uptime-kuma、rustfs 等 ~1.7G）→ 空间回线 → 调 `POST /api/v1/diskguard/restore`（空 JSON 体）解除锁存（顺带把被压制的容器全部拉起）。判别口诀：容器「起来几秒就被停」+ runtime/site 记录状态正常 = 先看磁盘保护再查代码。
+- **现象二**：runtime 容器被停后重启换了 IP，nginx 对 php 站点 502——静态 `fastcgi_pass <容器名>:9000` 的域名**只在配置加载时解析一次**，容器死亡期间 reload 会把失效 IP 缓存住。`nginx -s reload` 刷新解析即恢复（新 IP 立即生效）。长期解（P3）：variables + `resolver 127.0.0.11` 方案。
+- **附带**：遗留测试 conf 引用已删容器（如 `b20site.conf` → `php-b20`）会让 nginx 容器崩溃循环，阻塞面板一切建站操作且报错详情为空（agent exec 只捕 stdout，nginx 错误在 stderr）——「nginx 配置校验失败: 」后面空串 = 先手工 `docker exec ypanel-nginx nginx -t` 看真错。
+- **来源**：2026-10-10 商店 PHP 应用类型 P1 验收（core/internal/service/store_php.go；142 磁盘保护触发期）
