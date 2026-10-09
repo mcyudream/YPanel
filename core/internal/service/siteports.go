@@ -303,6 +303,7 @@ func (s *SiteService) GetPortConf(id uint) (SitePortConf, error) {
 	if err != nil {
 		return SitePortConf{}, err
 	}
+	s = s.forSite(site)
 	applied := siteBasePorts[site.Port]
 	var count int64
 	_ = s.db.Model(&model.SitePortLease{}).Where("port = ?", site.Port).Count(&count).Error
@@ -315,6 +316,7 @@ func (s *SiteService) UpdatePortConf(ctx context.Context, id uint, port int) (Si
 	if err != nil {
 		return SitePortConf{}, err
 	}
+	s = s.forSite(site)
 	newPort, err := validateSitePort(port)
 	if err != nil {
 		return SitePortConf{}, err

@@ -40,14 +40,27 @@ type SiteService struct {
 	// 端口对账依赖（SetPortDeps 装配期注入）；reconcileMu 串行化对账，避免并发重写 compose
 	fw          *FirewallService
 	nat         *NatForwardService
-	reconcileMu sync.Mutex
+	reconcileMu *sync.Mutex // 指针：结构体副本共享同一对账锁（对账需全局串行），且消除 copies-lock
 	nodeClient *agentclient.Client // WithNode 绑定（M57）
 	modeOverride string // WithNode 副本强制 nginx 形态（节点=host）
 }
 
 // NewSiteService 创建站点服务。
 func NewSiteService(db *gorm.DB, nodes *NodeService) *SiteService {
-	return &SiteService{db: db, nodes: nodes}
+	return &SiteService{
+		reconcileMu: &sync.Mutex{},db: db, nodes: nodes}
+}
+
+// forSite 返回绑定站点节点的服务副本（本机站点/已绑定副本原样返回）。
+// 写方法在查询站点后调用 s = s.forSite(site)，后续写盘/reload 全部路由到归属节点。
+func (s *SiteService) forSite(site *model.Site) *SiteService {
+	if s.nodeClient != nil || normalizeNodeID(site.NodeID) == "local" {
+		return s
+	}
+	if ns, err := s.WithNode(site.NodeID); err == nil {
+		return ns
+	}
+	return s
 }
 
 // WithNode 返回绑定站点所在节点的副本（M57：配置写盘/nginx reload 按站点节点路由）。
@@ -59,6 +72,7 @@ func (s *SiteService) WithNode(nodeId string) (*SiteService, error) {
 	cp := *s
 	cp.nodeClient = agentclient.New(node.BaseURL, node.Token)
 	cp.modeOverride = "host" // 节点 nginx 均为宿主模式（本机 container 形态的 ypanel-nginx 不存在于节点）
+	// 副本共享原对账锁（指针） // 副本独立对账锁（复制结构体不得携带原锁，vet: copies lock）
 	return &cp, nil
 }
 
@@ -890,6 +904,7 @@ func (s *SiteService) GetExt(id uint) (SiteExtConfig, error) {
 	if err != nil {
 		return SiteExtConfig{}, err
 	}
+	s = s.forSite(site)
 	m := parseSiteMeta(site)
 	return SiteExtConfig{
 		RewriteName: m.RewriteName, RewriteContent: m.RewriteContent,
@@ -904,6 +919,7 @@ func (s *SiteService) UpdateExt(ctx context.Context, id uint, ext SiteExtConfig)
 	if err != nil {
 		return err
 	}
+	s = s.forSite(site)
 	if err := validateCustomLocations(ext.CustomLocations); err != nil {
 		return err
 	}
@@ -941,6 +957,7 @@ func (s *SiteService) GetWaf(id uint) (SiteWaf, error) {
 	if err != nil {
 		return SiteWaf{}, err
 	}
+	s = s.forSite(site)
 	return parseWaf(site), nil
 }
 
@@ -950,6 +967,7 @@ func (s *SiteService) UpdateWaf(ctx context.Context, id uint, w SiteWaf) error {
 	if err != nil {
 		return err
 	}
+	s = s.forSite(site)
 	if err := validateWaf(w); err != nil {
 		return err
 	}
@@ -969,6 +987,7 @@ func (s *SiteService) IssueSelfSigned(ctx context.Context, id uint) error {
 	if err != nil {
 		return err
 	}
+	s = s.forSite(site)
 	if err := s.selfSign(ctx, site.Domain, nil); err != nil {
 		return err
 	}
@@ -985,6 +1004,7 @@ func (s *SiteService) UpdateConfig(ctx context.Context, id uint, content string)
 	if err != nil {
 		return err
 	}
+	s = s.forSite(site)
 	return s.writeConf(ctx, site, content)
 }
 
@@ -994,6 +1014,7 @@ func (s *SiteService) Config(ctx context.Context, id uint) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	s = s.forSite(site)
 	ac, err := s.client()
 	if err != nil {
 		return "", err
@@ -1033,6 +1054,7 @@ func (s *SiteService) SetDefault(ctx context.Context, id uint) error {
 	if err != nil {
 		return err
 	}
+	s = s.forSite(site)
 	if !site.Enabled {
 		return errs.Wrap(errs.ErrBadRequest, "禁用状态的站点不能设为默认")
 	}
@@ -1079,6 +1101,7 @@ func (s *SiteService) SetEnabled(ctx context.Context, id uint, enabled bool) err
 	if err != nil {
 		return err
 	}
+	s = s.forSite(site)
 	ac, err := s.client()
 	if err != nil {
 		return err
@@ -1120,6 +1143,7 @@ func (s *SiteService) Delete(ctx context.Context, id uint, opts SiteDeleteOption
 	if err != nil {
 		return err
 	}
+	s = s.forSite(site)
 	ac, err := s.client()
 	if err != nil {
 		return err
@@ -1422,6 +1446,7 @@ func (s *SiteService) UpdateMeta(id uint, in SiteMetaInput) error {
 	if err != nil {
 		return err
 	}
+	s = s.forSite(site)
 	updates := map[string]any{}
 	if in.GroupID != nil {
 		if *in.GroupID != 0 {
@@ -1447,6 +1472,7 @@ func (s *SiteService) GetRunDir(ctx context.Context, id uint) (map[string]any, e
 	if err != nil {
 		return nil, err
 	}
+	s = s.forSite(site)
 	ac, err := s.client()
 	if err != nil {
 		return nil, err
@@ -1481,6 +1507,7 @@ func (s *SiteService) UpdateRunDir(ctx context.Context, id uint, runDir string) 
 	if err != nil {
 		return err
 	}
+	s = s.forSite(site)
 	runDir = strings.TrimSpace(runDir)
 	if runDir == "/" {
 		runDir = ""
@@ -1510,6 +1537,7 @@ func (s *SiteService) SiteLogs(ctx context.Context, id uint, logType, tail strin
 	if err != nil {
 		return "", err
 	}
+	s = s.forSite(site)
 	if logType != "access" && logType != "error" {
 		logType = "access"
 	}

@@ -29,6 +29,7 @@ func (s *SiteService) GetDomainConf(id uint) (SiteDomainConf, error) {
 	if err != nil {
 		return SiteDomainConf{}, err
 	}
+	s = s.forSite(site)
 	extra, _ := parseExtraDomains(site)
 	return SiteDomainConf{Name: site.Name, Domain: site.Domain, Domains: extra, CertDomain: site.CertDomain}, nil
 }
@@ -41,6 +42,7 @@ func (s *SiteService) UpdateDomainConf(ctx context.Context, id uint, domains []s
 	if err != nil {
 		return SiteDomainConf{}, err
 	}
+	s = s.forSite(site)
 	cleaned, err := validateDomains(domains)
 	if err != nil {
 		return SiteDomainConf{}, err
@@ -213,6 +215,7 @@ func (s *SiteService) GetDefaultsConf(id uint) (SiteDefaultsConf, error) {
 	if err != nil {
 		return SiteDefaultsConf{}, err
 	}
+	s = s.forSite(site)
 	return SiteDefaultsConf{IndexFiles: site.IndexFiles, ErrorPage404: site.ErrorPage404}, nil
 }
 
@@ -222,6 +225,7 @@ func (s *SiteService) UpdateDefaultsConf(ctx context.Context, id uint, conf Site
 	if err != nil {
 		return SiteDefaultsConf{}, err
 	}
+	s = s.forSite(site)
 	files := strings.Split(strings.ReplaceAll(conf.IndexFiles, "，", ","), ",")
 	cleaned := make([]string, 0, len(files))
 	for _, f := range files {
@@ -265,6 +269,7 @@ func (s *SiteService) GetProxyConf(id uint) (SiteProxyConf, error) {
 	if err != nil {
 		return SiteProxyConf{}, err
 	}
+	s = s.forSite(site)
 	m := parseSiteMeta(site)
 	return SiteProxyConf{Rules: m.ProxyRules, CacheEnable: m.CacheEnable, CacheDuration: m.CacheDuration}, nil
 }
@@ -275,6 +280,7 @@ func (s *SiteService) UpdateProxyConf(ctx context.Context, id uint, conf SitePro
 	if err != nil {
 		return SiteProxyConf{}, err
 	}
+	s = s.forSite(site)
 	if site.Type != "proxy" {
 		return SiteProxyConf{}, errs.Wrap(errs.ErrBadRequest, "仅反向代理站点支持该配置")
 	}
@@ -320,6 +326,7 @@ func (s *SiteService) GetRewriteConf(id uint) (SiteRewriteConf, error) {
 	if err != nil {
 		return SiteRewriteConf{}, err
 	}
+	s = s.forSite(site)
 	return SiteRewriteConf{RewriteName: site.RewriteName, RewriteContent: site.RewriteContent}, nil
 }
 
@@ -329,6 +336,7 @@ func (s *SiteService) UpdateRewriteConf(ctx context.Context, id uint, conf SiteR
 	if err != nil {
 		return SiteRewriteConf{}, err
 	}
+	s = s.forSite(site)
 	if err := s.db.Model(site).Updates(map[string]any{
 		"rewrite_name": conf.RewriteName, "rewrite_content": conf.RewriteContent,
 	}).Error; err != nil {
@@ -363,6 +371,7 @@ func (s *SiteService) GetHTTPSConf(id uint) (SiteHTTPSConf, error) {
 	if err != nil {
 		return SiteHTTPSConf{}, err
 	}
+	s = s.forSite(site)
 	cfg := parseHTTPS(site)
 	return SiteHTTPSConf{
 		Enable: site.CertDomain != "", CertDomain: site.CertDomain, CertID: site.CertID,
@@ -390,6 +399,7 @@ func (s *SiteService) UpdateHTTPSConf(ctx context.Context, id uint, in SiteHTTPS
 	if err != nil {
 		return SiteHTTPSConf{}, err
 	}
+	s = s.forSite(site)
 
 	// 1) 证书来源变更
 	if in.Disable {
@@ -459,6 +469,7 @@ func (s *SiteService) DisableHTTPS(ctx context.Context, id uint) (SiteHTTPSConf,
 	if err != nil {
 		return SiteHTTPSConf{}, err
 	}
+	s = s.forSite(site)
 	if site.CertDomain == "" {
 		return s.GetHTTPSConf(id)
 	}

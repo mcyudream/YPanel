@@ -121,6 +121,7 @@ func (s *SiteService) getExtraForWrite(id uint) (*model.Site, SiteExtraConf, err
 	if err != nil {
 		return nil, SiteExtraConf{}, err
 	}
+	s = s.forSite(site)
 	return site, parseSiteExtra(site), nil
 }
 
