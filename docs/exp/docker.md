@@ -28,3 +28,9 @@
 - **坑三：换源重装时「写源」必须排在所有 apt-get update 之前**——旧源残留的脏索引（如镜像站同步瞬态留下的 mismatch 状态）会毒死任何先跑的 update/install（`File has unexpected size ... Mirror sync in progress?`），任务在依赖安装步骤就 fail-fast，永远走不到后面的写源步骤，形成「换源重试永远失败」死循环。修法：写源最前 + 依赖「缺失才装」（`command -v curl && command -v gpg || apt-get update && apt-get install ...`，避免无谓 update）+ update 步骤自动重试一次（镜像站同步瞬态是常态，阿里云 jammy/stable 曾持续数分钟 InRelease 与 Packages 大小不匹配）。
 - **附带**：143（Ubuntu 22.04 干净机）实测官方源完整安装 32s、清华源 compose-only 补装 12s；Docker Hub registry 被墙但 apt 下载站可通的网络分区很常见——加速器配置与安装源是两件独立的事。
 - **来源**：2026-10-09 M52 143 真机验收（core/internal/service/dockerinstall.go buildSteps 三轮返修）
+
+### 复杂应用（需 prepare/初始化脚本）收录 yp 商店的「初始化容器」模式：包内静态文件吃不到安装参数
+
+- **现象/约束**：yp 安装管线是「整包拷到项目根 + 写 .env + compose up」——`${VAR}` 渲染**只发生在 compose.yml**（经 .env），包内其他文件（如 Harbor 的 `harbor.yml`）是静态的，安装参数进不去；管线也没有 pre-install 脚本钩子。
+- **规避/解决（Harbor v2.15 实战验证）**：加一个一次性 `prepare` 服务做全部初始化——`entrypoint: ["/bin/sh","-c"]` + `command` 里用 heredoc 把安装参数 echo 成 harbor.yml，再调官方 `goharbor/prepare` 镜像生成全部组件配置（`./common/config`）；其余服务全部 `depends_on: prepare: condition: service_completed_successfully`。要点：① compose 命令串里只准出现 `${安装参数}`，其余 `$` 会被 compose 插值——heredoc 里别写 shell 变量；② 官方 prepare 会**无条件往 `/compose_location/docker-compose.yml` 写它自己生成的编排**——挂个丢弃目录（`./prepare-out`）盖掉，别让它覆写面板这份；③ 数据卷相对路径要「prepare 容器内挂载路径 == 其他服务 bind 源」（Harbor：全部服务挂 `./data/harbor:/data`，harbor.yml `data_volume: /data`，secretkey 等文件由 prepare 先于依赖服务创建，避开 dockerd 缺源自动建目录坑）；④ 密码类参数在 heredoc 里是文本插值，字段 description 必须劝退 `$` 引号反引号；⑤ 干跑验收顺序：`compose config --services`（不依赖生成物）→ 真跑 prepare → 再 `compose config` 全量（env_file 生成后才过）→ `diff` 官方生成的编排查缺挂载。验证平台磁盘紧就只跑到 prepare + config，别真装 2GB 镜像。
+- **来源**：2026-10-10 商店收录 Harbor v2.15.4（YPanel-AppStore apps/harbor；读 goharbor/harbor make/prepare 源码得出容器契约：/input 配置、/config 产物、/data 数据卷、/compose_location 编排产物）
