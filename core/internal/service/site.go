@@ -803,7 +803,12 @@ func (s *SiteService) writeConf(ctx context.Context, site *model.Site, content s
 	if s.nginxMode() == "host" {
 		content = hostPathMap.Replace(content)
 	}
-	confPath := path.Join(nginxConfDir, site.Name+".conf")
+	confDir := nginxConfDir
+	if s.nginxMode() == "host" {
+		// M57 节点宿主 nginx：conf 目录为系统标准路径（与 nginx.conf include 对应）
+		confDir = "/etc/nginx/conf.d"
+	}
+	confPath := path.Join(confDir, site.Name+".conf")
 	orig := ""
 	if out, err := agentclient.GetJSON[dto.FileReadResp](ac, ctx, "/agent/v1/files/read?path="+escapeURL(confPath)); err == nil {
 		orig = out.Content

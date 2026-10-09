@@ -92,12 +92,14 @@ func (s *NginxService) Status(ctx context.Context) (map[string]any, error) {
 
 // Install 安装 nginx（Debian/Ubuntu apt；RHEL 系 yum/dnf）。
 func (s *NginxService) Install(ctx context.Context) (map[string]any, error) {
-	out, err := s.exec(ctx, `export DEBIAN_FRONTEND=noninteractive; if command -v apt-get >/dev/null; then apt-get update -qq && apt-get install -y -qq nginx; elif command -v dnf >/dev/null; then dnf install -y nginx; elif command -v yum >/dev/null; then yum install -y nginx; else echo NGINX_NO_PKG_MGR; exit 1; fi; systemctl enable --now nginx && echo NGINX_INSTALL_OK`, 900)
+	_, err := s.exec(ctx, `export DEBIAN_FRONTEND=noninteractive; if command -v apt-get >/dev/null; then apt-get update -qq && apt-get install -y -qq nginx; elif command -v dnf >/dev/null; then dnf install -y nginx; elif command -v yum >/dev/null; then yum install -y nginx; fi; systemctl enable nginx && systemctl start nginx && systemctl enable nginx`, 900)
 	if err != nil {
 		return nil, err
 	}
-	if !strings.Contains(out, "NGINX_INSTALL_OK") {
-		return nil, errs.Wrapc(errs.CodeFileOpFailed, "nginx 安装失败: "+tailStr(out, 300))
+	// 装后探测判定（apt/dnf 的 SysV 同步消息会污染标记串，标记法误报）
+	out, err := s.exec(ctx, `command -v nginx >/dev/null && echo NGINX_INSTALL_OK`, 30)
+	if err != nil || !strings.Contains(out, "NGINX_INSTALL_OK") {
+		return nil, errs.Wrapc(errs.CodeFileOpFailed, "nginx 安装失败")
 	}
 	return map[string]any{"message": "nginx 已安装并启动"}, nil
 }
