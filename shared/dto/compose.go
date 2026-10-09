@@ -19,6 +19,30 @@ type ComposeProject struct {
 	Services []ComposeServiceState `json:"services"`
 }
 
+// ComposeTopologyNode 拓扑节点：compose 服务定义 + 容器实时状态。
+type ComposeTopologyNode struct {
+	Name   string   `json:"name"`
+	Image  string   `json:"image"`
+	State  string   `json:"state,omitempty"`   // running/exited/...；未创建容器为空
+	Health string   `json:"health,omitempty"`  // healthy/starting/unhealthy；无 healthcheck 为空
+	Ports  []string `json:"ports,omitempty"`   // 编排定义的发布端口，如 "8080:80/tcp"
+}
+
+// ComposeTopologyEdge 依赖边：from 依赖 to（depends_on）。
+type ComposeTopologyEdge struct {
+	From      string `json:"from"`
+	To        string `json:"to"`
+	Condition string `json:"condition,omitempty"` // service_started / service_healthy / service_completed_successfully
+}
+
+// ComposeTopology compose 项目服务拓扑（M26 P1：仅可视化，编排行为仍由 compose 自身依赖排序）。
+type ComposeTopology struct {
+	Name  string                `json:"name"`
+	Dir   string                `json:"dir"`
+	Nodes []ComposeTopologyNode `json:"nodes"`
+	Edges []ComposeTopologyEdge `json:"edges"`
+}
+
 // ComposeConfigResp 读取 compose yaml 内容。
 type ComposeConfigResp struct {
 	Name    string `json:"name"`
@@ -49,9 +73,11 @@ type ComposeLogsReq struct {
 }
 
 // ExecReq 受控命令执行（计划任务/脚本通道）。
+// Env：注入进程环境变量（敏感值走 env 不进 argv，避免宿主进程列表泄露）。
 type ExecReq struct {
-	Command    string `json:"command" binding:"required"`
-	TimeoutSecs int   `json:"timeoutSecs"` // 0 = 默认 300
+	Command     string            `json:"command" binding:"required"`
+	TimeoutSecs int               `json:"timeoutSecs"` // 0 = 默认 300
+	Env         map[string]string `json:"env,omitempty"`
 }
 
 // ExecResp 执行结果。
@@ -80,10 +106,10 @@ type CronTask struct {
 type CronTaskCreateReq struct {
 	Name        string `json:"name" binding:"required,max=64"`
 	Cron        string `json:"cron" binding:"required"`
-	Command     string `json:"command" binding:"required,max=8192"`
-	Type        string `json:"type"`                          // B4：shell（默认）/ db_backup / site_backup / container_op / script
-	Payload     string `json:"payload"`                       // 类型参数 JSON
-	TimeoutSecs int    `json:"timeoutSecs"` // 0 = 300
+	Command     string `json:"command" binding:"max=8192"` // 类型化任务（备份/curl/清理等）可为空
+	Type        string `json:"type"`                       // shell（默认）/ db_backup / site_backup / dir_backup / compose_backup / curl / cut_website_log / clean / cert_renew / container_op / script
+	Payload     string `json:"payload"`                    // 类型参数 JSON
+	TimeoutSecs int    `json:"timeoutSecs"`                // 0 = 300
 }
 
 // CronTaskUpdateReq 更新任务（零值字段不更新）。
@@ -91,7 +117,7 @@ type CronTaskUpdateReq struct {
 	Name        *string `json:"name" binding:"omitempty,max=64"`
 	Cron        *string `json:"cron" binding:"omitempty"`
 	Command     *string `json:"command" binding:"omitempty,max=8192"`
-	Type        *string `json:"type" binding:"omitempty,oneof=shell db_backup site_backup container_op script"`
+	Type        *string `json:"type" binding:"omitempty,oneof=shell db_backup site_backup dir_backup compose_backup curl cut_website_log clean cert_renew container_op script"`
 	Payload     *string `json:"payload"`
 	TimeoutSecs *int    `json:"timeoutSecs" binding:"omitempty,min=1,max=86400"`
 	Enabled     *bool   `json:"enabled"`
