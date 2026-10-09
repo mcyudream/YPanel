@@ -1,0 +1,52 @@
+{
+  "name": "@yudream/yudream-webos-arco",
+  "type": "module",
+  "version": "0.2.0",
+  "description": "Arco Design Vue UI layer of YudreamWebOS: all visual components (desktop, windows, dock, launchpad, finder, menubar, widgets)",
+  "author": "YuDream",
+  "license": "MIT",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./style.css": "./dist/yudream-webos-arco.css"
+  },
+  "main": "./dist/index.js",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "vite build",
+    "test": "vitest run",
+    "lint": "vue-tsc -b --noEmit"
+  },
+  "peerDependencies": {
+    "vue": "^3.5.0"
+  },
+  "dependencies": {
+    "@yudream/yudream-webos-core": "workspace:*",
+    "@yudream/yudream-webos-shared": "workspace:*",
+    "@yudream/yudream-webos-vue": "workspace:*",
+    "clsx": "catalog:",
+    "es-toolkit": "catalog:"
+  },
+  "devDependencies": {
+    "@arco-design/web-vue": "catalog:arco-design-vue",
+    "@vitejs/plugin-vue": "catalog:",
+    "happy-dom": "catalog:",
+    "typescript": "catalog:",
+    "vite": "catalog:",
+    "vite-plugin-dts": "catalog:",
+    "vite-plugin-lib-inject-css": "catalog:",
+    "vitest": "catalog:",
+    "vue": "catalog:",
+    "vue-tsc": "catalog:"
+  },
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org/"
+  }
+}

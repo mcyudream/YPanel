@@ -1,0 +1,1 @@
+export { useAppsStore } from './compat'

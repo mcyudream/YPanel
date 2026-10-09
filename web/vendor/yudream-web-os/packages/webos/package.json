@@ -1,0 +1,41 @@
+{
+  "name": "@yudream/yudream-webos",
+  "type": "module",
+  "version": "0.2.0",
+  "description": "YudreamWebOS: standalone WebOS UI library for Vue 3 - theme, windows, desktop, grid tiles, cards, dock, quick launch, launchpad, sandboxed browser",
+  "author": "YuDream",
+  "license": "MIT",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "main": "./dist/index.js",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "vite build",
+    "test": "vitest run",
+    "lint": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@yudream/yudream-webos-apps": "workspace:*",
+    "@yudream/yudream-webos-arco": "workspace:*",
+    "@yudream/yudream-webos-core": "workspace:*",
+    "@yudream/yudream-webos-vue": "workspace:*"
+  },
+  "devDependencies": {
+    "typescript": "catalog:",
+    "vite": "catalog:",
+    "vite-plugin-dts": "catalog:",
+    "vitest": "catalog:"
+  },
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org/"
+  }
+}

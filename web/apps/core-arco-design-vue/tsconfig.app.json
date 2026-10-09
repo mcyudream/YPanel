@@ -6,11 +6,11 @@
     "paths": {
       "@/*": ["./src/*"],
       "#/*": ["./src/types/*"],
-      "@yudream/yudream-webos-vue": ["../../../../yudream-web-os/packages/vue/src/index.ts"],
-      "@yudream/yudream-webos-arco": ["../../../../yudream-web-os/packages/arco/src/index.ts"],
-      "@yudream/yudream-webos-core": ["../../../../yudream-web-os/packages/core/src/index.ts"],
-      "@yudream/yudream-webos-shared": ["../../../../yudream-web-os/packages/shared/src/index.ts"],
-      "@yudream/yudream-webos": ["../../../../yudream-web-os/packages/webos/src/index.ts"]
+      "@yudream/yudream-webos-vue": ["../../vendor/yudream-web-os/packages/vue/src/index.ts"],
+      "@yudream/yudream-webos-arco": ["../../vendor/yudream-web-os/packages/arco/src/index.ts"],
+      "@yudream/yudream-webos-core": ["../../vendor/yudream-web-os/packages/core/src/index.ts"],
+      "@yudream/yudream-webos-shared": ["../../vendor/yudream-web-os/packages/shared/src/index.ts"],
+      "@yudream/yudream-webos": ["../../vendor/yudream-web-os/packages/webos/src/index.ts"]
     },
     "types": [
       "@fantastic-admin/types/global",

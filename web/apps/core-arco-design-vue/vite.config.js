@@ -21,7 +21,7 @@ const monacoWorkerAlias = {
 // alias 目标按目录解析），库内修复即时生效、无需构建同步；UnoCSS 沿模块图自动扫描其源码，
 // 图标类可正常提取。⚠️ 本目录同时存在并行流程转译产物 vite.config.js，加载顺序 js 优先——
 // 改 vite 配置必须两份同步，详见 docs/exp/frontend.md。
-const webosPackagesRoot = path.resolve(import.meta.dirname, '../../../../yudream-web-os/packages');
+const webosPackagesRoot = path.resolve(import.meta.dirname, '../../vendor/yudream-web-os/packages');
 const webosAlias = {
     '@yudream/yudream-webos-vue': path.join(webosPackagesRoot, 'vue/src'),
     '@yudream/yudream-webos-arco': path.join(webosPackagesRoot, 'arco/src'),

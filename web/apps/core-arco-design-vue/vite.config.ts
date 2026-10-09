@@ -19,11 +19,12 @@ const monacoWorkerAlias = {
   '#monaco/worker-typescript': path.join(monacoRoot, 'esm/vs/language/typescript/ts.worker.js'),
 }
 
-// YudreamWebOS：兄弟仓库源码直连（M29 桌面工作台）。别名指向 src 目录（rolldown 解析器的
-// alias 目标按目录解析），库内修复即时生效、无需构建同步；UnoCSS 沿模块图自动扫描其源码，
-// 图标类可正常提取。⚠️ 本目录同时存在并行流程转译产物 vite.config.js，加载顺序 js 优先——
+// YudreamWebOS（M29 桌面工作台）：源码已 vendor 进仓库 web/vendor/yudream-web-os/（使 CI 与
+// 第三方可独立构建；开发源头仍是本地兄弟仓库 ../yudream-web-os，修复后同步覆盖 vendor 目录）。
+// 别名指向 src 目录（rolldown alias 目标按目录解析）；UnoCSS 沿模块图自动扫描其源码。
+// ⚠️ 本目录同时存在并行流程转译产物 vite.config.js，加载顺序 js 优先——
 // 改 vite 配置必须两份同步，详见 docs/exp/frontend.md。
-const webosPackagesRoot = path.resolve(import.meta.dirname, '../../../../yudream-web-os/packages')
+const webosPackagesRoot = path.resolve(import.meta.dirname, '../../vendor/yudream-web-os/packages')
 const webosAlias = {
   '@yudream/yudream-webos-vue': path.join(webosPackagesRoot, 'vue/src'),
   '@yudream/yudream-webos-arco': path.join(webosPackagesRoot, 'arco/src'),
