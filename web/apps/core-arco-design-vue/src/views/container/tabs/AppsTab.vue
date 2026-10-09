@@ -108,7 +108,7 @@ const cards = computed<AppCard[]>(() => {
 })
 
 // 未部署（total=0，容器已移除）项目默认隐藏，开关显示后可删除清理
-const showUndeployed = ref(false)
+const showUndeployed = ref(true) // M55 默认全部展示（含未部署）
 const undeployedCount = computed(() => cards.value.filter(c => c.project.total === 0).length)
 const visibleCards = computed(() => showUndeployed.value ? cards.value : cards.value.filter(c => c.project.total > 0))
 
@@ -435,7 +435,7 @@ onBeforeUnmount(() => {
       <YdDockerNodeSelect />
       <label class="flex items-center gap-1.5 text-xs text-muted-foreground">
         <input v-model="showUndeployed" type="checkbox" class="accent-[var(--primary)]">
-        {{ $t('container.apps.showUndeployed') }}<template v-if="undeployedCount"> ({{ undeployedCount }})</template>
+        {{ $t('container.apps.showUndeployed') }}<template v-if="!showUndeployed && undeployedCount"> ({{ undeployedCount }})</template>
       </label>
       <span class="text-xs text-muted-foreground">{{ $t('container.apps.cardHint') }}</span>
       <FaButton class="ml-auto" size="sm" :disabled="dockerDisabled" variant="outline" @click="srcWizardVisible = true">

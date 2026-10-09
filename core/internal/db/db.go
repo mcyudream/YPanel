@@ -33,6 +33,12 @@ func Open(dataDir string) (*gorm.DB, error) {
 			return nil, fmt.Errorf("迁移应用索引失败: %w", err)
 		}
 	}
+	// M55 多实例：compose_project 全局唯一索引让位（同名应用可装多节点，项目名带节点后缀）
+	if gdb.Migrator().HasIndex(&model.AppStoreInstall{}, "idx_app_store_installs_compose_project") {
+		if err := gdb.Migrator().DropIndex(&model.AppStoreInstall{}, "idx_app_store_installs_compose_project"); err != nil {
+			return nil, fmt.Errorf("迁移已装应用索引失败: %w", err)
+		}
+	}
 	if err := gdb.AutoMigrate(&model.User{}, &model.Role{}, &model.RolePermission{}, &model.RoleNode{}, &model.LoginLog{}, &model.Setting{}, &model.CronTask{}, &model.CronTaskLog{}, &model.DatabaseInstance{}, &model.Site{}, &model.SiteGroup{}, &model.SitePortLease{}, &model.Certificate{}, &model.DnsAccount{}, &model.AcmeAccount{}, &model.Node{}, &model.PairingCode{}, &model.AlertRule{}, &model.Notification{}, &model.AuditLog{}, &model.MetricRecord{}, &model.AppStoreSource{}, &model.AppStoreApp{}, &model.AppStoreInstall{}, &model.Runtime{}, &model.Script{}, &model.AIProvider{}, &model.AIKnowledge{}, &model.AIKnowledgeDoc{}, &model.AIKnowledgeChunk{}, &model.AIMemory{}, &model.AIConversation{}, &model.AIToolFlag{}, &model.AIOperationLog{}, &model.ConfigRevision{}, &model.NatForwardRule{}, &model.AppTask{}, &model.GitCredential{}, &model.DnsRecord{}, &model.HostRecord{}, &model.HostTarget{}, &model.DatabaseAuditLog{}, &model.MonitorProbe{}, &model.StorageAccount{}, &model.DockerEnvironment{}, &model.LogSearchQuery{}, &model.MetricHourly{}, &model.FileFavorite{}, &model.FileShare{}, &model.MCPOperation{}, &model.DiskGuardEvent{}); err != nil {
 		return nil, fmt.Errorf("数据库迁移失败: %w", err)
 	}
