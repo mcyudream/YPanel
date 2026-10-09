@@ -484,6 +484,24 @@ async function doSetOwner(uid: number) {
 
 // ---------- 已安装 Tab（1Panel 风格卡片：状态/启停/重启/重建/参数/日志/外链） ----------
 const installedInfos = ref<StoreInstallInfo[]>([])
+// M55 节点筛选：全部/本机/各节点（前端过滤，installedDetailed 本就跨节点聚合）
+const installedNodeFilter = ref('all')
+const installedNodeOptions = computed(() => {
+  const opts = [{ label: i18n.global.t('store.nodeAll'), value: 'all' }, { label: i18n.global.t('nodes.localPanel'), value: 'local' }]
+  for (const i of installedInfos.value) {
+    const nid = i.nodeId || 'local'
+    if (nid !== 'local' && !opts.some(o => o.value === nid)) {
+      opts.push({ label: `@${nid}`, value: nid })
+    }
+  }
+  return opts
+})
+const installedFiltered = computed(() => {
+  if (installedNodeFilter.value === 'all') {
+    return installedInfos.value
+  }
+  return installedInfos.value.filter(i => (i.nodeId || 'local') === installedNodeFilter.value)
+})
 const uninstallSource = ref<StoreInstallInfo | null>(null)
 const installedLoading = ref(false)
 const actingOn = ref('')
@@ -771,6 +789,10 @@ function statusText(s: StoreSource) {
 
       <!-- 已安装：1Panel 风格大卡片（状态/启停/重启/重建/参数/日志/外链/卸载） -->
       <template v-if="activeTab === 'installed'">
+        <div class="mb-3 flex items-center gap-2">
+          <FaIcon name="i-lucide:server" class="text-sm text-muted-foreground" />
+          <YdSelect v-model="installedNodeFilter" :options="installedNodeOptions" class="w-52!" @update:model-value="() => {}" />
+        </div>
         <div v-if="installedLoading && !installedInfos.length" class="grid gap-4 md:grid-cols-2">
           <div v-for="i in 4" :key="i" class="h-36 animate-pulse rounded-lg border bg-muted/30" />
         </div>
@@ -779,7 +801,7 @@ function statusText(s: StoreSource) {
         </div>
         <div v-else class="grid gap-4 md:grid-cols-2">
           <div
-            v-for="info in installedInfos"
+            v-for="info in installedFiltered"
             :key="info.id"
             class="flex flex-col rounded-lg border bg-background p-4 transition-shadow hover:shadow-md"
           >
@@ -1111,6 +1133,15 @@ function statusText(s: StoreSource) {
           <FaInput v-model="installForm.name" :placeholder="$t('store.appNamePh')" class="flex-1" />
         </div>
         <div class="flex items-center gap-3">
+          <span class="w-28 shrink-0 text-sm text-muted-foreground">{{ $t('nodes.targetNode') }}</span>
+          <select v-model="installNode" class="h-9 min-w-0 flex-1 rounded-md border border-input bg-background px-2 text-sm outline-none">
+            <option value="">{{ $t('nodes.localPanel') }}</option>
+            <option v-for="n in onlineNodes.filter(x => x.id !== 'local')" :key="n.id" :value="n.id">
+              {{ n.name }}（{{ n.arch || 'linux' }}）
+            </option>
+          </select>
+        </div>
+        <div class="flex items-center gap-3">
           <span class="w-28 shrink-0 text-sm text-muted-foreground">{{ $t('store.version') }}</span>
           <select v-model="installForm.version" class="h-9 flex-1 rounded-md border border-input bg-background px-2 text-sm outline-none">
             <option v-for="v in installVersions" :key="v.id" :value="v.id">{{ v.name || v.id }}</option>
@@ -1201,15 +1232,6 @@ function statusText(s: StoreSource) {
           {{ $t('store.advanced') }}
         </button>
         <div v-if="installAdvanced" class="flex flex-col gap-3 rounded-md border border-dashed p-3">
-          <div class="flex items-center gap-3">
-            <span class="w-28 shrink-0 text-sm text-muted-foreground">{{ $t('nodes.targetNode') }}</span>
-            <select v-model="installNode" class="h-9 min-w-0 flex-1 rounded-md border border-input bg-background px-2 text-sm outline-none">
-              <option value="">{{ $t('nodes.localPanel') }}</option>
-              <option v-for="n in onlineNodes.filter(x => x.id !== 'local')" :key="n.id" :value="n.id">
-                {{ n.name }}（{{ n.arch || 'linux' }}）
-              </option>
-            </select>
-          </div>
           <div class="flex items-center gap-3">
             <span class="w-28 shrink-0 text-sm text-muted-foreground">{{ $t('store.network') }}</span>
             <div class="flex flex-1 items-center gap-2">

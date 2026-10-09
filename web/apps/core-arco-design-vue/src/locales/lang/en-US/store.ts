@@ -164,4 +164,6 @@ export default {
   saveFailed: 'Save failed',
   opFailed: 'Operation failed',
   deleteFailed: 'Delete failed',
+  nodeAll: 'All nodes',
+
 }

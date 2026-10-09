@@ -118,9 +118,9 @@ func (s *SshGuardService) SetConfig(ctx context.Context, nodeID string, port *in
 		lines = append(lines, "passwordauthentication "+v)
 	}
 	if pubkeyAuth != nil {
-		v := "yes"
+		v := "no"
 		if *pubkeyAuth {
-			v = "no"
+			v = "yes"
 		}
 		lines = append(lines, "pubkeyauthentication "+v)
 	}

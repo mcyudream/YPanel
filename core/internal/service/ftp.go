@@ -3,6 +3,7 @@ package service
 
 import (
 	"context"
+	"encoding/base64"
 	"fmt"
 	"regexp"
 	"strings"
@@ -141,6 +142,54 @@ grep -E '^(listen_port|pasv_min_port|pasv_max_port)' /etc/vsftpd.conf`, port, pa
 	}
 	if !strings.Contains(out, fmt.Sprintf("listen_port=%d", port)) {
 		return errs.Wrapc(errs.CodeFileOpFailed, "端口设置回读验证失败")
+	}
+	return nil
+}
+
+// ftpConfPathProbe 探测配置文件路径（Debian /etc/vsftpd.conf 优先，RHEL /etc/vsftpd/vsftpd.conf 兜底）。
+const ftpConfPathProbe = `f=/etc/vsftpd.conf; [ -f "$f" ] || f=/etc/vsftpd/vsftpd.conf; if [ -f "$f" ]; then cat "$f"; else echo __NO_CONF__; fi`
+
+// GetConfig 读 vsftpd.conf 原文（M53：配置编辑器）。
+func (s *FtpService) GetConfig(ctx context.Context) (string, error) {
+	out, err := s.exec(ctx, ftpConfPathProbe, 15)
+	if err != nil {
+		return "", err
+	}
+	if strings.Contains(out, "__NO_CONF__") {
+		return "", errs.Wrap(errs.ErrBadRequest, "未找到 vsftpd 配置文件（服务未安装？）")
+	}
+	return out, nil
+}
+
+// PutConfig 写回 vsftpd.conf（base64 传递防注入）+ 重启校验，失败自动回滚备份。
+func (s *FtpService) PutConfig(ctx context.Context, content string) error {
+	if strings.TrimSpace(content) == "" {
+		return errs.Wrap(errs.ErrBadRequest, "配置内容不能为空")
+	}
+	if len(content) > 512*1024 {
+		return errs.Wrap(errs.ErrBadRequest, "配置内容过大（>512KB）")
+	}
+	b64 := base64.StdEncoding.EncodeToString([]byte(content))
+	script := `set -e
+f=/etc/vsftpd.conf; [ -f "$f" ] || f=/etc/vsftpd/vsftpd.conf
+[ -f "$f" ] || { echo __NO_CONF__; exit 1; }
+cp "$f" /tmp/yp-vsftpd.bak
+printf '%s' '` + b64 + `' | base64 -d > "$f"
+if systemctl restart vsftpd 2>/tmp/yp-ftp.err; then
+  echo FTP_CONF_OK
+else
+  cp /tmp/yp-vsftpd.bak "$f"
+  systemctl restart vsftpd 2>/dev/null || true
+  echo FTP_CONF_ROLLBACK
+  cat /tmp/yp-ftp.err
+  exit 1
+fi`
+	out, err := s.exec(ctx, script, 60)
+	if err != nil {
+		return err
+	}
+	if !strings.Contains(out, "FTP_CONF_OK") {
+		return errs.Wrapc(errs.CodeFileOpFailed, "重启 vsftpd 失败，已回滚: "+firstLine(tail(out, 300)))
 	}
 	return nil
 }

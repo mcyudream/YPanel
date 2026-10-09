@@ -164,4 +164,6 @@ export default {
   saveFailed: '保存失败',
   opFailed: '操作失败',
   deleteFailed: '删除失败',
+  nodeAll: '全部节点',
+
 }
