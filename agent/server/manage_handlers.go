@@ -165,9 +165,20 @@ func (s *Server) handleDockerContainerStats(w http.ResponseWriter, r *http.Reque
 	writeOK(w, raw)
 }
 
+// handleDockerContainerRootfs GET /agent/v1/docker/containers/{id}/rootfs
+// 返回容器可写层宿主目录（overlay2 UpperDir），供无法启动的容器经宿主文件通道直读/修复。
+func (s *Server) handleDockerContainerRootfs(w http.ResponseWriter, r *http.Request) {
+	dir, err := s.dock.ContainerRootfsDir(r.Context(), r.PathValue("id"))
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	writeOK(w, map[string]string{"path": dir})
+}
+
 // handleDockerContainerRemove DELETE /agent/v1/docker/containers/{id}
 func (s *Server) handleDockerContainerRemove(w http.ResponseWriter, r *http.Request) {
-	if err := s.dock.ContainerRemove(r.Context(), r.PathValue("id"), r.URL.Query().Get("force") == "1"); err != nil {
+	if err := s.dock.ContainerRemove(r.Context(), r.PathValue("id"), r.URL.Query().Get("force") == "1", r.URL.Query().Get("v") == "1"); err != nil {
 		writeErr(w, err)
 		return
 	}
@@ -201,4 +212,47 @@ func (s *Server) handleDockerContainerCreate(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	writeOK(w, map[string]string{"id": id})
+}
+
+// handleDockerContainerRecreate POST /agent/v1/docker/containers/{id}/recreate
+// 编辑保存：删除并按新参数重建同名容器（compose 管理的容器被拒绝）。
+func (s *Server) handleDockerContainerRecreate(w http.ResponseWriter, r *http.Request) {
+	if !s.dockerOK() {
+		writeErr(w, errs.ErrAgentDisabled)
+		return
+	}
+	req, err := decodeBody[dockerx.ContainerCreateReq](r)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	id, err := s.dock.ContainerRecreate(r.Context(), r.PathValue("id"), *req)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	writeOK(w, map[string]string{"id": id})
+}
+
+// handleDockerContainerUpdate POST /agent/v1/docker/containers/{id}/update
+// 资源限制/重启策略热更新（docker update，免重建）。
+func (s *Server) handleDockerContainerUpdate(w http.ResponseWriter, r *http.Request) {
+	if !s.dockerOK() {
+		writeErr(w, errs.ErrAgentDisabled)
+		return
+	}
+	req, err := decodeBody[dockerx.ContainerUpdateReq](r)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	warnings, err := s.dock.ContainerUpdateResources(r.Context(), r.PathValue("id"), *req)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	if warnings == nil {
+		warnings = []string{}
+	}
+	writeOK(w, map[string]any{"warnings": warnings})
 }

@@ -29,6 +29,20 @@ func (s *Server) handleComposeList(w http.ResponseWriter, r *http.Request) {
 	writeOK(w, projects)
 }
 
+// handleComposeTopology GET /agent/v1/compose/topology?name=&dir=（M26 P1：项目服务拓扑）
+func (s *Server) handleComposeTopology(w http.ResponseWriter, r *http.Request) {
+	if !s.composeReady() {
+		writeErr(w, errs.ErrAgentDisabled)
+		return
+	}
+	out, err := s.compose.Topology(r.Context(), qParam(r, "name"), qParam(r, "dir"))
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	writeOK(w, out)
+}
+
 func (s *Server) handleComposeConfig(w http.ResponseWriter, r *http.Request) {
 	if !s.composeReady() {
 		writeErr(w, errs.ErrAgentDisabled)
@@ -129,7 +143,7 @@ func (s *Server) handleExec(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	slog.Info("agent exec", "cmdPrefix", req.Command[:min(60, len(req.Command))], "timeout", req.TimeoutSecs)
-	out, err := execx.Run(r.Context(), req.Command, req.TimeoutSecs)
+	out, err := execx.RunEnv(r.Context(), req.Command, req.Env, req.TimeoutSecs)
 	if err != nil {
 		writeErr(w, err)
 		return

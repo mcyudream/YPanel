@@ -1,39 +1,62 @@
-// 文件管理扩展 handlers（chmod/压缩/解压/搜索）。
+// 文件管理扩展 handlers（chmod/chown/压缩/解压/搜索/属主枚举）。
 package server
 
 import (
 	"net/http"
 
+	"github.com/ypanel/shared/dto"
 )
 
-// handleFileChmod POST /agent/v1/files/chmod {path, mode}
+// handleFileChmod POST /agent/v1/files/chmod {path, mode, recursive}
 func (s *Server) handleFileChmod(w http.ResponseWriter, r *http.Request) {
-	req, err := decodeBody[struct {
-		Path string `json:"path" binding:"required"`
-		Mode string `json:"mode" binding:"required"`
-	}](r)
+	req, err := decodeBody[dto.FileChmodReq](r)
 	if err != nil {
 		writeErr(w, err)
 		return
 	}
-	if err := s.files.Chmod(r.Context(), req.Path, req.Mode); err != nil {
+	if err := s.files.Chmod(r.Context(), req.Path, req.Mode, req.Recursive); err != nil {
 		writeErr(w, err)
 		return
 	}
 	writeOKEmpty(w)
 }
 
-// handleFileCompress POST /agent/v1/files/compress {src, dest}
-func (s *Server) handleFileCompress(w http.ResponseWriter, r *http.Request) {
-	req, err := decodeBody[struct {
-		Src  string `json:"src" binding:"required"`
-		Dest string `json:"dest" binding:"required"`
-	}](r)
+// handleFileChown POST /agent/v1/files/chown {path, owner, group, recursive}
+func (s *Server) handleFileChown(w http.ResponseWriter, r *http.Request) {
+	req, err := decodeBody[dto.FileChownReq](r)
 	if err != nil {
 		writeErr(w, err)
 		return
 	}
-	if err := s.files.Compress(r.Context(), req.Src, req.Dest); err != nil {
+	if err := s.files.Chown(r.Context(), req.Path, req.Owner, req.Group, req.Recursive); err != nil {
+		writeErr(w, err)
+		return
+	}
+	writeOKEmpty(w)
+}
+
+// handleFileOwners GET /agent/v1/files/owners（系统用户/组枚举）
+func (s *Server) handleFileOwners(w http.ResponseWriter, r *http.Request) {
+	out, err := s.files.ListOwners()
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	writeOK(w, out)
+}
+
+// handleFileCompress POST /agent/v1/files/compress {src?, srcs?, dest}
+func (s *Server) handleFileCompress(w http.ResponseWriter, r *http.Request) {
+	req, err := decodeBody[dto.FileCompressReq](r)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	srcs := req.Srcs
+	if len(srcs) == 0 && req.Src != "" {
+		srcs = []string{req.Src} // 兼容旧单源调用方
+	}
+	if err := s.files.Compress(r.Context(), req.Dest, srcs); err != nil {
 		writeErr(w, err)
 		return
 	}

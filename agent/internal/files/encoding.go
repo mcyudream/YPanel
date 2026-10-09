@@ -42,7 +42,15 @@ type ReadOptions struct {
 }
 
 // decodeBytes 按白名单编码解码原始字节；encoding 为空/utf-8 时原样返回。
+// base64 为传输用特殊编码（二进制文件写入通道），不参与文本编码白名单。
 func decodeBytes(data []byte, encodingID string) ([]byte, string, error) {
+	if encodingID == "base64" {
+		decoded, err := base64.StdEncoding.DecodeString(string(data))
+		if err != nil {
+			return nil, "", fmt.Errorf("base64 解码失败: %w", err)
+		}
+		return decoded, "base64", nil
+	}
 	enc, ok := LookupEncoding(encodingID)
 	if !ok {
 		return nil, "", fmt.Errorf("不支持的编码: %s", encodingID)
@@ -59,6 +67,9 @@ func decodeBytes(data []byte, encodingID string) ([]byte, string, error) {
 
 // encodeBytes 按白名单编码编码文本；encoding 为空/utf-8 时原样返回。
 func encodeBytes(text []byte, encodingID string) ([]byte, error) {
+	if encodingID == "base64" {
+		return base64.StdEncoding.DecodeString(string(text))
+	}
 	enc, ok := LookupEncoding(encodingID)
 	if !ok {
 		return nil, fmt.Errorf("不支持的编码: %s", encodingID)

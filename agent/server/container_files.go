@@ -139,7 +139,24 @@ func (s *Server) handleContainerFileChmod(w http.ResponseWriter, r *http.Request
 		writeErr(w, err)
 		return
 	}
-	if err := s.dock.ContainerFileChmod(r.Context(), r.PathValue("id"), req.Path, req.Mode); err != nil {
+	if err := s.dock.ContainerFileChmod(r.Context(), r.PathValue("id"), req.Path, req.Mode, req.Recursive); err != nil {
+		writeErr(w, err)
+		return
+	}
+	writeOKEmpty(w)
+}
+
+// handleContainerFileChown POST /agent/v1/docker/containers/{id}/files/chown {path, owner, group, recursive}
+func (s *Server) handleContainerFileChown(w http.ResponseWriter, r *http.Request) {
+	if !s.containerFileGuard(w) {
+		return
+	}
+	req, err := decodeBody[dto.FileChownReq](r)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	if err := s.dock.ContainerFileChown(r.Context(), r.PathValue("id"), req.Path, req.Owner, req.Group, req.Recursive); err != nil {
 		writeErr(w, err)
 		return
 	}

@@ -5,6 +5,7 @@ package execx
 import (
 	"bytes"
 	"context"
+	"os"
 	"os/exec"
 	"strings"
 	"time"
@@ -24,6 +25,11 @@ const MaxTimeoutSecs = 86400
 
 // Run 以 sh -c 执行命令，返回输出与超时/退出码。timeoutSecs<=0 时用默认值。
 func Run(ctx context.Context, command string, timeoutSecs int) (dto.ExecResp, error) {
+	return RunEnv(ctx, command, nil, timeoutSecs)
+}
+
+// RunEnv 同 Run，额外注入环境变量（敏感值走 env 不进 argv）。
+func RunEnv(ctx context.Context, command string, env map[string]string, timeoutSecs int) (dto.ExecResp, error) {
 	command = strings.TrimSpace(command)
 	if command == "" {
 		return dto.ExecResp{}, errs.ErrBadRequest
@@ -39,6 +45,12 @@ func Run(ctx context.Context, command string, timeoutSecs int) (dto.ExecResp, er
 	defer cancel()
 
 	cmd := exec.CommandContext(ctx, "sh", "-c", command)
+	if len(env) > 0 {
+		cmd.Env = os.Environ()
+		for k, v := range env {
+			cmd.Env = append(cmd.Env, k+"="+v)
+		}
+	}
 	var buf bytes.Buffer
 	cmd.Stdout = &buf
 	cmd.Stderr = &buf

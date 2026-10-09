@@ -153,8 +153,17 @@ func (m *Manager) Action(ctx context.Context, id, action string) error {
 	return nil
 }
 
-// Logs 读取容器日志。follow 时持续写入 w 直到 ctx 取消。
-func (m *Manager) Logs(ctx context.Context, id, tail string, follow, timestamps bool, w io.Writer) error {
+// LogsOptions 容器日志读取参数。
+type LogsOptions struct {
+	Tail       string
+	Follow     bool
+	Timestamps bool
+	Since      string // RFC3339 / unix 秒 / 相对时长，透传 docker；空 = 不限
+	Until      string // 空 = 至今
+}
+
+// Logs 读取容器日志。Follow 时持续写入 w 直到 ctx 取消。
+func (m *Manager) Logs(ctx context.Context, id string, opt LogsOptions, w io.Writer) error {
 	cli, err := m.getClient()
 	if err != nil {
 		return err
@@ -162,9 +171,11 @@ func (m *Manager) Logs(ctx context.Context, id, tail string, follow, timestamps 
 	opts := client.ContainerLogsOptions{
 		ShowStdout: true,
 		ShowStderr: true,
-		Follow:     follow,
-		Tail:       tail,
-		Timestamps: timestamps,
+		Follow:     opt.Follow,
+		Tail:       opt.Tail,
+		Timestamps: opt.Timestamps,
+		Since:      opt.Since,
+		Until:      opt.Until,
 	}
 	reader, err := cli.ContainerLogs(ctx, id, opts)
 	if err != nil {

@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"net/netip"
+	"os"
 	"regexp"
 	"strings"
 
@@ -266,6 +267,31 @@ func (m *Manager) ContainerInspectRaw(ctx context.Context, id string) (json.RawM
 	return res.Raw, nil
 }
 
+// ContainerRootfsDir 返回容器可写层在宿主机上的目录（overlay2 UpperDir）。
+// 用途：容器无法启动（挂载损坏/文件损坏）时经宿主文件通道直读/修复可写层文件。
+// 注意：仅含可写层（运行期写入/修改的文件）；仅对非运行容器操作才与容器视图一致。
+func (m *Manager) ContainerRootfsDir(ctx context.Context, id string) (string, error) {
+	cli, err := m.getClient()
+	if err != nil {
+		return "", err
+	}
+	res, err := cli.ContainerInspect(ctx, id, client.ContainerInspectOptions{})
+	if err != nil {
+		return "", errs.Wrapc(errs.CodeNotFound, "容器不存在: "+err.Error())
+	}
+	upper := ""
+	if res.Container.GraphDriver != nil && res.Container.GraphDriver.Data != nil {
+		upper = res.Container.GraphDriver.Data["UpperDir"]
+	}
+	if upper == "" {
+		return "", errs.Wrapc(errs.CodeFileOpFailed, "该容器的存储驱动不提供可写层目录（GraphDriver.Data.UpperDir 为空）")
+	}
+	if _, err := os.Stat(upper); err != nil {
+		return "", errs.Wrapc(errs.CodeFileOpFailed, "可写层目录不可访问: "+err.Error())
+	}
+	return upper, nil
+}
+
 // ContainerStatsRaw 容器单次 stats 原始 JSON。
 func (m *Manager) ContainerStatsRaw(ctx context.Context, id string) (json.RawMessage, error) {
 	cli, err := m.getClient()
@@ -284,13 +310,13 @@ func (m *Manager) ContainerStatsRaw(ctx context.Context, id string) (json.RawMes
 	return raw, nil
 }
 
-// ContainerRemove 删除容器（force 强制）。
-func (m *Manager) ContainerRemove(ctx context.Context, id string, force bool) error {
+// ContainerRemove 删除容器（force 强制；volumes 同时删除匿名数据卷）。
+func (m *Manager) ContainerRemove(ctx context.Context, id string, force bool, volumes bool) error {
 	cli, err := m.getClient()
 	if err != nil {
 		return err
 	}
-	_, rmErr := cli.ContainerRemove(ctx, id, client.ContainerRemoveOptions{Force: force})
+	_, rmErr := cli.ContainerRemove(ctx, id, client.ContainerRemoveOptions{Force: force, RemoveVolumes: volumes})
 	return rmErr
 }
 
@@ -398,6 +424,22 @@ func (m *Manager) ContainerCreate(ctx context.Context, r ContainerCreateReq) (st
 	if err != nil {
 		return "", err
 	}
+	id, err := m.containerCreateOnly(ctx, r)
+	if err != nil {
+		return "", err
+	}
+	if _, err := cli.ContainerStart(ctx, id, client.ContainerStartOptions{}); err != nil {
+		return "", errs.Wrapc(errs.CodeFileOpFailed, "启动容器失败: "+err.Error())
+	}
+	return id, nil
+}
+
+// containerCreateOnly 仅创建不启动（recreate 需按原运行状态决定是否启动）。
+func (m *Manager) containerCreateOnly(ctx context.Context, r ContainerCreateReq) (string, error) {
+	cli, err := m.getClient()
+	if err != nil {
+		return "", err
+	}
 	if r.Name == "" || r.Image == "" {
 		return "", errs.Wrap(errs.ErrBadRequest, "name/image 必填")
 	}
@@ -450,9 +492,6 @@ func (m *Manager) ContainerCreate(ctx context.Context, r ContainerCreateReq) (st
 	})
 	if err != nil {
 		return "", errs.Wrapc(errs.CodeFileOpFailed, "创建容器失败: "+err.Error())
-	}
-	if _, err := cli.ContainerStart(ctx, resp.ID, client.ContainerStartOptions{}); err != nil {
-		return "", errs.Wrapc(errs.CodeFileOpFailed, "启动容器失败: "+err.Error())
 	}
 	return resp.ID, nil
 }

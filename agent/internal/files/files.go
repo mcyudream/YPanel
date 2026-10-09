@@ -239,6 +239,84 @@ func (m *Manager) Rename(from, to string) error {
 	return nil
 }
 
+// Copy 递归复制文件/目录（保留权限；symlink 原样重建；目标已存在默认报错，
+// overwrite=true 时先移除目标再复制；目标位于源内部拒绝（防自环））。
+func (m *Manager) Copy(from, to string, overwrite bool) error {
+	absFrom, err := m.Normalize(from)
+	if err != nil {
+		return err
+	}
+	absTo, err := m.Normalize(to)
+	if err != nil {
+		return err
+	}
+	if absFrom == "/" || absTo == "/" {
+		return errs.Wrap(errs.ErrBadRequest, "不允许操作系统根目录")
+	}
+	if absTo == absFrom {
+		return errs.Wrap(errs.ErrBadRequest, "源与目标相同")
+	}
+	if strings.HasPrefix(absTo, absFrom+string(filepath.Separator)) {
+		return errs.Wrap(errs.ErrBadRequest, "目标不能位于源目录内部")
+	}
+	if _, err := os.Lstat(absFrom); err != nil {
+		return errs.Wrap(errs.ErrNotFound, err.Error())
+	}
+	if _, err := os.Lstat(absTo); err == nil {
+		if !overwrite {
+			return errs.Wrap(errs.ErrBadRequest, "目标已存在: "+absTo)
+		}
+		if err := os.RemoveAll(absTo); err != nil {
+			return errs.Wrapc(errs.CodeFileOpFailed, err.Error())
+		}
+	}
+	return copyRecursive(absFrom, absTo)
+}
+
+func copyRecursive(src, dst string) error {
+	info, err := os.Lstat(src)
+	if err != nil {
+		return err
+	}
+	switch {
+	case info.Mode()&os.ModeSymlink != 0:
+		link, err := os.Readlink(src)
+		if err != nil {
+			return err
+		}
+		return os.Symlink(link, dst)
+	case info.IsDir():
+		if err := os.MkdirAll(dst, info.Mode().Perm()); err != nil {
+			return err
+		}
+		entries, err := os.ReadDir(src)
+		if err != nil {
+			return err
+		}
+		for _, e := range entries {
+			if err := copyRecursive(filepath.Join(src, e.Name()), filepath.Join(dst, e.Name())); err != nil {
+				return err
+			}
+		}
+		return nil
+	default:
+		in, err := os.Open(src)
+		if err != nil {
+			return err
+		}
+		defer func() { _ = in.Close() }()
+		out, err := os.OpenFile(dst, os.O_WRONLY|os.O_CREATE|os.O_EXCL, info.Mode().Perm())
+		if err != nil {
+			return err
+		}
+		if _, err := io.Copy(out, in); err != nil {
+			_ = out.Close()
+			return err
+		}
+		return out.Close()
+	}
+}
+
 // Delete 批量删除（递归）。
 func (m *Manager) Delete(paths []string) error {
 	for _, p := range paths {

@@ -14,6 +14,7 @@ import (
 
 	"github.com/gorilla/websocket"
 	"github.com/ypanel/agent/internal/compose"
+	"github.com/ypanel/agent/internal/dockerx"
 	"github.com/ypanel/agent/internal/files"
 	"github.com/ypanel/agent/internal/term"
 	"github.com/ypanel/shared/dto"
@@ -152,6 +153,19 @@ func (s *Server) handleFileRename(w http.ResponseWriter, r *http.Request) {
 	writeOKEmpty(w)
 }
 
+func (s *Server) handleFileCopy(w http.ResponseWriter, r *http.Request) {
+	req, err := decodeBody[dto.FileCopyReq](r)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	if err := s.files.Copy(req.From, req.To, req.Overwrite); err != nil {
+		writeErr(w, err)
+		return
+	}
+	writeOKEmpty(w)
+}
+
 func (s *Server) handleFileDelete(w http.ResponseWriter, r *http.Request) {
 	req, err := decodeBody[dto.FileDeleteReq](r)
 	if err != nil {
@@ -221,30 +235,56 @@ func (s *Server) handleDockerLogs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	id := r.PathValue("id")
-	follow := qParam(r, "follow") == "1"
-	tail := qParam(r, "tail")
-	if tail == "" {
-		tail = "500"
+	opt := dockerx.LogsOptions{
+		Tail:       qParam(r, "tail"),
+		Follow:     qParam(r, "follow") == "1",
+		Timestamps: qParam(r, "timestamps") != "0",
+		Since:      qParam(r, "since"),
+		Until:      qParam(r, "until"),
 	}
-	timestamps := qParam(r, "timestamps") != "0"
-	if follow {
+	if opt.Tail == "" {
+		opt.Tail = "500"
+	}
+	if opt.Follow {
 		// 持续推送：chunked 文本流
 		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 		w.Header().Set("X-Accel-Buffering", "no")
 		flusher, _ := w.(http.Flusher)
-		err := s.dock.Logs(r.Context(), id, tail, true, timestamps, writeFlush{w, flusher})
+		err := s.dock.Logs(r.Context(), id, opt, writeFlush{w, flusher})
 		if err != nil && r.Context().Err() == nil && !errors.Is(err, context.Canceled) {
 			slog.Warn("docker follow logs failed", "err", err)
 		}
 		return
 	}
 	var sb bufferedWriter
-	if err := s.dock.Logs(r.Context(), id, tail, false, timestamps, &sb); err != nil {
+	if err := s.dock.Logs(r.Context(), id, opt, &sb); err != nil {
 		writeErr(w, err)
 		return
 	}
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 	_, _ = w.Write([]byte(sb.String()))
+}
+
+// handleDockerLogsSearch POST /agent/v1/docker/logs/search（M33 日志中心：多容器服务端搜索）
+func (s *Server) handleDockerLogsSearch(w http.ResponseWriter, r *http.Request) {
+	if !s.dock.Available() {
+		writeErr(w, errs.ErrAgentDisabled)
+		return
+	}
+	req, err := decodeBody[dto.LogsSearchReq](r)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	// 有界扫描兜底：单次搜索最长 60s
+	ctx, cancel := context.WithTimeout(r.Context(), 60*time.Second)
+	defer cancel()
+	out, err := s.dock.Search(ctx, req)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	writeOK(w, out)
 }
 
 type writeFlush struct {

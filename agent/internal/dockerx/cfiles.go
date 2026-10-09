@@ -27,6 +27,9 @@ const containerReadLimit = 1 << 20
 
 var chmodModePattern = regexp.MustCompile(`^[0-7]{3,4}$`)
 
+// ownerSpecPattern chown 属主/属组名单段（名字或数字 ID，排除空串与 - 开头选项形态）。
+var ownerSpecPattern = regexp.MustCompile(`^[A-Za-z0-9_.][A-Za-z0-9_.-]*$`)
+
 // ContainerFileList 列目录：CopyFrom 解 tar 头，只保留第一层子项。
 func (m *Manager) ContainerFileList(ctx context.Context, id, dir string) ([]dto.FileEntry, error) {
 	if !m.Available() {
@@ -317,13 +320,57 @@ func (m *Manager) ContainerFileDelete(ctx context.Context, id string, paths []st
 	return nil
 }
 
-// ContainerFileChmod 容器内权限修改（exec chmod，3-4 位八进制）。
-func (m *Manager) ContainerFileChmod(ctx context.Context, id, filePath, mode string) error {
+// ContainerFileChmod 容器内权限修改（exec chmod，3-4 位八进制；recursive 加 -R）。
+func (m *Manager) ContainerFileChmod(ctx context.Context, id, filePath, mode string, recursive bool) error {
 	if !chmodModePattern.MatchString(mode) {
 		return errs.Wrapc(errs.CodeBadRequest, "权限格式错误（3-4 位八进制）")
 	}
-	code, out, err := m.ContainerExecRun(ctx, id, []string{"chmod", mode, filePath}, 30*time.Second)
+	argv := []string{"chmod"}
+	if recursive {
+		argv = append(argv, "-R")
+	}
+	argv = append(argv, "--", mode, filePath)
+	code, out, err := m.ContainerExecRun(ctx, id, argv, 60*time.Second)
 	return containerFileExecErr("权限修改", code, out, err)
+}
+
+// containerOwnerSpec 校验并组装 chown 的 owner[:group] 参数（名字或数字 ID，防选项注入）。
+func containerOwnerSpec(owner, group string) (string, error) {
+	ok := func(v string) bool { return ownerSpecPattern.MatchString(v) }
+	switch {
+	case owner != "" && group != "":
+		if !ok(owner) || !ok(group) {
+			return "", errs.Wrapc(errs.CodeBadRequest, "属主格式错误")
+		}
+		return owner + ":" + group, nil
+	case owner != "":
+		if !ok(owner) {
+			return "", errs.Wrapc(errs.CodeBadRequest, "属主格式错误")
+		}
+		return owner, nil
+	case group != "":
+		if !ok(group) {
+			return "", errs.Wrapc(errs.CodeBadRequest, "属组格式错误")
+		}
+		return ":" + group, nil
+	default:
+		return "", errs.Wrapc(errs.CodeBadRequest, "未指定属主/属组")
+	}
+}
+
+// ContainerFileChown 容器内属主修改（exec chown [-R] -- owner[:group] path）。
+func (m *Manager) ContainerFileChown(ctx context.Context, id, filePath, owner, group string, recursive bool) error {
+	spec, err := containerOwnerSpec(owner, group)
+	if err != nil {
+		return err
+	}
+	argv := []string{"chown"}
+	if recursive {
+		argv = append(argv, "-R")
+	}
+	argv = append(argv, "--", spec, filePath)
+	code, out, err := m.ContainerExecRun(ctx, id, argv, 60*time.Second)
+	return containerFileExecErr("属主修改", code, out, err)
 }
 
 func containerFileExecErr(op string, code int, out string, err error) error {
