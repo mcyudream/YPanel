@@ -13,7 +13,12 @@ type Fail2banAPI struct {
 
 // Status GET /api/v1/fail2ban/status
 func (a *Fail2banAPI) Status(c *gin.Context) {
-	out, err := a.F2B.Status(c.Request.Context())
+	f2b, err := a.F2B.WithNode(c.Query("nodeId"))
+	if err != nil {
+		respErr(c, err)
+		return
+	}
+	out, err := f2b.Status(c.Request.Context())
 	if err != nil {
 		respErr(c, err)
 		return
@@ -23,6 +28,11 @@ func (a *Fail2banAPI) Status(c *gin.Context) {
 
 // Unban POST /api/v1/fail2ban/unban {jail, ip}
 func (a *Fail2banAPI) Unban(c *gin.Context) {
+	f2b, err := a.F2B.WithNode(c.Query("nodeId"))
+	if err != nil {
+		respErr(c, err)
+		return
+	}
 	req, ok := bind[struct {
 		Jail string `json:"jail" binding:"required"`
 		IP   string `json:"ip" binding:"required"`
@@ -34,7 +44,7 @@ func (a *Fail2banAPI) Unban(c *gin.Context) {
 		respErr(c, err)
 		return
 	}
-	if err := a.F2B.Unban(c.Request.Context(), req.Jail, req.IP); err != nil {
+	if err := f2b.Unban(c.Request.Context(), req.Jail, req.IP); err != nil {
 		respErr(c, err)
 		return
 	}
@@ -43,6 +53,11 @@ func (a *Fail2banAPI) Unban(c *gin.Context) {
 
 // Ban POST /api/v1/fail2ban/ban {jail, ip}
 func (a *Fail2banAPI) Ban(c *gin.Context) {
+	f2b, err := a.F2B.WithNode(c.Query("nodeId"))
+	if err != nil {
+		respErr(c, err)
+		return
+	}
 	req, ok := bind[struct {
 		Jail string `json:"jail" binding:"required"`
 		IP   string `json:"ip" binding:"required"`
@@ -54,7 +69,7 @@ func (a *Fail2banAPI) Ban(c *gin.Context) {
 		respErr(c, err)
 		return
 	}
-	if err := a.F2B.Ban(c.Request.Context(), req.Jail, req.IP); err != nil {
+	if err := f2b.Ban(c.Request.Context(), req.Jail, req.IP); err != nil {
 		respErr(c, err)
 		return
 	}

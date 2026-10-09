@@ -1,7 +1,6 @@
 package api
 
 import (
-	"strconv"
 
 	"github.com/gin-gonic/gin"
 
@@ -13,6 +12,28 @@ import (
 // DatabaseAPI 数据库实例接口。
 type DatabaseAPI struct {
 	DBS *service.DatabaseService
+}
+
+// SetOwner PUT /api/v1/database/instances/:id/owner {ownerId}（M54-P3：仅 all 数据范围可操作；0=公共）
+func (a *DatabaseAPI) SetOwner(c *gin.Context) {
+	if !requireAllScope(c) {
+		return
+	}
+	id, err := idParam(c)
+	if err != nil {
+		respErr(c, err)
+		return
+	}
+	ownerID, ok := parseOwnerBody(c)
+	if !ok {
+		respErr(c, errBadRequest("ownerId 不合法"))
+		return
+	}
+	if err := a.DBS.SetInstanceOwner(id, ownerID); err != nil {
+		respErr(c, err)
+		return
+	}
+	respOK(c, struct{}{})
 }
 
 // List GET /api/v1/database/instances
@@ -41,6 +62,11 @@ func (a *DatabaseAPI) Create(c *gin.Context) {
 		respErr(c, err)
 		return
 	}
+	// M54-P3：assigned 创建 → 属主自己；all → 公共
+	if uid := stampOwnerForCreate(c); uid != 0 {
+		_ = a.DBS.SetInstanceOwner(inst.ID, uid)
+		inst.OwnerID = uid
+	}
 	respOK(c, gin.H{"id": inst.ID, "name": inst.Name, "port": inst.Port})
 }
 
@@ -63,6 +89,10 @@ func (a *DatabaseAPI) CreateExternal(c *gin.Context) {
 		respErr(c, err)
 		return
 	}
+	if uid := stampOwnerForCreate(c); uid != 0 {
+		_ = a.DBS.SetInstanceOwner(inst.ID, uid)
+		inst.OwnerID = uid
+	}
 	respOK(c, gin.H{"id": inst.ID, "name": inst.Name, "host": inst.Host, "port": inst.Port})
 }
 
@@ -70,14 +100,19 @@ func (a *DatabaseAPI) CreateExternal(c *gin.Context) {
 func (a *DatabaseAPI) Adopt(c *gin.Context) {
 	req, ok := bind[struct {
 		Project string `json:"project" binding:"required"`
+		NodeID  string `json:"nodeId"`
 	}](c)
 	if !ok {
 		return
 	}
-	inst, err := a.DBS.Adopt(c.Request.Context(), req.Project)
+	inst, err := a.DBS.Adopt(c.Request.Context(), req.Project, req.NodeID)
 	if err != nil {
 		respErr(c, err)
 		return
+	}
+	if uid := stampOwnerForCreate(c); uid != 0 {
+		_ = a.DBS.SetInstanceOwner(inst.ID, uid)
+		inst.OwnerID = uid
 	}
 	respOK(c, gin.H{"id": inst.ID, "name": inst.Name, "type": inst.Type, "port": inst.Port})
 }
@@ -114,7 +149,7 @@ func (a *DatabaseAPI) StartStop(up bool) gin.HandlerFunc {
 
 // Reveal GET /api/v1/database/instances/:id/reveal（含明文密码，admin 专用）
 func (a *DatabaseAPI) Reveal(c *gin.Context) {
-	if c.GetString(middleware.CtxRole) != "admin" {
+	if !isSuperCaller(c) { // M54：按通配权限判断（等价旧 admin）
 		respErr(c, errs.ErrForbidden)
 		return
 	}

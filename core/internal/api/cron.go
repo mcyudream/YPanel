@@ -63,7 +63,7 @@ func (a *CronAPI) Create(c *gin.Context) {
 	if taskType == "" {
 		taskType = "shell"
 	}
-	row := model.CronTask{Name: req.Name, Cron: req.Cron, Command: req.Command, Type: taskType, Payload: req.Payload, Enabled: true, TimeoutSecs: timeout}
+	row := model.CronTask{Name: req.Name, Cron: req.Cron, Command: req.Command, Type: taskType, Payload: req.Payload, Enabled: true, TimeoutSecs: timeout, NodeID: req.NodeID}
 	if err := a.DB.Create(&row).Error; err != nil {
 		respErr(c, err)
 		return

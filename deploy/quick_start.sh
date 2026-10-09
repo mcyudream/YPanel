@@ -111,17 +111,19 @@ ask_yn() {
 # ---- 卸载 ----
 if [ "$UNINSTALL" = "1" ]; then
   if [ "$MODE" = "node" ]; then
-    systemctl disable --now "$AGENT_SERVICE" 2>/dev/null || true
-    rm -f /etc/systemd/system/${AGENT_SERVICE}.service
-    systemctl daemon-reload
-    rm -rf "$NODE_DIR" /etc/ypanel
-    log "节点 agent 已卸载"
+  systemctl disable --now "$AGENT_SERVICE" 2>/dev/null || true
+  rm -f /etc/systemd/system/${AGENT_SERVICE}.service
+  systemctl daemon-reload
+  rm -rf "$NODE_DIR" /etc/ypanel
+  rm -f /usr/local/bin/ypagent
+  log "节点 agent 已卸载"
   else
     systemctl disable --now "$SERVICE_NAME" 2>/dev/null || true
     systemctl disable --now "$AGENT_SERVICE" 2>/dev/null || true
     rm -f /etc/systemd/system/${SERVICE_NAME}.service /etc/systemd/system/${AGENT_SERVICE}.service
     systemctl daemon-reload
     rm -rf "$INSTALL_DIR"
+    rm -f /usr/local/bin/ypanel
     log "已卸载（数据目录一并移除；如需保留数据请先备份 $DATA_DIR）"
   fi
   exit 0
@@ -297,8 +299,9 @@ if [ "$MODE" = "panel" ] && [ "$UPGRADE" = "1" ]; then
   tar -xzf "$TMP_TAR" -C "$UPDATE_DIR" ypanel
   rm -rf "$TMP_DIR"
   log "应用更新（约 3 秒后自动替换并重启）…"
+  ln -sf "${INSTALL_DIR}/ypanel" /usr/local/bin/ypanel
   setsid nohup sh -c "sleep 2; cp ${INSTALL_DIR}/ypanel ${INSTALL_DIR}/ypanel.bak; mv ${UPDATE_DIR}/ypanel ${INSTALL_DIR}/ypanel; chmod +x ${INSTALL_DIR}/ypanel; systemctl restart ${SERVICE_NAME}" >/tmp/ypanel-upgrade.log 2>&1 < /dev/null &
-  log "升级已启动，稍后用 ypanel version 或访问面板确认新版本"
+  log "升级已启动，稍后用 ypanel version（任意路径可用）或访问面板确认新版本"
   exit 0
 fi
 
@@ -319,6 +322,8 @@ if [ "$MODE" = "node" ]; then
     systemctl stop "$AGENT_SERVICE" 2>/dev/null || true
   fi
   mv -f "${NODE_DIR}/ypagent.new" "${NODE_DIR}/ypagent"
+  # CLI 全局命令软链（ypagent version/info/status/update/uninstall 任意路径可用）
+  ln -sf "${NODE_DIR}/ypagent" /usr/local/bin/ypagent
 
   log "配对到主面板 ${CORE_URL}（节点名：${NODE_NAME}）…"
   rm -f /etc/ypanel/agent.json   # 清旧凭据（配对轮询以凭据文件出现为准）
@@ -365,6 +370,7 @@ EOF
   log " 节点 agent 安装完成（${NODE_NAME}）"
   log " 回到主面板「节点管理」即可看到本节点在线，"
   log " 后续 agent 升级可直接在面板上一键更新"
+  log " CLI 命令:  ypagent version|info|status|update|uninstall（任意路径可用，ypagent 不带参数看全部）"
   log "=============================================="
   exit 0
 fi
@@ -379,6 +385,8 @@ tar -xzf "$TMP_TAR" -C "$INSTALL_DIR"
 rm -rf "$TMP_DIR"
 chmod +x "${INSTALL_DIR}/ypanel"
 [ -f "${INSTALL_DIR}/ypagent" ] && chmod +x "${INSTALL_DIR}/ypagent"
+# CLI 全局命令软链（ypanel version/user-info/update/restart/... 任意路径可用）
+ln -sf "${INSTALL_DIR}/ypanel" /usr/local/bin/ypanel
 
 # 初始密码（未指定则生成 16 位随机）
 if [ -z "$ADMIN_PASSWORD" ]; then
@@ -444,7 +452,8 @@ if [ -n "$ENTRY" ]; then
 else
   warn "未能从日志解析安全入口，请执行 journalctl -u ${SERVICE_NAME} | grep 安全入口 获取"
 fi
-log " 数据目录:  ${DATA_DIR}"
-log " 服务管理:  systemctl status ${SERVICE_NAME}"
-log " Docker:    装好面板后可在「容器」域一键安装/管理"
+	log " 数据目录:  ${DATA_DIR}"
+	log " 服务管理:  systemctl status ${SERVICE_NAME} 或 ypanel status"
+	log " CLI 命令:  ypanel version|user-info|update|restart|reset mfa…（任意路径可用，ypanel 不带参数看全部）"
+	log " Docker:    装好面板后可在「容器」域一键安装/管理"
 log "=============================================="

@@ -367,6 +367,7 @@ onBeforeUnmount(() => {
   <div>
     <!-- 工具条 -->
     <div class="mb-3 flex flex-wrap items-center gap-2">
+		<YdDockerNodeSelect />
       <FaInput v-model="search" :placeholder="$t('container.list.searchPlaceholder')" class="h-8 w-52!" />
       <div class="flex overflow-hidden rounded-md border text-xs">
         <button

@@ -56,4 +56,19 @@ export default {
   keyword: 'Keyword',
   filter: 'Filter',
   total: '{n} items',
+
+  owner: {
+    title: 'Assign Owner',
+    short: 'Owner',
+    siteTitle: 'Assign Site Owner',
+    dbTitle: 'Assign Owner of "{name}"',
+    storeTitle: 'Assign Owner of "{name}"',
+    public: 'Public (visible to all "assigned" roles)',
+    current: 'Current',
+    toPublicConfirm: 'Make this resource public? All roles with "assigned" data scope will see and manage it.',
+    toUserConfirm: 'Change owner to {name}? Other "assigned" accounts will no longer see it.',
+    saved: 'Owner updated',
+    saveFailed: 'Failed to update owner',
+  },
 }
+

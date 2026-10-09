@@ -88,4 +88,7 @@ export default {
     agentUpgradeDone: 'Node agent upgraded to v{version}',
     agentUpgradeFailed: 'Node agent upgrade failed. Check the task log',
 
+    targetNode: 'Target node',
+    localPanel: 'Local panel node',
+
 }

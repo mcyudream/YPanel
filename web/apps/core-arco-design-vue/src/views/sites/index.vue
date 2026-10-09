@@ -4,6 +4,7 @@ import apiSite, { siteDiscoveryApi } from '@/api/modules/site'
 import { siteBatchApi } from '@/api/modules/site'
 import apiRuntime from '@/api/modules/runtime'
 import YdDangerDelete from '@/components/YdDangerDelete/index.vue'
+import YdOwnerDialog from '@/components/YdOwnerDialog/index.vue'
 import { siteGroupApi } from '@/api/modules/cert'
 import type { SiteGroup } from '@/api/modules/cert'
 import { useYwEmbed } from '@/views/desktop/embed'
@@ -15,6 +16,26 @@ defineOptions({
 
 function typeLabel(t: string) {
   return tr(`sites.type.${t}`, t)
+}
+
+// ---- M54-P3 属主分配 ----
+const ownerVisible = ref(false)
+const ownerTarget = ref<{ id: number, ownerId: number }>({ id: 0, ownerId: 0 })
+
+function openOwner(id: number, ownerId: number) {
+  ownerTarget.value = { id, ownerId: ownerId ?? 0 }
+  ownerVisible.value = true
+}
+
+async function doSetOwner(uid: number) {
+  try {
+    await apiSite.setOwner(ownerTarget.value.id, uid)
+    useFaToast().success(i18n.global.t('owner.saved'))
+    load()
+  }
+  catch (e: any) {
+    useFaToast().error(i18n.global.t('owner.saveFailed'), { description: e?.message })
+  }
 }
 
 const router = useRouter()
@@ -574,6 +595,7 @@ onMounted(() => {
                     <FaButton v-if="!s.isDefault" variant="ghost" size="sm" :title="$t('sites.list.setDefaultTip')" @click="setDefault(s)">{{ $t('sites.list.setDefault') }}</FaButton>
                     <FaButton variant="ghost" size="sm" :title="$t('sites.list.setExpireTip')" @click="openExpire(s)">{{ $t('sites.list.expire') }}</FaButton>
                     <FaButton variant="outline" size="sm" @click="toggle(s)">{{ s.enabled ? $t('sites.list.disable') : $t('common.enabled') }}</FaButton>
+                    <FaButton variant="ghost" size="sm" :title="$t('owner.title')" @click="openOwner(s.id, s.ownerId)">{{ $t('owner.short') }}</FaButton>
                     <FaButton variant="outline" size="sm" class="text-red-500!" @click="remove(s)">{{ $t('common.delete') }}</FaButton>
                   </div>
                 </td>
@@ -778,5 +800,8 @@ onMounted(() => {
       :loading="deleting"
       @confirm="doDelete"
     />
-  </div>
+  
+  <!-- M54-P3 属主分配 -->
+  <YdOwnerDialog v-model="ownerVisible" :title="$t('owner.siteTitle')" :current-owner-id="ownerTarget.ownerId" @confirm="doSetOwner" />
+</div>
 </template>

@@ -27,7 +27,12 @@ type DockerExtAPI struct {
 
 // Images GET /api/v1/docker/images
 func (a *DockerExtAPI) Images(c *gin.Context) {
-	out, err := a.Ext.Passthrough(c.Request.Context(), "/agent/v1/docker/images")
+	ext, nerr := a.Ext.WithNode(c.Query("node"))
+	if nerr != nil {
+		respErr(c, nerr)
+		return
+	}
+	out, err := ext.Passthrough(c.Request.Context(), "/agent/v1/docker/images")
 	if err != nil {
 		respErr(c, err)
 		return
@@ -37,13 +42,18 @@ func (a *DockerExtAPI) Images(c *gin.Context) {
 
 // ImagePull POST /api/v1/docker/images/pull {ref}（任务化：返回 taskId，日志在任务中心轮询）
 func (a *DockerExtAPI) ImagePull(c *gin.Context) {
+	ext, nerr := a.Ext.WithNode(c.Query("node"))
+	if nerr != nil {
+		respErr(c, nerr)
+		return
+	}
 	req, ok := bind[struct {
 		Ref string `json:"ref" binding:"required"`
 	}](c)
 	if !ok {
 		return
 	}
-	out, err := a.Ext.ImagePullTask(req.Ref)
+	out, err := ext.ImagePullTask(req.Ref)
 	if err != nil {
 		respErr(c, err)
 		return
@@ -53,8 +63,13 @@ func (a *DockerExtAPI) ImagePull(c *gin.Context) {
 
 // ImageRemove DELETE /api/v1/docker/images/:id
 func (a *DockerExtAPI) ImageRemove(c *gin.Context) {
+	ext, nerr := a.Ext.WithNode(c.Query("node"))
+	if nerr != nil {
+		respErr(c, nerr)
+		return
+	}
 	imageRef := strings.TrimPrefix(c.Param("id"), "/")
-	if err := a.Ext.ImageRemove(c.Request.Context(), imageRef, c.Query("force") == "1"); err != nil {
+	if err := ext.ImageRemove(c.Request.Context(), imageRef, c.Query("force") == "1"); err != nil {
 		respErr(c, err)
 		return
 	}
@@ -68,7 +83,12 @@ func (a *DockerExtAPI) ImagesPrune(c *gin.Context) {
 
 // Usage GET /api/v1/docker/usage（system df 用量统计；agent 侧实算 size，前端懒加载）
 func (a *DockerExtAPI) Usage(c *gin.Context) {
-	out, err := a.Ext.Passthrough(c.Request.Context(), "/agent/v1/docker/usage")
+	ext, nerr := a.Ext.WithNode(c.Query("node"))
+	if nerr != nil {
+		respErr(c, nerr)
+		return
+	}
+	out, err := ext.Passthrough(c.Request.Context(), "/agent/v1/docker/usage")
 	if err != nil {
 		respErr(c, err)
 		return
@@ -78,7 +98,12 @@ func (a *DockerExtAPI) Usage(c *gin.Context) {
 
 // BuildCachePrune POST /api/v1/docker/buildcache/prune（清空构建缓存，返回释放字节数）
 func (a *DockerExtAPI) BuildCachePrune(c *gin.Context) {
-	out, err := a.Ext.PassthroughPost(c.Request.Context(), "/agent/v1/docker/buildcache/prune")
+	ext, nerr := a.Ext.WithNode(c.Query("node"))
+	if nerr != nil {
+		respErr(c, nerr)
+		return
+	}
+	out, err := ext.PassthroughPost(c.Request.Context(), "/agent/v1/docker/buildcache/prune")
 	if err != nil {
 		respErr(c, err)
 		return
@@ -88,7 +113,12 @@ func (a *DockerExtAPI) BuildCachePrune(c *gin.Context) {
 
 // Networks GET /api/v1/docker/networks
 func (a *DockerExtAPI) Networks(c *gin.Context) {
-	out, err := a.Ext.Passthrough(c.Request.Context(), "/agent/v1/docker/networks")
+	ext, nerr := a.Ext.WithNode(c.Query("node"))
+	if nerr != nil {
+		respErr(c, nerr)
+		return
+	}
+	out, err := ext.Passthrough(c.Request.Context(), "/agent/v1/docker/networks")
 	if err != nil {
 		respErr(c, err)
 		return
@@ -98,6 +128,11 @@ func (a *DockerExtAPI) Networks(c *gin.Context) {
 
 // NetworkCreate POST /api/v1/docker/networks {name, driver}
 func (a *DockerExtAPI) NetworkCreate(c *gin.Context) {
+	ext, nerr := a.Ext.WithNode(c.Query("node"))
+	if nerr != nil {
+		respErr(c, nerr)
+		return
+	}
 	req, ok := bind[struct {
 		Name   string `json:"name" binding:"required"`
 		Driver string `json:"driver"`
@@ -105,7 +140,7 @@ func (a *DockerExtAPI) NetworkCreate(c *gin.Context) {
 	if !ok {
 		return
 	}
-	if err := a.Ext.NetworkCreate(c.Request.Context(), req.Name, req.Driver); err != nil {
+	if err := ext.NetworkCreate(c.Request.Context(), req.Name, req.Driver); err != nil {
 		respErr(c, err)
 		return
 	}
@@ -114,7 +149,12 @@ func (a *DockerExtAPI) NetworkCreate(c *gin.Context) {
 
 // NetworkRemove DELETE /api/v1/docker/networks/:name
 func (a *DockerExtAPI) NetworkRemove(c *gin.Context) {
-	if err := a.Ext.NetworkRemove(c.Request.Context(), c.Param("name")); err != nil {
+	ext, nerr := a.Ext.WithNode(c.Query("node"))
+	if nerr != nil {
+		respErr(c, nerr)
+		return
+	}
+	if err := ext.NetworkRemove(c.Request.Context(), c.Param("name")); err != nil {
 		respErr(c, err)
 		return
 	}
@@ -123,7 +163,12 @@ func (a *DockerExtAPI) NetworkRemove(c *gin.Context) {
 
 // Volumes GET /api/v1/docker/volumes
 func (a *DockerExtAPI) Volumes(c *gin.Context) {
-	out, err := a.Ext.Passthrough(c.Request.Context(), "/agent/v1/docker/volumes")
+	ext, nerr := a.Ext.WithNode(c.Query("node"))
+	if nerr != nil {
+		respErr(c, nerr)
+		return
+	}
+	out, err := ext.Passthrough(c.Request.Context(), "/agent/v1/docker/volumes")
 	if err != nil {
 		respErr(c, err)
 		return
@@ -133,13 +178,18 @@ func (a *DockerExtAPI) Volumes(c *gin.Context) {
 
 // VolumeCreate POST /api/v1/docker/volumes {name}
 func (a *DockerExtAPI) VolumeCreate(c *gin.Context) {
+	ext, nerr := a.Ext.WithNode(c.Query("node"))
+	if nerr != nil {
+		respErr(c, nerr)
+		return
+	}
 	req, ok := bind[struct {
 		Name string `json:"name" binding:"required"`
 	}](c)
 	if !ok {
 		return
 	}
-	if err := a.Ext.VolumeCreate(c.Request.Context(), req.Name); err != nil {
+	if err := ext.VolumeCreate(c.Request.Context(), req.Name); err != nil {
 		respErr(c, err)
 		return
 	}
@@ -148,7 +198,12 @@ func (a *DockerExtAPI) VolumeCreate(c *gin.Context) {
 
 // VolumeRemove DELETE /api/v1/docker/volumes/:name
 func (a *DockerExtAPI) VolumeRemove(c *gin.Context) {
-	if err := a.Ext.VolumeRemove(c.Request.Context(), c.Param("name")); err != nil {
+	ext, nerr := a.Ext.WithNode(c.Query("node"))
+	if nerr != nil {
+		respErr(c, nerr)
+		return
+	}
+	if err := ext.VolumeRemove(c.Request.Context(), c.Param("name")); err != nil {
 		respErr(c, err)
 		return
 	}
@@ -162,7 +217,12 @@ func (a *DockerExtAPI) VolumesPrune(c *gin.Context) {
 
 // ContainersPrune POST /api/v1/docker/containers/prune
 func (a *DockerExtAPI) ContainersPrune(c *gin.Context) {
-	out, err := a.Ext.ContainersPrune(c.Request.Context())
+	ext, nerr := a.Ext.WithNode(c.Query("node"))
+	if nerr != nil {
+		respErr(c, nerr)
+		return
+	}
+	out, err := ext.ContainersPrune(c.Request.Context())
 	if err != nil {
 		respErr(c, err)
 		return
@@ -172,7 +232,12 @@ func (a *DockerExtAPI) ContainersPrune(c *gin.Context) {
 
 // ContainerInspect GET /api/v1/docker/containers/:id/inspect
 func (a *DockerExtAPI) ContainerInspect(c *gin.Context) {
-	out, err := a.Ext.Passthrough(c.Request.Context(), "/agent/v1/docker/containers/"+c.Param("id")+"/inspect")
+	ext, nerr := a.Ext.WithNode(c.Query("node"))
+	if nerr != nil {
+		respErr(c, nerr)
+		return
+	}
+	out, err := ext.Passthrough(c.Request.Context(), "/agent/v1/docker/containers/"+c.Param("id")+"/inspect")
 	if err != nil {
 		respErr(c, err)
 		return
@@ -204,7 +269,12 @@ func (a *DockerExtAPI) pruneViaPost(c *gin.Context, path string) {
 // ContainerRootfs GET /api/v1/docker/containers/:id/rootfs
 // 返回容器可写层宿主目录（供无法启动的容器经宿主文件通道直读/修复）。
 func (a *DockerExtAPI) ContainerRootfs(c *gin.Context) {
-	out, err := a.Ext.Passthrough(c.Request.Context(), "/agent/v1/docker/containers/"+c.Param("id")+"/rootfs")
+	ext, nerr := a.Ext.WithNode(c.Query("node"))
+	if nerr != nil {
+		respErr(c, nerr)
+		return
+	}
+	out, err := ext.Passthrough(c.Request.Context(), "/agent/v1/docker/containers/"+c.Param("id")+"/rootfs")
 	if err != nil {
 		respErr(c, err)
 		return
@@ -214,7 +284,12 @@ func (a *DockerExtAPI) ContainerRootfs(c *gin.Context) {
 
 // ContainerStats GET /api/v1/docker/containers/:id/stats
 func (a *DockerExtAPI) ContainerStats(c *gin.Context) {
-	out, err := a.Ext.Passthrough(c.Request.Context(), "/agent/v1/docker/containers/"+c.Param("id")+"/stats")
+	ext, nerr := a.Ext.WithNode(c.Query("node"))
+	if nerr != nil {
+		respErr(c, nerr)
+		return
+	}
+	out, err := ext.Passthrough(c.Request.Context(), "/agent/v1/docker/containers/"+c.Param("id")+"/stats")
 	if err != nil {
 		respErr(c, err)
 		return
@@ -224,6 +299,11 @@ func (a *DockerExtAPI) ContainerStats(c *gin.Context) {
 
 // ContainerExecWS GET /api/v1/docker/containers/:id/exec?cmd=/bin/sh（WS 双向代理，浏览器 ↔ agent）
 func (a *DockerExtAPI) ContainerExecWS(c *gin.Context) {
+	ext, nerr := a.Ext.WithNode(c.Query("node"))
+	if nerr != nil {
+		respErr(c, nerr)
+		return
+	}
 	id := c.Param("id")
 	cmd := c.DefaultQuery("cmd", "/bin/sh")
 	upgrader := websocket.Upgrader{
@@ -237,7 +317,7 @@ func (a *DockerExtAPI) ContainerExecWS(c *gin.Context) {
 	}
 	defer func() { _ = browserWS.Close() }()
 
-	ac, err := a.Ext.Client()
+	ac, err := ext.Client()
 	if err != nil {
 		_ = browserWS.WriteControl(websocket.CloseMessage,
 			websocket.FormatCloseMessage(websocket.CloseInternalServerErr, "节点不可用: "+err.Error()),
@@ -280,11 +360,16 @@ func (a *DockerExtAPI) ContainerExecWS(c *gin.Context) {
 
 // ContainerCreate POST /api/v1/docker/containers
 func (a *DockerExtAPI) ContainerCreate(c *gin.Context) {
+	ext, nerr := a.Ext.WithNode(c.Query("node"))
+	if nerr != nil {
+		respErr(c, nerr)
+		return
+	}
 	req, ok := bind[service.ExtContainerCreateReq](c)
 	if !ok {
 		return
 	}
-	id, err := a.Ext.ContainerCreate(c.Request.Context(), *req)
+	id, err := ext.ContainerCreate(c.Request.Context(), *req)
 	if err != nil {
 		respErr(c, err)
 		return
@@ -294,7 +379,12 @@ func (a *DockerExtAPI) ContainerCreate(c *gin.Context) {
 
 // ContainerRemove DELETE /api/v1/docker/containers/:id
 func (a *DockerExtAPI) ContainerRemove(c *gin.Context) {
-	if err := a.Ext.ContainerRemove(c.Request.Context(), c.Param("id"), c.Query("force") == "1", c.Query("v") == "1"); err != nil {
+	ext, nerr := a.Ext.WithNode(c.Query("node"))
+	if nerr != nil {
+		respErr(c, nerr)
+		return
+	}
+	if err := ext.ContainerRemove(c.Request.Context(), c.Param("id"), c.Query("force") == "1", c.Query("v") == "1"); err != nil {
 		respErr(c, err)
 		return
 	}
@@ -303,11 +393,16 @@ func (a *DockerExtAPI) ContainerRemove(c *gin.Context) {
 
 // ContainerRecreate POST /api/v1/docker/containers/:id/recreate（编辑保存：删除重建）
 func (a *DockerExtAPI) ContainerRecreate(c *gin.Context) {
+	ext, nerr := a.Ext.WithNode(c.Query("node"))
+	if nerr != nil {
+		respErr(c, nerr)
+		return
+	}
 	req, ok := bind[service.ExtContainerCreateReq](c)
 	if !ok {
 		return
 	}
-	id, err := a.Ext.ContainerRecreate(c.Request.Context(), c.Param("id"), *req)
+	id, err := ext.ContainerRecreate(c.Request.Context(), c.Param("id"), *req)
 	if err != nil {
 		respErr(c, err)
 		return
@@ -317,11 +412,16 @@ func (a *DockerExtAPI) ContainerRecreate(c *gin.Context) {
 
 // ContainerUpdate POST /api/v1/docker/containers/:id/update（docker update 热更新）
 func (a *DockerExtAPI) ContainerUpdate(c *gin.Context) {
+	ext, nerr := a.Ext.WithNode(c.Query("node"))
+	if nerr != nil {
+		respErr(c, nerr)
+		return
+	}
 	req, ok := bind[service.ExtContainerUpdateReq](c)
 	if !ok {
 		return
 	}
-	if err := a.Ext.ContainerUpdateResources(c.Request.Context(), c.Param("id"), *req); err != nil {
+	if err := ext.ContainerUpdateResources(c.Request.Context(), c.Param("id"), *req); err != nil {
 		respErr(c, err)
 		return
 	}
@@ -330,7 +430,12 @@ func (a *DockerExtAPI) ContainerUpdate(c *gin.Context) {
 
 // RegistryList GET /api/v1/docker/registry（B10）
 func (a *DockerExtAPI) RegistryList(c *gin.Context) {
-	out, err := a.Ext.Passthrough(c.Request.Context(), "/agent/v1/docker/registry")
+	ext, nerr := a.Ext.WithNode(c.Query("node"))
+	if nerr != nil {
+		respErr(c, nerr)
+		return
+	}
+	out, err := ext.Passthrough(c.Request.Context(), "/agent/v1/docker/registry")
 	if err != nil {
 		respErr(c, err)
 		return
@@ -340,6 +445,11 @@ func (a *DockerExtAPI) RegistryList(c *gin.Context) {
 
 // RegistrySet PUT /api/v1/docker/registry（B10）
 func (a *DockerExtAPI) RegistrySet(c *gin.Context) {
+	ext, nerr := a.Ext.WithNode(c.Query("node"))
+	if nerr != nil {
+		respErr(c, nerr)
+		return
+	}
 	req, ok := bind[struct {
 		Registry string `json:"registry" binding:"required"`
 		Username string `json:"username" binding:"required"`
@@ -348,7 +458,7 @@ func (a *DockerExtAPI) RegistrySet(c *gin.Context) {
 	if !ok {
 		return
 	}
-	out, err := a.Ext.PostJSON(c.Request.Context(), "/agent/v1/docker/registry", map[string]string{
+	out, err := ext.PostJSON(c.Request.Context(), "/agent/v1/docker/registry", map[string]string{
 		"registry": req.Registry, "username": req.Username, "password": req.Password,
 	})
 	if err != nil {
@@ -360,12 +470,17 @@ func (a *DockerExtAPI) RegistrySet(c *gin.Context) {
 
 // RegistryRemove DELETE /api/v1/docker/registry?registry=（B10）
 func (a *DockerExtAPI) RegistryRemove(c *gin.Context) {
+	ext, nerr := a.Ext.WithNode(c.Query("node"))
+	if nerr != nil {
+		respErr(c, nerr)
+		return
+	}
 	registry := c.Query("registry")
 	if registry == "" {
 		respErr(c, errBadRequest("registry 必填"))
 		return
 	}
-	out, err := a.Ext.Delete(c.Request.Context(), "/agent/v1/docker/registry?registry="+url.QueryEscape(registry))
+	out, err := ext.Delete(c.Request.Context(), "/agent/v1/docker/registry?registry="+url.QueryEscape(registry))
 	if err != nil {
 		respErr(c, err)
 		return
@@ -375,7 +490,12 @@ func (a *DockerExtAPI) RegistryRemove(c *gin.Context) {
 
 // DaemonConfig GET /api/v1/docker/daemon-config// DaemonConfig GET /api/v1/docker/daemon-config
 func (a *DockerExtAPI) DaemonConfig(c *gin.Context) {
-	out, err := a.Ext.Passthrough(c.Request.Context(), "/agent/v1/docker/daemon-config")
+	ext, nerr := a.Ext.WithNode(c.Query("node"))
+	if nerr != nil {
+		respErr(c, nerr)
+		return
+	}
+	out, err := ext.Passthrough(c.Request.Context(), "/agent/v1/docker/daemon-config")
 	if err != nil {
 		respErr(c, err)
 		return
@@ -385,6 +505,11 @@ func (a *DockerExtAPI) DaemonConfig(c *gin.Context) {
 
 // UpdateDaemonConfig PUT /api/v1/docker/daemon-config {content}（JSON 校验 + 重启 docker）
 func (a *DockerExtAPI) UpdateDaemonConfig(c *gin.Context) {
+	ext, nerr := a.Ext.WithNode(c.Query("node"))
+	if nerr != nil {
+		respErr(c, nerr)
+		return
+	}
 	req, ok := bind[struct {
 		Content string `json:"content" binding:"required"`
 	}](c)
@@ -395,7 +520,7 @@ func (a *DockerExtAPI) UpdateDaemonConfig(c *gin.Context) {
 		respErr(c, errBadRequest("daemon.json 不是合法 JSON"))
 		return
 	}
-	out, err := a.Ext.PostJSON(c.Request.Context(), "/agent/v1/docker/daemon-config", map[string]string{"content": req.Content})
+	out, err := ext.PostJSON(c.Request.Context(), "/agent/v1/docker/daemon-config", map[string]string{"content": req.Content})
 	if err != nil {
 		respErr(c, err)
 		return

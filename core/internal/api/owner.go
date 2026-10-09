@@ -4,6 +4,7 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"github.com/ypanel/core/internal/middleware"
+	"github.com/ypanel/core/internal/rbac"
 	"github.com/ypanel/core/internal/service"
 	"github.com/ypanel/shared/errs"
 )
@@ -33,6 +34,13 @@ func ownerAllowed(c *gin.Context, ownerID uint) bool {
 		return true
 	}
 	return ownerID == 0 || ownerID == callerUID(c)
+}
+
+// isSuperCaller 调用者是否持通配权限（等价旧 admin 全量判断）。
+func isSuperCaller(c *gin.Context) bool {
+	set, _ := c.Get(middleware.CtxPerms)
+	permSet, _ := set.(map[string]struct{})
+	return rbac.Match(permSet, rbac.Wildcard)
 }
 
 // errNotFound 统一越权/不存在响应体（不暴露存在性差异）。

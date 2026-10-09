@@ -15,7 +15,12 @@ type SystemToolAPI struct {
 
 // SwapStatus GET /api/v1/system/swap
 func (a *SystemToolAPI) SwapStatus(c *gin.Context) {
-	out, err := a.Tools.SwapStatus(c.Request.Context())
+	tools, terr := a.Tools.WithNode(c.Query("nodeId"))
+	if terr != nil {
+		respErr(c, terr)
+		return
+	}
+	out, err := tools.SwapStatus(c.Request.Context())
 	if err != nil {
 		respErr(c, err)
 		return
@@ -25,13 +30,18 @@ func (a *SystemToolAPI) SwapStatus(c *gin.Context) {
 
 // SwapApply POST /api/v1/system/swap {sizeGB}
 func (a *SystemToolAPI) SwapApply(c *gin.Context) {
+	tools, terr := a.Tools.WithNode(c.Query("nodeId"))
+	if terr != nil {
+		respErr(c, terr)
+		return
+	}
 	req, ok := bind[struct {
 		SizeGB int `json:"sizeGB"`
 	}](c)
 	if !ok {
 		return
 	}
-	out, err := a.Tools.SwapApply(c.Request.Context(), req.SizeGB)
+	out, err := tools.SwapApply(c.Request.Context(), req.SizeGB)
 	if err != nil {
 		respErr(c, err)
 		return
@@ -41,7 +51,12 @@ func (a *SystemToolAPI) SwapApply(c *gin.Context) {
 
 // BBRStatus GET /api/v1/system/bbr
 func (a *SystemToolAPI) BBRStatus(c *gin.Context) {
-	out, err := a.Tools.BBRStatus(c.Request.Context())
+	tools, terr := a.Tools.WithNode(c.Query("nodeId"))
+	if terr != nil {
+		respErr(c, terr)
+		return
+	}
+	out, err := tools.BBRStatus(c.Request.Context())
 	if err != nil {
 		respErr(c, err)
 		return
@@ -51,13 +66,18 @@ func (a *SystemToolAPI) BBRStatus(c *gin.Context) {
 
 // BBRApply POST /api/v1/system/bbr {enable}
 func (a *SystemToolAPI) BBRApply(c *gin.Context) {
+	tools, terr := a.Tools.WithNode(c.Query("nodeId"))
+	if terr != nil {
+		respErr(c, terr)
+		return
+	}
 	req, ok := bind[struct {
 		Enable bool `json:"enable"`
 	}](c)
 	if !ok {
 		return
 	}
-	out, err := a.Tools.BBRApply(c.Request.Context(), req.Enable)
+	out, err := tools.BBRApply(c.Request.Context(), req.Enable)
 	if err != nil {
 		respErr(c, err)
 		return
@@ -67,7 +87,12 @@ func (a *SystemToolAPI) BBRApply(c *gin.Context) {
 
 // Clean POST /api/v1/system/clean
 func (a *SystemToolAPI) Clean(c *gin.Context) {
-	out, err := a.Tools.SystemClean(c.Request.Context())
+	tools, terr := a.Tools.WithNode(c.Query("nodeId"))
+	if terr != nil {
+		respErr(c, terr)
+		return
+	}
+	out, err := tools.SystemClean(c.Request.Context())
 	if err != nil {
 		respErr(c, err)
 		return

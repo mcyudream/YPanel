@@ -67,6 +67,7 @@ function remove(n: DockerNetwork) {
   <div>
     <FaPageMain>
   <div>
+		<YdDockerNodeSelect />
     <div class="mb-3 flex items-center gap-2">
       <FaButton class="ml-auto" size="sm" @click="visible = true">
         <FaIcon name="i-lucide:plus" class="mr-1" /> {{ $t('container.networks.create') }}

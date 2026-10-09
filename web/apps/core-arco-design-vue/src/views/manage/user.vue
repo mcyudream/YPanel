@@ -228,8 +228,8 @@ onMounted(() => {
           <FaInput v-model="createForm.nickname" :placeholder="$t('manage.user.nicknamePlaceholder')" class="flex-1" />
         </div>
         <div class="flex items-center gap-3">
-          <span class="w-16 text-sm text-muted-foreground">{{ $t('manage.user.role') }}</span>
-          <YdSelect v-model="createForm.roleId" :options="roleOptions" size="default" button-class="w-full" class="flex-1" />
+          <span class="w-16 shrink-0 text-sm text-muted-foreground">{{ $t('manage.user.role') }}</span>
+          <YdSelect v-model="createForm.roleId" :options="roleOptions" size="default" button-class="w-full" class="min-w-0 flex-1" />
         </div>
       </div>
       <template #footer>
@@ -250,8 +250,8 @@ onMounted(() => {
           <FaInput v-model="editForm.nickname" class="flex-1" />
         </div>
         <div class="flex items-center gap-3">
-          <span class="w-16 text-sm text-muted-foreground">{{ $t('manage.user.role') }}</span>
-          <YdSelect v-model="editForm.roleId" :options="roleOptions" size="default" button-class="w-full" class="flex-1" />
+          <span class="w-16 shrink-0 text-sm text-muted-foreground">{{ $t('manage.user.role') }}</span>
+          <YdSelect v-model="editForm.roleId" :options="roleOptions" size="default" button-class="w-full" class="min-w-0 flex-1" />
         </div>
         <div class="flex items-center gap-3">
           <span class="w-16 text-sm text-muted-foreground">{{ $t('manage.user.newPassword') }}</span>

@@ -10,6 +10,7 @@ package main
 import (
 	"context"
 	"flag"
+	"fmt"
 	"log/slog"
 	"os"
 	"os/signal"
@@ -34,6 +35,15 @@ func main() {
 	dataDir := flag.String("data", defaultDataDir(), "数据目录（凭据文件位置）")
 	pairOnly := flag.Bool("pair-only", false, "仅执行配对并保存凭据后退出（供安装脚本使用）")
 	flag.Parse()
+
+	// CLI 子命令（version/info/status/update/uninstall...）；无位置参数时保持原启动流程
+	if flag.NArg() > 0 {
+		if !runSubcommand(version, flag.Args()) {
+			fmt.Fprintf(os.Stderr, "未知命令: %s\n\n%s", flag.Arg(0), agentUsageText)
+			os.Exit(2)
+		}
+		return
+	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()

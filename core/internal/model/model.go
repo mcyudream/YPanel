@@ -158,6 +158,7 @@ type AppStoreInstall struct {
 	Remark         string    `gorm:"size:255" json:"remark"`
 	ParamsJSON     string    `gorm:"type:text" json:"paramsJson"` // 安装参数（含密码明文，仅 admin 视图返回）
 	OwnerID        uint      `gorm:"index;not null;default:0" json:"ownerId"` // M54-P3 数据范围属主（0=公共）
+	NodeID         string    `gorm:"size:32;not null;default:'';index" json:"nodeId"` // M55 目标节点（空=local）
 	CreatedAt      time.Time `json:"createdAt"`
 }
 
@@ -292,6 +293,7 @@ type CronTask struct {
 	Command     string     `gorm:"type:text;not null" json:"command"`
 	Type        string     `gorm:"size:16;not null;default:shell" json:"type"` // shell / db_backup / site_backup / container_op / script
 	Payload     string     `gorm:"type:text" json:"payload"`                   // 类型参数 JSON（B4：{dbId|siteName|container|action|scriptId}）
+	NodeID      string     `gorm:"size:32;not null;default:''" json:"nodeId"` // M55 目标节点（空=local；shell/script 类在目标节点执行）
 	Enabled     bool       `gorm:"not null;default:true" json:"enabled"`
 	TimeoutSecs int        `gorm:"not null;default:300" json:"timeoutSecs"`
 	LastRunAt   *time.Time `json:"lastRunAt"`
@@ -460,6 +462,7 @@ type CronTaskLog struct {
 	DurationMs int64      `json:"durationMs"`
 	Success    bool       `json:"success"`
 	Output     string     `gorm:"type:text" json:"output"`
+	NodeID     string     `gorm:"size:32;not null;default:''" json:"nodeId"`
 }
 
 // ConfigRevision 受管配置版本快照（M23）：面板写盘前自动快照旧内容。

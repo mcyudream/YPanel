@@ -27,8 +27,8 @@ func (a *SiteConfAPI) dnsAlignRefresh(c *gin.Context) {
 }
 
 // confGet GET 泛型代理。
-func confGet[T any](c *gin.Context, get func(uint) (T, error)) {
-	id, err := ownedSiteID(c, a.Sites)
+func confGet[T any](c *gin.Context, sites *service.SiteService, get func(uint) (T, error)) {
+	id, err := ownedSiteID(c, sites)
 	if err != nil {
 		respErr(c, err)
 		return
@@ -42,8 +42,8 @@ func confGet[T any](c *gin.Context, get func(uint) (T, error)) {
 }
 
 // confPut PUT 泛型代理（apply 首参为 request context）。
-func confPut[Req any, Out any](c *gin.Context, apply func(context.Context, uint, Req) (Out, error)) {
-	id, err := ownedSiteID(c, a.Sites)
+func confPut[Req any, Out any](c *gin.Context, sites *service.SiteService, apply func(context.Context, uint, Req) (Out, error)) {
+	id, err := ownedSiteID(c, sites)
 	if err != nil {
 		respErr(c, err)
 		return
@@ -241,7 +241,7 @@ func (a *SiteConfAPI) EnableHTTPS(c *gin.Context) {
 
 // UpdateHTTPS PUT /api/v1/sites/:id/conf/https（B23：证书绑定/停用/HTTP 模式/HSTS/TLS 版本/加密算法）
 func (a *SiteConfAPI) UpdateHTTPS(c *gin.Context) {
-	confPut(c, a.Sites.UpdateHTTPSConf)
+	confPut(c, a.Sites, a.Sites.UpdateHTTPSConf)
 }
 
 // DisableHTTPS DELETE /api/v1/sites/:id/conf/https
@@ -262,64 +262,64 @@ func (a *SiteConfAPI) DisableHTTPS(c *gin.Context) {
 // ---- S20 第二批配置域 ----
 
 // GetAntiLeech GET /api/v1/sites/:id/conf/antileech
-func (a *SiteConfAPI) GetAntiLeech(c *gin.Context) { confGet(c, a.Sites.GetAntiLeech) }
+func (a *SiteConfAPI) GetAntiLeech(c *gin.Context) { confGet(c, a.Sites, a.Sites.GetAntiLeech) }
 
 // UpdateAntiLeech PUT /api/v1/sites/:id/conf/antileech
 func (a *SiteConfAPI) UpdateAntiLeech(c *gin.Context) {
-	confPut(c, a.Sites.UpdateAntiLeech)
+	confPut(c, a.Sites, a.Sites.UpdateAntiLeech)
 }
 
 // GetAuthBasic GET /api/v1/sites/:id/conf/authbasic
-func (a *SiteConfAPI) GetAuthBasic(c *gin.Context) { confGet(c, a.Sites.GetAuthBasic) }
+func (a *SiteConfAPI) GetAuthBasic(c *gin.Context) { confGet(c, a.Sites, a.Sites.GetAuthBasic) }
 
 // UpdateAuthBasic PUT /api/v1/sites/:id/conf/authbasic
 func (a *SiteConfAPI) UpdateAuthBasic(c *gin.Context) {
-	confPut(c, a.Sites.UpdateAuthBasic)
+	confPut(c, a.Sites, a.Sites.UpdateAuthBasic)
 }
 
 // GetCORS GET /api/v1/sites/:id/conf/cors
-func (a *SiteConfAPI) GetCORS(c *gin.Context) { confGet(c, a.Sites.GetCORS) }
+func (a *SiteConfAPI) GetCORS(c *gin.Context) { confGet(c, a.Sites, a.Sites.GetCORS) }
 
 // UpdateCORS PUT /api/v1/sites/:id/conf/cors
-func (a *SiteConfAPI) UpdateCORS(c *gin.Context) { confPut(c, a.Sites.UpdateCORS) }
+func (a *SiteConfAPI) UpdateCORS(c *gin.Context) { confPut(c, a.Sites, a.Sites.UpdateCORS) }
 
 // GetRedirect GET /api/v1/sites/:id/conf/redirect
-func (a *SiteConfAPI) GetRedirect(c *gin.Context) { confGet(c, a.Sites.GetRedirect) }
+func (a *SiteConfAPI) GetRedirect(c *gin.Context) { confGet(c, a.Sites, a.Sites.GetRedirect) }
 
 // UpdateRedirect PUT /api/v1/sites/:id/conf/redirect
 func (a *SiteConfAPI) UpdateRedirect(c *gin.Context) {
-	confPut(c, a.Sites.UpdateRedirect)
+	confPut(c, a.Sites, a.Sites.UpdateRedirect)
 }
 
 // GetRealIP GET /api/v1/sites/:id/conf/realip
-func (a *SiteConfAPI) GetRealIP(c *gin.Context) { confGet(c, a.Sites.GetRealIP) }
+func (a *SiteConfAPI) GetRealIP(c *gin.Context) { confGet(c, a.Sites, a.Sites.GetRealIP) }
 
 // UpdateRealIP PUT /api/v1/sites/:id/conf/realip
-func (a *SiteConfAPI) UpdateRealIP(c *gin.Context) { confPut(c, a.Sites.UpdateRealIP) }
+func (a *SiteConfAPI) UpdateRealIP(c *gin.Context) { confPut(c, a.Sites, a.Sites.UpdateRealIP) }
 
 // GetLimitConn GET /api/v1/sites/:id/conf/limitconn
-func (a *SiteConfAPI) GetLimitConn(c *gin.Context) { confGet(c, a.Sites.GetLimitConn) }
+func (a *SiteConfAPI) GetLimitConn(c *gin.Context) { confGet(c, a.Sites, a.Sites.GetLimitConn) }
 
 // UpdateLimitConn PUT /api/v1/sites/:id/conf/limitconn
 func (a *SiteConfAPI) UpdateLimitConn(c *gin.Context) {
-	confPut(c, a.Sites.UpdateLimitConn)
+	confPut(c, a.Sites, a.Sites.UpdateLimitConn)
 }
 
 // GetLoadBalance GET /api/v1/sites/:id/conf/loadbalance
-func (a *SiteConfAPI) GetLoadBalance(c *gin.Context) { confGet(c, a.Sites.GetLoadBalance) }
+func (a *SiteConfAPI) GetLoadBalance(c *gin.Context) { confGet(c, a.Sites, a.Sites.GetLoadBalance) }
 
 // UpdateLoadBalance PUT /api/v1/sites/:id/conf/loadbalance
 func (a *SiteConfAPI) UpdateLoadBalance(c *gin.Context) {
-	confPut(c, a.Sites.UpdateLoadBalance)
+	confPut(c, a.Sites, a.Sites.UpdateLoadBalance)
 }
 
 // GetPort GET /api/v1/sites/:id/conf/port（M50 监听端口）
-func (a *SiteConfAPI) GetPort(c *gin.Context) { confGet(c, a.Sites.GetPortConf) }
+func (a *SiteConfAPI) GetPort(c *gin.Context) { confGet(c, a.Sites, a.Sites.GetPortConf) }
 
 // UpdatePort PUT /api/v1/sites/:id/conf/port {port}
 // 非 80/443 端口保存后自动落点：container 模式追加容器映射并重建，host 模式联动防火墙放行。
 func (a *SiteConfAPI) UpdatePort(c *gin.Context) {
-	confPut(c, func(ctx context.Context, id uint, req struct {
+	confPut(c, a.Sites, func(ctx context.Context, id uint, req struct {
 		Port int `json:"port"`
 	}) (service.SitePortConf, error) {
 		return a.Sites.UpdatePortConf(ctx, id, req.Port)

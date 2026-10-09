@@ -12,6 +12,7 @@ export interface CronTask {
   lastRunAt?: string | null
   lastSuccess?: boolean | null
   createdAt: string
+	  nodeId?: string
 }
 
 export interface CronTaskLog {
@@ -36,7 +37,7 @@ export default {
     const res = await api.get(`api/v1/cron/tasks?page=${page}&pageSize=${pageSize}`)
     return res.data as PageResp<CronTask>
   },
-  create: (data: { name: string, cron: string, command: string, timeoutSecs?: number, type?: string, payload?: string }) =>
+  create: (data: { name: string, cron: string, command: string, timeoutSecs?: number, type?: string, payload?: string, nodeId?: string }) =>
     api.post('api/v1/cron/tasks', data),
   update: (id: number, data: { name?: string, cron?: string, command?: string, timeoutSecs?: number, enabled?: boolean }) =>
     api.put(`api/v1/cron/tasks/${id}`, data),

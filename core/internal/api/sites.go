@@ -3,7 +3,6 @@ package api
 import (
 	"github.com/gin-gonic/gin"
 	"log/slog"
-	"strconv"
 
 	"github.com/ypanel/core/internal/service"
 	"time"
@@ -163,6 +162,28 @@ func (a *SiteAPI) GetSite(c *gin.Context) {
 	respOK(c, site)
 }
 
+// SetOwner PUT /api/v1/sites/:id/owner {ownerId}（M54-P3：仅 all 数据范围可操作；0=公共）
+func (a *SiteAPI) SetOwner(c *gin.Context) {
+	if !requireAllScope(c) {
+		return
+	}
+	id, err := idParam(c)
+	if err != nil {
+		respErr(c, err)
+		return
+	}
+	ownerID, ok := parseOwnerBody(c)
+	if !ok {
+		respErr(c, errBadRequest("ownerId 不合法"))
+		return
+	}
+	if err := a.Sites.SetSiteOwner(id, ownerID); err != nil {
+		respErr(c, err)
+		return
+	}
+	respOK(c, struct{}{})
+}
+
 // List GET /api/v1/sites
 func (a *SiteAPI) List(c *gin.Context) {
 	out, err := a.Sites.List(c.Request.Context())
@@ -200,6 +221,11 @@ func (a *SiteAPI) Create(c *gin.Context) {
 	if err != nil {
 		respErr(c, err)
 		return
+	}
+	// M54-P3：assigned 创建 → 属主自己；all → 公共
+	if uid := stampOwnerForCreate(c); uid != 0 {
+		_ = a.Sites.SetSiteOwner(site.ID, uid)
+		site.OwnerID = uid
 	}
 	a.dnsAlignRefresh(c)
 	respOK(c, site)

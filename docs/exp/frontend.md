@@ -541,6 +541,8 @@
 
 - **模式**：① 路由 `meta.title` 存 i18n key（`menu.*`），`generateTitle` 统一 `te()→t()`、无词条原样透传（中文标题/动态函数双兼容）；因菜单/面包屑/页签/document.title 全部经它渲染，语言切换**自动重渲染，无需任何 watch**（渲染读 locale ref 自带响应式）。② 设置类标题同法键化（`settings.ts` 的 `app.home.title: 'menu.overview'`——面包屑里藏的「主机概览」就是它）。③ 动态枚举文案用 `tr(\`域.key.${v}\`, v)`（不存在回落原值，后端新枚举不裸 key）；非组件模块（store/composables/ts 元数据表）统一 `import { i18n, tr } from '@/locales'` + **函数内求值**（模块顶层求值会固化语言）；元数据表的中文 label 改 getter 即时求值，消费方零改动。④ vue-i18n 消息里 `{ } @ |` 是语法字符，含这些字符的文案要转义（`@`→`{'@'}`）或改用命名参数传值；LogsQL/JSON 示例含裸 `{}` 的干脆留在代码里。
 - **校验**：语言包校验脚本用 esbuild transformSync 加载 TS 词条做 zh/en 键集比对与引用完整性扫描——**注意词条对象顶层没有域名层**（域名在文件名），扫描器必须给键补 `域名.` 前缀，否则 4000+ 假 MISSING / 结构比对假阴性。
+- **补充（2026-10-09 M54 真机）**：向某域追加词条时锚点不能选「文件里第一个同名行」——`deleteConfirm` 在 user/role/backups 三域都有，正则取首个匹配把 6 个角色页词条插进了 backups 域，页面渲染成裸 key（`manage.role.allNodes` 原样显示，即「中英文混合」观感）。规避：锚点正则必须限定域上下文（如 `
+  role: \{.*?deleteConfirm` 带 re.S），或插完后断言「引用键 ∈ 所属域对象」。裸 key 渲染 = vue-i18n 缺键回落 key 本身，排查先 grep 语言文件里 key 的实际落点域。
 - **验收手法**：浏览器 `localStorage.setItem('ypanel.locale','en-US') + reload` 直接进 EN 态；单 cell 批量 `location.hash` 导航 + body.innerText 断言（IAB evaluate 上限 ~32s，一批 ≤14 页）；剩余中文区分「数据」（供应商名/站点名/探针名等后端内容）与「UI」，只有后者是缺陷。
 - **来源**：2026-10-08，B26-full 全站双语（14 个迁移批次、34 域 3555 对键、vue-tsc/生产构建/双语言走查全绿）。
 

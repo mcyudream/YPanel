@@ -56,6 +56,11 @@ ypanel/
   - SQL 全部参数化；对 MySQL/PG 的管理操作（建库/授权）同样需要标识符白名单校验
   - 节点间通信必须认证+加密；agent 操作需能力白名单
 - WebSocket：连接必须有鉴权与退出条件；协程不得持有请求上下文
+- RBAC 权限三层校验（M54 起强制，详见 core/internal/rbac）：
+  - **新增路由必须声明权限点**：先在 `core/internal/rbac/perm.go` 目录登记（`模块:read|write`，高危动作单列），再在 router.go 标注 `pm("...")`；不带权限点的路由仅限面板级自助端点（auth 自助/通知/任务中心等，需注释说明）。新增 AI 工具模块必须在 `rbac.aiModulePerm` 登记模块→权限点映射，未登记的模块回落 ai:use/ai:admin。
+  - **前端 meta.auth 只是 UI 过滤**，不是安全边界（fa 守卫不做硬拦截）；权限硬边界只有后端中间件。fa `hasPermission` 是精确 includes，后端下发权限列表必须经 `rbac.Expand` 展开通配。
+  - **节点范围**：带 `?node=`/`?nodeId=` 的接口自动过 NodeScope 中间件；新写「隐式操作本机节点」的接口要评估是否加入 `middleware/localImplicitPrefixes` 前缀表。资源「分配属主」类接口必须 `requireAllScope` 把关。
+  - **数据范围**：新资源域引入属主时沿用三件套——List 服务层 ctx 过滤（`rbac.CallerFrom`）、单资源 API 断言（api/owner.go 的 ownedXxx 助手，越权 404）、创建归属（`stampOwnerForCreate`：assigned→自己，all→公共）。
 
 ## 4. 前端编码约定
 

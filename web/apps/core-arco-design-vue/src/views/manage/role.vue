@@ -44,23 +44,23 @@ function groupTitle(key: string) {
 // ---- 创建 / 编辑 / 复制 / 删除 ----
 const editVisible = ref(false)
 const editTarget = ref<RoleItem | null>(null) // null = 创建/复制
-const editForm = ref({ key: '', name: '', remark: '', perms: [] as string[], scopeAllNodes: true, nodeIds: [] as string[] })
+const editForm = ref({ key: '', name: '', remark: '', perms: [] as string[], scopeAllNodes: true, nodeIds: [] as string[], dataScope: 'all' as 'all' | 'assigned' })
 
 function openCreate() {
   editTarget.value = null
-  editForm.value = { key: '', name: '', remark: '', perms: [], scopeAllNodes: true, nodeIds: [] }
+  editForm.value = { key: '', name: '', remark: '', perms: [], scopeAllNodes: true, nodeIds: [], dataScope: 'all' }
   editVisible.value = true
 }
 
 function openCopy(r: RoleItem) {
   editTarget.value = null
-  editForm.value = { key: `${r.key}-copy`, name: `${r.name} 副本`, remark: r.remark, perms: [...r.perms], scopeAllNodes: r.scopeAllNodes, nodeIds: [...(r.nodeIds ?? [])] }
+  editForm.value = { key: `${r.key}-copy`, name: `${r.name} 副本`, remark: r.remark, perms: [...r.perms], scopeAllNodes: r.scopeAllNodes, nodeIds: [...(r.nodeIds ?? [])], dataScope: (r.dataScope as 'all' | 'assigned') ?? 'all' }
   editVisible.value = true
 }
 
 function openEdit(r: RoleItem) {
   editTarget.value = r
-  editForm.value = { key: r.key, name: r.name, remark: r.remark, perms: [...r.perms], scopeAllNodes: r.scopeAllNodes, nodeIds: [...(r.nodeIds ?? [])] }
+  editForm.value = { key: r.key, name: r.name, remark: r.remark, perms: [...r.perms], scopeAllNodes: r.scopeAllNodes, nodeIds: [...(r.nodeIds ?? [])], dataScope: (r.dataScope as 'all' | 'assigned') ?? 'all' }
   editVisible.value = true
 }
 
@@ -70,7 +70,11 @@ async function doSave() {
     return
   }
   try {
-    const scope = { scopeAllNodes: editForm.value.scopeAllNodes, nodeIds: editForm.value.scopeAllNodes ? [] : editForm.value.nodeIds }
+    const scope = {
+      scopeAllNodes: editForm.value.scopeAllNodes,
+      nodeIds: editForm.value.scopeAllNodes ? [] : editForm.value.nodeIds,
+      dataScope: editForm.value.dataScope,
+    }
     if (editTarget.value) {
       await apiRole.update(editTarget.value.id, { name: editForm.value.name, remark: editForm.value.remark, perms: editForm.value.perms, ...scope })
     }
@@ -233,6 +237,19 @@ onMounted(load)
               </label>
             </div>
           </div>
+        </div>
+        <div class="flex items-center gap-3">
+          <span class="w-16 shrink-0 text-sm text-muted-foreground">{{ $t('manage.role.dataScope') }}</span>
+          <YdSelect
+            v-model="editForm.dataScope"
+            :options="[
+              { label: $t('manage.role.dataScopeAll'), value: 'all' },
+              { label: $t('manage.role.dataScopeAssigned'), value: 'assigned' },
+            ]"
+            size="default"
+            button-class="w-full"
+            class="min-w-0 flex-1"
+          />
         </div>
         <div class="max-h-[40vh] overflow-y-auto rounded-md border p-3">
           <div v-for="g in catalog" :key="g.key" class="mb-3 last:mb-0">

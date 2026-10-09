@@ -23,6 +23,7 @@ type FirewallService struct {
 	db        *gorm.DB
 	nodes     *NodeService
 	panelPort int
+	nodeClient *agentclient.Client // WithNode 绑定的节点客户端（空=本机）
 }
 
 // NewFirewallService 创建（panelPort 用于自锁保护）。
@@ -30,7 +31,21 @@ func NewFirewallService(db *gorm.DB, nodes *NodeService, panelPort int) *Firewal
 	return &FirewallService{db: db, nodes: nodes, panelPort: panelPort}
 }
 
+// WithNode 返回绑定目标节点的副本（M55 主机域节点化：client 按节点路由，方法签名不变）。
+func (s *FirewallService) WithNode(nodeId string) (*FirewallService, error) {
+	node, err := s.nodes.ByID(nodeId)
+	if err != nil {
+		return nil, err
+	}
+	cp := *s
+	cp.nodeClient = agentclient.New(node.BaseURL, node.Token)
+	return &cp, nil
+}
+
 func (s *FirewallService) client() (*agentclient.Client, error) {
+	if s.nodeClient != nil {
+		return s.nodeClient, nil
+	}
 	node, err := s.nodes.ByID("local")
 	if err != nil {
 		return nil, err

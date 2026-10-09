@@ -25,6 +25,7 @@ export interface SiteItem {
   runDir: string
   isDefault?: boolean
   expireAt?: string | null
+  ownerId: number
   enabled: boolean
   onDisk: boolean
   nginxRunning: boolean
@@ -117,6 +118,9 @@ export default {
   },
   create: (data: { name: string, type: string, domain: string, extraDomains?: string[], port?: number, proxyRules?: ProxyRule[], proxyPass?: string, indexFiles?: string, runtimeId?: number, groupId?: number, remark?: string, runDir?: string }) =>
     api.post('api/v1/sites', data),
+  // M54-P3 属主分配（0=公共；仅数据范围不受限账号可操作）
+  setOwner: (id: number, ownerId: number) =>
+    api.put(`api/v1/sites/${id}/owner`, { ownerId }),
   updateMeta: (id: number, data: { groupId?: number, remark?: string }) => api.put(`api/v1/sites/${id}/meta`, data),
   remove: (id: number, purge: boolean, backups = false) => api.delete(`api/v1/sites/${id}?purge=${purge}&backups=${backups}`),
   enable: (id: number) => api.post(`api/v1/sites/${id}/enable`),

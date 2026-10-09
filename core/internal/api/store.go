@@ -179,6 +179,28 @@ func (a *StoreAPI) Installed(c *gin.Context) {
 	respOK(c, out)
 }
 
+// SetOwner POST /api/v1/store/installed/:project/owner {ownerId}（M54-P3：仅 all 数据范围可操作；0=公共）
+func (a *StoreAPI) SetOwner(c *gin.Context) {
+	if !requireAllScope(c) {
+		return
+	}
+	project, err := ownedProject(c, a.Store)
+	if err != nil {
+		respErr(c, err)
+		return
+	}
+	ownerID, ok := parseOwnerBody(c)
+	if !ok {
+		respErr(c, errBadRequest("ownerId 不合法"))
+		return
+	}
+	if err := a.Store.SetInstallOwner(project, ownerID); err != nil {
+		respErr(c, err)
+		return
+	}
+	respOK(c, struct{}{})
+}
+
 // InstalledAction POST /api/v1/store/installed/:project/:action（start|stop|restart|rebuild）
 func (a *StoreAPI) InstalledAction(c *gin.Context) {
 	project, err := ownedProject(c, a.Store)
@@ -186,7 +208,7 @@ func (a *StoreAPI) InstalledAction(c *gin.Context) {
 		respErr(c, err)
 		return
 	}
-	if err := a.Store.InstalledAction(c.Request.Context(), project, c.Param("action")); err != nil {
+	if err := a.Store.InstalledAction(c.Request.Context(), project, c.Param("action"), c.Query("nodeId")); err != nil {
 		respErr(c, err)
 		return
 	}
@@ -195,7 +217,7 @@ func (a *StoreAPI) InstalledAction(c *gin.Context) {
 
 // InstallEnv GET /api/v1/store/installed/:project/env（admin，含密码明文）
 func (a *StoreAPI) InstallEnv(c *gin.Context) {
-	if c.GetString(middleware.CtxRole) != "admin" {
+	if !isSuperCaller(c) { // 含密码明文，维持「仅超管可见」产品语义（M54 起按通配权限判断）
 		respErr(c, errBadRequest("仅管理员可查看安装参数"))
 		return
 	}
@@ -204,7 +226,7 @@ func (a *StoreAPI) InstallEnv(c *gin.Context) {
 		respErr(c, err)
 		return
 	}
-	out, err := a.Store.InstallEnv(c.Request.Context(), project)
+	out, err := a.Store.InstallEnv(c.Request.Context(), project, c.Query("nodeId"))
 	if err != nil {
 		respErr(c, err)
 		return
@@ -220,6 +242,7 @@ func (a *StoreAPI) SaveInstallEnv(c *gin.Context) {
 	}
 	req, ok := bind[struct {
 		Content string `json:"content" binding:"required"`
+		NodeID  string `json:"nodeId"`
 	}](c)
 	if !ok {
 		return
@@ -229,7 +252,7 @@ func (a *StoreAPI) SaveInstallEnv(c *gin.Context) {
 		respErr(c, err)
 		return
 	}
-	if err := a.Store.SaveInstallEnv(c.Request.Context(), project, req.Content); err != nil {
+	if err := a.Store.SaveInstallEnv(c.Request.Context(), project, req.NodeID, req.Content); err != nil {
 		respErr(c, err)
 		return
 	}
@@ -242,6 +265,7 @@ func (a *StoreAPI) Install(c *gin.Context) {
 	if !ok {
 		return
 	}
+	req.OwnerID = stampOwnerForCreate(c) // M54-P3 创建归属
 	out, err := a.Store.Install(c.Request.Context(), *req)
 	if err != nil {
 		respErr(c, err)

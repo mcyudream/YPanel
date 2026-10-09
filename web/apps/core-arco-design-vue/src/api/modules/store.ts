@@ -78,6 +78,8 @@ export interface StoreInstallInfo {
   ports: number[]
   params: Record<string, string>
   createdAt: string
+  ownerId: number
+	  nodeId?: string
 }
 
 export interface StoreAppItem extends StoreApp {
@@ -176,19 +178,22 @@ export const storeApi = {
     const res = await api.get('api/v1/store/installed', { silent: true })
     return res.data as StoreInstallInfo[]
   },
-  installedAction: (project: string, action: 'start' | 'stop' | 'restart' | 'rebuild') =>
-    api.post(`api/v1/store/installed/${encodeURIComponent(project)}/${action}`, null, { timeout: 300000 }),
+  installedAction: (project: string, action: 'start' | 'stop' | 'restart' | 'rebuild', nodeId?: string) =>
+    api.post(`api/v1/store/installed/${encodeURIComponent(project)}/${action}${nodeId && nodeId !== 'local' ? `?nodeId=${encodeURIComponent(nodeId)}` : ''}`, null, { timeout: 300000 }),
+  // M54-P3 属主分配（0=公共；仅数据范围不受限账号可操作）
+  setOwner: (project: string, ownerId: number) =>
+    api.post(`api/v1/store/installed/${encodeURIComponent(project)}/owner`, { ownerId }),
   installEnv: async (project: string) => {
     const res = await api.get(`api/v1/store/installed/${encodeURIComponent(project)}/env`, { silent: true })
     return res.data as Record<string, string>
   },
   saveInstallEnv: (project: string, content: string) =>
     api.put(`api/v1/store/installed/${encodeURIComponent(project)}/env`, { content }, { timeout: 300000 }),
-  install: async (data: { sourceId: number, key: string, version: string, name: string, params: Record<string, string>, domain?: string, network?: string, createNetwork?: boolean, timezone?: string, extraHosts?: string[], mountHostsFile?: boolean, externalDB?: { instanceId: number, database?: string, user?: string, createIfMissing?: boolean } }) => {
+  install: async (data: { sourceId: number, key: string, version: string, name: string, params: Record<string, string>, domain?: string, nodeId?: string, network?: string, createNetwork?: boolean, timezone?: string, extraHosts?: string[], mountHostsFile?: boolean, externalDB?: { instanceId: number, database?: string, user?: string, createIfMissing?: boolean } }) => {
     const res = await api.post('api/v1/store/install', data, { timeout: 60000 })
     return res.data as { taskId: number, project: string }
   },
-  uninstall: async (project: string, opts: { purgeData?: boolean, rmi?: boolean, cascadeDB?: boolean } = {}) => {
+  uninstall: async (project: string, opts: { purgeData?: boolean, rmi?: boolean, cascadeDB?: boolean, nodeId?: string } = {}) => {
     const q = new URLSearchParams()
     if (opts.purgeData) {
       q.set('purgeData', 'true')

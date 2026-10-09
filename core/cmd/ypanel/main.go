@@ -29,42 +29,16 @@ func main() {
 	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stdout, nil)))
 	cfg := config.Load(version)
 
-	switch {
-	case cfg.ResetAdmin != "":
+	if cfg.ResetAdmin != "" {
 		resetAdmin(cfg)
 		return
-	case flag.NArg() > 0 && flag.Arg(0) == "version":
-		fmt.Println("YPanel", version)
+	}
+	if flag.NArg() > 0 {
+		if !runSubcommand(cfg, flag.Arg(0), flag.Args()[1:]) {
+			fmt.Fprintf(os.Stderr, "未知命令: %s\n\n%s", flag.Arg(0), cliUsageText)
+			os.Exit(2)
+		}
 		return
-	case flag.NArg() > 0 && flag.Arg(0) == "backup":
-		gdb, err := db.Open(cfg.DataDir)
-		if err != nil {
-			os.Exit(1)
-		}
-		settings := service.NewSettingService(gdb)
-		_, _ = settings.GetOrCreate("jwt_secret", "")
-		bp := service.NewPanelBackupService(nil)
-		res, err := bp.Create(context.Background())
-		if err != nil {
-			slog.Error("备份失败", "err", err)
-			os.Exit(1)
-		}
-		fmt.Printf("备份完成: %v\n", res["file"])
-		return
-	case flag.NArg() > 0 && flag.Arg(0) == "clean-cache":
-		gdb, err := db.Open(cfg.DataDir)
-		if err != nil {
-			os.Exit(1)
-		}
-		if err := gdb.Exec("DELETE FROM metric_records WHERE at < datetime('now', '-30 days')").Error; err != nil {
-			slog.Error("清理失败", "err", err)
-			os.Exit(1)
-		}
-		fmt.Println("历史监控缓存已清理（保留 30 天）")
-		return
-	case flag.NArg() > 0:
-		fmt.Fprintf(os.Stderr, "未知命令: %s\n可用: ypanel [--port] [--data] | ypanel version | backup | clean-cache | -reset-admin <user>\n", flag.Arg(0))
-		os.Exit(2)
 	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
@@ -289,4 +263,14 @@ func resetAdmin(cfg *config.Config) {
 		os.Exit(1)
 	}
 	slog.Info("密码已重置", "user", cfg.ResetAdmin)
+	// 交互确认是否同时关闭面板级 2FA（验证器丢失时的救急通道；默认不动）
+	fmt.Print("是否同时关闭面板 2FA（验证器丢失时选 y）[y/N]: ")
+	var ans string
+	if _, err := fmt.Scanln(&ans); err == nil && (ans == "y" || ans == "Y" || ans == "yes") {
+		if err := service.NewSecuritySettingsService(settings).Disable2FA(context.Background()); err != nil {
+			slog.Warn("关闭 2FA 失败（可稍后用 ypanel reset mfa）", "err", err)
+		} else {
+			slog.Info("面板 2FA 已关闭")
+		}
+	}
 }

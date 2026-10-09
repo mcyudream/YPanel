@@ -148,7 +148,7 @@ func (s *StoreService) UpgradeApp(ctx context.Context, project string) (map[stri
 	// Install 对同名项目自带重装语义（down 同名项目→端口预检→部署→记录 upsert）
 	out, err := s.Install(ctx, StoreInstallInput{
 		SourceID: inst.SourceID, Key: inst.Key, Name: inst.Name, Version: app.LatestVersion,
-		Params: params,
+		Params: params, NodeID: inst.NodeID, // M55：升级保持在原节点
 	})
 	if err != nil {
 		return nil, err

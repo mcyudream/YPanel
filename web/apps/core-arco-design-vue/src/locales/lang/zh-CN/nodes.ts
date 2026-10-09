@@ -88,4 +88,7 @@ export default {
     agentUpgradeDone: '节点 agent 已更新到 v{version}',
     agentUpgradeFailed: '节点 agent 更新失败，请查看任务日志',
 
+    targetNode: '目标节点',
+    localPanel: '本机面板节点',
+
 }

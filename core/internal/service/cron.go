@@ -107,9 +107,14 @@ func (c *Cron) RunTask(t *model.CronTask, trigger string) {
 	}
 	defer c.running.Delete(t.ID)
 
-	node, err := c.nodes.ByID("local")
+	// M55 目标节点：shell/script 类任务在指定节点执行；db/site 备份等自带目标语义仍由面板驱动
+	execNode := "local"
+	if t.Type == "shell" || t.Type == "script" {
+		execNode = normalizeNodeID(t.NodeID)
+	}
+	node, err := c.nodes.ByID(execNode)
 	if err != nil {
-		slog.Error("cron 取节点失败", "err", err)
+		slog.Error("cron 取节点失败", "node", execNode, "err", err)
 		return
 	}
 	ac := agentclient.New(node.BaseURL, node.Token)

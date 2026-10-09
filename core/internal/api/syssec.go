@@ -15,7 +15,12 @@ type FtpAPI struct {
 
 // Status GET /api/v1/ftp/status
 func (a *FtpAPI) Status(c *gin.Context) {
-	out, err := a.Ftp.Status(c.Request.Context())
+	ftp, ferr := a.Ftp.WithNode(c.Query("nodeId"))
+	if ferr != nil {
+		respErr(c, ferr)
+		return
+	}
+	out, err := ftp.Status(c.Request.Context())
 	if err != nil {
 		respErr(c, err)
 		return
@@ -25,7 +30,12 @@ func (a *FtpAPI) Status(c *gin.Context) {
 
 // Install POST /api/v1/ftp/install
 func (a *FtpAPI) Install(c *gin.Context) {
-	out, err := a.Ftp.Install(c.Request.Context())
+	ftp, ferr := a.Ftp.WithNode(c.Query("nodeId"))
+	if ferr != nil {
+		respErr(c, ferr)
+		return
+	}
+	out, err := ftp.Install(c.Request.Context())
 	if err != nil {
 		respErr(c, err)
 		return
@@ -41,7 +51,12 @@ func (a *FtpAPI) Power(c *gin.Context) {
 	if !ok {
 		return
 	}
-	if err := a.Ftp.Power(c.Request.Context(), req.Action); err != nil {
+	ftp, ferr := a.Ftp.WithNode(c.Query("nodeId"))
+	if ferr != nil {
+		respErr(c, ferr)
+		return
+	}
+	if err := ftp.Power(c.Request.Context(), req.Action); err != nil {
 		respErr(c, err)
 		return
 	}
@@ -62,7 +77,12 @@ func (a *FtpAPI) SetPort(c *gin.Context) {
 	if pasvMin == 0 && pasvMax == 0 {
 		pasvMin, pasvMax = 40000, 40100
 	}
-	if err := a.Ftp.SetPort(c.Request.Context(), req.Port, pasvMin, pasvMax); err != nil {
+	ftp, ferr := a.Ftp.WithNode(c.Query("nodeId"))
+	if ferr != nil {
+		respErr(c, ferr)
+		return
+	}
+	if err := ftp.SetPort(c.Request.Context(), req.Port, pasvMin, pasvMax); err != nil {
 		respErr(c, err)
 		return
 	}

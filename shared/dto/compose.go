@@ -110,6 +110,7 @@ type CronTaskCreateReq struct {
 	Type        string `json:"type"`                       // shell（默认）/ db_backup / site_backup / dir_backup / compose_backup / curl / cut_website_log / clean / cert_renew / container_op / script
 	Payload     string `json:"payload"`                    // 类型参数 JSON
 	TimeoutSecs int    `json:"timeoutSecs"`                // 0 = 300
+	NodeID      string `json:"nodeId"`                     // M55 目标节点（空=local；shell/script 类在目标节点执行）
 }
 
 // CronTaskUpdateReq 更新任务（零值字段不更新）。

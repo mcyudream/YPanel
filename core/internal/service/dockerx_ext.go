@@ -19,8 +19,9 @@ import (
 
 // DockerExtService Docker 管理扩展服务。
 type DockerExtService struct {
-	nodes *NodeService
-	tasks *TaskService
+	nodes      *NodeService
+	tasks      *TaskService
+	nodeClient *agentclient.Client // WithNode 绑定的节点客户端（空=本机；M55 容器域节点化）
 }
 
 // NewDockerExtService 创建（tasks 用于镜像拉取等耗时操作任务化，可 nil）。
@@ -58,7 +59,21 @@ func (s *DockerExtService) Client() (*agentclient.Client, error) {
 	return s.client()
 }
 
+// WithNode 返回绑定目标节点的副本（M55 容器域节点化：client 按节点路由，方法签名不变）。
+func (s *DockerExtService) WithNode(nodeId string) (*DockerExtService, error) {
+	node, err := s.nodes.ByID(nodeId)
+	if err != nil {
+		return nil, err
+	}
+	cp := *s
+	cp.nodeClient = agentclient.New(node.BaseURL, node.Token)
+	return &cp, nil
+}
+
 func (s *DockerExtService) client() (*agentclient.Client, error) {
+	if s.nodeClient != nil {
+		return s.nodeClient, nil
+	}
 	node, err := s.nodes.ByID("local")
 	if err != nil {
 		return nil, err

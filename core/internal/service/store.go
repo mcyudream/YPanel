@@ -191,7 +191,12 @@ func NewStoreService(db *gorm.DB, nodes *NodeService, sites *SiteService, tasks 
 }
 
 func (s *StoreService) client() (*agentclient.Client, error) {
-	node, err := s.nodes.ByID("local")
+	return s.clientFor("local")
+}
+
+// clientFor 按节点路由 agent 客户端（M55 商店节点安装：空/local=本机）。
+func (s *StoreService) clientFor(nodeId string) (*agentclient.Client, error) {
+	node, err := s.nodes.ByID(nodeId)
 	if err != nil {
 		return nil, err
 	}
@@ -829,6 +834,7 @@ func (s *StoreService) AppIcon(sourceID uint, key string) ([]byte, string, error
 // StoreInstallInput 安装入参。
 type StoreInstallInput struct {
 	SourceID uint           `json:"sourceId" binding:"required"`
+	NodeID   string         `json:"nodeId"`          // M55 目标节点（空=本机）
 	Key      string         `json:"key" binding:"required"`
 	Version  string         `json:"version"`
 	Name     string         `json:"name" binding:"required"`
@@ -1041,11 +1047,12 @@ func (s *StoreService) Install(ctx context.Context, in StoreInstallInput) (map[s
 
 // runInstall 任务化安装主体：重装清理 → 端口预检 → 部署 → 记录 → 一键反代。
 func (s *StoreService) runInstall(ctx context.Context, logf TaskLogf, app model.AppStoreApp, ver StoreVersion, in StoreInstallInput, project string, params map[string]string) error {
-	ac, err := s.client()
+	ac, err := s.clientFor(in.NodeID)
 	if err != nil {
 		return err
 	}
-	logf("info", "开始安装 %s 版本 %s → 项目 %s", app.Name, ver.ID, project)
+	logf("info", "开始安装 %s 版本 %s → 项目 %s%s", app.Name, ver.ID, project,
+		mapStr(normalizeNodeID(in.NodeID) != "local", "（节点 "+normalizeNodeID(in.NodeID)+"）", ""))
 
 	// 重装场景：先 down 同名项目释放端口与容器
 	if out, err := agentclient.DoJSON[dto.ExecReq, dto.ExecResp](ac, ctx, "POST", "/agent/v1/exec",
@@ -1055,8 +1062,8 @@ func (s *StoreService) runInstall(ctx context.Context, logf TaskLogf, app model.
 		}
 	}
 
-	// 端口占用预检
-	if err := s.precheckPorts(ctx, logf, params); err != nil {
+	// 端口占用预检（目标节点）
+	if err := s.precheckPorts(ctx, logf, ac, params); err != nil {
 		return err
 	}
 
@@ -1092,12 +1099,13 @@ func (s *StoreService) runInstall(ctx context.Context, logf TaskLogf, app model.
 	if err := s.db.Where("compose_project = ?", project).First(&exist).Error; err == nil {
 		_ = s.db.Model(&exist).Updates(map[string]any{
 			"source_id": app.SourceID, "key": app.Key, "name": in.Name, "version": ver.ID,
-			"params_json": marshalJSON(params),
+			"params_json": marshalJSON(params), "node_id": normalizeNodeID(in.NodeID),
 		}).Error
 	} else {
 		_ = s.db.Create(&model.AppStoreInstall{
 			SourceID: app.SourceID, Key: app.Key, Name: in.Name, Version: ver.ID,
 			ComposeProject: project, ParamsJSON: marshalJSON(params), OwnerID: in.OwnerID,
+			NodeID: normalizeNodeID(in.NodeID),
 		}).Error
 	}
 	logf("info", "安装完成，项目 %s 已启动", project)
@@ -1106,7 +1114,7 @@ func (s *StoreService) runInstall(ctx context.Context, logf TaskLogf, app model.
 	if dbServiceKeys[app.Key] && s.dbs != nil {
 		logf("info", "检测到数据库类应用，等待初始化后自动接管（最多 90 秒）…")
 		actx, cancel := context.WithTimeout(ctx, 90*time.Second)
-		if _, aerr := s.dbs.AdoptWithRetry(actx, project, 12, 5*time.Second); aerr != nil {
+		if _, aerr := s.dbs.AdoptWithRetry(actx, project, normalizeNodeID(in.NodeID), 12, 5*time.Second); aerr != nil {
 			logf("warn", "自动接管未完成: %s（可稍后在数据库页手动接管）", aerr.Error())
 		} else {
 			logf("info", "已自动接管至数据库模块，可直接管理库/用户/备份")
@@ -1136,7 +1144,7 @@ func (s *StoreService) runInstall(ctx context.Context, logf TaskLogf, app model.
 }
 
 // precheckPorts 端口占用预检：宿主已监听端口即冲突（compose down 后检测，本项目旧端口已释放）。
-func (s *StoreService) precheckPorts(ctx context.Context, logf TaskLogf, params map[string]string) error {
+func (s *StoreService) precheckPorts(ctx context.Context, logf TaskLogf, ac *agentclient.Client, params map[string]string) error {
 	ports := []int{}
 	for k, v := range params {
 		if !strings.Contains(strings.ToUpper(k), "PORT") || v == "" {
@@ -1148,10 +1156,6 @@ func (s *StoreService) precheckPorts(ctx context.Context, logf TaskLogf, params 
 	}
 	if len(ports) == 0 {
 		return nil
-	}
-	ac, err := s.client()
-	if err != nil {
-		return err
 	}
 	out, err := agentclient.DoJSON[dto.ExecReq, dto.ExecResp](ac, ctx, "POST", "/agent/v1/exec",
 		&dto.ExecReq{Command: "ss -tlnH | awk '{print $4}' | grep -oE '[0-9]+$' | sort -un", TimeoutSecs: 30})
@@ -1180,7 +1184,7 @@ func (s *StoreService) precheckPorts(ctx context.Context, logf TaskLogf, params 
 
 // deployCompose 两种包形态的统一部署（步骤日志写任务；network 为解析后的目标网络）。
 func (s *StoreService) deployCompose(ctx context.Context, logf TaskLogf, app model.AppStoreApp, ver StoreVersion, in StoreInstallInput, project string, params map[string]string, network, tz string, hosts []string, mountHostsFile bool) (string, error) {
-	ac, err := s.client()
+	ac, err := s.clientFor(in.NodeID)
 	if err != nil {
 		return "", err
 	}
@@ -1231,7 +1235,7 @@ func (s *StoreService) deployCompose(ctx context.Context, logf TaskLogf, app mod
 		}
 	case ver.LocalDir != "":
 		// 本地包（yp-git）：core 读缓存目录写入 agent（compose 内网络名替换为目标网络）
-		n, werr := s.writeLocalPackage(ctx, app.SourceID, ver.LocalDir, dir, network)
+		n, werr := s.writeLocalPackage(ctx, ac, app.SourceID, ver.LocalDir, dir, network)
 		if werr != nil {
 			return strings.Join(logs, "\n"), errs.Wrapc(errs.CodeFileOpFailed, "写入应用包失败: "+werr.Error())
 		}
@@ -1272,7 +1276,7 @@ func (s *StoreService) deployCompose(ctx context.Context, logf TaskLogf, app mod
 	for _, k := range keys {
 		envBuf.WriteString(k + "=" + params[k] + "\n")
 	}
-	if err := s.writeViaAgent(ctx, dir+"/.env", envBuf.String()); err != nil {
+	if err := s.writeViaAgent(ctx, ac, dir+"/.env", envBuf.String()); err != nil {
 		return strings.Join(logs, "\n"), err
 	}
 	logs = append(logs, "写入 .env ✓")
@@ -1292,7 +1296,7 @@ func (s *StoreService) deployCompose(ctx context.Context, logf TaskLogf, app mod
 }
 
 // writeLocalPackage 把仓库内包目录的文本文件写入 agent 目标目录（compose 文件统一命名 docker-compose.yml）。
-func (s *StoreService) writeLocalPackage(ctx context.Context, sourceID uint, pkgRel, remoteDir, network string) (int, error) {
+func (s *StoreService) writeLocalPackage(ctx context.Context, ac *agentclient.Client, sourceID uint, pkgRel, remoteDir, network string) (int, error) {
 	root := filepath.Join(s.dir, fmt.Sprintf("src-%d", sourceID))
 	pkgDir := filepath.Join(root, filepath.FromSlash(pkgRel))
 	if !strings.HasPrefix(pkgDir, filepath.Clean(root)+string(os.PathSeparator)) {
@@ -1339,7 +1343,7 @@ func (s *StoreService) writeLocalPackage(ctx context.Context, sourceID uint, pkg
 			// compose 内网络统一为所选安装网络
 			content = strings.ReplaceAll(content, "1panel-network", network)
 		}
-		if err := s.writeViaAgent(ctx, remoteDir+"/"+name, content); err != nil {
+		if err := s.writeViaAgent(ctx, ac, remoteDir+"/"+name, content); err != nil {
 			return err
 		}
 		count++
@@ -1356,6 +1360,7 @@ func (s *StoreService) writeLocalPackage(ctx context.Context, sourceID uint, pkg
 
 // StoreUninstallOptions 卸载选项（级联资源勾选）。
 type StoreUninstallOptions struct {
+	NodeID      string // M55 目标节点（空=本机）
 	PurgeData   bool // 删除应用数据（compose 目录含数据卷/数据库文件）
 	RemoveImage bool // 删除应用镜像（compose 内全部 image）
 	CascadeDB   bool // 级联移除关联的数据库纳管记录与备份
@@ -1369,9 +1374,10 @@ func (s *StoreService) Uninstall(ctx context.Context, project string, opts Store
 	if s.tasks == nil {
 		return nil, errs.Wrap(errs.ErrBadRequest, "任务服务不可用")
 	}
+	nodeId := normalizeNodeID(opts.NodeID)
 	task, err := s.tasks.StartTask(TaskStoreUninstall, fmt.Sprintf("卸载 %s", project), project, 15*time.Minute,
 		func(tctx context.Context, logf TaskLogf) error {
-			ac, aerr := s.client()
+			ac, aerr := s.clientFor(nodeId)
 			if aerr != nil {
 				return aerr
 			}
@@ -1475,6 +1481,7 @@ type StoreInstallInfo struct {
 	Params         map[string]string `json:"params"` // 密码类值已打码
 	OwnerID        uint              `json:"ownerId"` // M54-P3 数据范围属主（0=公共）
 	CreatedAt      time.Time         `json:"createdAt"`
+	NodeID string `json:"nodeId"`
 }
 
 // InstalledDetailed 已安装详情聚合（含 compose 运行状态、应用元数据与安装参数）。
@@ -1499,12 +1506,20 @@ func (s *StoreService) InstalledDetailed(ctx context.Context) ([]StoreInstallInf
 			metas[mk] = appMeta{name: a.Name, icon: a.IconURL, latest: a.LatestVersion}
 		}
 	}
-	// compose 运行状态
+	// compose 运行状态（M55：按节点分组路由查询）
 	running := map[string]bool{}
-	if ac, err := s.client(); err == nil {
-		if projects, perr := agentclient.GetJSON[[]dto.ComposeProject](ac, ctx, "/agent/v1/compose/projects"); perr == nil {
-			for _, p := range projectsSafe(projects) {
-				running[p.Name] = p.Running > 0
+	nodeClients := map[string]*agentclient.Client{}
+	for _, i := range installs {
+		nid := normalizeNodeID(i.NodeID)
+		if _, ok := nodeClients[nid]; ok {
+			continue
+		}
+		if ac, err := s.clientFor(nid); err == nil {
+			nodeClients[nid] = ac
+			if projects, perr := agentclient.GetJSON[[]dto.ComposeProject](ac, ctx, "/agent/v1/compose/projects"); perr == nil {
+				for _, p := range projectsSafe(projects) {
+					running[p.Name] = running[p.Name] || p.Running > 0
+				}
 			}
 		}
 	}
@@ -1514,6 +1529,7 @@ func (s *StoreService) InstalledDetailed(ctx context.Context) ([]StoreInstallInf
 			ID: i.ID, SourceID: i.SourceID, Key: i.Key, Name: i.Name, Remark: i.Remark, Version: i.Version,
 			ComposeProject: i.ComposeProject, Running: running[i.ComposeProject],
 			OwnerID: i.OwnerID, CreatedAt: i.CreatedAt, Params: map[string]string{}, Ports: []int{},
+			NodeID: normalizeNodeID(i.NodeID),
 		}
 		if m, ok := metas[fmt.Sprintf("%d/%s", i.SourceID, i.Key)]; ok {
 			info.AppName = m.name
@@ -1545,7 +1561,7 @@ func (s *StoreService) InstalledDetailed(ctx context.Context) ([]StoreInstallInf
 }
 
 // InstalledAction 已安装应用操作：start / stop / restart / rebuild。
-func (s *StoreService) InstalledAction(ctx context.Context, project, action string) error {
+func (s *StoreService) InstalledAction(ctx context.Context, project, action, nodeId string) error {
 	if !storeAppNamePattern.MatchString(strings.TrimPrefix(project, "app-")) {
 		return errs.ErrBadRequest
 	}
@@ -1554,7 +1570,7 @@ func (s *StoreService) InstalledAction(ctx context.Context, project, action stri
 	if count == 0 {
 		return errs.New(errs.CodeNotFound, "error.installNotFound", "安装记录不存在")
 	}
-	ac, err := s.client()
+	ac, err := s.clientFor(nodeId)
 	if err != nil {
 		return err
 	}
@@ -1587,11 +1603,11 @@ func (s *StoreService) InstalledAction(ctx context.Context, project, action stri
 }
 
 // InstallEnv 读取安装参数 .env（admin；含密码明文）。
-func (s *StoreService) InstallEnv(ctx context.Context, project string) (map[string]string, error) {
+func (s *StoreService) InstallEnv(ctx context.Context, project, nodeId string) (map[string]string, error) {
 	if !storeAppNamePattern.MatchString(strings.TrimPrefix(project, "app-")) {
 		return nil, errs.ErrBadRequest
 	}
-	ac, err := s.client()
+	ac, err := s.clientFor(nodeId)
 	if err != nil {
 		return nil, err
 	}
@@ -1613,7 +1629,7 @@ func (s *StoreService) InstallEnv(ctx context.Context, project string) (map[stri
 }
 
 // SaveInstallEnv 保存参数 .env 并重建容器使其生效（admin）。
-func (s *StoreService) SaveInstallEnv(ctx context.Context, project string, content string) error {
+func (s *StoreService) SaveInstallEnv(ctx context.Context, project, nodeId, content string) error {
 	if !storeAppNamePattern.MatchString(strings.TrimPrefix(project, "app-")) {
 		return errs.ErrBadRequest
 	}
@@ -1628,7 +1644,7 @@ func (s *StoreService) SaveInstallEnv(ctx context.Context, project string, conte
 			return errs.Wrap(errs.ErrBadRequest, "参数行不合法（需 KEY=VALUE 格式）: "+truncStr(t, 60))
 		}
 	}
-	ac, err := s.client()
+	ac, err := s.clientFor(nodeId)
 	if err != nil {
 		return err
 	}
@@ -1665,12 +1681,8 @@ func (s *StoreService) httpGet(ctx context.Context, url string, limit int64) ([]
 	return io.ReadAll(io.LimitReader(resp.Body, limit))
 }
 
-func (s *StoreService) writeViaAgent(ctx context.Context, p, content string) error {
-	ac, err := s.client()
-	if err != nil {
-		return err
-	}
-	_, err = agentclient.DoJSON[dto.FileWriteReq, struct{}](ac, ctx, "POST", "/agent/v1/files/write",
+func (s *StoreService) writeViaAgent(ctx context.Context, ac *agentclient.Client, p, content string) error {
+	_, err := agentclient.DoJSON[dto.FileWriteReq, struct{}](ac, ctx, "POST", "/agent/v1/files/write",
 		&dto.FileWriteReq{Path: p, Content: content})
 	return err
 }
@@ -1949,9 +1961,11 @@ func (s *StoreService) applyExternalDB(ctx context.Context, logf TaskLogf, ver S
 	if appNet == "" {
 		appNet = PanelNetwork
 	}
+	// M55 跨节点：容器名直连仅当应用与实例同节点（不同节点 docker 网络隔离），否则走宿主内网 IP:映射端口
+	sameNode := normalizeNodeID(in.NodeID) == "local"
 	host := info.LanIP
 	port := info.MapPort
-	if info.Container != "" && strings.Contains(info.Networks, appNet) {
+	if info.Container != "" && sameNode && strings.Contains(info.Networks, appNet) {
 		host = info.Container
 		port = info.InnerPort
 		logf("info", "实例容器与应用同在 %s 网络，连接地址使用 %s:%s（容器名直连）", appNet, host, port)
@@ -1980,6 +1994,11 @@ func (s *StoreService) applyExternalDB(ctx context.Context, logf TaskLogf, ver S
 
 // hostLanIP 宿主内网 IP（agent hostname -I 首个地址，进程内缓存）。
 func (s *StoreService) hostLanIP(ctx context.Context) (string, error) {
+	return s.hostLanIPOf(ctx, "local")
+}
+
+// hostLanIPOf 目标节点内网 IP（agent hostname -I 首个地址；M55 跨节点外接数据库连接信息用）。
+func (s *StoreService) hostLanIPOf(ctx context.Context, nodeId string) (string, error) {
 	s.hostIPOnce.Do(func() {
 		ac, err := s.client()
 		if err != nil {

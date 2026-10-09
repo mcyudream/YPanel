@@ -15,7 +15,12 @@ type FirewallAPI struct {
 
 // Status GET /api/v1/firewall/status
 func (a *FirewallAPI) Status(c *gin.Context) {
-	out, err := a.FW.Status(c.Request.Context())
+	fw, err := a.FW.WithNode(c.Query("nodeId"))
+	if err != nil {
+		respErr(c, err)
+		return
+	}
+	out, err := fw.Status(c.Request.Context())
 	if err != nil {
 		respErr(c, err)
 		return
@@ -25,6 +30,11 @@ func (a *FirewallAPI) Status(c *gin.Context) {
 
 // Allow POST /api/v1/firewall/allow
 func (a *FirewallAPI) Allow(c *gin.Context) {
+	fw, err := a.FW.WithNode(c.Query("nodeId"))
+	if err != nil {
+		respErr(c, err)
+		return
+	}
 	req, ok := bind[struct {
 		Port  string `json:"port" binding:"required"`
 		Proto string `json:"proto"`
@@ -32,7 +42,7 @@ func (a *FirewallAPI) Allow(c *gin.Context) {
 	if !ok {
 		return
 	}
-	if err := a.FW.Allow(c.Request.Context(), req.Port, req.Proto); err != nil {
+	if err := fw.Allow(c.Request.Context(), req.Port, req.Proto); err != nil {
 		respErr(c, err)
 		return
 	}
@@ -41,12 +51,17 @@ func (a *FirewallAPI) Allow(c *gin.Context) {
 
 // DeleteRule DELETE /api/v1/firewall/rules/:number
 func (a *FirewallAPI) DeleteRule(c *gin.Context) {
+	fw, err := a.FW.WithNode(c.Query("nodeId"))
+	if err != nil {
+		respErr(c, err)
+		return
+	}
 	n, err := strconv.Atoi(c.Param("number"))
 	if err != nil {
 		respErr(c, err)
 		return
 	}
-	if err := a.FW.DeleteRule(c.Request.Context(), n); err != nil {
+	if err := fw.DeleteRule(c.Request.Context(), n); err != nil {
 		respErr(c, err)
 		return
 	}
@@ -56,7 +71,12 @@ func (a *FirewallAPI) DeleteRule(c *gin.Context) {
 // SetEnabled POST /api/v1/firewall/enable | disable
 func (a *FirewallAPI) SetEnabled(enabled bool) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		if err := a.FW.SetEnabled(c.Request.Context(), enabled); err != nil {
+		fw, ferr := a.FW.WithNode(c.Query("nodeId"))
+		if ferr != nil {
+			respErr(c, ferr)
+			return
+		}
+		if err := fw.SetEnabled(c.Request.Context(), enabled); err != nil {
 			respErr(c, err)
 			return
 		}

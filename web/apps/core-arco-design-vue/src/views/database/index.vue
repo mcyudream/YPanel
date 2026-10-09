@@ -5,6 +5,7 @@ import type { StorageAccount } from '@/api/modules/storage'
 import { storageApi } from '@/api/modules/storage'
 import { storeApi } from '@/api/modules/store'
 import YdDangerDelete from '@/components/YdDangerDelete/index.vue'
+import YdOwnerDialog from '@/components/YdOwnerDialog/index.vue'
 import { i18n } from '@/locales'
 
 defineOptions({
@@ -14,6 +15,29 @@ defineOptions({
 const appAccountStore = useAppAccountStore()
 
 const instances = ref<DbInstance[]>([])
+
+// ---- M54-P3 属主分配 ----
+const ownerVisible = ref(false)
+const ownerTarget = ref<DbInstance | null>(null)
+
+function openOwner(inst: DbInstance) {
+  ownerTarget.value = inst
+  ownerVisible.value = true
+}
+
+async function doSetOwner(uid: number) {
+  if (!ownerTarget.value) {
+    return
+  }
+  try {
+    await apiDb.setOwner(ownerTarget.value.id, uid)
+    useFaToast().success(i18n.global.t('owner.saved'))
+    load()
+  }
+  catch (e: any) {
+    useFaToast().error(i18n.global.t('owner.saveFailed'), { description: e?.message })
+  }
+}
 const loading = ref(false)
 let timer: ReturnType<typeof setInterval> | null = null
 
@@ -786,6 +810,9 @@ onBeforeUnmount(() => {
             <FaButton variant="ghost" size="sm" @click="showConn(inst)">
               {{ $t('database.conn.title') }}
             </FaButton>
+            <FaButton variant="ghost" size="sm" :title="$t('owner.title')" @click="openOwner(inst)">
+              {{ $t('owner.short') }}
+            </FaButton>
             <FaButton variant="ghost" size="sm" class="ml-auto text-red-500!" @click="remove(inst)">
               {{ inst.origin === 'external' ? $t('database.actions.release') : $t('common.delete') }}
             </FaButton>
@@ -1224,5 +1251,13 @@ onBeforeUnmount(() => {
         <FaButton :loading="privSaving" @click="applyPrivs(true)">{{ $t('database.priv.grantSelected') }}</FaButton>
       </template>
     </FaModal>
+
+    <!-- M54-P3 属主分配 -->
+    <YdOwnerDialog
+      v-model="ownerVisible"
+      :title="$t('owner.dbTitle', { name: ownerTarget?.name || '' })"
+      :current-owner-id="ownerTarget?.ownerId ?? 0"
+      @confirm="doSetOwner"
+    />
   </div>
 </template>

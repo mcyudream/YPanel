@@ -1,4 +1,8 @@
 import api from '../index'
+import { makeNodeApi } from '../dockerNode'
+
+// M55 容器域节点路由：全部调用自动附当前节点（setDockerNode 切换）
+const napi = makeNodeApi(api)
 
 export interface ComposeServiceState {
   name: string
@@ -81,30 +85,30 @@ export interface Src2BuildReq {
 
 export default {
   list: async () => {
-    const res = await api.get('api/v1/compose/projects', { silent: true })
+    const res = await napi.get('api/v1/compose/projects', { silent: true })
     return res.data as ComposeProject[]
   },
   config: async (name: string, dir?: string) => {
-    const res = await api.get(`api/v1/compose/config?name=${encodeURIComponent(name)}&dir=${encodeURIComponent(dir || '')}`)
+    const res = await napi.get(`api/v1/compose/config?name=${encodeURIComponent(name)}&dir=${encodeURIComponent(dir || '')}`)
     return res.data as { name: string, dir: string, file: string, content: string }
   },
-  write: (name: string, content: string) => api.post('api/v1/compose/config', { name, content }),
+  write: (name: string, content: string) => napi.post('api/v1/compose/config', { name, content }),
   up: async (name: string, dir?: string) => {
-    const res = await api.post('api/v1/compose/up', { name, dir })
+    const res = await napi.post('api/v1/compose/up', { name, dir })
     return (res.data as { output?: string }).output || ''
   },
   down: async (name: string, dir?: string) => {
-    const res = await api.post('api/v1/compose/down', { name, dir })
+    const res = await napi.post('api/v1/compose/down', { name, dir })
     return (res.data as { output?: string }).output || ''
   },
   // 单服务操作：start / stop / restart / pull / up（按当前编排定义重建该服务）
   serviceAction: async (name: string, service: string, action: 'start' | 'stop' | 'restart' | 'pull' | 'up', dir?: string) => {
-    const res = await api.post('api/v1/compose/service-action', { name, service, action, dir }, { timeout: 300000 })
+    const res = await napi.post('api/v1/compose/service-action', { name, service, action, dir }, { timeout: 300000 })
     return (res.data as { output?: string }).output || ''
   },
   // 项目服务拓扑（M26 P1）
   topology: async (name: string, dir?: string) => {
-    const res = await api.get(`api/v1/compose/topology?name=${encodeURIComponent(name)}&dir=${encodeURIComponent(dir || '')}`)
+    const res = await napi.get(`api/v1/compose/topology?name=${encodeURIComponent(name)}&dir=${encodeURIComponent(dir || '')}`)
     return res.data as ComposeTopology
   },
   // M26 P2：源码构建（预检 + 创建构建任务；产物为普通 compose 项目）
@@ -112,11 +116,11 @@ export default {
   src2PreviewStreamURL: (gitUrl: string, branch?: string, credentialId?: number) =>
     `api/v1/compose/src2compose/preview/stream?gitUrl=${encodeURIComponent(gitUrl)}&branch=${encodeURIComponent(branch || '')}&credentialId=${credentialId || 0}`,
   src2Create: async (data: Src2BuildReq) => {
-    const res = await api.post('api/v1/compose/src2compose', data, { timeout: 30000 })
+    const res = await napi.post('api/v1/compose/src2compose', data, { timeout: 30000 })
     return res.data as { taskId: number }
   },
   // 删除托管项目（down + 移除编排目录，含其下全部数据，调用方须先确认）
-  deleteProject: (name: string) => api.delete(`api/v1/compose/projects/${encodeURIComponent(name)}`),
+  deleteProject: (name: string) => napi.delete(`api/v1/compose/projects/${encodeURIComponent(name)}`),
   logsURL: (name: string, dir: string | undefined, token: string, tail = 500, follow = false, service = '') =>
     `api/v1/compose/logs?name=${encodeURIComponent(name)}&dir=${encodeURIComponent(dir || '')}&tail=${tail}&follow=${follow ? 1 : 0}&service=${encodeURIComponent(service)}&token=${encodeURIComponent(token)}`,
 }

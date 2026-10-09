@@ -229,11 +229,16 @@ func (s *Service) CreateRole(key, name, remark, dataScope string, permKeys []str
 	if count > 0 {
 		return nil, fmt.Errorf("角色标识已存在: %s", key)
 	}
-	role := model.Role{Key: key, Name: name, ScopeAllNodes: scopeAllNodes, DataScope: normScope(dataScope), Remark: remark}
+	role := model.Role{Key: key, Name: name, DataScope: normScope(dataScope), Remark: remark}
 	err := s.db.Transaction(func(tx *gorm.DB) error {
 		if err := tx.Create(&role).Error; err != nil {
 			return err
 		}
+		// bool 零值 + default:true 标签会被 GORM Create 跳过插入（落成 DB 默认 true），显式回写
+		if err := tx.Model(&role).Update("scope_all_nodes", scopeAllNodes).Error; err != nil {
+			return err
+		}
+		role.ScopeAllNodes = scopeAllNodes
 		if err := replacePerms(tx, role.ID, permKeys); err != nil {
 			return err
 		}

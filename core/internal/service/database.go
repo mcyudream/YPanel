@@ -116,7 +116,12 @@ func (s *DatabaseService) decryptPassword(enc string) (string, error) {
 }
 
 func (s *DatabaseService) client() (*agentclient.Client, error) {
-	node, err := s.nodes.ByID("local")
+	return s.clientFor("local")
+}
+
+// clientFor 按节点路由 agent 客户端（M55：商店节点安装的接管/探活在目标节点执行）。
+func (s *DatabaseService) clientFor(nodeId string) (*agentclient.Client, error) {
+	node, err := s.nodes.ByID(nodeId)
 	if err != nil {
 		return nil, err
 	}
@@ -404,7 +409,7 @@ func (s *DatabaseService) StartAutoAdopt(ctx context.Context) {
 				continue
 			}
 			actx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
-			if _, err := s.AdoptWithRetry(actx, i.ComposeProject, 6, 10*time.Second); err == nil {
+			if _, err := s.AdoptWithRetry(actx, i.ComposeProject, i.NodeID, 6, 10*time.Second); err == nil {
 				slog.Info("商店数据库应用已自动接管", "project", i.ComposeProject, "type", i.Key)
 			}
 			cancel()
@@ -413,10 +418,10 @@ func (s *DatabaseService) StartAutoAdopt(ctx context.Context) {
 }
 
 // AdoptWithRetry 带重试的接管（容器初始化未就绪时 Ping 失败，等间隔重试直至上限）。
-func (s *DatabaseService) AdoptWithRetry(ctx context.Context, project string, attempts int, interval time.Duration) (*model.DatabaseInstance, error) {
+func (s *DatabaseService) AdoptWithRetry(ctx context.Context, project, nodeId string, attempts int, interval time.Duration) (*model.DatabaseInstance, error) {
 	var last error
 	for i := 0; i < attempts; i++ {
-		row, err := s.Adopt(ctx, project)
+		row, err := s.Adopt(ctx, project, nodeId)
 		if err == nil {
 			return row, nil
 		}
@@ -457,7 +462,7 @@ func (s *DatabaseService) adoptableItems(running map[string]bool) []map[string]a
 }
 
 // Adopt 接管商店已安装的数据库应用：从应用 .env 解析凭据与端口，直连验证后入库纳管。
-func (s *DatabaseService) Adopt(ctx context.Context, project string) (*model.DatabaseInstance, error) {
+func (s *DatabaseService) Adopt(ctx context.Context, project, nodeId string) (*model.DatabaseInstance, error) {
 	var inst model.AppStoreInstall
 	if err := s.db.Where("compose_project = ?", project).First(&inst).Error; err != nil {
 		return nil, errs.New(errs.CodeNotFound, "error.installNotFound", "商店安装记录不存在")
@@ -470,8 +475,8 @@ func (s *DatabaseService) Adopt(ctx context.Context, project string) (*model.Dat
 	if count > 0 {
 		return nil, errs.New(errs.CodeConflict, "error.instanceExists", "该应用已接管或实例名冲突")
 	}
-	// 读应用 .env 解析凭据与宿主端口
-	ac, err := s.client()
+	// 读应用 .env 解析凭据与宿主端口（目标节点）
+	ac, err := s.clientFor(nodeId)
 	if err != nil {
 		return nil, err
 	}

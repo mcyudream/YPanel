@@ -635,7 +635,7 @@ func (a *DBAdminAPI) MongoCollection(c *gin.Context) {
 
 // Audits GET /plugin/db-admin/audits?instanceId=&page=&size=（仅 admin）
 func (a *DBAdminAPI) Audits(c *gin.Context) {
-	if c.GetString(middleware.CtxRole) != "admin" {
+	if !isSuperCaller(c) { // M54：按通配权限判断（等价旧 admin）
 		respErr(c, errs.ErrForbidden)
 		return
 	}

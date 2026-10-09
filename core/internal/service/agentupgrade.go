@@ -24,6 +24,7 @@ import (
 
 	"github.com/ypanel/core/internal/agentclient"
 	"github.com/ypanel/shared/dto"
+	"github.com/ypanel/shared/release"
 	"github.com/ypanel/shared/errs"
 )
 
@@ -72,11 +73,11 @@ func (s *SelfUpdateService) CheckAgentUpdate(ctx context.Context, nodeId string)
 		plan.Updatable = false
 		return plan, nil
 	}
-	if isDev, _ := parseVersion(plan.AgentVer); isDev {
+	if release.IsDevVersion(plan.AgentVer) {
 		plan.Updatable = true
 		return plan, nil
 	}
-	plan.Updatable = compareVersions(plan.AgentVer, plan.Latest) < 0
+	plan.Updatable = release.CompareVersions(plan.AgentVer, plan.Latest) < 0
 	return plan, nil
 }
 
@@ -106,13 +107,12 @@ func (s *SelfUpdateService) UpgradeAgentTask(nodeId, source string) (map[string]
 func (s *SelfUpdateService) runAgentUpgrade(ctx context.Context, logf TaskLogf, nodeId, source string) error {
 	// 1) 取 Release 资产（tar 内含 ypagent，与面板同包）
 	logf("info", "[1/5] 获取最新 Release（源：%s）…", source)
-	rel := s.fetchLatest(ctx, source)
+	rel := release.FetchLatestRelease(ctx, source)
 	if !rel.Reachable || rel.AssetURL == "" {
 		return fmt.Errorf("Release 不可用: %s", rel.Error)
 	}
-	if !strings.HasPrefix(rel.AssetURL, "https://gitee.com/") && !strings.HasPrefix(rel.AssetURL, "https://github.com/") &&
-		!strings.HasPrefix(rel.AssetURL, "https://objects.githubusercontent.com/") {
-		return fmt.Errorf("资产地址域名不在白名单: %s", rel.AssetURL)
+	if err := release.ValidateAssetURL(rel.AssetURL); err != nil {
+		return err
 	}
 	logf("info", "目标版本 %s（%s）", rel.Version, rel.AssetURL)
 

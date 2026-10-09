@@ -1,4 +1,8 @@
 import api from '../index'
+import { makeNodeApi } from '../dockerNode'
+
+// M55 容器域节点路由：全部调用自动附当前节点（setDockerNode 切换）
+const napi = makeNodeApi(api)
 
 export interface DockerImage {
   id: string
@@ -23,37 +27,37 @@ export interface DockerVolume {
 
 export const dockerExtApi = {
   images: async () => {
-    const res = await api.get('api/v1/docker/images', { silent: true })
+    const res = await napi.get('api/v1/docker/images', { silent: true })
     return res.data as DockerImage[]
   },
   pull: async (ref: string) => {
-    const res = await api.post('api/v1/docker/images/pull', { ref }, { timeout: 60000 })
+    const res = await napi.post('api/v1/docker/images/pull', { ref }, { timeout: 60000 })
     return res.data as { taskId: number }
   },
   removeImage: (id: string, force = false) =>
-    api.delete(`api/v1/docker/images/${encodeURIComponent(id)}?force=${force}`),
+    napi.delete(`api/v1/docker/images/${encodeURIComponent(id)}?force=${force}`),
   pruneImages: async () => {
-    const res = await api.post('api/v1/docker/images/prune')
+    const res = await napi.post('api/v1/docker/images/prune')
     return (res.data as { output: string }).output
   },
   networks: async () => {
-    const res = await api.get('api/v1/docker/networks', { silent: true })
+    const res = await napi.get('api/v1/docker/networks', { silent: true })
     return res.data as DockerNetwork[]
   },
-  createNetwork: (name: string, driver = 'bridge') => api.post('api/v1/docker/networks', { name, driver }),
-  removeNetwork: (name: string) => api.delete(`api/v1/docker/networks/${encodeURIComponent(name)}`),
+  createNetwork: (name: string, driver = 'bridge') => napi.post('api/v1/docker/networks', { name, driver }),
+  removeNetwork: (name: string) => napi.delete(`api/v1/docker/networks/${encodeURIComponent(name)}`),
   volumes: async () => {
-    const res = await api.get('api/v1/docker/volumes', { silent: true })
+    const res = await napi.get('api/v1/docker/volumes', { silent: true })
     return res.data as DockerVolume[]
   },
-  createVolume: (name: string) => api.post('api/v1/docker/volumes', { name }),
-  removeVolume: (name: string) => api.delete(`api/v1/docker/volumes/${encodeURIComponent(name)}`),
+  createVolume: (name: string) => napi.post('api/v1/docker/volumes', { name }),
+  removeVolume: (name: string) => napi.delete(`api/v1/docker/volumes/${encodeURIComponent(name)}`),
   pruneVolumes: async () => {
-    const res = await api.post('api/v1/docker/volumes/prune')
+    const res = await napi.post('api/v1/docker/volumes/prune')
     return (res.data as { output: string }).output
   },
   pruneContainers: async () => {
-    const res = await api.post('api/v1/docker/containers/prune')
+    const res = await napi.post('api/v1/docker/containers/prune')
     return (res.data as { output: string }).output
   },
   daemonConfig: async () => {

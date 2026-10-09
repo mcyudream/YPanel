@@ -56,4 +56,19 @@ export default {
   keyword: '关键字',
   filter: '筛选',
   total: '共 {n} 条',
+
+  owner: {
+    title: '分配属主',
+    short: '属主',
+    siteTitle: '站点属主分配',
+    dbTitle: '实例「{name}」属主分配',
+    storeTitle: '应用「{name}」属主分配',
+    public: '公共（所有「仅分配」角色可见可用）',
+    current: '当前',
+    toPublicConfirm: '确定转为公共资源？所有「仅分配」数据范围的角色都将可见可管。',
+    toUserConfirm: '确定把属主改为 {name}？其他「仅分配」账号将不可见该资源。',
+    saved: '属主已更新',
+    saveFailed: '属主更新失败',
+  },
 }
+

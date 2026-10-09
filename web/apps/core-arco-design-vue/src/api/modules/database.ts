@@ -1,6 +1,7 @@
 import api from '../index'
 
 export interface DbInstance {
+  ownerId?: number
   id: number
   name: string
   type: 'mysql' | 'postgres' | 'redis' | 'mongo'
@@ -53,6 +54,9 @@ export default {
     api.post(`api/v1/database/instances/${id}/backups/import`, { filename, content }, { timeout: 300000 }),
   remoteAccess: (id: number, enable: boolean) =>
     api.post(`api/v1/database/instances/${id}/remote`, { enable }),
+  // M54-P3 属主分配（0=公共；仅数据范围不受限账号可操作）
+  setOwner: (id: number, ownerId: number) =>
+    api.put(`api/v1/database/instances/${id}/owner`, { ownerId }),
   remoteAccessStatus: async (id: number) => {
     const res = await api.get(`api/v1/database/instances/${id}/remote`, { silent: true })
     return (res.data as { enabled: boolean }).enabled

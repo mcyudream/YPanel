@@ -6,12 +6,14 @@ import apiCompose from '@/api/modules/compose'
 import dbApi, { type DbInstance } from '@/api/modules/database'
 import apiSystem from '@/api/modules/system'
 import { dockerExtApi } from '@/api/modules/dockerext'
+import api from '@/api'
 import { isPortField, storeApi, type StoreInstallInfo } from '@/api/modules/store'
 import { taskApi } from '@/api/modules/task'
 import { useTaskCenterStore } from '@/store/modules/taskCenter'
 import { i18n, tr } from '@/locales'
 import YdLogViewer from '@/components/YdLogViewer/index.vue'
 import YdDangerDelete from '@/components/YdDangerDelete/index.vue'
+import YdOwnerDialog from '@/components/YdOwnerDialog/index.vue'
 
 defineOptions({
   name: 'StoreIndex',
@@ -186,8 +188,10 @@ const installForm = ref({ version: '', name: '', domain: '', params: {} as Recor
 const installFields = ref<StoreFormField[]>([])
 const installProxyEnv = ref('')
 const installVersions = ref<StoreVersion[]>([])
-// 高级选项：网络 / 时区 / hosts
+// 高级选项：网络 / 时区 / hosts / 目标节点（M55）
 const installAdvanced = ref(false)
+const installNode = ref('')
+const onlineNodes = ref<{ id: string, name: string, arch?: string }[]>([])
 const dockerNets = ref<{ name: string }[]>([])
 const netSel = ref('ypanel_default')
 const netNew = ref('')
@@ -320,6 +324,9 @@ async function refreshInstallTask() {
 async function loadNetworks() {
   try {
     dockerNets.value = (await dockerExtApi.networks()).map(n => ({ name: n.name }))
+  api.get('api/v1/nodes', { silent: true }).then((r) => {
+    onlineNodes.value = (r.data as any[]).filter((x: any) => x.id === 'local' || x.online)
+  }).catch(() => {})
   }
   catch {}
 }
@@ -368,6 +375,7 @@ async function doInstall() {
       // 统一字符串化（number 输入框可能产出 number）
       params: Object.fromEntries(Object.entries(installForm.value.params).map(([k, v]) => [k, String(v ?? '')])),
       domain: installForm.value.domain || undefined,
+        nodeId: installNode.value || '',
       network: netSel.value === '__create__' ? netNew.value : netSel.value,
       createNetwork: netSel.value === '__create__',
       timezone: installTZ.value ? installTZValue.value : '',
@@ -420,8 +428,9 @@ const UNINSTALL_OPTS = computed(() => [
   { key: 'cascadeDB', label: i18n.global.t('store.optCascadeDB'), desc: i18n.global.t('store.optCascadeDBDesc') },
 ])
 
-function uninstall(p: string) {
+function uninstall(p: string, info?: StoreInstallInfo) {
   uninstallTarget.value = p
+  uninstallSource.value = info ?? null
   uninstallVisible.value = true
 }
 
@@ -429,6 +438,7 @@ async function doUninstall(checked: Record<string, boolean>) {
   uninstalling.value = true
   try {
     await storeApi.uninstall(uninstallTarget.value, {
+      nodeId: uninstallSource.value?.nodeId,
       purgeData: !!checked.purgeData,
       rmi: !!checked.rmi,
       cascadeDB: !!checked.cascadeDB,
@@ -449,8 +459,32 @@ async function upgrade(item: StoreAppItem) {
   openInstall(item, item.latestVer)
 }
 
+// ---------- M54-P3 属主分配 ----------
+const ownerVisible = ref(false)
+const ownerTarget = ref<StoreInstallInfo | null>(null)
+
+function openOwner(info: StoreInstallInfo) {
+  ownerTarget.value = info
+  ownerVisible.value = true
+}
+
+async function doSetOwner(uid: number) {
+  if (!ownerTarget.value) {
+    return
+  }
+  try {
+    await storeApi.setOwner(ownerTarget.value.composeProject, uid)
+    useFaToast().success(i18n.global.t('owner.saved'))
+    await loadInstalled()
+  }
+  catch (e: any) {
+    useFaToast().error(i18n.global.t('owner.saveFailed'), { description: e?.message })
+  }
+}
+
 // ---------- 已安装 Tab（1Panel 风格卡片：状态/启停/重启/重建/参数/日志/外链） ----------
 const installedInfos = ref<StoreInstallInfo[]>([])
+const uninstallSource = ref<StoreInstallInfo | null>(null)
 const installedLoading = ref(false)
 const actingOn = ref('')
 
@@ -470,7 +504,7 @@ async function loadInstalled() {
 async function installedAction(info: StoreInstallInfo, action: 'start' | 'stop' | 'restart' | 'rebuild') {
   actingOn.value = `${action}-${info.composeProject}`
   try {
-    await storeApi.installedAction(info.composeProject, action)
+    await storeApi.installedAction(info.composeProject, action, info.nodeId)
     const actionLabel = action === 'rebuild' ? i18n.global.t('store.rebuild') : i18n.global.t(`common.${action}`)
     useFaToast().success(i18n.global.t('store.actionDone', { name: info.composeProject, action: actionLabel }))
     await loadInstalled()
@@ -759,6 +793,7 @@ function statusText(s: StoreSource) {
               <div class="min-w-0 flex-1">
                 <div class="flex flex-wrap items-center gap-1.5">
                   <span class="truncate font-medium">{{ info.name }}</span>
+                  <span v-if="info.nodeId && info.nodeId !== 'local'" class="rounded-full bg-sky-500/10 px-1.5 py-0.5 text-[10px] text-sky-600">@{{ info.nodeId }}</span>
                   <span
                     class="inline-block whitespace-nowrap rounded-full px-2 py-0.5 text-xs"
                     :class="info.running ? 'bg-emerald-500/10 text-emerald-600' : 'bg-red-500/10 text-red-500'"
@@ -806,7 +841,8 @@ function statusText(s: StoreSource) {
               </FaButton>
               <FaButton size="sm" variant="outline" @click="openParams(info)">{{ $t('store.params') }}</FaButton>
               <FaButton size="sm" variant="outline" @click="openLogs(info)">{{ $t('store.logs') }}</FaButton>
-              <FaButton size="sm" variant="outline" class="ml-auto text-red-500!" @click="uninstall(info.composeProject)">
+              <FaButton size="sm" variant="outline" :title="$t('owner.title')" @click="openOwner(info)">{{ $t('owner.short') }}</FaButton>
+              <FaButton size="sm" variant="outline" class="ml-auto text-red-500!" @click="uninstall(info.composeProject, info)">
                 {{ $t('store.uninstall') }}
               </FaButton>
             </div>
@@ -1166,6 +1202,15 @@ function statusText(s: StoreSource) {
         </button>
         <div v-if="installAdvanced" class="flex flex-col gap-3 rounded-md border border-dashed p-3">
           <div class="flex items-center gap-3">
+            <span class="w-28 shrink-0 text-sm text-muted-foreground">{{ $t('nodes.targetNode') }}</span>
+            <select v-model="installNode" class="h-9 min-w-0 flex-1 rounded-md border border-input bg-background px-2 text-sm outline-none">
+              <option value="">{{ $t('nodes.localPanel') }}</option>
+              <option v-for="n in onlineNodes.filter(x => x.id !== 'local')" :key="n.id" :value="n.id">
+                {{ n.name }}（{{ n.arch || 'linux' }}）
+              </option>
+            </select>
+          </div>
+          <div class="flex items-center gap-3">
             <span class="w-28 shrink-0 text-sm text-muted-foreground">{{ $t('store.network') }}</span>
             <div class="flex flex-1 items-center gap-2">
               <select v-model="netSel" class="h-9 min-w-0 flex-1 rounded-md border border-input bg-background px-2 text-sm outline-none">
@@ -1376,5 +1421,13 @@ function statusText(s: StoreSource) {
         <FaButton :loading="sourceSaving" @click="saveSource">{{ $t('common.save') }}</FaButton>
       </template>
     </FaModal>
+
+    <!-- M54-P3 属主分配 -->
+    <YdOwnerDialog
+      v-model="ownerVisible"
+      :title="$t('owner.storeTitle', { name: ownerTarget?.composeProject || '' })"
+      :current-owner-id="ownerTarget?.ownerId ?? 0"
+      @confirm="doSetOwner"
+    />
   </div>
 </template>

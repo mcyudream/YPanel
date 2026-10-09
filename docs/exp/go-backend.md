@@ -47,7 +47,8 @@
 - **现象**：`SettingService.Set(key, "")` 返回成功，API 响应也是空值，但重启进程后旧值"回魂"——白名单关了又出现、安全入口关了又生效，行为像"设置丢失"。
 - **根因**：`db.Where(...).Assign(model.Setting{Value: ""}).FirstOrCreate(...)` 在记录已存在时走 GORM Updates 语义，**struct 更新跳过零值字段**——空字符串、0、false 永远写不进库；内存缓存 `mem` 却同步更新了，形成"当次生效、重启回滚"的假象。
 - **规避/解决**：upsert 手写三分支（查 → 不存在 Create / 存在且值变 `Model.Where.Update("列名", v)`）；或 Assign 传 map。凡是"改了没生效、重启又变回去"类问题，先怀疑零值更新被吞。
-- **来源**：2026-10-06，M19 安全基线（IP 白名单/安全入口持久化）。
+- **变体（Create 侧，2026-10-09 M54 真机验收揪出）**：`tx.Create(&struct)` 对**零值 bool + `default:x` 标签**的字段同样跳过插入、落成 DB 默认值——`Role{ScopeAllNodes:false}`（default:true）建出来恒为 true，前端"限定节点"形同虚设。规避：建后立刻 `tx.Model(&row).Update("列", 零值)` 显式回写（或 Create 用 map）。判别特征：API 提交 false/0 却入库 true/默认值，Update（map）路径正常、仅 Create 路径异常。
+- **来源**：2026-10-06，M19 安全基线（IP 白名单/安全入口持久化）；2026-10-09 M54-RBAC CreateRole 变体。
 
 ### time.Duration 转 int64 是纳秒：TOTP 步长除法恒为 0
 
