@@ -26,6 +26,18 @@ export default {
     searchFailed: '搜索失败',
   },
   list: {
+    copyToNode: '复制到节点…',
+    copyToNodeTitle: '复制到节点',
+    targetNode: '目标节点',
+    pickTargetNode: '选择目标节点…',
+    targetDir: '目标目录',
+    overwriteExisting: '覆盖同名文件/目录',
+    crossHint: '面板中转流式传输（不占本机带宽），进度见任务中心；大目录建议勾选前确认目标空间充足。',
+    selectFirst: '请先勾选要复制的文件/目录',
+    crossTaskCreated: '跨节点拷贝任务已创建，进度见任务中心',
+    crossDone: '跨节点拷贝完成',
+    crossFailed: '跨节点拷贝失败，请查看任务日志',
+
     title: '文件管理',
     description: '浏览、编辑与管理服务器文件（默认根目录为全盘）',
     searchPlaceholder: '在当前目录下搜索…',

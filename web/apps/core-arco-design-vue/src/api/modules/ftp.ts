@@ -18,4 +18,9 @@ export default {
   power: (action: 'start' | 'stop' | 'restart') => api.post('api/v1/ftp/power', { action }),
   setPort: (port: number, pasvMin: number, pasvMax: number) =>
     api.post('api/v1/ftp/port', { port, pasvMin, pasvMax }),
+  getConfig: async () => {
+    const res = await api.get('api/v1/ftp/config')
+    return res.data.content as string
+  },
+  putConfig: (content: string) => api.put('api/v1/ftp/config', { content }),
 }

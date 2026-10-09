@@ -58,6 +58,7 @@ type Deps struct {
 	DockerEnv  *service.DockerEnvService
 	DockerImg  *service.DockerImgService
 	FileExt    *service.FileExtService
+	FileCross  *service.FileCrossService
 	SysTool    *service.SystemToolService
 	MCP        *service.MCPService
 	OpsM       *service.MCPOperationService
@@ -86,7 +87,7 @@ func Setup(d *Deps) (*gin.Engine, error) {
 	sysAPI := &api.SystemAPI{Nodes: d.Nodes, Notif: d.Notif}
 	dashboardAPI := &api.DashboardAPI{Svc: d.Dashboard}
 	sysManageAPI := &api.SysManageAPI{Nodes: d.Nodes}
-	fileAPI := &api.FileAPI{Nodes: d.Nodes, Rev: d.Rev}
+	fileAPI := &api.FileAPI{Nodes: d.Nodes, Rev: d.Rev, Cross: d.FileCross}
 	dockerAPI := &api.DockerAPI{Nodes: d.Nodes}
 	termAPI := &api.TerminalAPI{Nodes: d.Nodes}
 	setAPI := &api.SettingsAPI{Settings: d.Settings}
@@ -707,6 +708,8 @@ func Setup(d *Deps) (*gin.Engine, error) {
 				admin.POST("/ftp/install", pm("tool:ftp"), ftpAPI.Install)
 				admin.POST("/ftp/power", pm("tool:ftp"), ftpAPI.Power)
 				admin.POST("/ftp/port", pm("tool:ftp"), ftpAPI.SetPort)
+				admin.GET("/ftp/config", pm("tool:ftp"), ftpAPI.GetConfig)
+				admin.PUT("/ftp/config", pm("tool:ftp"), ftpAPI.PutConfig)
 				admin.GET("/ssh/config", pm("tool:ssh"), sshAPI.GetConfig)
 				admin.PUT("/ssh/config", pm("tool:ssh"), sshAPI.SetConfig)
 				admin.GET("/ssh/keys", pm("tool:ssh"), sshAPI.Keys)

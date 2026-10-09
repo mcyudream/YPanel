@@ -293,3 +293,17 @@
 - **根因**：OpenSSH sshd_config 语义是 **first-value-wins**（首个读到的指令值生效，与直觉相反）。`Include /etc/ssh/sshd_config.d/*.conf` 按字典序展开，Ubuntu 云镜像预置 `50-cloud-init.conf`（`PasswordAuthentication yes`），YPanel 写的 `99-ypanel.conf` 排在后面，其 `passwordauthentication` 被**静默忽略**——写入、校验、reload 全部"成功"，生效值根本不是自己写的。
 - **规避/解决**：程序化写 sshd 配置片段一律用 **`00-` 前缀**（如 `00-ypanel.conf`，umask 077 收权限），保证字典序最先；写入成功后幂等清理旧前缀文件。改主配置 `/etc/ssh/sshd_config` 无效（Include 在文件最前，永远先读）。同类模型可推广：任何「多来源合并配置」先查合并语义（首值/末值/显式优先级）再决定写入位置。验收此类功能必须「写入→sshd -T 回读」闭环，不能只看写入返回。
 - **来源**：2026-10-09，M53 开关 bug 真机诊断（142 上 `50-cloud-init.conf` 压制 `99-ypanel.conf`，对比 sshd_config.d 目录即定位）。
+
+### 布尔语义的配置写入必须双向实测：取反逻辑只在「开」方向验收永远发现不了
+
+- **现象**：SSH「密钥认证」开关用户报「无法关闭」——点关闭写入后回弹开启；但「密码认证」开关一切正常。API 层 curl 实证：PUT `pubkeyAuth:false` 后 00-ypanel.conf 写入的是 `pubkeyauthentication yes`（false→yes、true→no，完全取反）。
+- **根因**：M49 的 SetConfig 里 pubkeyAuth 分支 `v := "yes"; if *pubkeyAuth { v = "no" }` 写反（与 passwordAuth 分支方向相反）；当时 SetConfig 未做真机验证，且若只验「开」方向或只看 HTTP 200，取反 bug 永远不暴露——回读值与写入值总是「成功地相反」。
+- **规避/解决**：布尔开关类写配置逻辑，验收必须**双向各一次**（true→回读 true、false→回读 false），并直接核对落盘文件内容而非只看 API 状态码；同类字段（passwordAuth/pubkeyAuth）实现自同一模板时逐字段对照方向。另：经 shell curl 传 JSON body 时内容含单引号会截断参数（表现为空响应），测试用远端临时文件 `-d @file`。
+- **来源**：2026-10-09，M53 返修三「密钥认证无法关闭」（142 现场 00-ypanel.conf 内容为证，一次 curl 双向定位）。
+
+### agent 信封错误码透传会冒充面板会话语义：鉴权类码（2001/2002）必须在 core 重映射
+
+- **现象**：用户切到「离线」节点后全页报「无权执行该操作」并被踢回登录页，重新登录无效（节点选择持久化，回来还打同一节点）。切换前一切正常，权限也未变。
+- **根因**：两层叠加。① agent 的 Bearer PSK 校验失败回 `writeErr(errs.ErrForbidden)` → HTTP 200 + `{code:2002}` 信封（agent/server.go auth 中间件）；core `agentclient.doResp` 对 agent 信封非零码**原样透传**（`&errs.Error{Code: env.Code}`），于是「agent 认证失败」冒充成面板权限拒绝；② 前端 M0 时代契约 `isSessionError = 2001 || 2002` 全局登出（当时 2002 只可能来自 admin 闸门），RBAC 后 2002 是常规业务拒绝。节点"离线"（online:false）只代表心跳过期，agent 进程可能还活着且在拒绝 token——这类节点最易踩。
+- **规避/解决**：① core `doResp` 对 agent 信封中的鉴权码（2001/2002）重映射为 `CodeAgentUnreach` + 明确文案「节点 agent 认证失败（token 不匹配），请重新配对该节点」——agent 的会话语义永远不能穿透到面板用户面；② 前端 `isSessionError` 收窄为仅 2001，2002 只拦截提示不登出（exp/frontend.md「meta.auth 硬拦截」条的姊妹约定：会话语义只认 2001）。排查特征：所有走某节点的请求统一回 2002 且 `data:{}`（respErr 形态）→ 先怀疑 agent 信封透传，curl 对照 admin 同请求即可证实。
+- **来源**：2026-10-09，M54 部署后用户切到 node-143（agent token 失配，心跳停摆但进程存活）触发登出风暴；两处修复 + 前端产物解剖验证（编译后 `te(e)=e===ee.Unauthorized`）。

@@ -94,6 +94,11 @@ func doResp[Resp any](c *Client, req *http.Request) (*Resp, error) {
 		return nil, errs.Wrap(errs.ErrAgentUnreach, "agent 响应解析失败: "+err.Error())
 	}
 	if env.Code != 0 {
+		// agent 侧鉴权失败（2001/2002）不能透传：会与面板会话语义混淆——
+		// 前端/调用方按 2002 处理会误伤面板登录态。统一归为 agent 认证错误。
+		if env.Code == errs.CodeUnauthorized || env.Code == errs.CodeForbidden {
+			return nil, errs.New(errs.CodeAgentUnreach, "error.agentAuthFailed", "节点 agent 认证失败（token 不匹配），请重新配对该节点")
+		}
 		return nil, &errs.Error{Code: env.Code, Message: env.Message}
 	}
 	var out Resp

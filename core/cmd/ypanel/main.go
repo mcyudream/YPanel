@@ -94,6 +94,7 @@ func run(ctx context.Context, cfg *config.Config) error {
 	dockerEnvSvc := service.NewDockerEnvService(gdb, nodes, string(auth.Secret()))
 	dockerImgSvc := service.NewDockerImgService(nodes)
 	fileExtSvc := service.NewFileExtService(gdb, nodes)
+	fileCrossSvc := service.NewFileCrossService(nodes, taskSvc)
 	sysToolSvc := service.NewSystemToolService(nodes)
 	panelBkSvc := service.NewPanelBackupService(nodes)
 	panelBkSvc.SetStorage(storageSvc)
@@ -192,7 +193,7 @@ func run(ctx context.Context, cfg *config.Config) error {
 		Notif: notifSvc, PanelBP: panelBkSvc, Hist: histSvc,
 		Storage: storageSvc, BackupSrv: backupSvc,
 		DockerEnv: dockerEnvSvc, DockerImg: dockerImgSvc,
-		FileExt: fileExtSvc,
+		FileExt: fileExtSvc, FileCross: fileCrossSvc,
 		SysTool: sysToolSvc,
 		MCP:     mcpSvc, OpsM: mcpOpSvc,
 		Snap:    snapSvc,

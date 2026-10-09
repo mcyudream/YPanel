@@ -26,6 +26,18 @@ export default {
     searchFailed: 'Search failed',
   },
   list: {
+    copyToNode: 'Copy to node…',
+    copyToNodeTitle: 'Copy to node',
+    targetNode: 'Target node',
+    pickTargetNode: 'Select target node…',
+    targetDir: 'Target directory',
+    overwriteExisting: 'Overwrite existing files/dirs',
+    crossHint: 'Streams via the panel (no local bandwidth); progress in the task center. Check target disk space for large dirs.',
+    selectFirst: 'Select files/dirs to copy first',
+    crossTaskCreated: 'Cross-node copy task created. Progress in task center',
+    crossDone: 'Cross-node copy finished',
+    crossFailed: 'Cross-node copy failed. Check the task log',
+
     title: 'File Management',
     description: 'Browse, edit, and manage server files (defaults to the filesystem root)',
     searchPlaceholder: 'Search in current directory…',

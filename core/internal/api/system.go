@@ -128,6 +128,7 @@ func (s *SystemAPI) DiskUsageTree(c *gin.Context) {
 type FileAPI struct {
 	Nodes *service.NodeService
 	Rev   *service.RevisionService // 受管路径写盘前自动快照（M23），可空
+	Cross *service.FileCrossService
 }
 
 func (f *FileAPI) client(c *gin.Context) *agentclient.Client {

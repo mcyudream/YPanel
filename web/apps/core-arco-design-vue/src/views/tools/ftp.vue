@@ -71,6 +71,44 @@ async function ftpSetPort() {
   }
 }
 
+// ---- M53 配置编辑器 ----
+const confVisible = ref(false)
+const confBusy = ref(false)
+const confContent = ref('')
+const confLoading = ref(false)
+
+async function openConfig() {
+  confVisible.value = true
+  confLoading.value = true
+  confContent.value = ''
+  try {
+    confContent.value = await ftpApi.getConfig()
+  }
+  catch (e: any) {
+    toast.error(i18n.global.t('tools.ftp.confReadFail'), { description: e?.message })
+    confVisible.value = false
+  }
+  finally {
+    confLoading.value = false
+  }
+}
+
+async function saveConfig() {
+  confBusy.value = true
+  try {
+    await ftpApi.putConfig(confContent.value)
+    toast.success(i18n.global.t('tools.ftp.confSaveDone'))
+    confVisible.value = false
+    await loadFtp()
+  }
+  catch (e: any) {
+    toast.error(i18n.global.t('tools.ftp.confSaveFail'), { description: e?.message })
+  }
+  finally {
+    confBusy.value = false
+  }
+}
+
 onMounted(loadFtp)
 </script>
 
@@ -107,6 +145,9 @@ onMounted(loadFtp)
             <FaButton variant="outline" size="sm" class="text-red-500!" :disabled="ftpBusy || !ftp?.running" @click="ftpPower('stop')">
               {{ $t('tools.ftp.stop') }}
             </FaButton>
+            <FaButton variant="outline" size="sm" class="ml-auto" @click="openConfig">
+              <FaIcon name="i-lucide:file-cog" class="mr-1" /> {{ $t('tools.ftp.editConfig') }}
+            </FaButton>
           </template>
           <FaButton v-else size="sm" :loading="ftpBusy" @click="ftpInstall">
             {{ $t('tools.ftp.install') }}
@@ -127,6 +168,32 @@ onMounted(loadFtp)
           </div>
         </template>
       </section>
+
+      <!-- 配置编辑器 -->
+      <FaModal v-model="confVisible" :title="$t('tools.ftp.confTitle')" class="max-w-4xl!" :destroy-on-close="true">
+        <div class="space-y-2">
+          <div class="text-xs text-muted-foreground">
+            {{ $t('tools.ftp.confHint') }}
+          </div>
+          <div v-if="confLoading" class="text-xs text-muted-foreground py-8 text-center">
+            {{ $t('tools.ssh.reading') }}
+          </div>
+          <textarea
+            v-else v-model="confContent" spellcheck="false"
+            class="text-xs leading-relaxed font-mono p-3 outline-none border rounded-md bg-background h-[60vh] w-full focus:ring-1 focus:ring-primary/40"
+          />
+        </div>
+        <template #footer>
+          <div class="flex gap-2 justify-end">
+            <FaButton variant="outline" size="sm" @click="confVisible = false">
+              {{ $t('common.cancel') }}
+            </FaButton>
+            <FaButton size="sm" :loading="confBusy" :disabled="confLoading" @click="saveConfig">
+              {{ $t('tools.ftp.confSave') }}
+            </FaButton>
+          </div>
+        </template>
+      </FaModal>
     </FaPageMain>
   </div>
 </template>

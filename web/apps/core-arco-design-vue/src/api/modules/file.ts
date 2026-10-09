@@ -72,6 +72,12 @@ export default {
     return api.post(`api/v1/files/write${nodeQ2(node)}`, req)
   },
   mkdir: (path: string, node?: string) => api.post(`api/v1/files/mkdir${nodeQ2(node)}`, { path }),
+  taskGet: async (id: number) => {
+    const res = await api.get(`api/v1/tasks/${id}`, { silent: true })
+    return res.data as { status: string, error: string, logText: string }
+  },
+  copyAcross: (data: { srcNode: string, srcPath: string, dstNode: string, dstDir: string, overwrite?: boolean, items?: Array<{ path: string, name: string, isDir: boolean }> }) =>
+    api.post('api/v1/files/copy-across', data, { timeout: 600000 }),
   rename: (from: string, to: string, node?: string) => api.post(`api/v1/files/rename${nodeQ2(node)}`, { from, to }),
   copy: (from: string, to: string, node?: string, overwrite?: boolean) =>
     api.post(`api/v1/files/copy${nodeQ2(node)}`, { from, to, overwrite: !!overwrite }),

@@ -90,6 +90,13 @@ export default {
     applyPort: 'Apply Port',
     portDone: 'FTP port applied (allow the port and passive range in firewall)',
     portHint: 'Port changes are written to /etc/vsftpd.conf (listen and passive range) and applied with a restart',
+    editConfig: 'Edit Config',
+    confTitle: 'Edit vsftpd configuration (/etc/vsftpd.conf)',
+    confHint: 'Saving restarts vsftpd to apply; on restart failure the previous content is rolled back automatically. Port and passive range can also be edited directly here.',
+    confSave: 'Save & Restart',
+    confReadFail: 'Failed to read configuration',
+    confSaveDone: 'Configuration saved, vsftpd restarted',
+    confSaveFail: 'Save failed (rolled back)',
   },
   brute: {
     title: 'Brute-force Protection',

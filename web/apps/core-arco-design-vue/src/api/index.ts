@@ -3,7 +3,7 @@ import { isSessionError } from '@/utils/errorCodes'
 
 // YPanel 统一 API 封装。
 // 后端契约：HTTP 200 + { code: 0 成功 | 业务错误码, message, data }；鉴权 Authorization: Bearer <jwt>。
-// 会话失效（2001/2002）全局登出；业务错误全局 toast，组件可 catch 自行处理。
+// 会话失效（2001）全局登出；2002 权限拒绝与业务错误同样只 toast 不登出（M54 RBAC）。
 // 下载/上传等需要原始响应的场景使用 api 的原始实例方法并自行处理。
 
 declare module 'axios' {

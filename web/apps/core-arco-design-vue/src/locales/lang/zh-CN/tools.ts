@@ -90,6 +90,13 @@ export default {
     applyPort: '应用端口',
     portDone: 'FTP 端口已生效（注意防火墙放行该端口与被动范围）',
     portHint: '端口修改写入 /etc/vsftpd.conf（listen 与被动范围），修改后自动重启生效',
+    editConfig: '编辑配置',
+    confTitle: '编辑 vsftpd 配置（/etc/vsftpd.conf）',
+    confHint: '保存后自动重启 vsftpd 使其生效；重启失败将自动回滚到修改前内容。端口与被动范围也可直接在此文件中修改。',
+    confSave: '保存并重启',
+    confReadFail: '读取配置失败',
+    confSaveDone: '配置已保存并重启 vsftpd',
+    confSaveFail: '保存失败（已回滚）',
   },
   brute: {
     title: '暴力破解防护',

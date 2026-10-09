@@ -20,5 +20,7 @@ export const ERR = {
 } as const
 
 export function isSessionError(code?: number) {
-  return code === ERR.Unauthorized || code === ERR.TokenInvalid
+  // 仅 2001 视为会话失效。2002 在 M54 RBAC 后是常规权限拒绝（节点范围/权限点闸门、
+  // 旧版 admin 闸门），属业务态——只拦截提示，绝不能触发全局登出。
+  return code === ERR.Unauthorized
 }

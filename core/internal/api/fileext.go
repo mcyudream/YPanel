@@ -213,3 +213,17 @@ func encodeRFC5987(s string) string {
 	}
 	return string(out)
 }
+
+// CopyAcross POST /api/v1/files/copy-across（M56 跨节点拷贝，任务化）
+func (a *FileAPI) CopyAcross(c *gin.Context) {
+	req, ok := bind[service.CopyAcrossReq](c)
+	if !ok {
+		return
+	}
+	out, err := a.Cross.CopyAcrossTask(c.Request.Context(), *req)
+	if err != nil {
+		respErr(c, err)
+		return
+	}
+	respOK(c, out)
+}

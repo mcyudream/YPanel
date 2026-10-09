@@ -421,10 +421,70 @@ const selectedEntries = computed(() => entries.value.filter(e => selected.value.
 const batchMenuItems = computed(() => [[
   { label: i18n.global.t('files.list.moveTo'), icon: 'i-lucide:folder-input', handle: () => openBatchTransfer('move') },
   { label: i18n.global.t('files.list.copyTo'), icon: 'i-lucide:folder-output', handle: () => openBatchTransfer('copy') },
+  { label: i18n.global.t('files.list.copyToNode'), icon: 'i-lucide:copy-plus', handle: () => openCopyAcross() },
   { label: i18n.global.t('files.list.compressMenu'), icon: 'i-lucide:package', handle: () => openCompress([...selected.value]) },
   { label: i18n.global.t('files.list.permMenu'), icon: 'i-lucide:lock', handle: () => openChmod([...selected.value], selectedEntries.value) },
   { label: i18n.global.t('common.delete'), icon: 'i-lucide:trash', variant: 'destructive' as const, handle: () => doDelete() },
 ]])
+
+// ---- M56 复制到节点（core 中转流式，任务化） ----
+const crossVisible = ref(false)
+const crossForm = ref({ dstNode: '', dstDir: '', overwrite: false })
+const crossing = ref(false)
+const allNodes = ref<{ id: string, name: string }[]>([])
+
+function openCopyAcross() {
+  if (!selected.value.size) {
+    useFaToast().warning(i18n.global.t('files.list.selectFirst'))
+    return
+  }
+  crossForm.value = { dstNode: '', dstDir: cwd.value, overwrite: false }
+  allNodes.value = (nodes.value as any[]).filter((x: any) => x.id !== 'local' && x.id !== nodeId.value && x.online)
+  crossVisible.value = true
+}
+
+async function doCopyAcross() {
+  if (!crossForm.value.dstNode) {
+    useFaToast().warning(i18n.global.t('files.list.pickTargetNode'))
+    return
+  }
+  crossing.value = true
+  try {
+    const items = selectedEntries.value.map(e => ({ path: e.path, name: e.name, isDir: e.isDir }))
+    const res = await apiFile.copyAcross({
+      srcNode: nodeId.value, srcPath: items[0]?.path || cwd.value,
+      dstNode: crossForm.value.dstNode, dstDir: crossForm.value.dstDir,
+      overwrite: crossForm.value.overwrite, items,
+    })
+    const taskId = (res.data as any)?.taskId
+    useFaToast().info(i18n.global.t('files.list.crossTaskCreated'))
+    // 轮询任务终态
+    if (taskId) {
+      for (let i = 0; i < 300; i++) {
+        await new Promise(r => setTimeout(r, 2000))
+        try {
+          const t = await apiFile.taskGet(taskId)
+          if (t.status === 'success') {
+            useFaToast().success(i18n.global.t('files.list.crossDone'))
+            break
+          }
+          if (t.status === 'failed') {
+            useFaToast().error(i18n.global.t('files.list.crossFailed'), { description: t.error || '' })
+            break
+          }
+        }
+        catch {}
+      }
+    }
+    crossVisible.value = false
+  }
+  catch (e: any) {
+    useFaToast().error(i18n.global.t('common.opFailed'), { description: e?.message })
+  }
+  finally {
+    crossing.value = false
+  }
+}
 
 // ---- 权限编辑（单项/批量共用 YdChmodDialog） ----
 const chmodDialogVisible = ref(false)
@@ -652,8 +712,37 @@ function onDropToFiles(e: DragEvent) {
   catch {
     return
   }
-  // 拖回原窗口（或跨节点）不处理
-  if (payload.srcId === instanceId || payload.node !== nodeId.value) {
+  // 拖回原窗口不处理；跨节点走 core 中转流式拷贝（M56）
+  if (payload.node !== nodeId.value) {
+    const items = payload.items.map(x => ({ path: x.path, name: x.name, isDir: x.isDir }))
+    apiFile.copyAcross({
+      srcNode: payload.node, srcPath: items[0]?.path || payload.fromCwd,
+      dstNode: nodeId.value, dstDir: cwd.value, items,
+    }).then((res: any) => {
+      useFaToast().info(i18n.global.t('files.list.crossTaskCreated'))
+      const taskId = (res.data as any)?.taskId
+      if (taskId) {
+        const poll = setInterval(async () => {
+          try {
+            const t = await apiFile.taskGet(taskId)
+            if (t.status !== 'running') {
+              clearInterval(poll)
+              if (t.status === 'success') {
+                useFaToast().success(i18n.global.t('files.list.crossDone'))
+                load()
+              } else {
+                useFaToast().error(i18n.global.t('files.list.crossFailed'), { description: t.error || '' })
+              }
+            }
+          } catch {}
+        }, 2000)
+      }
+    }).catch((e: any) => {
+      useFaToast().error(i18n.global.t('common.opFailed'), { description: e?.message })
+    })
+    return
+  }
+  if (payload.srcId === instanceId) {
     return
   }
   const targets = payload.items
@@ -1173,5 +1262,31 @@ onBeforeUnmount(() => {
         </FaButton>
       </template>
     </FaModal>
+    <!-- M56 复制到节点 -->
+    <FaModal v-model="crossVisible" :title="$t('files.list.copyToNodeTitle')" class="max-w-md!" :destroy-on-close="true">
+      <div class="flex flex-col gap-3">
+        <label class="space-y-1">
+          <span class="text-xs text-muted-foreground">{{ $t('files.list.targetNode') }}</span>
+          <select v-model="crossForm.dstNode" class="h-9 w-full rounded-md border border-input bg-background px-2 text-sm outline-none">
+            <option value="" disabled selected>{{ $t('files.list.pickTargetNode') }}</option>
+            <option v-for="n in allNodes" :key="n.id" :value="n.id">{{ n.name }}</option>
+          </select>
+        </label>
+        <label class="space-y-1">
+          <span class="text-xs text-muted-foreground">{{ $t('files.list.targetDir') }}</span>
+          <FaInput v-model="crossForm.dstDir" class="w-full" placeholder="/opt/data" />
+        </label>
+        <label class="flex items-center gap-2 text-xs text-muted-foreground">
+          <input v-model="crossForm.overwrite" type="checkbox" class="accent-(--primary)">
+          {{ $t('files.list.overwriteExisting') }}
+        </label>
+        <p class="text-[11px] text-muted-foreground">{{ $t('files.list.crossHint') }}</p>
+      </div>
+      <template #footer>
+        <FaButton variant="outline" @click="crossVisible = false">{{ $t('common.cancel') }}</FaButton>
+        <FaButton :loading="crossing" @click="doCopyAcross">{{ $t('common.start') }}</FaButton>
+      </template>
+    </FaModal>
+
   </div>
 </template>

@@ -89,6 +89,41 @@ func (a *FtpAPI) SetPort(c *gin.Context) {
 	respOK(c, struct{}{})
 }
 
+// GetConfig GET /api/v1/ftp/config?nodeId=（vsftpd.conf 原文，M53 配置编辑器）
+func (a *FtpAPI) GetConfig(c *gin.Context) {
+	ftp, ferr := a.Ftp.WithNode(c.Query("nodeId"))
+	if ferr != nil {
+		respErr(c, ferr)
+		return
+	}
+	out, err := ftp.GetConfig(c.Request.Context())
+	if err != nil {
+		respErr(c, err)
+		return
+	}
+	respOK(c, gin.H{"content": out})
+}
+
+// PutConfig PUT /api/v1/ftp/config?nodeId= {content}（写回 + 重启校验，失败回滚）
+func (a *FtpAPI) PutConfig(c *gin.Context) {
+	req, ok := bind[struct {
+		Content string `json:"content" binding:"required"`
+	}](c)
+	if !ok {
+		return
+	}
+	ftp, ferr := a.Ftp.WithNode(c.Query("nodeId"))
+	if ferr != nil {
+		respErr(c, ferr)
+		return
+	}
+	if err := ftp.PutConfig(c.Request.Context(), req.Content); err != nil {
+		respErr(c, err)
+		return
+	}
+	respOK(c, struct{}{})
+}
+
 // SshAPI SSH 安全管理（配置/密钥/暴力破解）。
 type SshAPI struct {
 	Ssh *service.SshGuardService
