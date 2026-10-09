@@ -969,7 +969,9 @@ function statusText(s: StoreSource) {
               <div class="flex gap-1.5">
                 <FaButton v-if="a.upgradable" size="sm" variant="outline" @click="upgrade(a)">{{ $t('store.upgradeV', { v: a.latestVer }) }}</FaButton>
                 <FaButton v-if="a.installed" size="sm" variant="outline" @click="uninstall(a.installInfo?.composeProject || '')">{{ $t('store.uninstall') }}</FaButton>
-                <FaButton v-else v-auth="['store:write']" size="sm" @click="openInstall(a)">{{ $t('store.install') }}</FaButton>
+                <FaButton v-auth="['store:write']" size="sm" :variant="a.installed ? 'outline' : 'default'" @click="openInstall(a)">
+                  {{ a.installed ? $t('store.installAgain') : $t('store.install') }}
+                </FaButton>
               </div>
             </div>
           </div>

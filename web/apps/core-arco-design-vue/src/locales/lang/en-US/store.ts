@@ -166,4 +166,6 @@ export default {
   deleteFailed: 'Delete failed',
   nodeAll: 'All nodes',
 
+  installAgain: 'Install again',
+
 }

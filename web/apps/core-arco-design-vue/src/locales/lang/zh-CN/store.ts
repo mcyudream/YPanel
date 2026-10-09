@@ -166,4 +166,6 @@ export default {
   deleteFailed: '删除失败',
   nodeAll: '全部节点',
 
+  installAgain: '再次安装',
+
 }
