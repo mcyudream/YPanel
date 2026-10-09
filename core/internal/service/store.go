@@ -16,6 +16,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io/fs"
 	"io"
 	"net/http"
 	"os"
@@ -72,9 +73,33 @@ type StoreFormField struct {
 	Random      bool              `json:"random"` // 安装时随机生成（密码/名称类）
 	Edit        *bool             `json:"edit"`   // false = 只读展示
 	Disabled    bool              `json:"disabled"`
-	Description string            `json:"description"`
+	Description FlexString         `json:"description"`
 	Values      []StoreFormValue  `json:"values"` // select 选项
 }
+
+// FlexString 宽容字符串：1P 新清单的 description 可为多语言 object/数组——非字符串形态取空
+// （该字段仅展示用，落空不影响安装参数识别）。已用 string 的调用点零改动（FlexString 可 String()）。
+type FlexString string
+
+func (f *FlexString) UnmarshalJSON(b []byte) error {
+	b = []byte(strings.TrimSpace(string(b)))
+	if len(b) == 0 || string(b) == "null" {
+		*f = ""
+		return nil
+	}
+	if b[0] == '"' {
+		var v string
+		if err := json.Unmarshal(b, &v); err != nil {
+			return nil // 容错：坏字符串丢弃
+		}
+		*f = FlexString(v)
+		return nil
+	}
+	*f = "" // object/array/number 形态忽略
+	return nil
+}
+
+func (f FlexString) String() string { return string(f) }
 
 // StoreFormValue select 选项。
 type StoreFormValue struct {
@@ -684,7 +709,7 @@ func (s *StoreService) Apps(q StoreListQuery) (map[string]any, error) {
 		if q.Tag != "" && !strings.Contains(strings.ToLower(a.Tags), strings.ToLower(q.Tag)) {
 			continue
 		}
-		if kw != "" && !strings.Contains(strings.ToLower(a.Name+a.Title+a.Description+a.Key), kw) {
+		if kw != "" && !strings.Contains(strings.ToLower(a.Name+a.Title+string(a.Description)+a.Key), kw) {
 			continue
 		}
 		item := StoreAppItem{AppStoreApp: a, LatestVer: a.LatestVersion}
@@ -1212,6 +1237,20 @@ func (s *StoreService) deployCompose(ctx context.Context, logf TaskLogf, app mod
 		return strings.Join(logs, "\n"), err
 	}
 	switch {
+	case strings.HasPrefix(ver.DownloadURL, "/"):
+		// 本地路径包（store-local 扫描入库）：core 读面板机包目录 → 写目标节点项目目录
+		n, werr := s.writeLocalDirPackage(ctx, ac, ver.DownloadURL, dir, network)
+		if werr != nil {
+			return strings.Join(logs, "\n"), errs.Wrapc(errs.CodeFileOpFailed, "写入应用包失败: "+werr.Error())
+		}
+		if network == "host" {
+			if rerr := s.rewriteComposeHostNetwork(ctx, ac, dir+"/docker-compose.yml"); rerr != nil {
+				return strings.Join(logs, "\n"), rerr
+			}
+			logf("info", "已改写为 host 网络模式")
+		}
+		logs = append(logs, fmt.Sprintf("写入应用包 %d 个文件 ✓", n))
+		logf("info", "写入应用包 %d 个文件 ✓", n)
 	case ver.DownloadURL != "":
 		// 远端包：agent 端下载解压
 		logf("info", "下载应用包: %s", ver.DownloadURL)
@@ -1685,6 +1724,41 @@ func (s *StoreService) writeViaAgent(ctx context.Context, ac *agentclient.Client
 	_, err := agentclient.DoJSON[dto.FileWriteReq, struct{}](ac, ctx, "POST", "/agent/v1/files/write",
 		&dto.FileWriteReq{Path: p, Content: content})
 	return err
+}
+
+// writeLocalDirPackage 把面板机本地包目录写入目标节点项目目录（compose 统一命名 + 网络替换；
+// M55：跨节点本地包安装 + 修复本地路径包被当 URL 下载的存量缺陷）。
+func (s *StoreService) writeLocalDirPackage(ctx context.Context, ac *agentclient.Client, localDir, remoteDir, network string) (int, error) {
+	n := 0
+	err := filepath.WalkDir(localDir, func(p string, d fs.DirEntry, err error) error {
+		if err != nil || d.IsDir() {
+			return err
+		}
+		rel, rerr := filepath.Rel(localDir, p)
+		if rerr != nil {
+			return rerr
+		}
+		rel = filepath.ToSlash(rel)
+		b := filepath.Base(rel)
+		if strings.HasSuffix(b, ".md") || b == "1panel.json" || b == "logo.png" || b == "logo.svg" {
+			return nil
+		}
+		content, rerr := os.ReadFile(p)
+		if rerr != nil {
+			return rerr
+		}
+		name := rel
+		if b == "docker-compose.yml" || b == "docker-compose.yaml" || b == "compose.yml" || b == "compose.yaml" {
+			name = "docker-compose.yml"
+			content = []byte(strings.ReplaceAll(string(content), "1panel-network", network))
+		}
+		if err := s.writeViaAgent(ctx, ac, remoteDir+"/"+name, string(content)); err != nil {
+			return rerr
+		}
+		n++
+		return nil
+	})
+	return n, err
 }
 
 // resolveStoreVersion 选版本（空=第一条，约定新版本在前）。
