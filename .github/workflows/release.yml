@@ -98,14 +98,15 @@ jobs:
           set -e
           TAG="${GITHUB_REF_NAME}"
           API="https://gitee.com/api/v5/repos/mcyudream/ypanel"
-          # 幂等：已有同名 tag 的 Release 直接复用（重打 tag 重跑不重复建）
-          RID=$(curl -sS "${API}/releases/tags/${TAG}?access_token=${GITEE_TOKEN}" \
-            | grep -o '"id": *[0-9]*' | head -1 | grep -o '[0-9]*')
+          # 幂等：已有同名 tag 的 Release 直接复用（重打 tag 重跑不重复建）。
+          # 注意 grep 无匹配返回 1，必须 || true 兜底，否则 set -e 会杀掉整个步骤
+          RID=$(curl -sS --max-time 20 "${API}/releases/tags/${TAG}?access_token=${GITEE_TOKEN}" \
+            | grep -o '"id": *[0-9]*' | head -1 | grep -o '[0-9]*' || true)
           if [ -z "$RID" ]; then
-            RID=$(curl -sS -X POST "${API}/releases" \
+            RID=$(curl -sS --max-time 20 -X POST "${API}/releases" \
               -H "Content-Type: application/json" \
               -d "{\"access_token\":\"${GITEE_TOKEN}\",\"tag_name\":\"${TAG}\",\"name\":\"YPanel ${TAG}\",\"body\":\"YPanel ${TAG}（与 GitHub Release 同源构建产物）\",\"prerelease\":false}" \
-              | grep -o '"id": *[0-9]*' | head -1 | grep -o '[0-9]*')
+              | grep -o '"id": *[0-9]*' | head -1 | grep -o '[0-9]*' || true)
           fi
           echo "gitee release id: $RID"
           [ -n "$RID" ] || { echo "gitee release 创建失败"; exit 1; }
