@@ -650,8 +650,9 @@ function fieldIsEditable(f: StoreFormField) {
 
 // 按字段语义生成默认值（密码随机 / 端口随机高位，对齐 1Panel 行为）
 function fieldDefault(f: StoreFormField) {
-  if (f.type === 'password' && f.random !== false && f.default === undefined) {
-    return randomPassword(f.randomLen ?? 16)
+  // 后端 Go 序列化把无 default 的字段输出为 null（非 undefined），必须用 == null 同时兜住两种
+  if (f.type === 'password' && f.random !== false && f.default == null) {
+    return randomPassword(f.randomLen || 16)
   }
   if (isPortField(f) && f.type === 'number') {
     return randomPort()
@@ -664,7 +665,7 @@ function fieldDefault(f: StoreFormField) {
 
 function randomizeField(f: StoreFormField) {
   if (f.type === 'password') {
-    installForm.value.params[f.envKey] = randomPassword(f.randomLen ?? 16)
+    installForm.value.params[f.envKey] = randomPassword(f.randomLen || 16)
   }
   else if (isPortField(f)) {
     installForm.value.params[f.envKey] = randomPort()

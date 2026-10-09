@@ -571,6 +571,16 @@ func (s *StoreService) syncYpManifest(src *model.AppStoreSource, raw []byte, loc
 				if p.EnvKey == "" {
 					continue
 				}
+				dup := false // env 已声明同名字段（如 PANEL_APP_PORT）时不重复生成「端口」行
+				for _, f := range fields {
+					if f.EnvKey == p.EnvKey {
+						dup = true
+						break
+					}
+				}
+				if dup {
+					continue
+				}
 				fields = append(fields, StoreFormField{
 					EnvKey: p.EnvKey, Label: map[string]string{"zh": "端口"}, Default: p.Default, Type: "number",
 				})
