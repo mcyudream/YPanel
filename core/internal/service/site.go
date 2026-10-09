@@ -41,6 +41,8 @@ type SiteService struct {
 	fw          *FirewallService
 	nat         *NatForwardService
 	reconcileMu sync.Mutex
+	nodeClient *agentclient.Client // WithNode 绑定（M57）
+	modeOverride string // WithNode 副本强制 nginx 形态（节点=host）
 }
 
 // NewSiteService 创建站点服务。
@@ -48,7 +50,22 @@ func NewSiteService(db *gorm.DB, nodes *NodeService) *SiteService {
 	return &SiteService{db: db, nodes: nodes}
 }
 
+// WithNode 返回绑定站点所在节点的副本（M57：配置写盘/nginx reload 按站点节点路由）。
+func (s *SiteService) WithNode(nodeId string) (*SiteService, error) {
+	node, err := s.nodes.ByID(nodeId)
+	if err != nil {
+		return nil, err
+	}
+	cp := *s
+	cp.nodeClient = agentclient.New(node.BaseURL, node.Token)
+	cp.modeOverride = "host" // 节点 nginx 均为宿主模式（本机 container 形态的 ypanel-nginx 不存在于节点）
+	return &cp, nil
+}
+
 func (s *SiteService) client() (*agentclient.Client, error) {
+	if s.nodeClient != nil {
+		return s.nodeClient, nil
+	}
 	node, err := s.nodes.ByID("local")
 	if err != nil {
 		return nil, err
@@ -117,6 +134,9 @@ const settingKeyNginxMode = "nginx.mode"
 
 // nginxMode 当前 nginx 环境模式。
 func (s *SiteService) nginxMode() string {
+	if s.modeOverride != "" {
+		return s.modeOverride
+	}
 	var row model.Setting
 	if err := s.db.Where("`key` = ?", settingKeyNginxMode).First(&row).Error; err == nil && row.Value == "host" {
 		return "host"
@@ -1223,6 +1243,14 @@ func (s *SiteService) List(ctx context.Context) ([]map[string]any, error) {
 
 // Create 创建站点（M13：多域名/反代规则/默认文档/日志）。
 func (s *SiteService) Create(ctx context.Context, req SiteCreateInput) (*model.Site, error) {
+	// M57：节点站点——委托到目标节点副本（配置写盘/nginx reload/证书分发全部路由；副本强制 host 模式）
+	if nid := normalizeNodeID(req.NodeID); nid != "local" && s.nodeClient == nil {
+		ns, err := s.WithNode(nid)
+		if err != nil {
+			return nil, err
+		}
+		return ns.Create(ctx, req)
+	}
 	if !siteNamePattern.MatchString(req.Name) {
 		return nil, errs.Wrap(errs.ErrBadRequest, "站点名不合法（小写字母/数字/中划线）")
 	}
@@ -1305,6 +1333,7 @@ func (s *SiteService) Create(ctx context.Context, req SiteCreateInput) (*model.S
 		IndexFiles: indexFiles, LogsEnabled: true, Enabled: true,
 		RuntimeID: req.RuntimeID, RuntimeContainer: runtimeContainer,
 		GroupID: req.GroupID, Remark: strings.TrimSpace(req.Remark), RunDir: req.RunDir,
+		NodeID: normalizeNodeID(req.NodeID),
 	}
 	if err := s.db.Create(site).Error; err != nil {
 		return nil, err
@@ -1366,6 +1395,7 @@ func (s *SiteService) writeStaticIndex(ctx context.Context, site *model.Site) er
 
 // SiteCreateInput 创建站点输入。
 type SiteCreateInput struct {
+	NodeID       string      `json:"nodeId"` // M57 目标节点（空=local，站点 nginx 所在机）
 	Name         string      `json:"name"`
 	Type         string      `json:"type"`
 	Domain       string      `json:"domain"`

@@ -116,7 +116,7 @@ export default {
     const res = await api.get(`api/v1/sites/${id}/logs?type=${type}&tail=${tail}`, { silent: true })
     return (res.data as { content: string }).content
   },
-  create: (data: { name: string, type: string, domain: string, extraDomains?: string[], port?: number, proxyRules?: ProxyRule[], proxyPass?: string, indexFiles?: string, runtimeId?: number, groupId?: number, remark?: string, runDir?: string }) =>
+  create: (data: { nodeId?: string, name: string, type: string, domain: string, extraDomains?: string[], port?: number, proxyRules?: ProxyRule[], proxyPass?: string, indexFiles?: string, runtimeId?: number, groupId?: number, remark?: string, runDir?: string }) =>
     api.post('api/v1/sites', data),
   // M54-P3 属主分配（0=公共；仅数据范围不受限账号可操作）
   setOwner: (id: number, ownerId: number) =>

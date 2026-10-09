@@ -212,6 +212,7 @@ type Site struct {
 	CacheEnable      bool      `gorm:"not null;default:false" json:"cacheEnable"`
 	CacheDuration    string    `gorm:"size:16" json:"cacheDuration"`      // 如 12h / 1d
 	CertDomain       string    `gorm:"size:255" json:"certDomain"`        // 非空 = 已启用 SSL
+	NodeID           string    `gorm:"size:32;not null;default:'';index" json:"nodeId"` // M57 站点归属节点（空=local，nginx 所在机）
 	CertID           uint      `gorm:"not null;default:0" json:"certId"`  // 绑定证书库条目（B23）
 	RunDir           string    `gorm:"size:128" json:"runDir"`            // 运行目录（相对 root 的二级目录，空=根）
 	GroupID          uint      `gorm:"not null;default:0" json:"groupId"` // 分组（0=默认分组）

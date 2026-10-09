@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import type { SiteItem, DiscoveredSite } from '@/api/modules/site'
 import apiSite, { siteDiscoveryApi } from '@/api/modules/site'
+import api from '@/api'
 import { siteBatchApi } from '@/api/modules/site'
 import apiRuntime from '@/api/modules/runtime'
 import YdDangerDelete from '@/components/YdDangerDelete/index.vue'
@@ -154,14 +155,15 @@ async function adoptHost() {
 
 // 创建
 const createVisible = ref(false)
-const form = ref({ name: '', type: 'static', domain: '', extraDomains: '', port: 80, proxyPass: '', indexFiles: 'index.html', runtimeId: 0, groupId: 0, remark: '' })
+const form = ref({ name: '', type: 'static', domain: '', extraDomains: '', port: 80, proxyPass: '', indexFiles: 'index.html', runtimeId: 0, groupId: 0, remark: '', nodeId: '' })
+const siteNodes = ref<{ id: string, name: string }[]>([])
 const proxyRules = ref<{ prefix: string, target: string, ws?: boolean }[]>([{ prefix: '/api', target: '' }])
 const creating = ref(false)
 const runtimes = ref<{ id: number, name: string, type: string, version: string, origin: string, fcgiAddr: string, containerName: string, running: boolean }[]>([])
 
 function openCreate() {
   const defGroup = groups.value.find(g => g.isDefault)
-  form.value = { name: '', type: 'static', domain: '', extraDomains: '', port: 80, proxyPass: '', indexFiles: 'index.html', runtimeId: 0, groupId: defGroup?.id || 0, remark: '' }
+  form.value = { name: '', type: 'static', domain: '', extraDomains: '', port: 80, proxyPass: '', indexFiles: 'index.html', runtimeId: 0, groupId: defGroup?.id || 0, remark: '', nodeId: '' }
   proxyRules.value = [{ prefix: '/api', target: '' }]
   createVisible.value = true
   apiRuntime.list().then((list) => {
@@ -186,6 +188,7 @@ async function doCreate() {
       domain: form.value.domain,
       extraDomains,
       port: Number(form.value.port) || 80,
+      nodeId: form.value.nodeId,
       proxyPass: form.value.proxyPass,
       proxyRules: form.value.type === 'proxy' ? rules : undefined,
       indexFiles: form.value.indexFiles,
@@ -431,6 +434,9 @@ async function saveExpire() {
 }
 
 onMounted(() => {
+  api.get('api/v1/nodes', { silent: true }).then((r) => {
+    siteNodes.value = (r.data as any[]).map((x: any) => ({ id: x.id, name: x.name }))
+  }).catch(() => {})
   load()
   loadGroups()
 })
@@ -664,6 +670,13 @@ onMounted(() => {
         <div class="flex items-center gap-3">
           <span class="w-20 shrink-0 text-sm text-muted-foreground">{{ $t('sites.dialogs.create.siteName') }}</span>
           <FaInput v-model="form.name" :placeholder="$t('sites.dialogs.create.namePlaceholder')" class="flex-1" />
+        </div>
+        <div class="flex items-center gap-3">
+          <span class="w-20 shrink-0 text-sm text-muted-foreground">{{ $t('nodes.targetNode') }}</span>
+          <select v-model="form.nodeId" class="h-9 min-w-0 flex-1 rounded-md border border-input bg-background px-2 text-sm outline-none">
+            <option value="">{{ $t('nodes.localPanel') }}</option>
+            <option v-for="n in siteNodes.filter(x => x.id !== 'local')" :key="n.id" :value="n.id">{{ n.name }}</option>
+          </select>
         </div>
         <div class="flex items-center gap-3">
           <span class="w-20 shrink-0 text-sm text-muted-foreground">{{ $t('sites.dialogs.create.primaryDomain') }}</span>
