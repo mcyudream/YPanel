@@ -35,3 +35,15 @@ data-test/
 *.db
 *.db-shm
 *.db-wal
+
+# 本地工具/临时杂物（曾误入历史，2026-10-10 从全历史剔除；锚定根目录不影响 web 资产）
+/.workbuddy/
+/.zcode/
+/.zcodeignore
+/design/
+/devcode*/
+/tmp/
+/m28-dist/
+/.iab-alt8.png
+/tmp_shot_sql.png
+/.m44_probe.py
