@@ -305,6 +305,11 @@ fi
 # ---- 节点模式：纯 agent 安装（不装面板） ----
 if [ "$MODE" = "node" ]; then
   log "安装节点 agent（${NODE_DIR}，不装面板）…"
+  # 旧布局兼容：早期手工部署把二进制直接放在 $NODE_DIR（文件），迁移为目录布局
+  if [ -f "$NODE_DIR" ]; then
+    warn "检测到旧布局（$NODE_DIR 为文件），迁移为 ${NODE_DIR}.old-bin"
+    mv -f "$NODE_DIR" "${NODE_DIR}.old-bin"
+  fi
   mkdir -p "$NODE_DIR"
   tar -xzf "$TMP_TAR" -C "$TMP_DIR" ypagent
   install -m 0755 "${TMP_DIR}/ypagent" "${NODE_DIR}/ypagent.new"
