@@ -134,3 +134,11 @@
 - **自更新链路**：GitHub/Gitee releases/latest 双源并行探测（gitee 无 release 时 404 属预期，配 GITEE_TOKEN secret 后 CI 镜像发布自动启用）→ agent 主机侧 curl 下载+sha256sums 校验+解包 → 复用本地 apply 通道（备份 ypanel.bak → 替换 → systemctl restart，detached 脚本）。真机验证 v0.9.0→v0.9.1 无损升级 ✓。
 - **Gitee Release 镜像步三坑（CI 里 continue-on-error 会吞错，必须拉步骤日志看）**：① step 的 `if` 读不到 step 自身 env（`GITEE_TOKEN` 要在 **job 级** env 注入）；② `RID=$(... | grep -o ...)` 无匹配时 grep 返回 1，`set -e` 直接杀步骤（管道尾必须 `|| true`）；③ Gitee 建 Release `POST /repos/{o}/{r}/releases` 的 **target_commitish 必填**（tag 已存在也不可省，缺了报 `{"messages":["target_commitish is missing"]}`），且 **JSON body 含未转义中文直接 400 HTML 页**（body 保持 ASCII）。GitHub repo secrets 写入：GET actions/secrets/public-key → PyNaCl SealedBox 加密 → PUT（PublicKey 传 base64 解码后的 32 字节 raw）。发行包只出 CI 一份，Gitee 与 GitHub 同源——拉 GitHub Release 资产上传 attach_files 即镜像。
 - **来源**：2026-10-09 发布体系首建（GitHub run 37909074629 绿；143 真机 v0.9.1 装机+自更新双验证）；Gitee 镜像当晚启用（v0.9.1 双平台同源附件实测可下载）
+
+### M54 节点体系四坑（2026-10-09 晚）
+
+- **gitee raw 分发有顽固缓存**：`curl raw/main/xxx.sh` 拉到的可能是旧版（带 `?t=` 时间戳也无效），「刚推的脚本远端不生效」排障先 `grep 特征串 本地拉到的文件`；临时手段 sftp 直推。
+- **has_tty 检测 `[ -e /dev/tty ]` 不可靠**：paramiko/CI exec 会话无 controlling terminal，/dev/tty 节点存在却打不开（ENXIO）——`[ -e ]` 通过、实际 printf 就炸。必须实测打开：`{ printf '' >/dev/tty; } 2>/dev/null`。
+- **GitHub runner 出口对 gitee attach_files 大文件上传不可行**：30MB 附件零字节挂满超时，而本地/国内机上传秒级。CI 只建 Release 骨架（180s 快败），**正式镜像 = 本地跑 deploy/mirror-release.sh <tag>**；替代下载通道：GitHub API artifact（`git credential fill` 取 token → GET /actions/runs/{id}/artifacts → zip 含全部产物，不走被墙的 objects CDN）。
+- **sha256sums 条目按文件名匹配**：下载保存名写死（ypanel-linux.tar.gz）与 sums 带架构名（ypanel-linux-amd64.tar.gz）对不上必炸——文件名从 URL basename 保留。另 CheckAgentUpdate 类布尔判定字段注意每个分支显式赋值（漏置 else 分支的 true 导致恒 false）。
+- **来源**：2026-10-09 M54（143 真机：面板自更新 v0.9.3 ✓ + node-143b v0.9.1→v0.9.3 一键升级 7s 切换心跳确认 ✓）

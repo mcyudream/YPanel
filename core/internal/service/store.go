@@ -33,6 +33,7 @@ import (
 	"gorm.io/gorm"
 
 	"github.com/ypanel/core/internal/agentclient"
+	"github.com/ypanel/core/internal/rbac"
 	"github.com/ypanel/core/internal/model"
 	"github.com/ypanel/shared/dto"
 	"github.com/ypanel/shared/errs"

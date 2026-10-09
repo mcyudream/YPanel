@@ -20,6 +20,7 @@ import (
 	"gorm.io/gorm"
 
 	"github.com/ypanel/core/internal/agentclient"
+	"github.com/ypanel/core/internal/rbac"
 	"github.com/ypanel/core/internal/dbdriver"
 	"github.com/ypanel/core/internal/model"
 	"github.com/ypanel/shared/dto"
@@ -349,6 +350,16 @@ func (s *DatabaseService) List(ctx context.Context) ([]map[string]any, error) {
 	if err := s.db.Order("id").Find(&rows).Error; err != nil {
 		return nil, err
 	}
+	// M54-P3：assigned 数据范围仅见 owner∈{uid,0}
+	if caller, ok := rbac.CallerFrom(ctx); ok && caller.Assigned() {
+		kept := rows[:0:0]
+		for _, r := range rows {
+			if r.OwnerID == 0 || r.OwnerID == caller.UserID {
+				kept = append(kept, r)
+			}
+		}
+		rows = kept
+	}
 	ac, err := s.client()
 	if err != nil {
 		return nil, err
@@ -370,8 +381,8 @@ func (s *DatabaseService) List(ctx context.Context) ([]map[string]any, error) {
 		out = append(out, map[string]any{
 			"id": r.ID, "name": r.Name, "type": r.Type, "origin": r.Origin, "host": r.Host,
 			"port": r.Port, "user": r.RootUser, "remark": r.Remark,
-			"composeProject": r.ComposeProject,
-			"running":        running, "createdAt": r.CreatedAt,
+			"composeProject": r.ComposeProject, "ownerId": r.OwnerID,
+			"running": running, "createdAt": r.CreatedAt,
 		})
 	}
 	// 商店已安装的数据库类应用，未接管则作为待接管条目展示
@@ -570,6 +581,11 @@ func (s *DatabaseService) Reveal(id uint) (map[string]any, error) {
 }
 
 // ByID 查实例。
+// SetInstanceOwner 属主再分配（0=公共；仅 all 数据范围调用方可达，由 API 层把关）。
+func (s *DatabaseService) SetInstanceOwner(id uint, ownerID uint) error {
+	return s.db.Model(&model.DatabaseInstance{}).Where("id = ?", id).Update("owner_id", ownerID).Error
+}
+
 func (s *DatabaseService) ByID(id uint) (*model.DatabaseInstance, error) {
 	var inst model.DatabaseInstance
 	if err := s.db.First(&inst, id).Error; err != nil {

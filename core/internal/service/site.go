@@ -14,6 +14,7 @@ import (
 	"gorm.io/gorm"
 
 	"github.com/ypanel/core/internal/agentclient"
+	"github.com/ypanel/core/internal/rbac"
 	"github.com/ypanel/core/internal/model"
 	"github.com/ypanel/shared/dto"
 	"github.com/ypanel/shared/errs"
@@ -1123,6 +1124,11 @@ func (s *SiteService) Delete(ctx context.Context, id uint, opts SiteDeleteOption
 }
 
 // GetByIDF 单条站点查询（F8：详情页免拉全量列表）。
+// SetSiteOwner 属主再分配（0=公共；仅 all 数据范围调用方可达，由 API 层把关）。
+func (s *SiteService) SetSiteOwner(id uint, ownerID uint) error {
+	return s.db.Model(&model.Site{}).Where("id = ?", id).Update("owner_id", ownerID).Error
+}
+
 func (s *SiteService) GetByIDF(id uint) (*model.Site, error) {
 	return s.siteByID(id)
 }
@@ -1146,6 +1152,16 @@ func (s *SiteService) List(ctx context.Context) ([]map[string]any, error) {
 	var rows []model.Site
 	if err := s.db.Order("id").Find(&rows).Error; err != nil {
 		return nil, err
+	}
+	// M54-P3：assigned 数据范围仅见 owner∈{uid,0}
+	if caller, ok := rbac.CallerFrom(ctx); ok && caller.Assigned() {
+		kept := rows[:0:0]
+		for _, r := range rows {
+			if r.OwnerID == 0 || r.OwnerID == caller.UserID {
+				kept = append(kept, r)
+			}
+		}
+		rows = kept
 	}
 	// 分组名与证书过期时间映射（B23）
 	groupNames := map[uint]string{}
@@ -1197,7 +1213,7 @@ func (s *SiteService) List(ctx context.Context) ([]map[string]any, error) {
 			"indexFiles": r.IndexFiles, "logsEnabled": r.LogsEnabled,
 			"groupId": r.GroupID, "groupName": groupName, "remark": r.Remark,
 			"runDir": r.RunDir, "certId": r.CertID, "certNotAfter": notAfter,
-			"isDefault": r.IsDefault, "expireAt": r.ExpireAt,
+			"isDefault": r.IsDefault, "expireAt": r.ExpireAt, "ownerId": r.OwnerID,
 			"enabled": r.Enabled, "onDisk": onDisk, "nginxRunning": nginxRunning,
 			"createdAt": r.CreatedAt,
 		})

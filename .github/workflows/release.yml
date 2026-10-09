@@ -111,11 +111,13 @@ jobs:
           fi
           echo "gitee release id: $RID"
           [ -n "$RID" ] || { echo "gitee release 创建失败"; exit 1; }
-          # 附件上传带超时与重试（gitee 对 GitHub runner 出口可能限速/挂连，无超时会挂满 6h job 上限）
+          # 附件上传：GitHub runner 出口对 gitee 大文件上传实测挂连（零字节挂满超时），只给短窗口尽力而为；
+          # 正式镜像路径 = 本地/国内机执行 deploy/mirror-release.sh <tag>（GITEE_TOKEN 同源上传，秒级）
           for f in build/*.tar.gz build/sha256sums.txt; do
-            curl -sS --max-time 900 --retry 1 --connect-timeout 15 \
+            curl -sS --max-time 180 --retry 1 --connect-timeout 15 \
               -X POST "${API}/releases/${RID}/attach_files" \
               -F "access_token=${GITEE_TOKEN}" \
               -F "file=@${f}" | head -c 200
             echo " <- $f"
           done
+          echo "若附件缺失：本地执行 GITEE_TOKEN=xxx bash deploy/mirror-release.sh ${TAG} 完成镜像"
