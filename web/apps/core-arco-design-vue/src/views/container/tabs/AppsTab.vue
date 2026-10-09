@@ -463,6 +463,7 @@ onBeforeUnmount(() => {
             <div class="min-w-0">
               <div class="flex items-center gap-2">
                 <span class="truncate font-medium">{{ c.appName || c.project.name }}</span>
+                  <span v-if="(c.install as any)?.nodeId && (c.install as any)?.nodeId !== 'local'" class="rounded-full bg-sky-500/10 px-1.5 py-0.5 text-[10px] text-sky-600">@{{ (c.install as any)?.nodeId }}</span>
                 <span
                   class="shrink-0 rounded-full px-2 py-0.5 text-xs"
                   :class="c.install ? 'bg-violet-500/10 text-violet-600' : c.project.managed ? 'bg-primary/10 text-primary' : 'bg-muted text-muted-foreground'"

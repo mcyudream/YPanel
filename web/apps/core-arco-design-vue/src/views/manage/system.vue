@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import api from '@/api/index'
+import { withNodeId } from '@/api/hostNode'
 import { i18n } from '@/locales'
 
 defineOptions({
@@ -9,13 +10,21 @@ defineOptions({
 const toast = useFaToast()
 const modal = useFaModal()
 
+// ---- M55 主机域节点上下文（工具箱 swap/bbr/clean 随节点） ----
+const hostNodes = ref<{ id: string, name: string }[]>([])
+onMounted(() => {
+  api.get('api/v1/nodes', { silent: true }).then((r) => {
+    hostNodes.value = (r.data as any[]).map((x: any) => ({ id: x.id, name: x.name }))
+  }).catch(() => {})
+})
+
 // ---- swap ----
 const swap = ref<{ files: { file: string, size: string }[], totalBytes: number, usedBytes: number, on: boolean } | null>(null)
 const swapBusy = ref(false)
 
 async function loadSwap() {
   try {
-    swap.value = (await api.get('api/v1/system/swap', { silent: true })).data
+    swap.value = (await api.get(withNodeId('api/v1/system/swap'), { silent: true })).data
   }
   catch (e: any) {
     toast.error(i18n.global.t('system.swapReadFail'), { description: e?.message })
@@ -30,7 +39,7 @@ function applySwap(sizeGB: number) {
     onConfirm: async () => {
       swapBusy.value = true
       try {
-        await api.post('api/v1/system/swap', { sizeGB })
+        await api.post(withNodeId('api/v1/system/swap'), { sizeGB })
         toast.success(i18n.global.t('system.applied'))
         await loadSwap()
       }
@@ -50,7 +59,7 @@ const bbrBusy = ref(false)
 
 async function loadBBR() {
   try {
-    bbr.value = (await api.get('api/v1/system/bbr', { silent: true })).data
+    bbr.value = (await api.get(withNodeId('api/v1/system/bbr'), { silent: true })).data
   }
   catch (e: any) {
     toast.error(i18n.global.t('system.bbrReadFail'), { description: e?.message })
@@ -60,7 +69,7 @@ async function loadBBR() {
 async function applyBBR(enable: boolean) {
   bbrBusy.value = true
   try {
-    const out = (await api.post('api/v1/system/bbr', { enable })).data
+    const out = (await api.post(withNodeId('api/v1/system/bbr'), { enable })).data
     toast.success(enable ? i18n.global.t('system.bbrOn', { algo: out.algo }) : i18n.global.t('system.bbrOff'))
     await loadBBR()
   }
@@ -83,7 +92,7 @@ async function doClean() {
     onConfirm: async () => {
       cleanBusy.value = true
       try {
-        const out = (await api.post('api/v1/system/clean')).data
+        const out = (await api.post(withNodeId('api/v1/system/clean'))).data
         cleanOut.value = out.output || i18n.global.t('system.cleanNoOutput')
         toast.success(i18n.global.t('system.cleanDone'))
       }
@@ -124,6 +133,7 @@ onMounted(() => {
           <div class="flex gap-2 items-center">
             <FaIcon name="i-lucide:hard-drive" class="text-base text-primary opacity-70" />
             <span class="font-medium">{{ $t('system.swap') }}</span>
+          <YdHostNodeSelect @change="() => { loadSwap(); loadBBR() }" />
             <span class="text-xs px-2 py-0.5 rounded-full" :class="swap?.on ? 'bg-emerald-500/10 text-emerald-600' : 'bg-muted text-muted-foreground'">
               {{ swap?.on ? `${$t('system.swapOn')}（${((swap.totalBytes || 0) / 1024 / 1024 / 1024).toFixed(1)}G）` : $t('system.swapOff') }}
             </span>
