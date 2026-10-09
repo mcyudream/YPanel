@@ -127,6 +127,9 @@ onMounted(loadFtp)
     </FaPageHeader>
 
     <FaPageMain>
+		<div class="flex justify-end mb-3">
+			<YdHostNodeSelect />
+		</div>
       <section class="mx-auto p-4 border rounded-lg bg-background max-w-3xl">
         <div class="flex flex-wrap gap-2 items-center">
           <span class="font-medium">vsftpd</span>

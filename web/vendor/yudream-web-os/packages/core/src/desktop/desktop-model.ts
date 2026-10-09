@@ -160,6 +160,30 @@ export class DesktopModel {
       return { ok: true }
     }
     const target = pos as GridPosition
+    // 小组件：挤开所有占位者（含其它小组件——卡片实际占格，不允许重叠）
+    if (item.type === 'widget') {
+      const rect = this.rectOf({ ...item, position: target })
+      for (let c = rect.col; c < rect.col + rect.w; c++) {
+        for (let r = rect.row; r < rect.row + rect.h; r++) {
+          if (this.blockedCells.has(`${c},${r}`)) {
+            item.position = this.firstFreeCell(target, spanOf(item))
+            this.notify('move')
+            return { ok: true }
+          }
+        }
+      }
+      for (const x of this.list()) {
+        if (x.id === id) {
+          continue
+        }
+        if (this.rectsOverlap(this.rectOf(x), rect)) {
+          x.position = this.firstFreeCell({ col: 0, row: 0 }, spanOf(x))
+        }
+      }
+      item.position = { ...target }
+      this.notify('move')
+      return { ok: true }
+    }
     // 目标矩形被文件夹占据 → 不移动，交由 UI 解释为「拖入文件夹」
     const hit = this.collides(this.rectOf({ ...item, position: target }), id)
     if (hit && hit !== 'blocked' && hit.type === 'folder') {
@@ -196,7 +220,7 @@ export class DesktopModel {
     return { ok: true }
   }
 
-  /** 改变项的跨度（文件夹卡片 / 大图标）。撞其它图标 → 挤开；撞小组件占格 → 本项自动挪到最近可用位置。永不拒绝 */
+  /** 改变项的跨度（文件夹卡片 / 大图标）。rtl 固定视觉左缘；撞其它图标 → 挤开；撞小组件占格 → 本项自动挪到最近可用位置。永不拒绝 */
   resizeItem(id: string, span: DesktopSpan): MoveResult {
     const item = this.items.get(id)
     if (!item) {
@@ -212,12 +236,21 @@ export class DesktopModel {
       }
       return false
     }
-    let pos = item.position as GridPosition
+    const oldSpan = spanOf(item)
+    let pos = { ...(item.position as GridPosition) }
+    // rtl（从右起排）：优先固定视觉左缘向视觉右扩（基列左移，最多扩到 col 0）；
+    // 右缘已无空间（项贴屏幕最右）→ 改为右缘不动、向视觉左扩（col 不变），请求的跨度始终生效
+    if (this.grid.direction === 'rtl' && span.w !== oldSpan.w) {
+      const maxRight = oldSpan.w + pos.col
+      if (span.w <= maxRight) {
+        pos = { ...pos, col: pos.col + oldSpan.w - span.w }
+      }
+      // else：col 不动，向左长
+    }
     let rect: Rect = { col: pos.col, row: pos.row, w: span.w, h: span.h }
     // 目标区域压到小组件 → 本项挪到最近能放下 span 的空位
     if (blockedHit(rect)) {
       pos = this.firstFreeCell(pos, span)
-      item.position = pos
       rect = { col: pos.col, row: pos.row, w: span.w, h: span.h }
     }
     // 挡路的图标逐个迁到空位
@@ -229,6 +262,7 @@ export class DesktopModel {
         x.position = this.firstFreeCell({ col: 0, row: 0 }, spanOf(x))
       }
     }
+    item.position = pos
     item.span = span
     this.notify('move')
     return { ok: true }
@@ -387,6 +421,16 @@ export class DesktopModel {
   private reassignCells(items: DesktopItem[]) {
     const next = new Map<string, DesktopItem>()
     const placed: Rect[] = []
+    // 小组件不参与整理/排序：原位保留，其它项绕开它们排布
+    for (const item of items) {
+      if (item.type === 'widget') {
+        const sp = spanOf(item)
+        const p = item.position as GridPosition
+        const rect: Rect = { col: p.col, row: p.row, w: sp.w, h: sp.h }
+        placed.push(rect)
+        next.set(item.id, item)
+      }
+    }
     const free = (rect: Rect) => {
       for (let c = rect.col; c < rect.col + rect.w; c++) {
         for (let r = rect.row; r < rect.row + rect.h; r++) {
@@ -398,6 +442,9 @@ export class DesktopModel {
       return !placed.some(p => this.rectsOverlap(p, rect))
     }
     for (const item of items) {
+      if (item.type === 'widget') {
+        continue
+      }
       const s = spanOf(item)
       let col = 0
       let row = 0

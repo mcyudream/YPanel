@@ -2,6 +2,7 @@
  * 桌面网格拖拽：pointer 拖动桌面项，落点换算网格坐标 → DesktopModel.moveTo（swap/shift）。
  * 关键契约：**移动超过阈值（5px）才激活拖拽**——单击/双击不产生 ghost、不提交 moveTo，
  * 否则 pointerup 的同位 moveTo 会触发 onChange 重建 DOM 并吞掉浏览器的 dblclick。
+ * 跨格卡（span>1）：ghost 中心吸附指针（居中跟手），落点按 ghost 中心所在格换算基列。
  */
 import type { DesktopItem, DesktopModel } from '@yudream/yudream-webos-core'
 
@@ -38,6 +39,26 @@ export interface DesktopDragHandle {
 /** 拖拽激活阈值（px）：低于此位移视为点击 */
 const DRAG_THRESHOLD = 5
 
+/** 落点格：ghost 中心所在格 → 模型基列（rtl 镜像下按跨度居中换算） */
+function dropCell(options: { metrics: () => DesktopGridMetrics, model: DesktopModel | null }, s: DesktopDragState): { col: number, row: number } {
+  const m = options.metrics()
+  const it = options.model?.get(s.id)
+  const sp = it ? (it.span ?? { w: 1, h: 1 }) : { w: 1, h: 1 }
+  const Wpx = sp.w * 84 + (sp.w - 1) * 4
+  const Hpx = sp.h * 92 + (sp.h - 1) * 4
+  const cf = (s.x + Wpx / 2) / (m.cellWidth + m.gap)
+  const rf = (s.y + Hpx / 2) / (m.cellHeight + m.gap)
+  const cols = Math.max(1, Math.floor((m.width + m.gap) / (m.cellWidth + m.gap)))
+  const rows = Math.max(1, Math.floor((m.height + m.gap) / (m.cellHeight + m.gap)))
+  const base = m.gravity === 'top-right'
+    ? Math.round(cols - 1 - cf - (sp.w - 1) / 2)
+    : Math.round(cf - (sp.w - 1) / 2)
+  return {
+    col: Math.max(0, Math.min(cols - sp.w, base)),
+    row: Math.max(0, Math.min(rows - sp.h, Math.round(rf - (sp.h - 1) / 2))),
+  }
+}
+
 export function bindDesktopDrag(options: {
   container: HTMLElement | null
   model: DesktopModel | null
@@ -50,6 +71,8 @@ export function bindDesktopDrag(options: {
   resolveDropTarget?: (id: string, col: number, row: number) => string | null
   /** 拖拽悬停/结束的文件夹高亮 */
   setHoverFolder?: (id: string | null) => void
+  /** 拖拽过程中的落点格指示（模型坐标） */
+  setDropHint?: (hint: { col: number, row: number } | null) => void
 }) {
   /** 激活前的待定起点（pointerdown 记录，超阈值才转正为拖拽） */
   let pending: { id: string, pointerId: number, startX: number, startY: number, item: DesktopItem } | null = null
@@ -72,8 +95,11 @@ export function bindDesktopDrag(options: {
       const containerRect = options.container.getBoundingClientRect()
       const itemEl = document.elementFromPoint(pending.startX, pending.startY)?.closest('.yw-desktop-cell')
       const itemRect = itemEl?.getBoundingClientRect()
-      const anchorX = itemRect ? pending.startX - itemRect.left : 42
-      const anchorY = itemRect ? pending.startY - itemRect.top : 46
+      // 跨格卡：中心吸附指针（居中跟手）；1×1 保持抓取点锚定
+      const it0 = options.model?.get(pending.id)
+      const sp0 = it0 ? (it0.span ?? { w: 1, h: 1 }) : { w: 1, h: 1 }
+      const anchorX = itemRect ? (sp0.w > 1 ? itemRect.width / 2 : pending.startX - itemRect.left) : 42
+      const anchorY = itemRect ? (sp0.h > 1 ? itemRect.height / 2 : pending.startY - itemRect.top) : 46
       options.setState({
         id: pending.id,
         pointerId: pending.pointerId,
@@ -95,15 +121,12 @@ export function bindDesktopDrag(options: {
     const containerRect = options.container.getBoundingClientRect()
     s.x = ev.clientX - containerRect.left - s.offsetX
     s.y = ev.clientY - containerRect.top - s.offsetY
-    // 悬停文件夹高亮
+    // 悬停文件夹高亮 + 落点格指示
+    const drop = dropCell(options, s)
     if (options.resolveDropTarget && options.setHoverFolder) {
-      const m = options.metrics()
-      const col = Math.floor(s.x / (m.cellWidth + m.gap))
-      const row = Math.floor(s.y / (m.cellHeight + m.gap))
-      const maxCol = Math.max(0, Math.floor((m.width + m.gap) / (m.cellWidth + m.gap)) - 1)
-      const modelCol = m.gravity === 'top-right' ? Math.max(0, maxCol - col) : Math.max(0, col)
-      options.setHoverFolder(options.resolveDropTarget(s.id, modelCol, Math.max(0, row)))
+      options.setHoverFolder(options.resolveDropTarget(s.id, drop.col, drop.row))
     }
+    options.setDropHint?.(drop)
   }
 
   function onPointerUp(ev: PointerEvent) {
@@ -113,25 +136,21 @@ export function bindDesktopDrag(options: {
       return
     }
     options.setHoverFolder?.(null)
+    options.setDropHint?.(null)
     if (!options.container) {
       options.setState(null)
       return
     }
-    const m = options.metrics()
-    const col = Math.floor(s.x / (m.cellWidth + m.gap))
-    const row = Math.floor(s.y / (m.cellHeight + m.gap))
-    // gravity=right：视觉列 0 在最右 → 模型 col = maxCol - 视觉列
-    const maxCol = Math.max(0, Math.floor((m.width + m.gap) / (m.cellWidth + m.gap)) - 1)
-    const modelCol = m.gravity === 'top-right' ? Math.max(0, maxCol - col) : Math.max(0, col)
+    const drop = dropCell(options, s)
     // 落点命中文件夹 → 移入归组（不换位）
-    const folderId = options.resolveDropTarget?.(s.id, modelCol, Math.max(0, row))
+    const folderId = options.resolveDropTarget?.(s.id, drop.col, drop.row)
     if (folderId) {
       options.model?.addToFolder(folderId, s.id)
       options.setState(null)
       options.onCommit?.(s.id)
       return
     }
-    options.model?.moveTo(s.id, { col: modelCol, row: Math.max(0, row) })
+    options.model?.moveTo(s.id, { col: drop.col, row: drop.row })
     options.setState(null)
     options.onCommit?.(s.id)
   }

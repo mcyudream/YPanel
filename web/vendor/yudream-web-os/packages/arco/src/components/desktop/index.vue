@@ -72,8 +72,11 @@ const wallpaperStyle = computed((): Record<string, string> => {
 /** ── 桌面项：DesktopModel 为数据源 ── */
 interface RenderItem {
   id: string
-  kind: 'app' | 'folder' | 'file'
+  kind: 'app' | 'folder' | 'file' | 'widget'
   appId?: string
+  /** 仅 widget：实例/定义标识 */
+  instanceId?: string
+  widgetId?: string
   name: string
   icon: string
   iconBg?: string
@@ -116,7 +119,6 @@ function syncFromModel() {
   if (!outOfRange) {
     repackGuard = false
   }
-  syncBlockedCells()
   const out: RenderItem[] = []
   for (const item of os.desktop.list()) {
     const pos = item.position as { col: number, row: number }
@@ -159,35 +161,56 @@ function syncFromModel() {
     else if (item.type === 'file') {
       out.push({ id: item.id, kind: 'file', name: item.name, icon: 'i-lucide-file-text', col: pos.col, row: pos.row, spanW: span.w, spanH: span.h, children: [] })
     }
+    else if (item.type === 'widget') {
+      const inst = os.widgets.listInstances().find(i => i.instanceId === item.refId)
+      const def = inst ? os.widgets.getDefinition(inst.widgetId) : undefined
+      out.push({ id: item.id, kind: 'widget', name: def?.name ?? item.name, icon: 'i-lucide-puzzle', col: pos.col, row: pos.row, spanW: span.w, spanH: span.h, children: [], instanceId: item.refId, widgetId: inst?.widgetId })
+    }
   }
   desktopItems.value = out
 }
 
-/** ── 小组件占格：被小组件卡片盖住的图标格视为已占用（落点/换位/整理共用） ── */
-function syncBlockedCells() {
-  const grid = gridEl.value
-  if (!grid) {
+/** 小组件实例 ↔ 桌面模型项双向对账（widget 项为真实占格项） */
+const WIDGET_SPAN: Record<string, { w: number, h: number }> = { small: { w: 2, h: 2 }, medium: { w: 4, h: 2 }, large: { w: 4, h: 4 } }
+let widgetSyncing = false
+
+function syncWidgets() {
+  if (widgetSyncing) {
     return
   }
-  const gr = grid.getBoundingClientRect()
-  // 小组件卡片（DOM 量测，避免复刻 host 的网格数学）
-  const cards = [...document.querySelectorAll('.yw-widget-card.is-desktop')].map(el => el.getBoundingClientRect())
-  const blocked = new Set<string>()
-  if (cards.length) {
-    const cols = visualCols.value
-    const rows = os.desktop.rowsPerColumn
-    for (let vc = 0; vc < cols; vc++) {
-      for (let r = 0; r < rows; r++) {
-        const cx = gr.left + vc * (84 + 4) + 42
-        const cy = gr.top + r * (92 + 4) + 46
-        if (cards.some(rc => cx >= rc.left && cx <= rc.right && cy >= rc.top && cy <= rc.bottom)) {
-          const modelCol = props.iconGravity === 'top-right' ? cols - 1 - vc : vc
-          blocked.add(`${modelCol},${r}`)
-        }
+  widgetSyncing = true
+  try {
+    const instances = os.widgets.listInstances()
+    for (const mw of os.desktop.list().filter(x => x.type === 'widget')) {
+      if (!instances.some(i => i.instanceId === mw.refId)) {
+        os.desktop.remove(mw.id)
+      }
+    }
+    for (const inst of instances) {
+      const id = `yww-${inst.instanceId}`
+      const span = WIDGET_SPAN[inst.size] ?? { w: 2, h: 2 }
+      const existing = os.desktop.get(id)
+      if (!existing) {
+        const def = os.widgets.getDefinition(inst.widgetId)
+        os.desktop.add({ id, type: 'widget', refId: inst.instanceId, name: def?.name ?? inst.widgetId, span, position: inst.position })
+      }
+      else {
+        existing.span = span
       }
     }
   }
-  os.desktop.blockedCells = blocked
+  finally {
+    widgetSyncing = false
+  }
+}
+
+function widgetInst(item: RenderItem) {
+  return os.widgets.listInstances().find(i => i.instanceId === item.instanceId)
+}
+
+function widgetComp(item: RenderItem): unknown {
+  const inst = widgetInst(item)
+  return inst ? os.widgets.getDefinition(inst.widgetId)?.component : undefined
 }
 
 /** 把已注册应用播种进 DesktopModel（已有 app 项跳过；启动台是覆盖层不落桌面） */
@@ -208,6 +231,10 @@ function seedApps() {
   }
 }
 
+/** 卡片右下把手拖拽调大小的预览跨度（声明前置供 cellStyle 引用） */
+const resizePreview = ref<{ id: string, w: number, h: number, leftVisual: number } | null>(null)
+let resizeCleanup: (() => void) | null = null
+
 /** gravity=right 时模型列向左增长：跨格项的视觉左缘 = 其覆盖的最后一个模型列的视觉列 */
 function visualLeftOf(item: { col: number, spanW?: number }): number {
   const w = item.spanW ?? 1
@@ -215,21 +242,70 @@ function visualLeftOf(item: { col: number, spanW?: number }): number {
   return props.iconGravity === 'top-right' ? visualCols.value - 1 - lastModelCol : item.col
 }
 
-/** 模型坐标 → 渲染像素（gravity=right 时列镜像）；span 决定格子尺寸 */
+/** 模型坐标 → 渲染像素；span 决定格子尺寸（拖拽调大小时用预览跨度） */
 function cellStyle(item: RenderItem): Record<string, string> {
-  const w = item.spanW ?? 1
-  const h = item.spanH ?? 1
+  const p = resizePreview.value?.id === item.id ? resizePreview.value : null
+  const w = p ? p.w : item.spanW
+  const h = p ? p.h : item.spanH
   return {
-    left: `${visualLeftOf(item) * (84 + 4)}px`,
+    left: `${(p ? p.leftVisual : visualLeftOf(item)) * (84 + 4)}px`,
     top: `${item.row * (92 + 4)}px`,
     width: `${w * 84 + (w - 1) * 4}px`,
     height: `${h * 92 + (h - 1) * 4}px`,
   }
 }
 
+/** 卡片右下把手拖拽调大小：pointermove 实时预览跨度，pointerup 提交（resizeItem 挤开占位者） */
+function startCardResize(ev: PointerEvent, item: RenderItem) {
+  ev.preventDefault()
+  ev.stopPropagation()
+  const grid = gridEl.value?.getBoundingClientRect()
+  if (!grid) {
+    return
+  }
+  // rtl：向视觉右扩大 = 基列左移，视觉左缘固定；最多扩到 col 0
+  const leftVisual = props.iconGravity === 'top-right'
+    ? visualCols.value - 1 - (item.col + item.spanW - 1)
+    : item.col
+  const maxW = Math.min(4, props.iconGravity === 'top-right' ? item.spanW + item.col : visualCols.value - item.col)
+  const maxH = Math.min(4, os.desktop.rowsPerColumn || 4)
+  const onMove = (e: PointerEvent) => {
+    const vcol = Math.floor((e.clientX - grid.left) / (84 + 4))
+    const row = Math.floor((e.clientY - grid.top) / (92 + 4))
+    resizePreview.value = {
+      id: item.id,
+      w: Math.max(1, Math.min(maxW, vcol - leftVisual + 1)),
+      h: Math.max(1, Math.min(maxH, row - item.row + 1)),
+      leftVisual,
+    }
+  }
+  const onUp = () => {
+    window.removeEventListener('pointermove', onMove)
+    window.removeEventListener('pointerup', onUp)
+    window.removeEventListener('pointercancel', onUp)
+    resizeCleanup = null
+    const p = resizePreview.value
+    resizePreview.value = null
+    if (p && (p.w !== item.spanW || p.h !== item.spanH)) {
+      os.desktop.resizeItem(p.id, { w: p.w, h: p.h })
+    }
+  }
+  window.addEventListener('pointermove', onMove)
+  window.addEventListener('pointerup', onUp)
+  window.addEventListener('pointercancel', onUp)
+  resizeCleanup = onUp
+}
+
 const dragGhost = computed(() => {
   const s = dragState.value
-  return s ? { transform: `translate(${s.x}px, ${s.y}px)` } : null
+  if (!s) {
+    return null
+  }
+  // ghost 跟随被拖项的跨度（跨格卡拖动时不再是 1×1 小图）
+  const d = desktopItems.value.find(x => x.id === s.id)
+  const w = d ? d.spanW * 84 + (d.spanW - 1) * 4 : 84
+  const h = d ? d.spanH * 92 + (d.spanH - 1) * 4 : 92
+  return { transform: `translate(${s.x}px, ${s.y}px)`, width: `${w}px`, height: `${h}px` }
 })
 
 const draggingItem = computed(() => {
@@ -239,6 +315,22 @@ const draggingItem = computed(() => {
 
 /** 拖拽悬停命中的文件夹（高亮反馈 + 落点移入） */
 const hoverFolderId = ref<string | null>(null)
+
+/** 落点格指示（随被拖项跨度） */
+const dropHint = ref<{ col: number, row: number } | null>(null)
+
+function dropHintStyle(h: { col: number, row: number }): Record<string, string> {
+  const d = draggingItem.value
+  const w = d?.spanW ?? 1
+  const hh = d?.spanH ?? 1
+  const left = props.iconGravity === 'top-right' ? visualCols.value - 1 - (h.col + w - 1) : h.col
+  return {
+    left: `${left * (84 + 4)}px`,
+    top: `${h.row * (92 + 4)}px`,
+    width: `${w * 84 + (w - 1) * 4}px`,
+    height: `${hh * 92 + (hh - 1) * 4}px`,
+  }
+}
 
 function resolveDropTarget(id: string, col: number, row: number): string | null {
   for (const item of desktopItems.value) {
@@ -258,9 +350,16 @@ const drag = bindDesktopDrag({
   metrics,
   getState: () => dragState.value,
   setState: v => (dragState.value = v),
-  onCommit: () => syncFromModel(),
+  onCommit: (id) => {
+    const it = os.desktop.get(id)
+    if (it?.type === 'widget') {
+      os.widgets.moveInstance(it.refId, it.position as { col: number, row: number })
+    }
+    syncFromModel()
+  },
   resolveDropTarget: (id, col, row) => resolveDropTarget(id, col, row),
   setHoverFolder: (id) => { hoverFolderId.value = id },
+  setDropHint: (h) => { dropHint.value = h },
 })
 
 /** 多格应用大卡：图标砖铺满整卡（图标字形随卡缩放），底色沿用 icon-tile 色板 */
@@ -270,6 +369,11 @@ function largeTileStyle(item: RenderItem): Record<string, string> {
 
 function isImageIcon(item: RenderItem): boolean {
   return /^(?:https?:|data:|\/|\.)/.test(item.icon)
+}
+
+/** 文件夹卡：末格「打开」之外能外露的子项数 */
+function folderMore(item: RenderItem): number {
+  return item.children.length - (item.spanW * item.spanH - 1)
 }
 
 function onCellPointerDown(ev: PointerEvent, item: DesktopItem) {
@@ -321,13 +425,17 @@ onMounted(async () => {
       }
     }
     seedApps()
+    syncWidgets()
     syncFromModel()
   })
   os.desktop.onChange(() => {
     syncFromModel()
   })
-  // 小组件换位/增删 → 占格变化 → 落点与遮挡即时修正
-  detachWidgetsWatch = os.widgets.onChange(() => syncFromModel())
+  // 小组件增删/尺寸变化 → 对账出模型项（真实占格）+ 重渲染
+  detachWidgetsWatch = os.widgets.onChange(() => {
+    syncWidgets()
+    syncFromModel()
+  })
   watch(() => appsStore.apps.length, () => seedApps())
   if (gridEl.value) {
     drag.container = gridEl.value
@@ -344,6 +452,7 @@ onBeforeUnmount(() => {
   mediaQuery?.removeEventListener('change', () => {})
   detachDrag?.()
   detachWidgetsWatch?.()
+  resizeCleanup?.()
 })
 
 /** ── 交互 ── */
@@ -387,9 +496,34 @@ function onIconContextmenu(ev: MouseEvent, item: RenderItem) {
   ev.preventDefault()
   ev.stopPropagation()
   selectedKey.value = item.id
+  if (item.kind === 'widget') {
+    const inst = widgetInst(item)
+    const def = inst ? os.widgets.getDefinition(inst.widgetId) : undefined
+    const sizeItems = (def?.sizes ?? []).map(sz => ({
+      label: sz === 'small' ? '小（2×2）' : sz === 'medium' ? '中（4×2）' : '大（4×4）',
+      onSelect: () => os.widgets.resizeInstance(inst!.instanceId, sz),
+    }))
+    os.ui.menu({
+      x: ev.clientX,
+      y: ev.clientY,
+      items: [
+        ...(sizeItems.length ? [{ label: '大小 ▸', icon: 'i-lucide-scaling', onSelect: () => os.ui.menu({ x: ev.clientX, y: ev.clientY, items: sizeItems }) }] : []),
+        { separator: true, label: '' },
+        { label: '移除小组件', icon: 'i-lucide-trash-2', danger: true, disabled: !inst, onSelect: () => os.widgets.removeInstance(inst!.instanceId) },
+      ],
+    })
+    emit('iconContextmenu', { event: ev, appId: item.id })
+    return
+  }
   const items: any[] = [{ label: '打开', icon: 'i-lucide-external-link', onSelect: () => onIconOpen(item) }]
   if (item.kind === 'folder' && item.spanW * item.spanH > 1) {
-    items.push({ label: '整理此文件夹', icon: 'i-lucide-square-stack', onSelect: () => { openFolder(item) } })
+    items.push({
+      label: '整理此文件夹',
+      icon: 'i-lucide-square-stack',
+      onSelect: () => {
+        openFolder(item)
+      },
+    })
   }
   if (item.kind !== 'app') {
     items.push({ label: '重命名', icon: 'i-lucide-pencil', onSelect: () => startRename(item) })
@@ -598,6 +732,7 @@ defineExpose({ showDesktopMenu })
           'is-folder-card': item.kind === 'folder' && item.spanW * item.spanH > 1,
           'is-hover-folder': hoverFolderId === item.id,
           'is-large-app': item.kind === 'app' && item.spanW * item.spanH > 1,
+          'is-dragging': dragState?.id === item.id,
         }"
         :style="cellStyle(item)"
         @pointerdown="onCellPointerDown($event, os.desktop.get(item.id)!)"
@@ -605,32 +740,44 @@ defineExpose({ showDesktopMenu })
         @dblclick="onIconOpen(item)"
         @contextmenu="onIconContextmenu($event, item)"
       >
-        <!-- 文件夹卡片（多格）：子项快捷预览 + 名称条 -->
+        <!-- 文件夹卡片（多格）：W×H 预览网格铺满，末格固定「打开」，名称挂卡下 -->
         <template v-if="item.kind === 'folder' && item.spanW * item.spanH > 1">
           <div class="yw-folder-card">
+            <span v-if="item.children.length" class="yw-folder-badge">{{ item.children.length }}</span>
             <div class="yw-folder-grid" :style="{ gridTemplateColumns: `repeat(${item.spanW}, 1fr)` }">
               <button
-                v-for="child in item.children.slice(0, item.spanW * (item.spanH - 1))"
+                v-for="child in item.children.slice(0, item.spanW * item.spanH - 1)"
                 :key="child.id"
                 class="yw-folder-mini"
                 :title="child.name"
-                @pointerdown.stop
                 @click.stop="openChild(child)"
                 @dblclick.stop
                 @contextmenu.stop="onChildContextmenu($event, item, child)"
               >
                 <YwAppIcon :app-key="child.appId ?? child.id" :icon="child.icon" :icon-bg="child.iconBg" :title="child.name" />
               </button>
+              <button
+                class="yw-folder-open"
+                :title="`打开 ${item.name}`"
+                @click.stop="openFolder(item)"
+                @dblclick.stop
+              >
+                <i class="i-lucide-folder-open" />
+                <span v-if="folderMore(item) > 0" class="yw-folder-open-more">+{{ folderMore(item) }}</span>
+                <span v-else-if="!item.children.length" class="yw-folder-open-more">空</span>
+              </button>
             </div>
-            <div v-if="item.children.length > item.spanW * (item.spanH - 1)" class="yw-folder-more">
-              +{{ item.children.length - item.spanW * (item.spanH - 1) }}
-            </div>
-            <button class="yw-folder-name" :title="item.name" @pointerdown.stop @click.stop="openFolder(item)" @dblclick.stop>
-              {{ item.name }}
-            </button>
-            <span class="yw-folder-count">{{ item.children.length }}</span>
           </div>
+          <span class="yw-folder-label">{{ item.name }}</span>
         </template>
+        <!-- 小组件：定义组件直接铺在格内（真实占格项） -->
+        <div v-else-if="item.kind === 'widget'" class="yw-widget-item">
+          <div class="yw-widget-item-card">
+            <div class="yw-widget-item-body">
+              <component :is="widgetComp(item)" v-if="widgetComp(item)" :config="widgetInst(item)?.config ?? {}" />
+            </div>
+          </div>
+        </div>
         <!-- 多格应用大卡：图标砖铺满整卡 -->
         <div
           v-else-if="item.kind === 'app' && item.spanW * item.spanH > 1"
@@ -649,7 +796,18 @@ defineExpose({ showDesktopMenu })
           :title="item.name"
           :selected="selectedKey === item.id"
         />
+        <!-- 卡片右下拖拽调大小把手（悬停浮现） -->
+        <span
+          v-if="item.spanW * item.spanH > 1 && item.kind !== 'widget'"
+          class="yw-card-resize"
+          :class="{ 'is-on-label': item.kind === 'folder' }"
+          title="拖拽调整大小"
+          @pointerdown.stop="startCardResize($event, item)"
+        ><i /></span>
       </div>
+
+      <!-- 落点格指示 -->
+      <div v-if="dropHint && dragState" class="yw-drop-hint" :style="dropHintStyle(dropHint)" />
 
       <!-- 拖拽 ghost -->
       <div v-if="dragGhost && draggingItem" class="yw-desktop-cell yw-desktop-ghost" :style="dragGhost">
@@ -684,7 +842,6 @@ defineExpose({ showDesktopMenu })
             @contextmenu="onChildContextmenu($event, openFolderItem, child)"
           >
             <YwAppIcon :app-key="child.appId ?? child.id" :icon="child.icon" :icon-bg="child.iconBg" :title="child.name" />
-            <span>{{ child.name }}</span>
           </button>
           <div v-if="!openFolderItem.children.length" class="yw-folder-flyout-empty">
             空文件夹——把图标拖到桌面文件夹上即可归组
@@ -758,6 +915,55 @@ defineExpose({ showDesktopMenu })
   z-index: 50;
   pointer-events: none;
   opacity: 0.85;
+  will-change: transform;
+}
+
+/* 格内小组件卡（原生占格项） */
+.yw-widget-item {
+  box-sizing: border-box;
+  width: 100%;
+  height: 100%;
+  padding: 4px; /* 卡片间 8px 呼吸间距（两侧各 4） */
+  pointer-events: auto;
+}
+
+.yw-widget-item-card {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  cursor: default;
+  background: color-mix(in oklch, oklch(var(--yw-popover, 100% 0 0)) 48%, transparent);
+  border: 1px solid rgb(255 255 255 / 12%);
+  border-radius: var(--yw-radius-widget, 16px);
+  backdrop-filter: blur(16px) saturate(1.3);
+  box-shadow: 0 8px 24px rgb(0 0 0 / 18%);
+  transition: border-color 0.15s, box-shadow 0.15s, transform 0.15s;
+}
+
+/* 与文件夹卡同族的悬停反馈：描边提亮 + 轻浮起 */
+.yw-desktop-cell:hover .yw-widget-item-card {
+  border-color: rgb(255 255 255 / 24%);
+  box-shadow: 0 10px 28px rgb(0 0 0 / 26%);
+  transform: translateY(-1px);
+}
+
+.yw-widget-item-body {
+  flex: 1;
+  min-height: 0;
+  padding: 12px;
+}
+
+/* 落点格指示（拖动时的目标高亮框） */
+.yw-drop-hint {
+  position: absolute;
+  z-index: 49;
+  pointer-events: none;
+  will-change: transform;
+  background: oklch(var(--yw-primary, 60% 0.15 250) / 22%);
+  border: 2px dashed oklch(var(--yw-primary, 60% 0.15 250) / 75%);
+  border-radius: 14px;
 }
 
 /* ── 文件夹卡片（多格）：对齐小组件卡片的视觉 ── */
@@ -770,8 +976,8 @@ defineExpose({ showDesktopMenu })
   position: relative;
   display: flex;
   flex-direction: column;
-  height: 100%;
-  padding: 10px 8px 6px;
+  height: calc(100% - 20px);
+  padding: 6px 0;
   cursor: default;
   background: color-mix(in oklch, oklch(var(--yw-popover, 100% 0 0)) 26%, transparent);
   border: 1px solid rgb(255 255 255 / 14%);
@@ -779,6 +985,74 @@ defineExpose({ showDesktopMenu })
   backdrop-filter: blur(18px) saturate(1.4);
   box-shadow: 0 8px 24px rgb(0 0 0 / 18%);
   transition: border-color 0.15s, box-shadow 0.15s;
+}
+
+/* 卡片右下拖拽调大小把手（悬停浮现） */
+.yw-card-resize {
+  position: absolute;
+  right: 2px;
+  bottom: 2px;
+  z-index: 3;
+  width: 16px;
+  height: 16px;
+  cursor: nwse-resize;
+  opacity: 0;
+  background:
+    linear-gradient(135deg,
+      transparent 0 40%,
+      rgb(255 255 255 / 80%) 40% 50%,
+      transparent 50% 64%,
+      rgb(255 255 255 / 80%) 64% 74%,
+      transparent 74%);
+  border-radius: 4px;
+  transition: opacity 0.15s;
+}
+
+.yw-desktop-cell:hover .yw-card-resize {
+  opacity: 0.9;
+}
+
+.yw-card-resize.is-on-label {
+  bottom: 22px;
+}
+
+/* 名称挂卡片下方（对齐系统图标标签） */
+.yw-folder-label {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  height: 20px;
+  overflow: hidden;
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 20px;
+  color: #fff;
+  text-align: center;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-shadow:
+    0 1px 2px rgb(0 0 0 / 70%),
+    0 0 8px rgb(0 0 0 / 45%);
+  pointer-events: none;
+}
+
+/* 总数角标（右上角，小米式） */
+.yw-folder-badge {
+  position: absolute;
+  top: -8px;
+  right: -8px;
+  z-index: 1;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  font-size: 10px;
+  line-height: 18px;
+  color: #fff;
+  text-align: center;
+  background: oklch(var(--yw-primary, 60% 0.15 250));
+  border: 1.5px solid rgb(255 255 255 / 85%);
+  border-radius: 99px;
 }
 
 .yw-desktop-cell.is-hover-folder .yw-folder-card {
@@ -789,7 +1063,6 @@ defineExpose({ showDesktopMenu })
 .yw-folder-grid {
   display: grid;
   flex: 1;
-  align-content: start;
   gap: 2px;
 }
 
@@ -808,48 +1081,48 @@ defineExpose({ showDesktopMenu })
 
 .yw-folder-mini :deep(.yw-app-icon) {
   width: 100%;
+  height: 100%;
+  justify-content: center;
+  padding: 0;
 }
 
-.yw-folder-mini span {
-  width: 100%;
-  overflow: hidden;
-  font-size: 10px;
-  line-height: 1.2;
-  color: #fff;
-  text-align: center;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+/* 外露图标不显示文字（名称在浮层里看） */
+.yw-folder-mini :deep(.yw-app-icon-label) {
+  display: none;
 }
 
-.yw-folder-more {
-  position: absolute;
-  top: 6px;
-  right: 10px;
-  font-size: 10px;
-  color: #fff;
-  opacity: 0.75;
-}
-
-.yw-folder-name {
-  overflow: hidden;
-  padding: 2px 4px;
-  font-size: 11px;
-  color: #fff;
-  text-align: center;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+/* 末格「打开文件夹」 */
+.yw-folder-open {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 48px;
+  height: 48px;
+  place-self: center;
   cursor: default;
-  background: none;
-  border: none;
+  background: rgb(255 255 255 / 10%);
+  border: 1px dashed rgb(255 255 255 / 30%);
+  border-radius: 12px;
+  transition: background 0.15s;
 }
 
-.yw-folder-count {
+.yw-folder-open:hover {
+  background: rgb(255 255 255 / 20%);
+}
+
+.yw-folder-open i {
+  width: 22px;
+  height: 22px;
+  color: #fff;
+}
+
+.yw-folder-open-more {
   position: absolute;
-  bottom: 6px;
-  right: 8px;
+  right: 4px;
+  bottom: 3px;
   font-size: 9px;
   color: #fff;
-  opacity: 0.55;
+  opacity: 0.85;
 }
 
 /* 多格应用大卡：图标砖铺满整卡，视觉与 icon-tile 同源（圆角/高光/投影） */
@@ -1008,6 +1281,7 @@ defineExpose({ showDesktopMenu })
   width: 100%;
   height: 100%;
   overflow: hidden;
+  user-select: none; /* 拖动图标/卡片时不得拉出文字选区 */
   background: linear-gradient(160deg, #1e293b 0%, #334155 100%);
 }
 

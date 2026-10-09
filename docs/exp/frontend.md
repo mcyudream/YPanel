@@ -610,3 +610,12 @@
 - **根因**：iconGravity=top-right 时模型列向左镜像（visual=cols-1-model）。跨格项占模型列 c..c+w-1，映射到视觉列是**向左**展开；渲染若以首列视觉号作左缘向右画 width，卡就画出屏幕右缘、并盖住视觉右侧的项。模型占用检查（model 空间）完全正确，纯渲染层错位。
 - **规避/解决**：`visualLeft = (cols - col - w) * pitch`（= 最后覆盖模型列的视觉列）；1×1 退化为原公式。凡「镜像 + 跨格」的渲染都要用覆盖终点求左缘，不能拿起点当左缘。涉及处：cellStyle、浮层定位。
 - **来源**：2026-10-09，桌面文件夹卡片（vendor desktop/index.vue）。
+
+### 小组件并入桌面网格（原生 widget 项）：影子对账而非搬迁持久化
+
+- **背景**：小组件原为独立图层（自有 92px 网格/仅编辑模式可拖/图标靠 DOM 量测避让）。改为方案 A「彻底原生」：每个实例在 DesktopModel 登记 `type:'widget'` 项（span 按尺寸 2×2/4×2/4×4），真实占格、整卡即拖、同款落点指示/居中跟手。
+- **关键决策**：渲染与持久化**不搬迁**——WidgetStore 仍是实例/配置/尺寸的源（provider 的 widgets scope 不动），桌面组件只做「对账」（syncWidgets：实例 ↔ 模型项双向增删改，`widgetSyncing` 重入守卫）；拖动提交后 `widgets.moveInstance` 回写实例位置（sidebar/旧持久化兼容）。存量数据零迁移：首次对账自动从旧 widgets scope 生成桌面项进 desktop.layout。
+- **内容渲染**：YPanel 注册 widget 定义时带 `component`（markRaw），WidgetStore.getDefinition 拿得到——桌面格内直接 `<component :is="def.component" :config>`，不需要宿主的 slot。YPanel 壳据此退役 YwWidgetHost（宿主文件保留，sidebar 形态仍是活的）。
+- **模型侧**：整理/排序跳过 type 'widget'（原位保留，placed 先登记占格）；moveTo 对 widget 项特殊化——挤开非 widget 占位者、widget 互撞走自由位重定位、撞 blockedCells（若将来有）自由位重定位。
+- **坑**：①落点换算的行必须做上界钳制（rows - spanH），否则向下拖出视口；②shadow 对账的回写要在 onCommit 单点做，别在 onChange 里互相触发（双方都 notify，无守卫即死循环）。
+- **来源**：2026-10-10，桌面小组件原生化（方案 A，vendor widget-model/desktop-model/desktop/host + YPanel 壳）。

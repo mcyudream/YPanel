@@ -93,6 +93,9 @@ onMounted(() => {
     </FaPageHeader>
 
     <FaPageMain>
+		<div class="flex justify-end mb-3">
+			<YdHostNodeSelect />
+		</div>
       <div class="gap-4 grid grid-cols-1 xl:grid-cols-5">
         <!-- SSH 失败登录 -->
         <section class="p-4 border rounded-lg bg-background xl:col-span-3">

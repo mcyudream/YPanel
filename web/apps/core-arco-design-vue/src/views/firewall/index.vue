@@ -167,6 +167,9 @@ onMounted(() => {
     </FaPageHeader>
 
     <FaPageMain>
+		<div class="flex justify-end mb-3">
+			<YdHostNodeSelect />
+		</div>
       <!-- fail2ban 入侵防护 -->
       <div class="mb-4 rounded-lg border bg-background p-4">
         <div class="mb-3 flex flex-wrap items-center justify-between gap-2">

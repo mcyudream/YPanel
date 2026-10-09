@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import type { AppDefinition } from '@yudream/yudream-webos-core'
 import { useWebOS } from '@yudream/yudream-webos-vue'
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { useAppsStore } from '../../stores/apps'
 import YwIconTile from '../icon-tile/index.vue'
 
@@ -90,6 +90,81 @@ function onKeydown(ev: KeyboardEvent) {
     page.value--
   }
 }
+
+/* ── 滚轮 / 横向拖动换页 ── */
+let wheelLockUntil = 0
+
+function onWheel(ev: WheelEvent) {
+  const now = Date.now()
+  if (now < wheelLockUntil || pages.value.length < 2) {
+    return
+  }
+  const d = Math.abs(ev.deltaX) > Math.abs(ev.deltaY) ? ev.deltaX : ev.deltaY
+  if (Math.abs(d) < 24) {
+    return
+  }
+  wheelLockUntil = now + 450
+  if (d > 0 && page.value < pages.value.length - 1) {
+    page.value++
+  }
+  else if (d < 0 && page.value > 0) {
+    page.value--
+  }
+}
+
+/** 横向拖动换页：超过阈值即翻页，并在 click 捕获段吞掉这次点击（防止误开应用） */
+const swipe = reactive({ active: false, x: 0, y: 0, done: false })
+let suppressClick = false
+
+function onGridPointerDown(ev: PointerEvent) {
+  if (ev.button !== 0) {
+    return
+  }
+  swipe.active = true
+  swipe.x = ev.clientX
+  swipe.y = ev.clientY
+  swipe.done = false
+}
+
+function onGridPointerMove(ev: PointerEvent) {
+  if (!swipe.active) {
+    return
+  }
+  const dx = ev.clientX - swipe.x
+  const dy = ev.clientY - swipe.y
+  if (Math.abs(dx) > 48 && Math.abs(dx) > Math.abs(dy) * 1.4) {
+    swipe.done = true
+  }
+}
+
+function onGridPointerUp(ev: PointerEvent) {
+  if (!swipe.active) {
+    return
+  }
+  const dx = ev.clientX - swipe.x
+  swipe.active = false
+  if (!swipe.done) {
+    return
+  }
+  suppressClick = true
+  setTimeout(() => {
+    suppressClick = false
+  }, 100)
+  if (dx < 0 && page.value < pages.value.length - 1) {
+    page.value++
+  }
+  else if (dx > 0 && page.value > 0) {
+    page.value--
+  }
+}
+
+function onClickCapture(ev: MouseEvent) {
+  if (suppressClick) {
+    ev.stopPropagation()
+    ev.preventDefault()
+    suppressClick = false
+  }
+}
 </script>
 
 <template>
@@ -99,6 +174,7 @@ function onKeydown(ev: KeyboardEvent) {
     aria-label="启动台"
     @pointerdown.self="emit('close')"
     @keydown="onKeydown"
+    @wheel="onWheel"
   >
     <input
       ref="inputEl"
@@ -108,7 +184,16 @@ function onKeydown(ev: KeyboardEvent) {
     >
 
     <Transition name="yw-lp-page" mode="out-in">
-      <div :key="page" class="yw-launchpad-grid" :style="{ gridTemplateColumns: `repeat(${columns}, 1fr)`, gridTemplateRows: `repeat(${rows}, 1fr)` }">
+      <div
+        :key="page"
+        class="yw-launchpad-grid"
+        :style="{ gridTemplateColumns: `repeat(${columns}, 1fr)`, gridTemplateRows: `repeat(${rows}, 1fr)` }"
+        @pointerdown="onGridPointerDown"
+        @pointermove="onGridPointerMove"
+        @pointerup="onGridPointerUp"
+        @pointercancel="onGridPointerUp"
+        @click.capture="onClickCapture"
+      >
         <button
           v-for="app in pages[page]"
           :key="app.id"

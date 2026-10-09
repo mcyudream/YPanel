@@ -14,7 +14,6 @@ import {
   YwNotificationCenter,
   YwQuickLaunch,
   YwWidgetGallery,
-  YwWidgetHost,
 } from '@yudream/yudream-webos-arco'
 import {
   shortcuts,
@@ -246,13 +245,6 @@ function onDockFileDrop({ appId, dataTransfer }: { appId: string, dataTransfer: 
   catch {}
 }
 
-// ⚠️ 注册必须在 setup 阶段同步完成（不能放 onMounted）：Vue 子组件先于父 onMounted 挂载，
-// YwWidgetHost/窗口层首渲染就会消费应用与小组件定义；WidgetStore 是普通类（非响应式），
-// 错过首渲染后没有任何机制触发补渲染。slot 的小组件组件表在 setup 填充（静态后即安全）。
-const widgetComponents: Record<string, unknown> = {}
-for (const w of ypanelWidgets) {
-  widgetComponents[w.id] = w.component
-}
 for (const app of [...ypanelApps, ...launcherApps, ...(isAdminAccount ? manageApps : []), ...detailApps, settingsApp, textEditorApp]) {
   registry.register(app)
 }
@@ -335,6 +327,11 @@ function backToClassic() {
 onMounted(() => {
   // 恢复持久化的主题/强调色/壁纸（scope: system）
   void theme.load()
+
+  // 桌面右键「编辑小组件」→ 打开画廊（添加/管理；移除与调尺寸在小组件右键菜单）
+  window.addEventListener('webos:widgets:edit', () => {
+    showWidgetGallery.value = true
+  })
 
   // M45：布局自动持久化（启动恢复 + 变更防抖上传）
   watchLayoutAutoSync()
@@ -433,13 +430,6 @@ onBeforeUnmount(() => {
     </YwMenubar>
 
     <YwDesktop :wallpaper="currentWallpaper" />
-
-    <!-- 桌面右侧栏小组件（编辑入口在 host 内置）；组件表来自 setup 期填充的 widgetComponents -->
-    <YwWidgetHost @open-gallery="showWidgetGallery = true">
-      <template #widget="{ instance }">
-        <component :is="widgetComponents[instance.widgetId]" :config="instance.config" />
-      </template>
-    </YwWidgetHost>
 
     <YwDock :drop-apps="['terminal', 'file']" @show-quicklaunch="showQuickLaunch = true" @file-drop="onDockFileDrop" />
 

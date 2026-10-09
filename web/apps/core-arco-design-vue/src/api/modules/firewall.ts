@@ -1,4 +1,8 @@
 import api from '../index'
+import { makeNodeIdApi } from '../hostNode'
+
+// M55 主机域节点路由：自动附当前 nodeId（setHostNode 切换）
+const hnapi = makeNodeIdApi(api)
 
 export interface FirewallStatus {
   available: boolean
@@ -19,20 +23,20 @@ export interface Fail2banJail {
 
 export const fail2banApi = {
   status: async () => {
-    const res = await api.get('api/v1/fail2ban/status', { silent: true })
+    const res = await hnapi.get('api/v1/fail2ban/status', { silent: true })
     return res.data as { available: boolean, hint?: string, jails?: Fail2banJail[] }
   },
-  unban: (jail: string, ip: string) => api.post('api/v1/fail2ban/unban', { jail, ip }),
-  ban: (jail: string, ip: string) => api.post('api/v1/fail2ban/ban', { jail, ip }),
+  unban: (jail: string, ip: string) => hnapi.post('api/v1/fail2ban/unban', { jail, ip }),
+  ban: (jail: string, ip: string) => hnapi.post('api/v1/fail2ban/ban', { jail, ip }),
 }
 
 export default {
   status: async () => {
-    const res = await api.get('api/v1/firewall/status', { silent: true })
+    const res = await hnapi.get('api/v1/firewall/status', { silent: true })
     return res.data as FirewallStatus
   },
-  allow: (port: string, proto = 'tcp') => api.post('api/v1/firewall/allow', { port, proto }),
-  deleteRule: (number: number) => api.delete(`api/v1/firewall/rules/${number}`),
-  enable: () => api.post('api/v1/firewall/enable'),
-  disable: () => api.post('api/v1/firewall/disable'),
+  allow: (port: string, proto = 'tcp') => hnapi.post('api/v1/firewall/allow', { port, proto }),
+  deleteRule: (number: number) => hnapi.delete(`api/v1/firewall/rules/${number}`),
+  enable: () => hnapi.post('api/v1/firewall/enable'),
+  disable: () => hnapi.post('api/v1/firewall/disable'),
 }
