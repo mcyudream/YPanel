@@ -103,9 +103,10 @@ jobs:
           RID=$(curl -sS --max-time 20 "${API}/releases/tags/${TAG}?access_token=${GITEE_TOKEN}" \
             | grep -o '"id": *[0-9]*' | head -1 | grep -o '[0-9]*' || true)
           if [ -z "$RID" ]; then
+            # Gitee API 硬要求：target_commitish 必填（tag 已存在时也不可省）；JSON body 含未转义中文会 400，保持 ASCII
             RID=$(curl -sS --max-time 20 -X POST "${API}/releases" \
               -H "Content-Type: application/json" \
-              -d "{\"access_token\":\"${GITEE_TOKEN}\",\"tag_name\":\"${TAG}\",\"name\":\"YPanel ${TAG}\",\"body\":\"YPanel ${TAG}（与 GitHub Release 同源构建产物）\",\"prerelease\":false}" \
+              -d "{\"access_token\":\"${GITEE_TOKEN}\",\"tag_name\":\"${TAG}\",\"target_commitish\":\"main\",\"name\":\"YPanel ${TAG}\",\"body\":\"YPanel ${TAG} - same build artifacts as the GitHub release\",\"prerelease\":false}" \
               | grep -o '"id": *[0-9]*' | head -1 | grep -o '[0-9]*' || true)
           fi
           echo "gitee release id: $RID"
