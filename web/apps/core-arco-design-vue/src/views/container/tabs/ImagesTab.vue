@@ -284,7 +284,7 @@ async function doCheckUpdates() {
   <div>
     <FaPageMain>
   <div>
-		<YdDockerNodeSelect />
+      <YdDockerNodeSelect />
     <div class="mb-3 flex flex-wrap items-center gap-2">
       <FaInput v-model="search" :placeholder="$t('container.images.searchPlaceholder')" class="h-8 w-52!" />
       <div class="ml-auto flex items-center gap-2">

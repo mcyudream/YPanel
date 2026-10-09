@@ -1,9 +1,8 @@
 <script setup lang="ts">
-// YdDockerNodeSelect 容器域节点选择器（M55）：写入 dockerNode 模块级上下文并整页刷新
-// （容器域六个独立路由页 + 详情页的 API 全部经 withNode 路由，reload 后按新节点加载）。
+// YdDockerNodeSelect 容器域节点选择器（M55）：写入 dockerNode 模块级上下文并整页刷新。
+// 形态对齐文件管理页节点下拉（FaDropdown + FaButton outline，工具条内联轻量样式）。
 import api from '@/api'
 import { getDockerNode, setDockerNode } from '@/api/dockerNode'
-import YdSelect from '@/components/YdSelect/index.vue'
 import { i18n } from '@/locales'
 
 defineOptions({ name: 'YdDockerNodeSelect' })
@@ -13,17 +12,26 @@ const emit = defineEmits<{ (e: 'change'): void }>()
 interface NodeItem { id: string, name: string, online: boolean }
 
 const current = ref(getDockerNode() || 'local')
-const options = ref<{ label: string, value: string }[]>([])
+const nodes = ref<NodeItem[]>([])
+
+const currentName = computed(() => {
+  if (current.value === 'local') {
+    return i18n.global.t('nodes.localPanel')
+  }
+  return nodes.value.find(n => n.id === current.value)?.name || current.value
+})
+
+const menuItems = computed(() => [nodes.value.map(n => ({
+  label: n.id === 'local' ? i18n.global.t('nodes.localPanel') : n.name,
+  disabled: n.id !== 'local' && !n.online,
+  handle: () => pick(n.id),
+}))])
 
 onMounted(async () => {
   try {
     const res = await api.get('api/v1/nodes', { silent: true })
-    const list = (res.data as NodeItem[]).filter(n => n.id === 'local' || n.online)
-    options.value = list.map(n => ({
-      value: n.id,
-      label: n.id === 'local' ? `${n.name} · ${i18n.global.t('nodes.local')}` : n.name,
-    }))
-    if (!options.value.some(o => o.value === current.value)) {
+    nodes.value = res.data as NodeItem[]
+    if (current.value !== 'local' && !nodes.value.some(n => n.id === current.value)) {
       current.value = 'local'
       setDockerNode('')
     }
@@ -31,8 +39,7 @@ onMounted(async () => {
   catch {}
 })
 
-function onChange(v: string | number) {
-  const id = String(v)
+function pick(id: string) {
   if (id === current.value) {
     return
   }
@@ -44,8 +51,11 @@ function onChange(v: string | number) {
 </script>
 
 <template>
-  <div class="flex items-center gap-1.5 text-xs text-muted-foreground">
-    <FaIcon name="i-lucide:server" class="text-sm opacity-70" />
-    <YdSelect v-model="current" :options="options" size="sm" @update:model-value="onChange" />
-  </div>
+  <FaDropdown :items="menuItems">
+    <FaButton variant="outline" size="sm" class="h-8">
+      <FaIcon name="i-lucide:server" class="mr-1 text-xs text-muted-foreground" />
+      {{ currentName }}
+      <FaIcon name="i-lucide:chevron-down" class="ml-1 text-xs text-muted-foreground" />
+    </FaButton>
+  </FaDropdown>
 </template>
