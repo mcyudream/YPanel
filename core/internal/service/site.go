@@ -721,6 +721,9 @@ func confTemplate(site *model.Site, ssl bool, waf SiteWaf) string {
 			}
 			b.WriteString("        fastcgi_index index.php;\n")
 			b.WriteString("        fastcgi_param SCRIPT_FILENAME $document_root$fastcgi_script_name;\n")
+			// fastcgi_params 不含这两条（在 fastcgi.conf 里），缺失会导致 PHP 收不到任何 POST body
+			b.WriteString("        fastcgi_param CONTENT_TYPE $content_type;\n")
+			b.WriteString("        fastcgi_param CONTENT_LENGTH $content_length;\n")
 			b.WriteString("        include fastcgi_params;\n")
 			b.WriteString("    }\n")
 		}

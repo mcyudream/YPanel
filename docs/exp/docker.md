@@ -50,3 +50,11 @@
 - **附带**：遗留测试 conf 引用已删容器（如 `b20site.conf` → `php-b20`）会让 nginx 容器崩溃循环，阻塞面板一切建站操作且报错详情为空（agent exec 只捕 stdout，nginx 错误在 stderr）——「nginx 配置校验失败: 」后面空串 = 先手工 `docker exec ypanel-nginx nginx -t` 看真错。
 - **附带两条**：① 站点创建 API（api/sites.go Create）用的是**内联白名单匿名结构体**，新增 SiteCreateInput 字段时必须同步补进 handler 透传，否则外部调用永远丢字段（runDir/rewriteName 静默为空，DB 无值）；② 站点 php 模板的 `location / { try_files $uri $uri/ /index.php?$query_string; }` 是**默认输出**（与 laravel 模板同文）——Laravel 系应用真正缺的只是 root 子目录（RunDir=/public）；web.rewrite 可用模板名以 rewrite.go 为准（spa/laravel/wordpress/thinkphp/typecho/discuz），app.json 写未知名安装即报错。
 - **来源**：2026-10-10 商店 PHP 应用类型 P1 验收（core/internal/service/store_php.go；142 磁盘保护触发期）
+
+### 商店 PHP 站点 POST 全空：nginx fastcgi_params 不含 CONTENT_TYPE/CONTENT_LENGTH
+
+- **现象**：php 站点（Blessing Skin 安装向导）表单提交后应用读到空参数（连接配置用回 .env 默认值报 socket 错误），GET 一切正常；fastcgi 探针证实 `$_SERVER['CONTENT_LENGTH']` 缺失、`$_POST` 为空。
+- **根因**：站点模板 `include fastcgi_params`——nginx 的 `fastcgi_params` 文件**不含** `CONTENT_TYPE`/`CONTENT_LENGTH`（这两条在 `fastcgi.conf` 里，与 fastcgi_params 的历史差异），PHP 拿不到请求体长度就不解析 POST。
+- **规避/解决**：php 站点模板显式补 `fastcgi_param CONTENT_TYPE $content_type;` + `fastcgi_param CONTENT_LENGTH $content_length;`（site.go confTemplate php 分支，已修）；存量站点 conf 需 sed 补行 + reload。判别手法：写一个 `var_export([$_SERVER['CONTENT_LENGTH'] ?? null, array_keys($_POST)])` 探针进站点根（注意 RunDir 子目录的站点要放子目录里）。
+- **附带**：Laravel 错误页/翻译加载（spatie translation-loader 查 language_lines 表）会在**未配置数据库时**抛嵌套异常，把真实错误（如 TokenMismatch 419）伪装成 500 空响应——排查时先看 `storage/logs/laravel-*.log` 而非响应体。
+- **来源**：2026-10-10 Blessing Skin 6.0.2 商店安装 Web 向导驱动（BS 安装向导表单为 Laravel 标准 POST，无 JS 依赖，Playwright 原生 fill+click 即可驱动；密码类字段每次填表必须显式赋值，页面残留值不可信）
