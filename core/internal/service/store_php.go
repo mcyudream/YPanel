@@ -197,11 +197,24 @@ func (s *StoreService) runInstallPHP(ctx context.Context, logf TaskLogf, app mod
 	}
 
 	// 4. 创建站点绑定运行时（nginx fastcgi → 运行时容器:9000；端口映射/防火墙由站点模块处理）
+	// web.rewrite 套用站点内置伪静态模板（如 laravel）、web.root 指定入口子目录（如 /public）——
+	// 上游文档里的 nginx/Caddy 手工配置片段由面板自动生成，用户无需手抄
+	rewrite := mf.Web.Rewrite
+	if rewrite != "" && rewrite != "none" && rewrite != "custom" { // none/custom = 无伪静态；其余必须是站点内置模板名
+		if _, rerr := ResolveRewrite(rewrite); rerr != nil {
+			return errs.Wrap(errs.ErrBadRequest, "app.json web.rewrite 模板不存在（可用: spa/laravel/wordpress/thinkphp/typecho/discuz）: "+rewrite)
+		}
+	}
+	runDir := ""
+	if mf.Web.Root != "" {
+		runDir = "/" + strings.Trim(mf.Web.Root, "/")
+	}
 	port := 0
 	_, _ = fmt.Sscanf(params["SITE_PORT"], "%d", &port)
 	site, serr := s.sites.Create(ctx, SiteCreateInput{
 		Name: project, Type: "php", Domain: params["SITE_DOMAIN"], Port: port,
 		RuntimeID: rt.ID, IndexFiles: "index.php", NodeID: in.NodeID,
+		RewriteName: rewrite, RunDir: runDir,
 		Remark: "商店应用 " + app.Name,
 	})
 	if serr != nil {

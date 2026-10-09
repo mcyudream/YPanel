@@ -206,6 +206,10 @@ func (a *SiteAPI) Create(c *gin.Context) {
 		ProxyPass    string              `json:"proxyPass"`
 		IndexFiles   string              `json:"indexFiles"`
 		RuntimeID    uint                `json:"runtimeId"`
+		RewriteName  string              `json:"rewriteName"`
+		RunDir       string              `json:"runDir"`
+		GroupID      uint                `json:"groupId"`
+		Remark       string              `json:"remark"`
 	}](c)
 	if !ok {
 		return
@@ -216,7 +220,8 @@ func (a *SiteAPI) Create(c *gin.Context) {
 	site, err := a.Sites.Create(c.Request.Context(), service.SiteCreateInput{
 		Name: req.Name, Type: req.Type, Domain: req.Domain, ExtraDomains: req.ExtraDomains,
 		Port: req.Port, ProxyPass: req.ProxyPass, ProxyRules: req.ProxyRules, IndexFiles: req.IndexFiles,
-		RuntimeID: req.RuntimeID,
+		RuntimeID: req.RuntimeID, RewriteName: req.RewriteName, RunDir: req.RunDir,
+		GroupID: req.GroupID, Remark: req.Remark,
 	})
 	if err != nil {
 		respErr(c, err)
