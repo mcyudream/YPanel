@@ -321,9 +321,21 @@ if [ "$MODE" = "node" ]; then
   mv -f "${NODE_DIR}/ypagent.new" "${NODE_DIR}/ypagent"
 
   log "配对到主面板 ${CORE_URL}（节点名：${NODE_NAME}）…"
+  rm -f /etc/ypanel/agent.json   # 清旧凭据（配对轮询以凭据文件出现为准）
   # -pair-only：配对成功落凭据（/etc/ypanel/agent.json）即退出；正式服务由 systemd 无参启动
-  if ! "${NODE_DIR}/ypagent" -core "$CORE_URL" -code "$PAIR_CODE" -name "$NODE_NAME" -pair-only; then
-    err "配对失败：请检查主面板地址/配对码（配对码一次性且 10 分钟有效，可重新生成）"
+  if ! "${NODE_DIR}/ypagent" -core "$CORE_URL" -code "$PAIR_CODE" -name "$NODE_NAME" -pair-only 2>/dev/null; then
+    # 旧版 agent 无 -pair-only：后台跑配对，轮询凭据文件出现后结束（systemd 正式接管）
+    nohup "${NODE_DIR}/ypagent" -core "$CORE_URL" -code "$PAIR_CODE" -name "$NODE_NAME" > /var/log/${AGENT_SERVICE}-pair.log 2>&1 &
+    PAIR_PID=$!
+    PAIRED=0
+    for i in $(seq 1 30); do
+      [ -f /etc/ypanel/agent.json ] && PAIRED=1 && break
+      sleep 2
+    done
+    kill "$PAIR_PID" 2>/dev/null || true
+    sleep 1
+    [ "$PAIRED" = "1" ] || err "配对失败：请检查主面板地址/配对码（配对码一次性且 10 分钟有效，可重新生成）；日志 /var/log/${AGENT_SERVICE}-pair.log"
+    log "配对成功（旧版 agent 回退模式）"
   fi
 
   cat > /etc/systemd/system/${AGENT_SERVICE}.service <<EOF
