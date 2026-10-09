@@ -60,3 +60,66 @@
 - **根因**：与 prepare-out-dir 的 EPERM 清理失败相关——输出目录清理被文件锁干扰后，rolldown/vite 的模块图或输出清单与磁盘实际状态不一致，后续构建复用了陈旧模块内容（具体缓存层未深究，现象稳定复现）。
 - **规避/解决**：① 连续构建时每次换全新 outDir（带时间戳）再拷贝进 core/internal/web/dist；② 部署前**必须 grep 产物特征串**验证本次修改真的进了二进制（如 menu:!1、新增文案），不能只看「构建成功」。
 - **来源**：2026-10-07，M23 菜单收敛（sites/certs menu:false）构建两次产物均为旧代码，换目录后一次通过。
+
+### rolldown 构建 OOM 与 corepack shim 损坏（Windows 构建机）
+
+- **现象**：`vite build` 在 rendering chunks 阶段报 `memory allocation of N bytes failed`（rolldown/Rust 崩溃，exit -1073740791）；崩溃后下次 `pnpm` 直接 `Cannot find module .../corepack/dist/pnpm.js`。
+- **根因**：同机并行进程（另一会话的 vite dev/构建）吃满内存，rolldown 默认并行线程内存峰值大；corepack 的 pnpm shim 在崩溃中被损坏。
+- **规避/解决**：构建加 `RAYON_NUM_THREADS=2`（或 1）限制 rolldown 并行即可通过；corepack 损坏用 `corepack install -g pnpm` 修复。部署脚本注意 `build.sh | tail` 这类管道会掩盖退出码——用 `PIPESTATUS` 或 `set -o pipefail`。
+- **来源**：2026-10-08 应用中心批次多轮构建（scripts/build.sh）
+
+### 临时排除半成品文件完成构建（并行会话同仓）
+
+- **现象**：并行会话持续产出新的半成品 Go 文件（缺 import/未定义符号），阻塞整个 package 编译，而其文件几分钟内还在变化。
+- **规避/解决**：把半成品文件 `mv` 出包目录（或改后缀）→ 立即构建 → 构建完成马上 `mv` 回原位（秒级窗口，冲突风险低）。仅用于解耦验证与部署，不要提交排除后的状态。
+- **来源**：2026-10-08 core 构建（vpn.go 排除部署）
+
+### 内网 DNS（dnsmasq）的 53 端口两坑：resolved stub 占用与公网侧开放解析器
+
+- **现象/风险**：① dnsmasq 绑 0.0.0.0:53 时报 EADDRINUSE（ss 显示 127.0.0.53:53 被占）；② 公网侧若为全端口 NAT 转发（本机拓扑：除 8006 外全部转发到 web 节点），绑 0.0.0.0 会把 53 暴露成开放解析器，被扫到即被滥用于 DNS 放大攻击。
+- **根因**：① systemd-resolved 的 stub 监听器固定绑 127.0.0.53:53，与通配绑定同端口互斥；② 用户边界 NAT 无 53 过滤。
+- **规避/解决**：conf 强制 `listen-address=<内网IP>` + `bind-interfaces`（只绑私网地址，天然绕开 stub 冲突且不暴露公网），面板校验拒绝 0.0.0.0/::与公网地址。**预检必须按绑定目标判定冲突**：Linux 同端口仅「通配绑定（0.0.0.0/*/::）」与「同地址精确绑定」互斥——resolved stub 只绑特定地址 127.0.0.53，与内网 IP 的精确绑定可共存；首版预检一刀切拦截所有非 dnsmasq 的 53 监听，真机首部即被 stub 误拦（2026-10-08 热修正：通配/同地址才拦截，其余特定地址监听降级为提示）。host 网络容器下 `ss -p` 可见 dnsmasq 进程名，重部署场景按进程名放行自身占用。
+- **来源**：2026-10-08 M27 内网 DNS 设计（core/internal/service/dnsmasq.go，真机部署实测后如有补充再更新本条）
+
+### 隔离目录构建部署：/health 版本串是新的、前端却是旧的
+
+- **现象**：为绕开并行会话的半成品文件，用临时目录拷贝仓库构建部署；连续三轮部署 `/health` 版本串都对，但浏览器跑的前端始终是旧代码（新卡片渲染不出）。
+- **根因**：临时副本里的 `core/internal/web/dist`（go:embed 源）是拷贝时刻的快照；后续在真实工作区重建的前端产物只更新了真实工作区的 dist，没有同步进临时副本，go build 一直把旧前端嵌进去。
+- **规避/解决**：① 部署后除 `/health` 外必须比对入口 chunk：`curl /` 取 `index-*.js` 与本地 `dist/assets/index-*.js` 比对（特征串 grep 二进制也行，但 minify 后中文文案才是稳定特征）；② 临时目录方案下，每次前端重建后要 `cp -r dist 临时副本/core/internal/web/dist` 再 go build；③ 并行会话修完自己的文件后，尽快回归真实工作区构建，避免快照漂移。
+- **来源**：2026-10-08，M27 三轮「部署成功但前端没更新」（版本串 m27c/d/e 嵌的都是 m27b 前端）。
+
+### Windows 构建嵌入 dist 被并行进程锁定：robocopy /MIR 方向语义与处置
+
+- **现象**：`rm -rf core/internal/web/dist` 报 Device or resource busy（并行会话的 ypanel-full.exe 等进程持有）；robocopy 清目录时误把方向写反（`robocopy dist tmp_empty /MIR` 是 dist→tmp），随后 `cp -r src dist` 因目标已存在落成 `dist/dist/` 嵌套，embed 编译报 "contains no embeddable files"。
+- **根因**：robocopy /MIR 语义是「把**第一个**参数镜像到**第二个**参数」（源→目标），与直觉的"清理工具"用法相反；`cp -r src dest` 在 dest 存在时会嵌套一层。
+- **规避/解决**：同步产物统一用 `robocopy <src> <dst> /MIR`（源在前目标在后，cmd 下 `>nul & exit /b 0` 吞掉 0-7 的成功退出码防 bash 误判失败）；被锁的空目录无需删除，/MIR 可向其中写入文件；同步后必须 `ls dest/assets | wc -l` 与源对账再编译。go:embed 报 "no embeddable files" 先查目录是否嵌套/为空，再查并行锁。
+- **补充（cmd //c 包装的两个变体坑，2026-10-08）**：① Git Bash 下 `cmd //c "robocopy x y //MIR"` 会把 `//MIR` **字面**传给 robocopy（报「无效参数 #3」）——cmd //c 的引号参数不走 MSYS 斜杠转换，双斜杠并不是转义手段；正确做法 `MSYS_NO_PATHCONV=1 cmd //c "robocopy \"$SRC\" \"$DST\" /MIR ..."`，src/dst 先 `cygpath -w` 转 Windows 绝对路径（NO_PATHCONV 下相对路径按当前 cwd 原样拼接，曾把源拼成 `web/.../web/apps/...` 双层路径）。
+- **来源**：2026-10-08，M30 部署构建（与并行会话共仓环境的 embed 同步）。
+
+### 双会话并行部署同一台机器：半写产物被 systemd 拉起 → Exec format error
+
+- **现象**：142 的 ypanel 服务循环 `Failed to execute /opt/ypanel/ypanel: Exec format error`，登录接口无响应。
+- **根因**：两个会话同时向 /opt/ypanel/ypanel 推送各自构建并 restart——一方 `put` 写到一半，另一方（或自身流程）触发 restart，systemd 在不完整/错误格式的文件上 EXEC 失败。
+- **规避/解决**：推送后必须 `file /opt/ypanel/ypanel` 验证 ELF + `curl /health` 校验**版本号字符串**（只看 active 不够）；产物用独立本地文件名（bin/ypanel-<tag>）防本地互踩；发现被覆盖立即重推。根治需部署锁（远端 flock），暂以"推完即验"缓解。
+- **来源**：2026-10-08，M31 部署与并行会话互踩。
+
+### 隔离构建剥离并行会话半成品：sed 整行删除会殃及同行其它字段
+
+- **现象**：M51 内网浏览器部署后，本地构建/验收全绿，142 上「创建代理会话」接口 500 panic（nil pointer）；且此前一轮协议层 curl 预检却是全绿的（跑在旧二进制上），极具迷惑性。
+- **根因**：并行会话把我的 `WebGW: webgwSvc` 与其半成品 `Dashboard: dashboardSvc` 合并进了 Deps 字面量**同一行**；隔离构建用 `sed '/Dashboard/d'` 剥离半成品时把整行删掉——编译照样通过（引用点一并被删），运行期 WebGW/Src2/Creds/LogCentral 全部 nil。
+- **规避/解决**：剥离并行半成品用**字段级替换**不用整行删除（`s/, Dashboard: dashboardSvc,/,/`，注意逗号锚定与保留——替换后同行其余键仍在）；替换后 grep 断言自己的接线键还在（`grep -c "WebGW: webgwSvc"`）再编译；「本地全绿、部署后个别接口 panic」先 diff 隔离副本与真仓的关键装配行，再怀疑代码本身。
+- **来源**：2026-10-09，M51 内网浏览器（1050-m42 修复）。
+
+### Windows 上初始化"分发类"git 仓库：首推前必须先加 .gitattributes 锁 LF
+
+- **现象**：`git init` 后直接 add，全仓库报 `LF will be replaced by CRLF` 警告；Windows 上 `core.autocrlf=true` 时克隆检出的 compose/yaml 全变 CRLF，Linux 端（面板浅克隆读包）行为不确定。
+- **根因**：autocrlf 只管"检出时转 CRLF"，仓库内容虽存 LF，但跨平台分发的仓库（如 YPanel-AppStore 应用源，面板直接读检出文件）检出字节随平台漂移。
+- **规避/解决**：首推前放 `.gitattributes`（`* text=auto eol=lf`，二进制由 auto 检测跳过）+ `git add --renormalize .`；未推送前可直接 `git commit --amend` 并入首提。
+- **来源**：2026-10-09，YPanel-AppStore 仓库初始化（GitHub/Gitee 双推）。
+
+### 商店源编辑 URL 后同步仍走旧地址：yp-git 克隆缓存不随 URL 失效
+
+- **现象**：面板「源管理」把 yp-git 源从 `file:///opt/ypanel/store-seed` 改为 Gitee 地址，点同步"成功"，应用清单还是旧的。
+- **根因**：`StoreService.UpdateSource` 改 URL 时不清理 `data/store-sources/src-<id>` 克隆缓存，`gitCheckout` 见 `.git` 存在只做 `fetch origin`——origin 仍指向旧地址（store.go）。
+- **规避/解决**：临时绕过 = 改 URL 后删服务端 `data/store-sources/src-<id>` 再同步（142 已如此处理）。**已修（2026-10-09）**：`gitCheckout` 复用缓存前先 `git remote set-url origin <最新地址+token>`（store.go，URL 与 token 轮换同修；clone 时 bake 进 .git/config 的旧地址/旧 token 是根因），回归测试 `TestGitCheckoutFollowsURLChange`（红绿验证：无修复时检出内容停留旧源）。
+- **来源**：2026-10-09，YPanel 官方源切换 Gitee（142 实测复现）。

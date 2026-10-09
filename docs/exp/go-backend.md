@@ -153,6 +153,13 @@
 - **规避/解决**：Save 切片前必须 `len(x) > 0` 判空。顺带范式：回写仅为刷新派生字段时，先浅拷贝原值、加工后逐字段比较（`*time.Time` 指针字段用 `.Equal` 按值比），只 Save 实际变化的行——既避开空切片，也把「每次开列表页全表写 SQLite」的写锁竞争降到仅变更行。
 - **来源**：2026-10-07，B23 证书库空库 500（core/internal/service/cert.go List）。
 
+### docker compose 日志"静默为空"：不传 --project-name 时项目名取编排文件目录名
+
+- **现象**：B20 运行环境的容器日志接口恒返回空（HTTP 200、Content-Length: 0，无任何报错），但手工执行 `docker compose -f ... -p rt-java-b20j logs` 有输出。受影响面不止运行时：任何"编排目录名 ≠ compose 项目名"的项目（外部接入的 compose、B20 的 /opt/ypanel/runtime/<type>/<name>）在 agent compose Logs 上都是空。
+- **根因**：agent compose 管理器的 Up/Down/ServiceAction 都显式传了 `--project-name`，唯独 **Logs 漏传**——compose CLI 在无 top-level `name:` 时以**编排文件所在目录的 basename** 作为项目名推断（/opt/ypanel/runtime/java/b20j → 项目名 "b20j"），按 label `com.docker.compose.project=b20j` 过滤容器自然一条都没有，且**不报错**。运行时目录命名（rt-<type>-<name> ≠ 目录名）正好踩中。
+- **规避/解决**：Logs 参数组补 `--project-name`（agent/internal/compose/compose.go）；凡是"compose 命令拼参数"的封装，up/down/logs/service 动作的项目名传递必须成套对齐，新增动作时先核对 compose 的隐式项目名推断规则。排查手法：同一命令手工加 `-p` 与不加各跑一遍对比输出，即可二分定位到项目名错位。
+- **来源**：2026-10-07，B20 Java/Go 运行时日志补验（agent/internal/compose/compose.go Logs）。
+
 ### langchaingo v0.1.15 流式回调三种 chunk 形态：content 是原始文本、tool_calls 是 JSON 数组、reasoning 只走专用回调
 
 - **现象**：AI 对话 SSE 只有 scene/step/done 事件，正文 content 一条都没有；思考过程（reasoning）也永远是空。后端无任何报错。
@@ -166,3 +173,115 @@
 - **根因**：deepseek-flash 并非无效模型名，而是思考型（对齐 deepseek-reasoner 行为）；工具循环每轮都会先流出一串思考 delta。给思考型模型配工具时，轮次耗时大头在思考阶段，前端"没有输出"的观感多半是思考在进行。
 - **规避/解决**：模型能力判断以直连 API 实测为准（各配一个小 curl），不凭名字或旧文档下结论；UI 侧思考过程块（可折叠+字数）正好消化这段等待。
 - **来源**：2026-10-07，B18 切换 DeepSeek 供应商（用户指定 deepseek-flash）。
+
+### Alpine apk del virtual 包会把 -dev 引入的运行库一起删掉：扩展编译进镜像后加载报缺 .so
+
+- **现象**：B20 PHP 运行时构建镜像时用 `apk add --virtual .build libpng-dev … → docker-php-ext-install gd → apk del .build`，构建成功，但运行时 PHP 加载 gd.so 报 `Error loading shared library libpng16.so.16: No such file or directory`（redis 这类无运行库依赖的 pecl 扩展不受影响）。
+- **根因**：apk 的 del 会移除该 virtual 包**连同它作为依赖拉进来的独有包**——libpng-dev 依赖 libpng，del virtual 时 libpng（运行库本体）一并被删。这与 apt 的 autoremove 保守语义直觉相反，"dev 包装进 virtual、del 后只留运行库"的思路在 alpine 上不成立。
+- **规避/解决**：**运行库在 virtual 之外显式安装**（`apk add --no-cache libpng libjpeg-turbo …` 持久保留），virtual 里只放 -dev/编译工具（PHPIZE_DEPS 等）再 del。同构坑：gettext 需要 `gettext` + virtual `gettext-dev`；pgsql 需要 `postgresql-libs` + virtual `postgresql-dev`；imagick 需要 `imagemagick` + `imagemagick-dev`。真机排查手法：容器内直接 `php -m` 看启动 Warning（错误出在 Startup 而非模块缺失清单）+ `ls /usr/local/etc/php/conf.d/` 对照 ini 存在与 .so 是否可加载。
+- **来源**：2026-10-07，B20 运行环境 v2 真机首建（runtimedata/php/install-ext.sh）。
+
+### 容器内 php-fpm slowlog 静默失效：ptrace 被 Docker 默认 seccomp 拦截，需 cap_add SYS_PTRACE
+
+- **现象**：B20 三期验收慢日志时，`request_slowlog_timeout=5s` + `sleep(6)` 请求正常执行超过阈值，fpm-error.log 也打出 `WARNING: child ... executing too slow (5.6s), logging`，但 slow.log 始终 0 字节；紧接着一行 `ERROR: failed to ptrace(ATTACH) child 9: Operation not permitted (1)`。
+- **根因**：fpm 慢日志抓堆栈依赖 `ptrace(ATTACH)`，Docker 默认 seccomp profile 与默认 capabilities 都不含 SYS_PTRACE，容器内 attach 子进程被内核拒绝——WARNING 照打、堆栈写不出来，表现为"慢日志静默为空"。
+- **规避/解决**：运行 php-fpm 的 compose 服务加 `cap_add: [SYS_PTRACE]`（1Panel 同款做法）。排查手法：看到 "executing too slow ... logging" 却无堆栈时直接看紧邻的 ERROR 行，ptrace 权限问题一眼定位；凡面板模板依赖 ptrace 类系统能力（slowlog/strace/调试器 xdebug 断点附加）都要补该 capability。
+- **来源**：2026-10-07，B20 三期慢日志真机验收（runtimedata/php/docker-compose.yml）。
+
+### moby client v0.6 的 PortMap 键是 struct：PortBindings 遍历不能当 "80/tcp" 字符串切
+
+- **现象**：从 `HostConfig.PortBindings`（`network.PortMap`）反提端口映射时，`string(portKey)` 编译报 `cannot convert portKey (variable of struct type network.Port) to type string`。
+- **根因**：moby 拆分模块（api v1.56）里 `network.Port` 是 struct（`num uint16 + proto unique.Handle[IPProtocol]`），不再有 `"80/tcp"` 字符串形态；取值走方法：`Num() uint16`、`Port() string`（端口数字串）、`Proto() network.IPProtocol`（"tcp"/"udp"/"sctp"）。
+- **规避/解决**：遍历写法 `for portKey, binds := range hc.PortBindings { proto := string(portKey.Proto()); cPort := portKey.Port() }`；正向构造仍用 `network.ParsePort("80/tcp")`（normalize 大小写、缺省 tcp）。`HostConfig.RestartPolicy.Name` 的空/`no` 判断用 `container.RestartPolicyDisabled` 常量，别裸比较字符串。
+- **来源**：2026-10-07，容器编辑重建（dockerx/crecreate.go inspectToReq，编译期发现）。
+
+### gin 路由「静态段 + 参数段混合」编译不报错：冲突在注册期 panic，必须启动验证
+
+- **现象**：给 core 加 `POST /docker/containers/:id/recreate`、`:id/update` 时，同路由组已有 `POST /docker/containers/:id/:action` 与静态 `POST /docker/containers/prune`——`go build` 全绿，但 gin 的 httprouter 树若不兼容该混合形态会在**启动注册路由时直接 panic**，编译/静态检查完全无感。
+- **根因**：gin 路由冲突是运行期（engine 注册函数）行为；本项目 gin 版本已支持同层「静态段优先于参数段」共存（`prune` 与 `:id` 先例可证），但静态与参数是否可混在同一子层级（`:id/:action` 与 `:id/recreate`）依赖版本实现，不能靠编译确认。
+- **规避/解决**：改完 core 路由必须本地起一次 core（`timeout 8 go run ./cmd/ypanel`，看到「YPanel 启动完成」监听日志即无冲突），顺带确认没有污染 data/（起来会建库写随机密码，测完 `rm -rf core/data`）。新增静态子路由前先 grep 同前缀有没有 `:param` 段路由。
+- **来源**：2026-10-07，容器 recreate/update 路由接入（core/internal/router/router.go）。
+
+### core 透传 agent 的 POST 动作路由不能用 GET 透传：Go 1.22 mux 对方法不匹配返回 405
+
+- **现象**：面板「清理悬空镜像/卷」报「agent HTTP 405：节点 agent 不可达」，而容器清理正常；直接 curl 复现 405，agent 进程正常。
+- **根因**：`ImagesPrune/VolumesPrune` 的 core 透传走 `Passthrough`（固定 GET），agent 路由是 `POST .../prune`；Go 1.22 ServeMux 对「路径匹配、方法不匹配」返回 405（不是 404），报错文案里的「不可达」是 core 包装误导。containers/prune 用 `DoJSON(..., "POST", ...)` 所以正常。
+- **规避/解决**：core 透传 agent 动作路由时**方法必须与 agent 注册一致**；新增 `PassthroughPost` 透传 POST 并解包 agent 信封（业务码非 0 转 core 业务错误，成功统一返回 `{output}` 与同类接口形状一致）。审计要点：grep 所有 `Passthrough(` 调用，核对 agent 侧对应路由的注册方法。
+- **来源**：2026-10-08，M23 镜像/卷清理 405（containers 正常、images/volumes 405 的差异定位）。
+
+### net.ParseIP 拒绝 IPv4 前导零：192.168.100.002 直接解析失败
+
+- **现象**：用 "192.168.100.002" 写 IP 归一化测试，net.ParseIP 返回 nil，"合法"地址被拒。
+- **根因**：Go 1.17 起 net.ParseIP 拒绝 IPv4 前导零（消除八进制解释歧义的安全加固，CVE-2021-29923 家族），不再宽容解析。
+- **规避/解决**：测试与文档示例用规范写法；用户输入 IP 校验失败时错误信息给规范示例。验证归一化逻辑用 IPv6 大小写（FD00::2 → fd00::2）或 v6 压缩形式，不要用前导零 v4。
+- **来源**：2026-10-08 M27 DNS 记录校验单测（core/internal/service/dnsmasq_test.go）
+
+### docker compose build 在面板进程环境下进度输出丢尾部：任务日志只见前几行进度
+
+- **现象**：经 agent（Go `exec.CommandContext` 或 execx 通道）执行 `docker compose build`，失败时输出只有前几行 plain 进度（恒停在 `#3/#5 load metadata` 一带、甚至半行），看不到真实编译错误；但 `BUILD_EXIT=$?` 拿到的是真实退出码 1，dockerd 日志里 solve 完整跑完并正确报错（`process ... exit code: 1`）。同一命令在 ssh shell、`env -i` 最小环境、`sh -c` + 文件重定向三种方式下输出全部完整。
+- **根因**（未完全定论）：该 compose 版本的 plain 进度 writer 在面板进程这一父环境下的缓冲于进程退出时被丢弃/提前停写（daemon 侧完整，客户端丢尾）。管道回传与文件重定向在手动 shell 下均完整，唯独经 agent 进程链路必现。
+- **规避/解决**：**构建输出一律先落文件再回读**：`docker compose ... build > build.log 2>&1; ec=$?; echo BUILD_EXIT=$ec; tail -c 1600 build.log`。三个要点：① 真实错误在 stderr，必须 `2>&1`；② 管道后 `$?` 是 tail 的，退出码要先用 `echo BUILD_EXIT=$ec` 标记再由调用方解析；③ 失败时**保留 build.log** 并在错误信息里给出路径（完整错误在文件里），成功才清理。排查此类"日志戛然而止"先对照 dockerd 日志确认 solve 是否完整，再决定是链路问题还是构建问题。
+- **来源**：2026-10-08，M26 P2 源码构建真机验收（core/internal/service/src2compose.go，四轮真机复现 + 三组对照实验）。
+
+### mongo-driver UnmarshalExtJSON 到 any：$oid/$date 落成 primitive.D，不还原原生类型
+
+- **现象**：Mongo 文档编辑保存后 `_id` 变成嵌套文档 `{oid: "..."}`（原 ObjectId 丢失）；按 `{"$oid":...}` 定位文档永远"文档不存在"。
+- **根因**：`bson.UnmarshalExtJSON(data, false, &anyVar)` 对 `{"$oid":"..."}` 解出的是 `primitive.D{{"$oid","..."}}`（实测本地最小复现），**不会**转成 `primitive.ObjectID`；拿它做 `_id` filter 或直接写库都语义变形。文档里的日期字段同理（`$date` → primitive.D）。
+- **规避/解决**：写递归归一化器——`bson.D` 单键 `$oid` → `primitive.ObjectIDFromHex`、单键 `$date` → `time.Time`（relaxed RFC3339 / canonical `$numberLong` 毫秒两形态），`bson.M`/`bson.A` 逐层递归；应用到 `_id` 解析、filter、文档插入/替换所有 ExtJSON 入口（core/internal/dbdriver/mongo_browser.go normalizeExt）。凡"ExtJSON 进、BSON 出"的边界都要过一遍。
+- **来源**：2026-10-08，M30 DB Admin v2（Mongo 文档 CRUD 真机验收）。
+
+### 用字符串 Replace 构造连接 DSN：用户名段被误伤，报 user=X database=基座库
+
+- **现象**：PG 切库连接报 `failed to connect to user=pgdemo database=postgres`（用户名变成了目标库名、库名还是基座库），该库全部浏览接口 500。
+- **根因**：`strings.Replace(dsn, "/postgres", "/"+db, 1)` 替换的是**第一处**子串——DSN `postgres://postgres:pwd@host:port/postgres` 中第一个 `/postgres` 出现在 **`//postgres:`（用户名）**，不在路径尾。URL 各段都可能包含目标词，Replace 不可控。
+- **规避/解决**：连接参数拆字段存（host/port/user/pwd），按库**重新 Sprintf** 构造 DSN；绝不对整串 DSN 做子串替换。判别特征：错误信息里 user/database 与预期"错位互换"，八成是替换错段。
+- **来源**：2026-10-08，M30 PG 多库连接池（pg_driver poolFor）。
+
+### MySQL SHOW INDEX 列数随版本漂移：Scan 固定列数必炸，用 information_schema.statistics
+
+- **现象**：索引列表接口在 MySQL 8 上报列数不匹配（驱动 Scan 要求 vars 数 = 列数）。
+- **根因**：`SHOW INDEX FROM t` 的列集随版本增长（8.0 比旧版多 Visible、Expression 等 15 列），按记忆写死 Scan 列表跨版本必碎。
+- **规避/解决**：索引元数据改查 `information_schema.statistics`（index_name/non_unique/seq_in_index/column_name 四列版本稳定），按 index_name 聚合、seq_in_index 保序。凡 SHOW 语句的输出列都要警惕版本漂移，优先 information_schema/performance_schema 等稳定视图。
+- **来源**：2026-10-08，M30 MySQL 索引管理。
+
+### Windows shell curl 发中文 JSON：GBK 字节被 encoding/json 逐字节替换成 U+FFFD，首个「GBK 对恰好合法 UTF-8」幸存成怪符号
+
+- **现象**：计划任务列表任务名显示 `ʱ�������`（形似"h/y"的怪符号 + 一串替换符），疑云先指向前端字体/截断/`gorm size:64`。库里 `hex(name)` = `CAB1EFBFBD…`——首两字节是原始 GBK，其后全是 `EFBFBD`（U+FFFD 的 UTF-8 编码）。
+- **根因**：Windows（CP936）shell 里 `curl -d` 带中文，JSON body 按 GBK 编码发出；Go `encoding/json` 解析字符串时对非法 UTF-8 **逐字节静默替换为 U+FFFD**（不报错不拒收），坏字节入库前已不可逆。首字符两字节若恰好构成合法 UTF-8 二字节序列则幸存成 IPA 怪符号——GBK"时"=`CA B1`→U+02B1 `ʱ`（像 h）、"失"=`CA A7`→U+02A7 `ʧ`（像 y）。SQLite 的 `varchar(N)` 不限长，与 GORM `size:64` 无关。
+- **规避/解决**：从 Windows shell curl 带**非 ASCII** JSON，一律先写 UTF-8 文件再 `curl -d @file`（或 `--data-binary`）；排查看库用 `hex(col)`，见到 `EFBFBD` 连串即「入库前已被 JSON 解码污染」，显示链路无罪、原名不可恢复。GUI 路径浏览器恒发 UTF-8 不受影响；防御性校验只能在 bind 后拒绝含 U+FFFD 的输入。
+- **来源**：2026-10-08，计划任务列表乱码排查（M3 种子任务，142 真机库 hex 定位）。
+
+### systemd 启动的 agent 无 HOME，bash 不会从 passwd 补齐：Web 终端用户 shell 配置整体失效
+
+- **现象**：Web 终端无颜色（ls 目录不高亮、提示符素色）、无用户别名/补全，看似「前端丢 ANSI」；WS 链路与 xterm 渲染均无损直传，排查极易跑偏到前端。
+- **根因**：agent 由 systemd 启动，进程环境无 HOME；pty 里 spawn 的 bash **不会**自行从 passwd 补齐 HOME（实测，仅登录场景处理），rcfile 里 `[ -f "$HOME/.bashrc" ]` 判空失败，用户 shell 配置（别名/dircolors/彩色提示符/命令历史/~ 展开）整体没加载。代码注释「bash 会自行从 passwd 补齐」是错误假设。
+- **规避/解决**：spawn shell 前显式补 HOME（`os/user.Current().HomeDir`，已存在且非空则不动）；排查「终端表现与 SSH 登录不一致」类问题，先在目标机上用与 agent 完全相同的 spawn 方式（无 HOME + pty + --rcfile）做对照复现，一个 `echo HOME=[$HOME]` 即可定位。另：Debian 老式 root bashrc 的彩色提示符需 `force_color_prompt=yes`（source 之前置位）才开启，发行版默认 root 配置的颜色块可能整段注释，需要在注入 rcfile 里做 alias/dircolors 兜底（已有则不覆盖）。
+- **来源**：2026-10-08，终端颜色排查（term_linux.go HOME 修复 + rcfile 颜色兜底，已部署 142 验证）。
+
+### Go 方法不允许类型参数：泛型助手只能定义成包级函数
+
+- **现象**：`func (s *AIService) agentGetJSON[T any](...)` 写成方法后编译报 `syntax error: method must have no type parameters`，报错行即方法签名行，易误判为泛型语法写错。
+- **根因**：Go 规范禁止方法（有 receiver）声明类型参数；泛型只能挂在包级函数或类型上。
+- **规避/解决**：泛型助手写成包级函数、receiver 作首参（`func agentGetJSON[T any](s *AIService, ctx, path)`），调用点 `agentGetJSON[T](s, ctx, ...)`。批量改造用正则 `s\.agentGetJSON\[...\]\(` → `agentGetJSON[...](s, `——类型参数含嵌套 `[]`（如 `[[]dto.Item, map[string]string]`）时 `[^\]]+` 会截断匹配，须用非贪婪 `\[.*?\]`。
+- **来源**：2026-10-08，M31 AI 工具注册表泛型助手（aibase.go，编译期发现后机械改造）。
+
+### 类型 switch 的 case 定义类型不匹配底层类型：json 产物静默落 default
+
+- **现象**：Compass 导出的 JSON（`_id: {"$oid": ...}`）导入 Mongo 报 `_id fields may not contain '$'-prefixed fields`——normalizeExt 的修复（单键 $oid 还原）"明明写了"却不生效。
+- **根因**：`bson.M` 是**定义类型**（`type M map[string]any`），类型 switch 的 `case bson.M:` 只匹配动态类型**恰为 bson.M** 的值；`json.Unmarshal` 产出的动态类型是 `map[string]interface{}`（底层类型相同但类型身份不同），不命中该 case，静默落 `default` 原样返回。修复代码写在了 bson.M 分支里所以从未执行。
+- **规避/解决**：同一处理逻辑必须同时挂 `case bson.M:` 与 `case map[string]any:`（`case bson.A:`/`case []any:` 同理），抽公共函数；重构时优先用**显式函数 + 底层类型**而非定义类型 case。排查特征：加了 case 却"完全不生效"且无报错，先怀疑类型身份不匹配而非逻辑错。
+- **来源**：2026-10-08，M31 Compass JSON 导入（本地最小复现 + 两轮真机才定位）。
+
+### MSYS_NO_PATHCONV=1 下 POSIX 目标路径原样传给原生程序：robocopy 写去了 D:	mp
+
+- **现象**：worktree 镜像后编译报旧代码错误——robocopy"成功"但目标目录内容没变。
+- **根因**：`MSYS_NO_PATHCONV=1 MSYS2_ARG_CONV_EXCL="*"` 阻止了 `/MIR` 被转成盘符路径（目的），但也让目标路径 `/tmp/ypanel-wt/core` **原样**传给 robocopy（Windows 程序）→ 按"当前盘符根"解析成 `D:\tmp\ypanel-wt\core`，镜像写去了错误位置，真目标纹丝不动。
+- **规避/解决**：禁路径转换的环境只该作用于**选项类短参数**；目标/源真实路径一律用 `cygpath -w` 转换后的 Windows 形式，或 worktree 直接放同盘真实路径（如 `D:\dev\code\ypanel-wt-m31`）。镜像后用"源目标各数一遍文件数/特征文件"对账，别信 robocopy 静默退出。
+- **来源**：2026-10-08，M31 worktree 隔离构建（两轮编译旧代码的假象）。
+
+### 恢复/重启自身服务的脚本会被 cgroup 连带杀死：用 systemd-run 瞬态单元脱离执行
+
+- **现象**：面板「快照恢复」功能经 agent exec 执行恢复脚本（stop ypanel → 换 db → start），真机实测脚本总是死在 `systemctl stop ypanel` 之后——cp/start 未执行，面板停在停止态；nohup + `&` 后台化同样无效。
+- **根因**：agent 嵌在 ypanel 服务内，脚本是其子进程；`systemctl stop ypanel` 触发 systemd 杀掉整个服务 cgroup，所有子进程（含 nohup/后台化的）一并收到终止信号。与客户端断连无关——是 cgroup 级死亡。
+- **规避/解决**：用 `systemd-run --unit=<唯一名> --collect bash <script>` 把脚本放进独立瞬态单元执行，脱离 ypanel cgroup；脚本结束后单元自动回收。适用于一切「脚本会停掉自己所在服务」的场景（自升级、自恢复、自重装）。审计要点：systemd-run 返回后仅代表单元已排队，完成与否靠日志文件/健康轮询确认。
+- **来源**：2026-10-09，M48 快照恢复真机三轮返工（阻塞式→nohup→systemd-run），marker 法（基线快照→制造标记→恢复→断言标记消失）验证回滚语义。

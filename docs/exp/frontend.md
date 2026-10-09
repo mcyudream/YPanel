@@ -242,3 +242,333 @@
 - **根因**：FaSwitch 转发 reka-ui SwitchRoot，其受控 prop 是 **`modelValue`**（emits `update:modelValue`，trueValue/falseValue 默认 true/false）；`checked` 只是组件内部计算值（`modelValue === trueValue`），**不是 prop**——传 `:checked` 会作为无效 attr 落到根 button 上，SwitchRoot 因 modelValue===undefined 落非受控（passive 内部态、初始 false），UI 与数据彻底脱钩。排查时曾被「radix 旧版用 checked」的印象与 FaTabs 的 el.click() 坑带偏方向，绕了 v-model → :model-value → :checked 三轮才定位。
 - **规避/解决**：正确写法就是标准 `<FaSwitch v-model="x" @update:model-value="v => 异步保存(x)" />`；验收开关视觉态用 `aria-checked` 属性与 API 状态对照。reka 系组件受控 prop 名不统一（Switch=modelValue、Dialog=open），接新组件先读它的 props 定义再绑定。自动化环境对 reka 组件 el.click()/合成 pointer 均不可靠，交互闭环以真实用户操作或 API 状态为准。
 - **来源**：2026-10-07，AI 系统工具开关页（views/ai/tools.vue），用户反馈「开关与启用状态不对（全是关）」定位。
+
+### Vue 模板中原生元素不要写自闭合标签：<div ref="x" /> 会被解析为未闭合开标签
+
+- **现象**：echarts 图表容器写成 `<div ref="cpuChart" class="h-56 ..." />`，构建通过、页面渲染出边框框，但 ref 永远绑不上（组件内 ref 值为 null）、后续兄弟节点层级错乱，图表永不绘制且无任何报错。
+- **根因**：Vue 模板遵循 HTML 解析规则，**原生 HTML 元素的自闭合斜杠被忽略**（`<div/>` ≡ `<div>` 开标签），后续内容全部成为其子节点直至"真正的"闭合标签；ref 绑定与 DOM 结构随之错乱。组件标签（`<FaXxx />`）自闭合才是合法的。
+- **规避/解决**：原生元素一律显式闭合 `<div></div>`；排查「ref 恒为 null/兄弟节点消失」类问题时先 grep 模板自闭合的原生元素。同族坑：模板 ref 属性名必须与 `<script setup>` 中**同名**变量/`useTemplateRef('名')` 一致，名字对不上 ref 恒为 null 且无报错（rolldown-vite 构建下 useTemplateRef 亦有失效案例，最稳的是同名 `ref()` 变量）。
+- **来源**：2026-10-08，M23 容器统计图表空白（init 5 次全部因 ref null 跳过，靠诊断行定位）。
+
+### node_modules/.vite 缓存目录被外部清掉：预打包依赖全 504，应用卡「载入中」且极易误判为代码问题
+
+- **现象**：dev 首页永远停在 fa 启动 loading；手动 `router.push` 报 `Failed to fetch dynamically imported module: .../overview/index.vue?t=xxx`；curl 该 URL 却 200，vue-tsc/build 全绿。
+- **根因**：`node_modules/.vite/deps` 目录被并行流程（或重装依赖）删除，vite 进程还活着但预打包产物全丢，所有 `.vite/deps/*?v=hash` 返回 504（Outdated Optimize Dep）。overview 引 echarts → 动态 import 失败 → vue-router 初始导航崩溃 → `router.isReady()` 永不 resolve → 整个应用卡启动遮罩。curl 200 的是 `.vue` 源模块，504 的是它依赖图里的预打包 deps——只 curl 顶层模块查不出来。
+- **规避/解决**：诊断链：页内 `new Function('return import(url)')()` 逐层 import 顶层依赖（sandbox 会改写裸 import 语法）→ 定位 `utils/echarts.ts` 失败 → curl 其 `from "/node_modules/.vite/deps/xxx.js?v=hash"` 依赖确认 504。修复：杀掉 vite 进程重启重新预打包（新 hash 变化后旧 `?v=` 仍 504，属正常）。
+- **来源**：2026-10-08，M27 验收期间 dev 环境瘫痪排查。
+
+### 生产构建下 useTemplateRef 对「v-else-if 分支内」的 ref 失效的排查路径，与三处易混坑
+
+- **现象**：同一文件里三个 ref（netChartRef/sysChartRef/usageChartRef）生产环境全部正常，唯独 duChartRef（`<template v-else-if>` 分支内）死活不绑：图表实例 0 个、无任何报错；dev 环境一切正常。
+- **排查**：产物解剖四条 ref 编译完全一致（`ref_key:` + `ref:X`，`X=r('duChartRef')`）→ 排除编译差异；`__vueParentComponent` 生产包不存在 → 改从 `app._instance.subTree` 遍历组件树（生产包遍历也难命中异步组件）；最终在 dev 环境（dev server 重启 + 真实登录）确认 ref 绑定与实例创建全部正常，再回到生产比对**部署产物**才发现：入口 chunk hash（`index-*.js`）与本地不一致——部署用的临时构建目录里嵌的是旧 dist，三轮前端修复根本没进二进制。
+- **教训**：① 「dev 正常生产异常」先比对部署产物 hash（`curl /` 的 index-*.js vs 本地 dist），再怀疑编译差异；② `/health` 版本串只证明二进制是新编译的，不证明嵌的前端是新的——隔离目录构建时 embed 源必须同步拷贝；③ `<div ref/>` 自闭合与显式闭合编译产物相同，但按 exp 首条规范仍应显式闭合；④ 背景窗口验收用 DOM/canvas 像素断言（`getImageData` 采样 alpha）+ `_echarts_instance_` 属性探针，截图在遮挡窗口下有「陈旧瓦片拼接」假象不可作准。
+- **来源**：2026-10-08，M27 磁盘占用分析 treemap 生产不渲染排查（两小时弯路：先疑 ref 编译、再疑 rAF 冻结、实为隔离构建 embed 未同步）。
+
+### 兄弟仓库前端库源码直连（YudreamWebOS 接入 M29）：alias 指目录、tsconfig paths、UnoCSS 走模块图
+
+- **背景**：桌面工作台改用 `../yudream-web-os` 全家桶，要求库内修复即时生效、不做构建同步。
+- **做法**：① `resolve.alias` 对象形式把 `@yudream/yudream-webos-*` 五包指到兄弟仓库 `packages/*/src` **目录**（不是 index.ts——rolldown 解析器对 alias 目标按目录解析，指文件会静默失配、报「Failed to resolve import」且无任何线索）；不发布不装依赖，`package.json` 零改动。② `tsconfig.app.json` paths 指到源码 `index.ts`，vue-tsc 按源码全量类型检查（ypanel 的 noUnusedLocals 比 webos 严格，会抓出对方仓库的死参数——修在对方仓库而不是放宽自己）。③ UnoCSS 无需配置：content.pipeline 首条是全量文件名正则，webos 源码沿 vite 模块图自动进扫描（`i-lucide-*` 图标类正常提取）。④ webos 插件在 `main.ts` 全局 `app.use(createWebOS(...))`，实例构造纯 TS 无 DOM 副作用，经典模式常驻无碍。⑤ 内部跨包互引（vue→core）靠同一组 alias 解析，无需 node_modules。
+- **验收**：dev 双窗开窗（真实后端数据）、刷新会话恢复、Ctrl+K、返回经典、`vue-tsc -b` 与生产构建全绿。
+- **来源**：2026-10-08，M29 桌面工作台 webos 化。
+
+### app 目录同时存在 vite.config.js 与 vite.config.ts：js 抢先加载，改 ts 等于白改
+
+- **现象**：给 `vite.config.ts` 加 resolve.alias，重启 dev 后 `Failed to resolve import "@yudream/..."`；对象/数组、字符串/正则、目录/文件目标全试遍无效；新增一个明显该生效的探针别名同样失效，而既有的 `@`/`#`/`#monaco/*` 却正常。
+- **根因**：app 目录下存在并行流程转译出的 `vite.config.js`（内容是旧版 vite.config.ts 的逐句转译）。**vite 配置发现顺序 .js 先于 .ts**，实际生效的永远是旧 js——对 ts 的一切修改都是死代码。
+- **规避/解决**：改 vite 配置必须**两份同步**（或删 js，但并行流程可能再生成旧版回灌，双写更稳）；在 ts 顶部加警告注释。排查手法：怀疑配置没生效时，先 `ls vite.config.*` 看有没有同名多扩展；再用一个「必然生效」的探针别名做对照（探针也失效=配置文件没被读，而非别名写法问题）。
+- **来源**：2026-10-08，M29 webos 接入 alias 半小时排查（五种写法试遍后靠探针定位）。
+
+### 遮挡/后台 IAB 的交互自动化边界：合成指针可用、可信输入(CUA)不可用、setPointerCapture 类交互无法仿真
+
+- **补充**（webos 侧 exp 有姊妹条）：遮挡窗口里 `tab.cua.click()` 返回成功但页面零事件（capture 监听证实）；合成 `dispatchEvent` 完整序列（pointerdown→mousedown→pointerup→mouseup→click）对自绘组件一律有效，Vue 的 `@dblclick` 用单发 `dblclick` 事件即可触发。但依赖 `setPointerCapture` 的真实拖拽无法仿真（合成 pointerId 报 InvalidPointerId），窗口拖拽类验收只能靠真实鼠标或库内单测覆盖。断言时机要留足余量：最大化等带过渡的状态变更，断言过早会误判「没生效」。
+- **来源**：2026-10-08，M29 桌面工作台浏览器验收（CUA 零到达、拖拽仿真失败、最大化断言过早三次踩坑）。
+
+### presetAttributify 的三个毒源：SVG 静态表现属性、注释里的属性字面量、include 误入嵌套 node_modules
+
+- **现象**：dev 首页样式全裸奔，`/__uno.css` 500，报 `Unclosed bracket`/`Unclosed comment`，行号随内容漂移；改掉一处后错误页字节不变（多个毒源并存，postcss 只报第一个）。
+- **根因**：presetAttributify 对源码原文做 `key="value"` 形态提取，三类内容会生成非法 CSS：① SVG 静态表现属性 `stroke="var(--x, rgba(...))"`（值含空格/括号 → 选择器值未闭合）；`transform="rotate(-90 22 22)"` 同罪；② **注释里**的属性字面量（写注释解释「不要写 stroke="var(...)"」本身就会中毒）；③ uno include 通配 `packages/components/**` 误入嵌套 node_modules——tailwind-merge dist 里类校验器的文档文本（row-end、`*/`、`/**`、scaleGridColRowStartAndEnd() 等）被分词成属性规则，值含注释符直接打开 CSS 注释。
+- **规避/解决**：SVG 表现属性一律 scoped CSS 类（动态值 `:style` 是既有安全模式）；注释措辞避开 `key="value"` 字面量；include 收窄到 `packages/components/src/**`。**排查手法**：`npx unocss "<glob>" -o out.css` 按目录二分 + `postcss.parse(out)` 逐段定位（CLI 不走 postcss 不报错，要主动 parse）；dev 的 500 错误页 HTML 里内嵌 pluginCode 可抠出完整产物按行看。
+- **来源**：2026-10-08，M29 第二轮小组件接入，__uno.css 500 三轮排查。
+
+### uno.config.js 与 vite.config.js 同款双写坑：.js 转译产物抢占加载，改 .ts 白改
+
+- **补充**：uno.config.ts 之外还有并行流程留下的 `web/uno.config.js`（Oct 7），UnoCSS 配置发现同样 .js 优先——uno include 收窄改 .ts 无效，必须双写。**规律**：改任何构建/样式配置前先 `ls *.config.*` 看有没有同名多扩展；.ts 顶部加「需与 .js 同步」警告注释。
+- **来源**：2026-10-08，M29 第二轮（uno 500 修复在 .ts 上三轮无效后定位）。
+
+### webos 桌面壳：应用/小组件注册必须在 setup 阶段（子组件先于父 onMounted 消费定义）
+
+- **现象**：小组件定义在 onMounted 里经 registry.register 注册（含 app.widgets），Host 挂载更早，slot 里 `getDefinition()` 首渲染求值为 undefined → 渲染成 v-if 注释；之后无任何响应式依赖能触发补渲染（WidgetStore 是普通类，Map 变更对 Vue 不可见），开合无关面板强制父重渲染也无效。
+- **根因**：Vue 子先父后的挂载顺序 + 非响应式 store 的消费时序。
+- **规避/解决**：registry.register/dock.pin/setSystemMenus 全部移到 setup 同步段；slot 不读 store 的 getDefinition，改读 setup 期填充的本地组件表（`widgetComponents[id]`，静态后安全）。通用规则：**往非响应式容器里注册、且渲染层要消费的东西，注册动作必须早于任何子组件挂载**。
+- **来源**：2026-10-08，M29 第二轮小组件空白卡排查。
+
+### webos 桌面布局被持久化固化：清 LS 会被自己加的 pagehide flushNow 写回
+
+- **现象**：重排桌面图标（列优先竖排）后验证，清掉 `ypanel.webos.*` 再 reload，图标仍按旧横排坐标渲染；新增应用则竖排出现在最右列——新旧两套坐标并存。
+- **根因**：桌面布局 scope（desktop.layout）在首轮已持久化旧坐标；restore 后内存模型持有旧项，seed 新项触发 onChange → persist（dirty）→ reload 的 pagehide 触发 flushNow（M29 修复①加的兜底）→ **旧布局在 reload 完成前被写回 LS**，新页面 restore 又读到旧值。
+- **规避/解决**：重置布局不要 removeItem，而是 `localStorage.setItem('<prefix>.desktop.layout', '[]')`——restore 读到空数组零恢复，内存模型清空后重播种新布局并覆盖持久化。开发/验收期清 webos 全部状态时同理（windows.session 置 '[]'）。
+- **来源**：2026-10-08，M29 第三轮桌面竖排验证（被自己的 flushNow 兜底反噬一次）。
+
+### persist.set 用 structuredClone 防别名：宿主传 Vue reactive 对象必炸 DataCloneError 且被 void 吞掉
+
+- **现象**：webos 控制中心选壁纸后 UI 即时生效但从不持久化（reload 回默认），无任何报错；dock/会话等其它 scope 却一直正常。
+- **根因**：core 的 MemoryPersistence.set 用 `structuredClone(value)` 防别名，而 `settings.wallpaper` 是 Vue reactive Proxy——structuredClone 不能克隆 Proxy，抛 DataCloneError；`void save()` 把 rejection 吞成静默。dock/session 等存的恰好是普通对象所以幸存。
+- **规避/解决**：持久化值的最终形态就是 JSON（flush 走 JSON.stringify），克隆语义与之对齐——改 `JSON.parse(JSON.stringify(value))`；补 Proxy 入参回归用例。**通用教训**：`void asyncFn()` 会吞一切 rejection，关键写路径至少 console.error；排查「部分 scope 持久化失效」先挂 unhandledrejection 钩子再复现操作。
+- **来源**：2026-10-08，M29 第四轮壁纸持久化排查（unhandledrejection 钩子一次定位）。
+
+### fa 基座给 localStorage 加了全局键前缀（fa_dev_）：读 LS 必须经包装对象，Object.keys 结果才一致
+
+- **现象**：持久化明明在工作，直接 `localStorage.getItem('ypanel.webos.xxx')` 却是 null，`Object.keys(localStorage)` 也「看不到」相关键，极易误判为「写路径坏了」。
+- **根因**：fa 基座 `utils/storage` 把 window.localStorage 换成带 `fa_dev_` 键前缀的包装实现；绕过包装的裸 getItem 查不到，但代理的 get/set/keys 双向一致（同前缀）。
+- **规避/解决**：调试持久化一律走页面内 `localStorage.xxx`（经包装），再不济 `Object.keys(localStorage)` 全量 dump 看真实键名（会带 fa_dev_ 前缀）；不要用「键不存在」断言写路径失败。
+- **来源**：2026-10-08，M29 第四轮壁纸持久化排查。
+
+### 给元素起 class="ring" 撞了 UnoCSS 原子类：svg 外凭空多一圈 box-shadow「白框」
+
+- **现象**：小组件的环形仪表外有一层白色圆角方框，circle 全部隐藏后依然存在（不是画的），computed background/border 全透明——像「凭空画的」。
+- **根因**：`class="ring"` 正是 UnoCSS presetWind 的 ring 工具类（box-shadow 一圈 ring 阴影，默认画在元素方框外）；scoped 样式与 uno 规则**同时生效**（scoped 只附加属性选择器，不互斥）。同理 `card`/`badge`/`border`/`invisible` 等常见英文词做类名都会撞。
+- **规避/解决**：自定义类名避开 uno 原子类词表（统一业务前缀最稳，如 gauge-*）；排查「元素外多出莫名框」先怀疑类名撞原子类——`getComputedStyle` 看 box-shadow。
+- **来源**：2026-10-08，M29 第五轮小组件白框二次排查（逐层 display:none 二分定位）。
+
+### webos token 消费契约速查：--yw-label 不存在；通道型/实体型别混用
+
+- **补充**（exp 既有条目的落地速查）：webos 语义色是 **oklch 通道三元组**（`--yw-foreground`/`--yw-muted-foreground`/`--yw-primary` 等，消费 `oklch(var(--x))` 或 `oklch(var(--x) / a)`）；实体值 token 只有 `--yw-label-2/3/4`、`--yw-separator`、`--yw-window-bg` 等（直接 `var()` 消费）。**没有 `--yw-label`**——引用未定义变量整条声明静默失效（computed 显示 none），文字丢色、轨道不渲染。实体值要调透明度用 `color-mix(in oklab, var(--x) 14%, transparent)`。宿主自定义组件配色前先 grep `packages/core/src/theme/tokens.ts` 的名单。
+- **来源**：2026-10-08，M29 第五轮（小组件文字/轨道引用了不存在的 --yw-label，computed stroke=none 定位）。
+
+### 合成事件派发 pointerenter 不冒泡：必须派发到绑定元素本身
+
+- **补充**（IAB 交互自动化姊妹条）：`pointerenter/pointerleave` **不冒泡**——Vue `@pointerenter` 绑在父容器时，向子元素派发 pointerenter 不会触发父级 handler（mouseover/mouseout 才冒泡）。悬停类交互（如 Snap 布局面板的 400ms 悬停触发）自动化必须把事件派发到**绑定元素本身**。
+- **另**：跨 MCP cell 验收时会撞上 dev 环境瞬态（HMR/预打包）导致「上一 cell 还在、下一 cell 元素消失」的假象——把完整验收链合并进**单个 evaluate cell**（内含 wait）是最稳的自动化形态。
+- **来源**：2026-10-08，M29 第六轮 Snap 面板验收（面板不弹两次误判为功能缺陷）。
+
+### 会话自毁竞态：store 创建时的初始 sync 会把空窗口列表固化为持久化会话
+
+- **现象**：窗口会话「有时恢复有时不恢复」；某次 dev 热更后恢复必失效。
+- **根因**：compat useWindowsStore 工厂末尾无条件 `sync()` → `persistSession()` 把**空窗口列表**写入持久化（dirty 防抖），与 provider/desktop 的会话恢复流程赛跑；恢复前任何一次页面生命周期扰动都会让空列表抢先落盘。
+- **规避/解决**：初始同步跳过持久化（`sync(persist = true)`，创建时 `sync(false)`）；同时注意 `bus.on(ev, sync)` 直接传函数会把事件 payload 当成 sync 的首参（加参后类型炸/语义错），须包箭头函数。
+- **来源**：2026-10-08，M29 第六轮 Snap 验收期会话恢复间歇失效排查。
+
+### 合成 HTML5 DnD 验收：DataTransfer 可构造、drop 可直接派发（dragstart 不可）
+
+- **可行**：`const dt = new DataTransfer(); dt.setData(type, val); target.dispatchEvent(new DragEvent('drop', { bubbles: true, dataTransfer: dt }))`——接收端 `getData` 拿到的就是 set 的值，拖放**接收逻辑**可完整自动化验收；`dragover` 一并派发（有 .prevent 的悬停态才会激活）。
+- **不可行**：源端 `dragstart` 无法启动真实拖拽会话——拖拽**发起侧**（dragstart 组装数据）只能代码走查或手动验证。
+- **另**：向 xterm/vwt 终端「执行命令」不必派发键盘——终端对外暴露的数据通道（sendRaw/写入 API）原样发 `命令\r` 即执行（键盘合成对 vwt 不生效）；`\u0003`（ETX）即 Ctrl+C 清缓冲。
+- **来源**：2026-10-08，M29 第七轮跨窗拖文件验收。
+
+### Vue 组件 ref 链：中间组件模板绑了 ref 才能透传 expose 方法（忘绑=静默 no-op）
+
+- **现象**：父组件调 `childRef.value?.method()` 静默不执行（`?.` 吞掉 undefined），无任何报错。
+- **根因**：孙组件 defineExpose 了方法、子组件模板也用了孙组件，但**子组件模板忘了给孙组件绑 `ref="xxxRef"`**——子组件 script 里的 ref 永远 undefined。
+- **规避/解决**：expose 链的每一跳都要「script 声明 ref + 模板绑定」成对出现；`?.` 调用点加临时日志或断言非空排查。
+- **来源**：2026-10-08，M29 第七轮终端 pasteText 链（Workspace→Panel 漏绑 ref）。
+
+### computed 包普通类字段 = 永不更新的假响应式（webos editing 状态）
+
+- **现象**：webos 小组件「编辑模式」永远进不去（抖动/按钮不出现），侧栏与桌面形态同时失效。
+- **根因**：`editing: computed(() => widgets.editing)`——WidgetStore 是普通类、`editing` 是普通字段，computed **没有任何响应式依赖**，求值一次后永不重算。同族：`instances` 之所以工作，是因为 onChange 里手动同步 ref——editing 漏了同样的处理。
+- **规避/解决**：普通类字段暴露给 Vue 的统一模式——ref 初始化 + 类 onChange 回调里手动同步（instances/editing 一致处理）。凡是用 `computed` 包非响应式对象字段都应视为红旗。
+- **来源**：2026-10-08，M29 第八轮小组件桌面平铺（编辑模式三连失效定位）。
+
+### 拖拽系统的 stopPropagation 吞掉父级语义：点击标题栏/把手永不触发窗口聚焦
+
+- **现象**：点击底层窗口（标题栏、边缘把手、被内容组件拦截指针的区域）窗口不置顶不聚焦；直接派发 pointerdown 到标题栏复现——事件在 titlebar 层后消失，section 的监听收不到。
+- **根因**：usePointerDrag.start() 里 `ev.preventDefault(); ev.stopPropagation()`——标题栏 beginDrag/把手 beginResize 启动拖拽时阻断冒泡，而窗口聚焦监听（@pointerdown="onFocus")挂在 section 冒泡阶段，永远收不到被阻断的事件。
+- **规避/解决**：父级语义监听改 **capture 阶段**（`@pointerdown.capture`）——capture 自外向内先于 target/冒泡，拖拽阻断不再影响；勿全局去掉拖拽系统的 stopPropagation（其它消费方依赖其隔离）。同类排查：capture/bubble 各挂一个计数监听即可定位事件死于哪一层。
+- **来源**：2026-10-08，M29 第九轮「点击底层窗口不聚焦」排查（逐层计数监听一次定位）。
+
+### 控制中心去伪存真：Web 面板别抄 OS 的演示件
+
+- **教训**：webos 控制中心初版照搬 macOS 放了 Wi-Fi/蓝牙/亮度/音量——全是改本地 ref 的假开关，对服务器面板是负资产（用户一眼识破「又不是真的 os」）。控制面板类产品的每个可见控件都应有真实后端/系统效果，纯演示件宁可不做。
+- **处置**：删除四件伪控件；保留真实生效的深色模式/壁纸，并补了真实生效的强调色选择（setAccent 全主题跟随 + 持久化）替代空缺。
+- **来源**：2026-10-08，M29 第十轮控制中心重写。
+
+### multiInstance 窗口标题带 #N：自动化按 title 匹配要用前缀
+
+- **现象**：`querySelector` 定位「标题 === 文件管理」的窗口找不到——实际标题是「文件管理 #2」（multiInstance 累计编号）。
+- **规避/解决**：多实例窗口断言/定位一律 `startsWith(app 名)`；同一应用的多个窗内容可能不同（各自 cwd/会话），取「最后一个打开的」用数组末位而非第一个匹配。
+- **来源**：2026-10-08，M29 第十一轮 Dock 拖放验收。
+
+### 终端主题读 fa settings store：webos 切深色后终端白底
+
+- **现象**：桌面工作台（webos）深色模式下，终端窗内容区白底浅字。
+- **根因**：YdTerminal 的 theme 读 **fa settings store 的 colorScheme**——webos 深色切换改的是 html.dark（webos 设置驱动），fa store 并未跟随，两套主题状态脱钩 → xterm 一直用浅色主题。
+- **规避/解决**：跨主题体系的组件主题口径统一为「实际生效的 html.dark」：MutationObserver 监听 documentElement class 变化（attributeFilter: ['class']）驱动 isDark ref。谁切暗色都触发，经典/桌面两模式通用。
+- **来源**：2026-10-08，M29 第十三轮终端深色白底修复。
+
+### DesktopModel 整理/排序挤成一列：reassignCells 未尊重 rowsPerColumn
+
+- **现象**：桌面图标「整理图标/按名称排序」后全部挤成第 0 列一根竖条。
+- **根因**：reassignCells 只递增 row、col 恒 0——firstFreeCell 有列满换列逻辑而 reassignCells 没有（两处语义漂移）。
+- **规避/解决**：整理/排序的单元格重排同样按 rowsPerColumn 换列；补三例单测（满列换列/rowsPerColumn=0 向后兼容/sortBy 同规则）。
+- **来源**：2026-10-08，M29 第十三轮桌面图标一列修复。
+
+### 自绘右键菜单不做视口钳制：屏幕底部/右缘的菜单被裁剪
+
+- **现象**：右键 Dock 底部图标，菜单向下展开溢出视口，「关闭窗口」等尾部项被遮住不可点。
+- **根因**：菜单定位裸 `left=x, top=y`，无视口钳制/翻转逻辑。
+- **规避/解决**：渲染后同步测量菜单 rect（`host.firstElementChild.getBoundingClientRect()`，同步 render 后即可测量），x/y 各自钳制到 `[8, innerWidth - w - 8]` / `[8, innerHeight - h - 8]`（贴底向上翻转）。初始 `visibility: hidden` 渲染避免闪跳。webos 已在 `adapter/builtin.ts menu()` 统一修复——自绘菜单/弹层都应有这道钳制。
+- **来源**：2026-10-08，M29 第十四轮 Dock 右键菜单遮挡修复。
+
+### 页头隐藏一刀切会把页头里的操作按钮一起藏掉
+
+- **现象**：webos 窗口内隐藏 FaPageHeader 后，文件管理等页的批量操作（删除/上传/新建目录/搜索）随之消失——这些按钮在页头的 default slot 里。
+- **根因**：「藏页头」按整个组件 display:none 一刀切；FaPageHeader 的标题/描述（main 区）与操作按钮（default 区）是两块兄弟 DOM，藏组件即全藏。
+- **规避/解决**：FaPageHeader 两块加稳定类（yp-page-header-main / yp-page-header-actions）；嵌入态 CSS 只藏 main 块并把组件压成一条紧凑工具条（padding/margin 压缩、去底边框），操作按钮保留。同时给 FaPageMain 加 yp-page-main 类，嵌入态把 m-4 外边距压到 8px。通用原则：**选择性隐藏要按「功能块」加钩子类，不能整组件一刀切**。
+- **来源**：2026-10-08，M29 第十六轮窗口内边距/批量操作回归修复。
+
+### 原生 <select> 的展开层是浏览器 UI：深色窗口里出现亮白系统下拉且位置脱管
+
+- **现象**：webos 深色窗口里点工具栏的节点下拉（原生 `<select>` 收起态被 utility 美化成深色），展开的选项列表却是**亮白底蓝高亮的系统样式**且位置由浏览器决定（Windows 下偏移脱管）——收起态美化骗人，展开态穿帮。
+- **根因**：原生 select 的弹出层是浏览器/OS 渲染，无法 CSS 主题化也无法控制定位；Windows Chrome 的弹层样式跟随机制在深色页面上也不稳定。
+- **规避/解决**：**工具栏常驻的下拉一律用 FaDropdown**（reka 系、主题跟随、贴合触发器）；表单弹窗内的原生 select 暂可保留（弹窗上下文中观感冲突小），后续统一封装 yd-select。项目内 FaDropdown items 形状是**分组数组** `[ [{label, handle, disabled}...] ]`，触发器走 default slot。
+- **来源**：2026-10-08，M29 第十七轮节点下拉换装。
+
+### flex 链断在「组件内部无主类的内层 div」：mainClass prop 是唯一注入点
+
+- **现象**：AI 对话窗外层全给了 flex-1/min-h-0，发送框仍悬在窗口中部——逐层量高发现断点在 FaPageMain **模板内部**的包装 div（display: block、高度由内容撑），这层没有任何业务类可挂。
+- **根因**：flex 高度链要求每一层都传递；包装组件的内层结构不在业务方控制范围。
+- **规避/解决**：包装组件若暴露 `mainClass`/`contentClass` 之类的内层类透传 prop，嵌入场景用它注入 `min-h-0 flex-1`（tailwind-merge 会合并掉内层原 p-4/p-0 冲突）；没有透传 prop 的组件只能改组件或整体绕过。排查手法：从窗口 body 沿 firstElementChild 逐层量 offsetHeight + display/flex，断在哪层一目了然。
+- **来源**：2026-10-08，M29 第十九轮智能窗发送框贴底修复（190→87→贴底两步）。
+
+### 原生 <select> 弹层不可主题化：封装 YdSelect 分批替换
+
+- **方案沉淀**（延续前条）：YdSelect（components/YdSelect）= FaDropdown 包一层——props `options`（string/number 或 {label,value,disabled}）、v-model 透传原始值类型、size 枚举对齐 FaButton 变体（'sm'|'default'|'icon-sm'，别造 'xs'/'md'——FaButton 不认会 TS2322）、buttonClass 透传宽度。unplugin 自动注册。
+- **替换分批策略**：先换「桌面窗口直接暴露」的页面级工具栏（商店筛选×2/容器列表过滤/日志行数/级别过滤/AI 供应商+模型等 ≈10 处）；**表单弹窗内**的几十处原生 select 留待第二批（弹窗上下文观感冲突小、v-model.number/联动复杂）。
+- **来源**：2026-10-08，M29 第二十轮原生 select 严查第一批。
+
+### 最大化/全屏窗口时 Dock 自动避让（macOS 语义）+ 状态类判定要用 store 而非 DOM
+
+- **交付**：webos Dock 在存在 maximized/fullscreen 窗口时自动滑出避让（按停靠方向 translateY/X 110% + opacity 0 + pointer-events none，transition 平滑），全部还原后回归；样式与拖拽数学互不影响。
+- **排查坑**：还原后 Dock 仍未回归的假象——判据读的是 store.windows（含 minimized 等不渲染 DOM 的窗），而 DOM 查询只能看到可见窗，两边的「maximized 计数」会不一致；判定一律基于 store 状态，验证时先 dump store 再下结论。
+- **来源**：2026-10-08，M29 第二十一轮 Dock 避让。
+
+### webos 窗口内业务弹窗约束到所属窗口：FaModal portalTo + 宿主 provide 注入
+
+- **方案沉淀**：FaModal 的 reka DialogPortal 默认挂 body——webos 窗口内业务弹窗浮在整个桌面且遮罩盖全部窗口（违反窗口模态语义）。修复三层：① DialogContent/DialogScrollContent props 加 `portalTo`，`<DialogPortal :to="portalTo">`；② FaModal `inject('fa:modal-container', undefined)` 解析挂载目标（字符串选择器或元素，缺省 body）；③ webos 桌面壳 `provide('fa:modal-container', computed(() => 聚焦窗 body 元素))`（YwWindow section 加 data-window-id 供定位）。全部业务弹窗自动进所属窗口（遮罩只盖本窗），经典模式无 provide 走 body 零影响。
+- **注意**：DialogPortal `:to` 传 undefined 回落 body ✓；组件内 inject 的 key 用字符串常量即可（fa 包无需导出 key 对象）。
+- **来源**：2026-10-08，M29 第二十三轮弹窗作用域改造。
+
+### FaModal 的受控 prop 是 modelValue 不是 open：绑 open 静默失败（DOM 挂载、display:none、零报错）
+
+- **现象**：`<FaModal v-model:open="x">` 的弹窗点击后"毫无反应"——无 JS 错误、弹窗 DOM 在 body 里已挂载（含内容文本），但内容容器 `display:none`，用户看不到。6 个弹窗（编辑/索引/审计等）全部中招且**从未真正显示过**，极易误判为"按钮没绑上事件"或环境问题。
+- **根因**：fa 对 reka Dialog 的封装把受控 prop 归一为 **modelValue**（`v-model`）；`open` 不是它的 prop，绑定后落到根元素成无效 attr，DialogRoot 恒为关闭态 → content 挂载但隐藏。exp 既有条目「reka 系受控 prop 名不统一（Switch=modelValue、Dialog=open）」说的是 reka 原生，**fa 封装层已统一为 modelValue**，不能按 reka 原生记忆写。
+- **规避/解决**：一律 `<FaModal v-model="x" :destroy-on-close="true">`（项目内正常弹窗全部此形态，database/index.vue 可证）；`destroy-on-close` 顺带解决「FaModal 开启动画期间挂载 monaco → 0 尺寸」的挂载时机问题。排查特征：`getBoundingClientRect` 全 0 / computed display=none 且无报错，先查受控 prop 名。
+- **变体（受控回环）**：组件内 `<FaModal :model-value="visible" @update:model-value="close">` 且 close 无条件上抛 false——FaModal 打开时 watch(isOpen) 会**回发 update:modelValue=true**，无条件 close 形成「开→回发→关」死循环，表现为点击触发按钮**毫无反应**（弹窗瞬时开关）。修复：update handler 如实上抛新值（`emit('update:visible', v)`），由父层 v-model 收敛，不做无条件 close。YdDangerDelete 组件曾因此导致 6 个页面删除/解除弹窗全部打不开。
+- **来源**：2026-10-08，M30 DB Admin 编辑/审计等弹窗全部静默不显示（对照 database 页正常弹窗定位）；同日 M31 用户反馈「解除点击无效果」确认为受控回环（YdDangerDelete）。
+
+### YdLogViewer 时间解析正则需兼容时区偏移与斜杠日期，否则整行落入 continuation（时间丢失、级别继承）
+
+- **现象**：EasyTier 容器日志 `2026-10-08T01:46:54.760893296+08:00 INFO CORE: …` 与 nginx `2026/10/07 17:01:15 [notice] 1#1: …` 的时间没有提取到最左栏、级别列空白（级别全灰继承）。
+- **根因**：行解析正则的时间段只认 `Z` 结尾与连字符日期，不认 **时区偏移（+08:00）** 与 **斜杠日期（2026/10/07）**；不匹配则整行走 continuation 分支（level 继承上一行、time 为空）。
+- **规避/解决**：时间正则统一为 `\d{4}[-/]\d{2}[-/]\d{2}[ T]\d{2}:\d{2}:\d{2}(?:[.,]\d+)?(?:Z|[+-]\d{2}:?\d{2})?`；新增「仅时间戳」分支（时间 + 无级别 token 的行：time 提取、level 继承、content 为剩余）。新增日志源时先在 node 里对真实样本跑一遍等价正则再上线。
+- **来源**：2026-10-08，M23 组网 EasyTier 日志解析修复（node 等价自测全部样本通过后部署）。
+
+### rolldown-vite 构建下 useTemplateRef 可能失效：模板 ref 恒为 null，echarts 等图表静默空白
+
+- **现象**：图表组件 `useTemplateRef('chart')` + 模板 `ref="chart"`，运行时 ref 值永远 null（诊断行证实），echarts 拿不到容器、canvas 数为 0；数据/采样一切正常，无任何报错。数据卡与图表在同一个组件内，采样正常、图表空白是识别特征。
+- **根因**：rolldown-vite 构建产物中 useTemplateRef 宏的 ref 收集与模板关联失效（特定嵌套/条件渲染场景，机理未深究）。经典写法（`const el = ref(null)` + 模板 `ref="el"` 同名自动绑定）不受影响。
+- **规避/解决**：图表类组件一律用**同名 ref() 变量**绑定模板 ref；且注意模板 ref 属性名必须与变量名完全一致（名字对不上同样恒 null 且无报错）。排查手段：组件内加临时诊断行输出 ref 状态，一次部署即可定位。
+- **来源**：2026-10-08，M23 容器统计图表（诊断行 init=5/ok0 cpuRefAtInit=null 定位）。
+
+### 内联事件调用工厂函数：返回的 handler 被丢弃，事件从未绑定
+
+- **现象**：webos 窗口边缘把手拖拽调整大小**从未工作过**——拖把手直接触发浏览器原生拖选（全选文字），窗口尺寸不变；且因 start() 的 preventDefault 未执行，表现像「事件没绑」。
+- **根因**：模板写成 `@pointerdown="beginResize('se')"`——beginResize 是**工厂函数**（返回真正 handler），内联语句执行工厂后**返回值被丢弃**，start(ev) 永远不执行。同时工厂内本应做的 preventDefault 也没跑 → 浏览器原生拖选接管。
+- **规避/解决**：工厂改直执签名 `beginResize(direction, ev)`，模板传 `$event`。**通用红旗**：`@事件="fn('参数')"` 里 fn 若是「返回 handler 的工厂」就是此坑；正常内联要么调用无返回值函数（参数含 $event），要么 `@事件="handlerRef"` 直接引用。顺带：`functionResize` 类内部状态（如 min 尺寸钳制）在 handler 从未执行时也全部静默失效。
+- **来源**：2026-10-08，M29 第二十二轮 resize 修复（此前多轮把 resize 失效误归因于把手遮挡/选区，真因是 handler 未绑定）。
+
+### 全屏避让 Dock 的贴边呼出：mousemove 热区触发 + 离区余量防误缩
+
+- **方案沉淀**（延续 Dock 避让）：避让（is-suppressed）期间监听 window mousemove——鼠标压到 Dock 所在侧边缘（8px 热区）→ 解除抑制滑入（peek）；鼠标移到 Dock 区域外（上方 24px 余量）→ 恢复抑制。**余量判断必须保留**：仅「不在热区就缩回」会让鼠标在 Dock 上短暂停留时中途缩回。
+- **注意**：suppress 类挂载条件改为 `suppressed && !peek`；dockEl ref 供余量计算取 Dock 实际位置。
+- **来源**：2026-10-08，M29 第二十六轮全屏 Dock 贴边呼出。
+
+### 桌面级命名弹窗 z-index 低于窗口层：被窗口盖住导致「功能失效」假象
+
+- **现象**：桌面右键「新建文件夹/文本文件」后命名框看不见（或部分被盖），确认后桌面无变化——误判为创建逻辑失效。
+- **根因**：命名弹窗 `.yw-desktop-dialog` z-index 100，而窗口层 zIndex 125+（动态递增）——弹窗被窗口盖住，用户无法完成确认。
+- **规避/解决**：桌面级浮层（命名框/确认框）z-index 提到与菜单同档（9400）；「右键功能失效」类反馈先检查**中间浮层**（确认框/对话框）是否被更高层盖住，别只盯功能本身。
+- **来源**：2026-10-08，M29 第二十七轮桌面新建修复。
+
+### 右键菜单引用未注册应用：openApp 静默失败
+
+- **现象**：桌面右键「系统设置…」点击无任何反应（无窗、无提示）。
+- **根因**：菜单项 `os.openApp('settings')`，而宿主未注册 settings 应用——openApp 对不存在应用仅 ui.message 提示（且消息位置不显眼时等于无反馈）。
+- **规避/解决**：宿主注册对应应用（复用 webos arco 内置 YwSettingsApp——壁纸/强调色/深浅/关于四节原生设置，markRaw 注册即可）；或菜单项按 registry.get 存在性条件渲染。**右键菜单引用的 appId 必须在宿主注册清单里核对一遍**。
+- **来源**：2026-10-08，M29 第二十七轮 settings 应用注册。
+
+### webos 深色切换不生效：settings setter 不自应用，依赖外部 watch 兜底
+
+- **现象**：webos 控制中心切深色，壁纸/桌面层变了但 ypanel 页面（fa token 层）保持浅色——html.dark 未切换。
+- **根因**：useSystemSettings 的 setMode/setAccent/setWallpaper 只写状态+持久化+发事件，**不调 applyNow**（html.dark/token 切换）——依赖外部 themeStore（compat）创建 watch 兜底；宿主（ypanel 壳）没创建该 watch → 切换断链。
+- **规避/解决**：webos setters 自身调 applyNow（设置变更即应用是 settings 系统的自身职责，不外包给消费者）；顺带把 fa 层组件的主题判定源统一抽 `useHtmlDark`（composables/useHtmlDark.ts，MutationObserver 监听 html class）——YdCodeEditor/YdTerminal/TerminalPanel 全改判定源，经典/桌面两模式通用。
+- **来源**：2026-10-08，M29 第二十八轮深色即时生效修复。
+
+### 控制中心深色开关重做：tile 点击切换改行式滑动开关（macOS 形态）
+
+- **方案沉淀**：深色模式从「整个 tile 点击切换」（点击区域大但无开关形态、ON 态无视觉差异）改为**行式滑动开关**——圆底图标（ON 时主色底白图标）+ 名称/状态两行 + 右侧 40×22 滑槽开关（knob 18px，spring 位移，ON 态主色底）。
+- **细节**：生效态用 `isDarkEff`（system 模式按系统暗色折算，而非直接比 settings.mode）；knob 位移用 transform + spring ease。
+- **来源**：2026-10-08，M29 第三十轮控制中心开关重做（用户反馈「开关有点丑」）。
+
+### 脚本批量替换模板的组合替换要逐处独立锚定（一次失配全批不落盘）
+
+- **现象**：python 脚本对同一文件做多处模板替换，第一处替换成功但后续 assert 失败——**整个文件写回被跳过**，所有替换都没落盘；导致页面编译报 Invalid end tag（双闭合标签），排查绕远。
+- **规避/解决**：多处替换逐处独立锚定（每处自己的 assert 与替换，最后一次性 write）；或分多次小脚本执行。替换后必须立刻 vue-tsc/构建验证落盘结果。
+- **来源**：2026-10-08，M29 第三十轮 app-detail 双闭合标签（替换叠加）排查修复。
+
+### 后台 IAB 里 Playwright 高层 locator（click/fill）会卡 actionability 超时：evaluate 取坐标 + CUA 点击是稳定兜底
+
+- **补充**（遮挡 IAB 交互自动化边界条目的重要补充）：后台/遮挡窗口下不仅 rAF 冻结影响路由切换，**Playwright 高层 locator 的 click/waitFor 也可能卡在 actionability 检查上超时**——即使元素 `getBoundingClientRect` 可见且有尺寸（text/role/title 选择器全试遍均超时，count() 都没机会执行）。
+- **规避/解决**：`playwright.evaluate` 里 `querySelector` + `getBoundingClientRect` 拿中心坐标（同步返回、不受 actionability 影响）→ `tab.cua.click({x,y})` 真实点击；表单填写用「原生 value setter + 派发 input 事件」驱动 v-model（不经过 locator fill）。该路径在后台窗口稳定可复现。
+- **来源**：2026-10-08，AI 工作空间页面浏览器验收（text/role/title 三种 locator 全超时，CUA 兜底一次通过）。
+
+### IAB 上传验收：DataTransfer 构造 File 塞 input.files + 派发 change 走真实上传链路
+
+- **可行**（file input 姊妹条，同 HTML5 DnD 条目）：IAB 明确不支持 filechooser（`waitForEvent("filechooser")` 报 capability_unsupported），但页内 `evaluate` 里 `const dt = new DataTransfer(); dt.items.add(new File([content], "name.txt")); input.files = dt.files; input.dispatchEvent(new Event("change", { bubbles: true }))` 会完整触发页面 `@change` 处理器 → 真实调用上传 API → toast + 列表刷新，端到端可断言（服务端 `ls` 对账文件与字节数）。
+- **不可行**：绕过页面处理器的「直接调上传接口」只能证明 API 通，证明不了 UI 链路；本条方案两者兼得。
+- **来源**：2026-10-08，AI 工作空间上传按钮验收（uploaded.txt 19 B 服务端对账一致）。
+
+### FaInput 根元素硬编码 w-[200px]：窄容器里必须显式覆盖宽度
+
+- **现象**：字段侧栏里的 FaInput 溢出容器约 12px（输入框右缘伸出侧栏边框）。
+- **根因**：fa 的 FaInput 根 InputGroup 写死默认宽度 `w-[200px]`（cn 合并默认类），不放宽度类就是 200px；容器内容宽 < 200px 时必溢出。页面里其他 FaInput 因都显式给了 `w-40!`/`w-72!` 而从未显形。
+- **规避/解决**：窄容器中使用必须带 `w-full!`（tailwind-merge 会压掉默认 w-[200px]，`!` 防内层优先级问题）；flex 场景再加 `min-w-0!`。新容器放 FaInput 先想宽度。
+- **来源**：2026-10-08，M33 日志中心字段侧栏（几何断言 aside 右缘 vs 输入框右缘验证）。
+
+
+### 全站 i18n 键化的四件套模式（B26-full 落地沉淀）
+
+- **模式**：① 路由 `meta.title` 存 i18n key（`menu.*`），`generateTitle` 统一 `te()→t()`、无词条原样透传（中文标题/动态函数双兼容）；因菜单/面包屑/页签/document.title 全部经它渲染，语言切换**自动重渲染，无需任何 watch**（渲染读 locale ref 自带响应式）。② 设置类标题同法键化（`settings.ts` 的 `app.home.title: 'menu.overview'`——面包屑里藏的「主机概览」就是它）。③ 动态枚举文案用 `tr(\`域.key.${v}\`, v)`（不存在回落原值，后端新枚举不裸 key）；非组件模块（store/composables/ts 元数据表）统一 `import { i18n, tr } from '@/locales'` + **函数内求值**（模块顶层求值会固化语言）；元数据表的中文 label 改 getter 即时求值，消费方零改动。④ vue-i18n 消息里 `{ } @ |` 是语法字符，含这些字符的文案要转义（`@`→`{'@'}`）或改用命名参数传值；LogsQL/JSON 示例含裸 `{}` 的干脆留在代码里。
+- **校验**：语言包校验脚本用 esbuild transformSync 加载 TS 词条做 zh/en 键集比对与引用完整性扫描——**注意词条对象顶层没有域名层**（域名在文件名），扫描器必须给键补 `域名.` 前缀，否则 4000+ 假 MISSING / 结构比对假阴性。
+- **验收手法**：浏览器 `localStorage.setItem('ypanel.locale','en-US') + reload` 直接进 EN 态；单 cell 批量 `location.hash` 导航 + body.innerText 断言（IAB evaluate 上限 ~32s，一批 ≤14 页）；剩余中文区分「数据」（供应商名/站点名/探针名等后端内容）与「UI」，只有后者是缺陷。
+- **来源**：2026-10-08，B26-full 全站双语（14 个迁移批次、34 域 3555 对键、vue-tsc/生产构建/双语言走查全绿）。
+
+### 子代理限速中断的续传纪律：交接状态必须以文件实况为准
+
+- **现象**：并行 13 个迁移子代理撞账号限速（1302）批量失败；失败代理自称「已改 N 个文件」，但续传代理实测**多数改动并未落盘**（git M 状态实为并行会话的功能改动，非代理的 i18n 半成品）；而个别「已写入」的语言包又真实存在。交接描述与磁盘实况错位率高。
+- **根因**：代理被限速杀死时，编辑批次可能停在任意中间态；且同一工作区里其他并行会话的改动会让 git status 无法区分「谁改的」。
+- **规避/解决**：续传前先跑机械盘点（grep 引用键数 vs 词条文件行数、抽查 `$t(` 落盘情况），把「补齐既有引用键」作为续传代理的第一优先级任务写进指令；并发控制在 5-6 个以内（13 并发必撞限速）；失败域的 vue 文件一律当「可能半迁移」处理。
+- **来源**：2026-10-08，B26-full 迁移期间 6 个代理 1302 失败后的续传实践。
+
+### getCurrentInstance 塞进 computed 定位宿主窗口：点击期求值恒为 null（webos 详情页返回逃逸）
+
+- **现象**：桌面工作台里节点/容器详情窗点「返回」没关自己窗，而是整个桌面被顶掉（hash 从 `#/desktop` 变 `#/nodes`）；应用详情的「关闭（桌面承载）」点击后**静默无效**（窗还在）。该模式 2026-10-08 验收时是通过的，回归排查发现是稳定复现的确定性 bug。
+- **根因**：`const selfWinId = computed(() => closestWindowId(getCurrentInstance()?.proxy?.$el))` —— Vue 的 `getCurrentInstance = () => currentInstance || currentRenderingInstance`，只在 setup 执行期与渲染执行期非空。computed 是**惰性**的：模板没引用它时，首次求值发生在用户点击回调里，此刻两个全局都为 null → `closestWindowId(undefined)` 返回 null → embed 分支被跳过，`router.push` 逃逸/关闭失效。此前验收通过纯靠偶然（当日 HMR 热替换后的重渲染恰好在渲染期求值过一次，缓存住了正确值）。
+- **规避/解决**：定位「自己所在的 webos 窗口」一律用**根元素 template ref**（`<div ref="rootRef">` + 经典 `ref()`，勿用 useTemplateRef——生产环境另有失效坑，见本文件前文）；`computed(() => closestWindowId(rootRef.value))` 挂载后即可确定求值。容器详情/应用详情/站点详情/节点详情四处已统一改掉。
+- **附带**：webos 嵌入态的「返回」处理器要显式分叉（embed=关自己窗），站点详情此前漏接、返回直接 `router.push('/sites')` 也会顶掉桌面——新详情页接入桌面时，返回/关闭是和下钻同级的必改点。
+- **来源**：2026-10-09，桌面工作台全量纳管轮（节点详情下钻回归，IAB evaluate 探针三段定位）。
+
+### 会话式反代的绝对路径资源逃逸：iframe 内目标应用的 /assets 落在代理前缀之外
+
+- **现象**：内网浏览器（gw 网关 `/s/{sid}/*` 会话式反代 + iframe）里访问 vmui 等相对路径应用一切正常；访问面板自身（fa 基座 `/assets/*.js` 绝对路径）时 JS 全部被拦：「不允许的 MIME 类型（text/html）」——资产请求打到了 `8881/assets/...`（代理端口的根），落在会话前缀外，网关回了 HTML 兜底页。
+- **根因**：iframe 文档在 `/s/{sid}/` 下，但**绝对路径**（`/assets`）按域名根解析，不随文档路径；HTML 注入 `<base>` 也救不了（只影响相对 URL）。
+- **规避/解决（根路径回捞）**：网关对非 `/s/` 前缀请求，从 `Referer` 中解析 `/s/{sid}` 找回会话继续代理到原目标。三个配套缺一不可：① iframe `referrerpolicy="no-referrer-when-downgrade"`（默认 strict-origin-when-cross-origin 跨源只发 origin，Referer 里没有 sid；no-referrer 则完全没有）；② 网关 Cookie 不能用 `Path=/s`（根路径请求带不上），改随机不透明令牌 + `Path=/`（别把 JWT 放进去——同 IP 其它服务会收到该 Cookie）；③ 同名 Cookie 新旧共存（Path 不同）时 Go `r.Cookie()` 只取第一条（浏览器按路径长度排序），要用 `r.Cookies()` 遍历任一有效。无 Referer 的裸根访问仍走 404 兜底页。
+- **另**：webos 快速启动/启动台搜索按应用名与 keywords 匹配——keywords 只写拼音/英文时，EN locale 下应用名变英文、中文搜索词不中；keywords 字面量同时给拼音+英文+中文（`'neiwang browser 内网 浏览器'`）任一 locale 全可达。
+- **来源**：2026-10-09，M51 内网浏览器（用户实测面板自身场景暴露，1105-m42 修复）。
+
+### 会话式反代浏览「面板自身」的两个专属缺口：安全入口 404 与动态 import 的 Referer 竞态
+
+- **现象**：内网浏览器（gw 会话式反代）访问一般内网服务都正常，唯独访问面板自身时：① iframe 里登录必失败（login 404）；② 偶发启动卡「载入中」（部分 chunk 404，手动重发同 URL 却 200）。
+- **根因**：① 面板安全入口（SecurityGate）要求 login 请求带 `?entry=`/X-Safe-Entry，经网关代理的 iframe 登录路径上没有；② 根逃逸回捞依赖 Referer 携带 /s/{sid}，但启动期部分动态 import 请求的 Referer 不在（竞态/策略差异），回捞失败落 404 兜底页。
+- **规避/解决**：① 网关识别「目标是本机面板」（端口==面板端口且主机为 loopback/本地网卡地址）时自动注入 `X-Safe-Entry` 头（值取 SecuritySettingsService.SafeEntry()；不对其它目标注入，避免入口值泄漏给局域网服务）；② 网关记录「令牌→最近使用会话」（/s/{sid} 命中时 TouchSession），根逃逸无 Referer 时用最近会话兜底——令牌已过门禁，语义安全。
+- **来源**：2026-10-09，M51 内网浏览器（用户要求实测「经网关登录面板及其功能」暴露，1238-m42 修复）。

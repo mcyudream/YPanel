@@ -27,6 +27,7 @@
 
 ## 条目
 
-- [go-backend.md](./go-backend.md) — moby 模块拆分、internal 跨模块限制、GOPROXY 镜像
+- [go-backend.md](./go-backend.md) — moby 模块拆分、internal 跨模块限制、GOPROXY 镜像、ExtJSON 归一化、DSN Replace 误伤、SHOW INDEX 版本漂移
 - [frontend.md](./frontend.md) — fa 基座对接真实后端、vue-tsc 假性 TS6133、MSYS 路径转换、xterm 排障、lucide 图标名漂移
-- [deploy.md](./deploy.md) — Text file busy、纯 Go SQLite 交叉编译、敏感信息解析、systemd 排障
+- [deploy.md](./deploy.md) — Text file busy、纯 Go SQLite 交叉编译、敏感信息解析、systemd 排障、robocopy /MIR 方向与 dist 锁定处置
+- [logging.md](./logging.md) — LogsQL v2 语法（\|=/\~ 已废）、stream_field_values 必带 query、vector 自排日志、VL/Vector 镜像 tag 速记
