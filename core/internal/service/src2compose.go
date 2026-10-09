@@ -115,7 +115,12 @@ type srcSuggestion struct {
 }
 
 func (s *Src2ComposeService) agentClient() (*agentclient.Client, error) {
-	node, err := s.Nodes.ByID("local")
+	return s.agentClientFor("local")
+}
+
+// agentClientFor 按节点路由（M57：clone/build 在目标节点执行）。
+func (s *Src2ComposeService) agentClientFor(nodeId string) (*agentclient.Client, error) {
+	node, err := s.Nodes.ByID(nodeId)
 	if err != nil {
 		return nil, err
 	}
@@ -128,7 +133,7 @@ func (s *Src2ComposeService) PreviewStream(ctx context.Context, req dto.Src2Comp
 	if err := checkGitURLLight(req.GitURL); err != nil {
 		return dto.Src2ComposeDetectResp{}, nil, err
 	}
-	ac, err := s.agentClient()
+	ac, err := s.agentClientFor(normalizeNodeID(req.NodeID))
 	if err != nil {
 		return dto.Src2ComposeDetectResp{}, nil, err
 	}
@@ -211,7 +216,7 @@ func (s *Src2ComposeService) Create(ctx context.Context, req dto.Src2ComposeBuil
 	if err := s.validateReq(req); err != nil {
 		return dto.Src2ComposeBuildResp{}, err
 	}
-	ac, err := s.agentClient()
+	ac, err := s.agentClientFor(normalizeNodeID(req.NodeID))
 	if err != nil {
 		return dto.Src2ComposeBuildResp{}, err
 	}

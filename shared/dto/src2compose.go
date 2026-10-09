@@ -28,6 +28,7 @@ type Src2ComposeDetectResp struct {
 
 // Src2ComposePreviewReq 预检（现走 SSE 流式接口，参数经 query 传入）。
 type Src2ComposePreviewReq struct {
+	NodeID       string `json:"nodeId"` // M57 目标节点（空=local）
 	GitURL       string `json:"gitUrl" binding:"required"`
 	Branch       string `json:"branch"`
 	CredentialID uint   `json:"credentialId"`
@@ -78,6 +79,7 @@ type Src2ComposeServiceSpec struct {
 // Src2ComposeBuildReq 创建构建任务（core 渲染模板 + 编排，agent 执行 clone/build）。
 // CredentialID：0=按 host 自动匹配凭据库；凭据命中后 core 解析为 Token/PrivateKey 下发。
 type Src2ComposeBuildReq struct {
+	NodeID       string                   `json:"nodeId"` // M57 目标节点（空=local）
 	Name         string                   `json:"name" binding:"required"`
 	GitURL       string                   `json:"gitUrl" binding:"required"`
 	Branch       string                   `json:"branch"`

@@ -1,5 +1,5 @@
 import api from '../index'
-import { makeNodeApi } from '../dockerNode'
+import { makeNodeApi, withNode } from '../dockerNode'
 
 // M55 容器域节点路由：全部调用自动附当前节点（setDockerNode 切换）
 const napi = makeNodeApi(api)
@@ -114,7 +114,7 @@ export default {
   // M26 P2：源码构建（预检 + 创建构建任务；产物为普通 compose 项目）
   // 源码预检 SSE 流地址（fetch + Authorization 头流式读取；data 行 JSON：log/done/error）
   src2PreviewStreamURL: (gitUrl: string, branch?: string, credentialId?: number) =>
-    `api/v1/compose/src2compose/preview/stream?gitUrl=${encodeURIComponent(gitUrl)}&branch=${encodeURIComponent(branch || '')}&credentialId=${credentialId || 0}`,
+    withNode(`api/v1/compose/src2compose/preview/stream?gitUrl=${encodeURIComponent(gitUrl)}&branch=${encodeURIComponent(branch || '')}&credentialId=${credentialId || 0}`),
   src2Create: async (data: Src2BuildReq) => {
     const res = await napi.post('api/v1/compose/src2compose', data, { timeout: 30000 })
     return res.data as { taskId: number }
