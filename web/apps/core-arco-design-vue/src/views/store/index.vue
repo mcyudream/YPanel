@@ -486,15 +486,27 @@ async function doSetOwner(uid: number) {
 const installedInfos = ref<StoreInstallInfo[]>([])
 // M55 节点筛选：全部/本机/各节点（前端过滤，installedDetailed 本就跨节点聚合）
 const installedNodeFilter = ref('all')
+const storeNodes = ref<{ id: string, name: string, online: boolean }[]>([])
 const installedNodeOptions = computed(() => {
   const opts = [{ label: i18n.global.t('store.nodeAll'), value: 'all' }, { label: i18n.global.t('nodes.localPanel'), value: 'local' }]
-  for (const i of installedInfos.value) {
-    const nid = i.nodeId || 'local'
-    if (nid !== 'local' && !opts.some(o => o.value === nid)) {
-      opts.push({ label: `@${nid}`, value: nid })
+  for (const n of storeNodes.value) {
+    if (n.id !== 'local' && !opts.some(o => o.value === n.id)) {
+      opts.push({ label: n.name, value: n.id })
     }
   }
   return opts
+})
+const installedNodeFilterLabel = computed(() =>
+  installedNodeOptions.value.find(o => o.value === installedNodeFilter.value)?.label || i18n.global.t('store.nodeAll'),
+)
+const installedNodeMenu = computed(() => [installedNodeOptions.value.map(o => ({
+  label: o.label,
+  handle: () => { installedNodeFilter.value = o.value },
+}))])
+onMounted(() => {
+  api.get('api/v1/nodes', { silent: true }).then((r) => {
+    storeNodes.value = (r.data as any[]).map((x: any) => ({ id: x.id, name: x.name, online: x.online }))
+  }).catch(() => {})
 })
 const installedFiltered = computed(() => {
   if (installedNodeFilter.value === 'all') {
@@ -791,7 +803,13 @@ function statusText(s: StoreSource) {
       <template v-if="activeTab === 'installed'">
         <div class="mb-3 flex items-center gap-2">
           <FaIcon name="i-lucide:server" class="text-sm text-muted-foreground" />
-          <YdSelect v-model="installedNodeFilter" :options="installedNodeOptions" class="w-52!" @update:model-value="() => {}" />
+          <FaDropdown :items="installedNodeMenu">
+            <FaButton variant="outline" size="sm" class="h-8">
+              <FaIcon name="i-lucide:server" class="mr-1 text-xs text-muted-foreground" />
+              {{ installedNodeFilterLabel }}
+              <FaIcon name="i-lucide:chevron-down" class="ml-1 text-xs text-muted-foreground" />
+            </FaButton>
+          </FaDropdown>
         </div>
         <div v-if="installedLoading && !installedInfos.length" class="grid gap-4 md:grid-cols-2">
           <div v-for="i in 4" :key="i" class="h-36 animate-pulse rounded-lg border bg-muted/30" />
