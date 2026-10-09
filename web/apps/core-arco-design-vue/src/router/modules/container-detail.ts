@@ -12,7 +12,7 @@ const routes: RouteRecordRaw = {
   component: Layout,
   name: 'containerDetailModule',
   meta: {
-    title: '容器详情',
+    title: 'menu.containerDetail',
     menu: false,
   },
   children: [
@@ -21,7 +21,7 @@ const routes: RouteRecordRaw = {
       name: 'containerDetail',
       component: () => import('@/views/container/detail.vue'),
       meta: {
-        title: '容器详情',
+        title: 'menu.containerDetail',
         menu: false,
       },
     },

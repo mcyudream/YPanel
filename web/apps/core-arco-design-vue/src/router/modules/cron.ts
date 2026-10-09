@@ -9,7 +9,7 @@ const routes: RouteRecordRaw = {
   component: Layout,
   name: 'cron',
   meta: {
-    title: '计划任务',
+    title: 'menu.cron',
     icon: 'yd:calendar-clock',
   },
   children: [
@@ -18,7 +18,7 @@ const routes: RouteRecordRaw = {
       name: 'cronIndex',
       component: () => import('@/views/cron/index.vue'),
       meta: {
-        title: '计划任务',
+        title: 'menu.cron',
         menu: false,
       },
     },

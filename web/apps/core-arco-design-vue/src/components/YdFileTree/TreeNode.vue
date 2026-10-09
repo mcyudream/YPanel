@@ -1,11 +1,17 @@
 <script setup lang="ts">
 import type { FileTreeApi, FileTreeNode } from './types'
 
+// 递归自引用必须显式自导入：模板名 YdFileTreeNode 既非文件名（TreeNode）也无自动导入声明，
+// 缺此行时运行时解析失败，子节点静默渲染为未知元素（数据已加载但树不显示）
+import YdFileTreeNode from './TreeNode.vue'
+
 // 文件树行（递归）：懒加载展开、右键菜单、已加载子树按名过滤。
 const props = defineProps<{
   node: FileTreeNode
   depth: number
   filter: string
+  /** 当前跟随高亮的目录路径 */
+  highlight: string
 }>()
 
 const tree = inject<FileTreeApi>('ydFileTreeApi')!
@@ -30,6 +36,7 @@ const matched = computed(() => {
         <button
           type="button"
           class="flex w-full cursor-pointer items-center gap-1 rounded px-1 py-[3px] text-left text-[13px] transition-colors hover:bg-accent/50"
+          :class="node.entry.path === props.highlight ? 'bg-primary/10 text-foreground' : ''"
           :style="{ paddingLeft: `${depth * 14 + 6}px` }"
           :title="node.entry.target ? `${node.entry.path} → ${node.entry.target}` : node.entry.path"
         >
@@ -58,13 +65,14 @@ const matched = computed(() => {
         :node="child"
         :depth="depth + 1"
         :filter="filter"
+        :highlight="props.highlight"
       />
       <div
         v-if="!node.children.length"
         class="py-0.5 text-xs text-muted-foreground"
         :style="{ paddingLeft: `${(depth + 1) * 14 + 24}px` }"
       >
-        （空目录）
+        {{ $t('components.ydFileTree.emptySubdir') }}
       </div>
     </div>
   </template>

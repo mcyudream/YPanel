@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import type { TerminalConnState } from './types'
+import { i18n } from '@/locales'
 
 // 终端状态栏：连接状态 / 节点 / 尺寸，VS Code 式纤细单行。
 const props = defineProps<{
@@ -13,13 +14,13 @@ const props = defineProps<{
 const stateMeta = computed(() => {
   switch (props.state) {
     case 'connected':
-      return { dot: 'bg-emerald-500', text: '已连接' }
+      return { dot: 'bg-emerald-500', text: i18n.global.t('components.ydTerminal.stateConnected') }
     case 'connecting':
-      return { dot: 'bg-amber-500 animate-pulse', text: '连接中…' }
+      return { dot: 'bg-amber-500 animate-pulse', text: i18n.global.t('components.ydTerminal.stateConnecting') }
     case 'error':
-      return { dot: 'bg-red-500', text: props.stateText || '连接错误' }
+      return { dot: 'bg-red-500', text: props.stateText || i18n.global.t('components.ydTerminal.stateError') }
     default:
-      return { dot: 'bg-muted-foreground/60', text: props.stateText || '已断开' }
+      return { dot: 'bg-muted-foreground/60', text: props.stateText || i18n.global.t('components.ydTerminal.stateDisconnected') }
   }
 })
 </script>

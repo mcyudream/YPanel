@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import type * as Monaco from 'monaco-editor'
 import { loadMonaco, monacoThemeName } from '@/utils/monacoLoader'
+import { useHtmlDark } from '@/composables/useHtmlDark'
 
 // Monaco 编辑器封装：单栏 / diff（传 diffOriginal 时）两种模式。
 // model 由外部（fileEditor store）管理，同文件多组共享同一 model。
@@ -23,7 +24,6 @@ defineOptions({
   name: 'YdCodeEditor',
 })
 
-const appSettingsStore = useAppSettingsStore()
 const containerRef = useTemplateRef<HTMLDivElement>('container')
 
 let editor: Monaco.editor.IStandaloneCodeEditor | null = null
@@ -62,7 +62,7 @@ function bindPokeLayout(el: HTMLElement) {
 
 function baseOptions(): Monaco.editor.IStandaloneEditorConstructionOptions {
   return {
-    theme: monacoThemeName(appSettingsStore.settings.theme.colorScheme),
+    theme: monacoThemeName(isDark.value ? 'dark' : 'light'),
     readOnly: props.readOnly,
     fontSize: props.fontSize ?? 13,
     fontFamily: 'Menlo, Monaco, "Courier New", monospace',
@@ -125,8 +125,10 @@ watch(() => props.model, (model) => {
   }
 }, { immediate: true, flush: 'post' })
 
-watch(() => appSettingsStore.settings.theme.colorScheme, (scheme) => {
-  loadMonaco().then(m => m.editor.setTheme(monacoThemeName(scheme)))
+const isDark = useHtmlDark()
+
+watch(isDark, dark => {
+  loadMonaco().then(m => m.editor.setTheme(monacoThemeName(dark ? 'dark' : 'light')))
 })
 
 watch(() => props.readOnly, v => editor?.updateOptions({ readOnly: v }))

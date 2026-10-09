@@ -2,9 +2,13 @@ import api from '../index'
 
 export interface FirewallStatus {
   available: boolean
+  backend?: 'ufw' | 'firewalld' | 'none'
   enabled?: boolean
+  running?: boolean
   hint?: string
   rules?: { raw: string }[]
+  ports?: { port: string, proto: string, number: number }[]
+  siteManaged?: { port: number, proto: string, sites: string }[]
 }
 
 export interface Fail2banJail {

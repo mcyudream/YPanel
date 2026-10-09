@@ -4,19 +4,43 @@ import ComposeRoutes from './modules/compose'
 import DatabaseRoutes from './modules/database'
 import SitesRoutes from './modules/sites'
 import CertsRoutes from './modules/certs'
-import ContainerRoutes from './modules/container'
+import {
+  ContainerApps,
+  ContainerList,
+  ContainerImages,
+  ContainerNetworks,
+  ContainerVolumes,
+  ContainerEnvs,
+  ContainerSettings,
+  ContainerRoot,
+} from './modules/container'
 import ContainerDetailRoutes from './modules/container-detail'
 import ContainerAppRoutes from './modules/container-app'
 import CronRoutes from './modules/cron'
+import DnsRoutes from './modules/dns'
+import VpnRoutes from './modules/vpn'
 import FileRoutes from './modules/file'
 import MonitorsRoutes from './modules/monitors'
-import AIRoutes from './modules/ai'
+import {
+  AiChat,
+  AiProviders,
+  AiKnowledge,
+  AiWorkspace,
+  AiMemory,
+  AiTools,
+  AiSkills,
+  AiMcp,
+  AiRoot,
+} from './modules/ai'
 import ManageRoutes from './modules/manage'
 import NodesRoutes from './modules/nodes'
 import NodesDetailRoutes from './modules/nodes-detail'
 import FirewallRoutes from './modules/firewall'
 import NatRoutes from './modules/nat'
+import HostsRoutes from './modules/hosts'
 import AlertRoutes from './modules/alert'
+import ProbeRoutes from './modules/probe'
+import LogCenterRoutes from './modules/logcenter'
 import ProcessesRoutes from './modules/processes'
 import DbAdminRoutes from './modules/dbadmin'
 import StoreRoutes from './modules/store'
@@ -32,7 +56,7 @@ const constantRoutes: RouteRecordRaw[] = [
     name: 'login',
     component: () => import('@/views/login.vue'),
     meta: {
-      title: '登录',
+      title: 'menu.login',
     },
   },
   {
@@ -40,7 +64,7 @@ const constantRoutes: RouteRecordRaw[] = [
     name: 'desktop',
     component: () => import('@/views/desktop/index.vue'),
     meta: {
-      title: '桌面工作台',
+      title: 'menu.desktop',
       breadcrumb: false,
     },
   },
@@ -49,7 +73,7 @@ const constantRoutes: RouteRecordRaw[] = [
     name: 'notFound',
     component: () => import('@/views/[...all].vue'),
     meta: {
-      title: '找不到页面',
+      title: 'menu.notFound',
     },
   },
 ]
@@ -68,7 +92,7 @@ const systemRoutes: RouteRecordRaw[] = [
         name: 'overview',
         component: () => import('@/views/overview/index.vue'),
         meta: {
-          title: '主机概览',
+          title: 'menu.overview',
           icon: 'yd:gauge',
           breadcrumb: false,
         },
@@ -78,7 +102,7 @@ const systemRoutes: RouteRecordRaw[] = [
         name: 'reload',
         component: () => import('@/views/reload.vue'),
         meta: {
-          title: '重新加载中...',
+          title: 'menu.reload',
           breadcrumb: false,
         },
       },
@@ -89,26 +113,39 @@ const systemRoutes: RouteRecordRaw[] = [
 // 动态路由（异步路由、导航菜单路由）
 // 一级大菜单统一 2 字命名；单页功能用"同名分组 + 子页 menu:false"配合
 // mainMenuClickMode=smart 实现主导航点击直达；强关联功能按域分组。
-const single = (title: string, icon: string, mod: RouteRecordRaw) => ({
-  meta: { title, icon },
-  children: [mod],
-})
-
 const asyncRoutes: RouteRecordMainRaw[] = [
   {
     meta: {
-      title: '网站',
+      title: 'menu.sites',
       icon: 'yd:globe',
     },
     children: [
       SitesRoutes,
       CertsRoutes,
+      RuntimesRoutes,
     ],
   },
-  single('智能', 'yd:sparkles', AIRoutes),
+  // 智能域：叶子平铺（对话/供应商/知识库/工作空间/记忆/系统工具/技能/MCP），无分组头行
   {
     meta: {
-      title: '数据库',
+      title: 'menu.ai',
+      icon: 'yd:sparkles',
+    },
+    children: [
+      AiChat,
+      AiProviders,
+      AiKnowledge,
+      AiWorkspace,
+      AiMemory,
+      AiTools,
+      AiSkills,
+      AiMcp,
+      AiRoot,
+    ],
+  },
+  {
+    meta: {
+      title: 'menu.database',
       icon: 'yd:database',
     },
     children: [
@@ -116,13 +153,22 @@ const asyncRoutes: RouteRecordMainRaw[] = [
       DbAdminRoutes,
     ],
   },
+  // 容器域：次侧栏平铺叶子项（应用/镜像/网络/卷/配置，无父标题行）；
+  // 容器列表路由保留（分组头直达）；分组内收纳详情页模块与旧路由重定向（均 menu:false）。
   {
     meta: {
-      title: '容器',
+      title: 'menu.container',
       icon: 'i-tabler:brand-docker',
     },
     children: [
-      ContainerRoutes,
+      ContainerApps,
+      ContainerList,
+      ContainerImages,
+      ContainerNetworks,
+      ContainerVolumes,
+      ContainerEnvs,
+      ContainerSettings,
+      ContainerRoot,
       ContainerDetailRoutes,
       ContainerAppRoutes,
       ComposeRoutes,
@@ -131,7 +177,7 @@ const asyncRoutes: RouteRecordMainRaw[] = [
   },
   {
     meta: {
-      title: '应用',
+      title: 'menu.app',
       icon: 'yd:package',
     },
     children: [
@@ -140,27 +186,30 @@ const asyncRoutes: RouteRecordMainRaw[] = [
   },
   {
     meta: {
-      title: '工具',
+      title: 'menu.tools',
       icon: 'i-lucide:wrench',
     },
     children: [
       CronRoutes,
-      RuntimesRoutes,
+      DnsRoutes,
+      VpnRoutes,
     ],
   },
   {
     meta: {
-      title: '监控',
+      title: 'menu.monitor',
       icon: 'yd:bell',
     },
     children: [
       AlertRoutes,
       MonitorsRoutes,
+      ProbeRoutes,
+      LogCenterRoutes,
     ],
   },
   {
     meta: {
-      title: '系统',
+      title: 'menu.system',
       icon: 'yd:shield-check',
       auth: ['admin'],
     },
@@ -169,6 +218,7 @@ const asyncRoutes: RouteRecordMainRaw[] = [
       TerminalRoutes,
       FirewallRoutes,
       NatRoutes,
+      HostsRoutes,
       ProcessesRoutes,
       NodesRoutes,
       NodesDetailRoutes,

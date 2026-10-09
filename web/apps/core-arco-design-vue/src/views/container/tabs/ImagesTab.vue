@@ -1,10 +1,14 @@
 <script setup lang="ts">
 import type { DockerImage } from '@/api/modules/dockerext'
+import type { ImageUpdateCheck } from '@/api/modules/dockerenv'
 import YdLogViewer from '@/components/YdLogViewer/index.vue'
 import { dockerExtApi } from '@/api/modules/dockerext'
+import { dockerImgApi } from '@/api/modules/dockerenv'
 import { taskApi } from '@/api/modules/task'
+import { i18n } from '@/locales'
 
 // 镜像管理（自 Docker 管理页迁入，M23）：列表 + 拉取 + 删除 + 清理悬空。
+// M35：构建 / 导入 / 导出 / 打标签 / 更新检查。
 const toast = useFaToast()
 
 const images = ref<DockerImage[]>([])
@@ -16,7 +20,7 @@ async function load() {
     images.value = await dockerExtApi.images()
   }
   catch (e: any) {
-    toast.error('镜像列表加载失败', { description: e?.message })
+    toast.error(i18n.global.t('container.images.loadFailed'), { description: e?.message })
   }
   finally {
     loading.value = false
@@ -62,16 +66,16 @@ async function refreshPullTask() {
         pullPollTimer = null
       }
       if (t.status === 'success') {
-        toast.success('镜像拉取完成')
+        toast.success(i18n.global.t('container.images.pullDone'))
         await load()
       }
       else {
-        toast.error('拉取失败', { description: t.error })
+        toast.error(i18n.global.t('container.images.pullFailed'), { description: t.error })
       }
     }
   }
   catch (e: any) {
-    toast.error('任务状态读取失败', { description: e?.message })
+    toast.error(i18n.global.t('container.images.taskStatusFailed'), { description: e?.message })
     if (pullPollTimer) {
       clearInterval(pullPollTimer)
       pullPollTimer = null
@@ -100,7 +104,7 @@ async function doPull() {
     }, 2000)
   }
   catch (e: any) {
-    toast.error('创建拉取任务失败', { description: e?.message })
+    toast.error(i18n.global.t('container.images.pullTaskFailed'), { description: e?.message })
   }
   finally {
     pulling.value = false
@@ -117,16 +121,16 @@ watch(pullVisible, (v) => {
 function removeImage(img: DockerImage) {
   const modal = useFaModal()
   modal.confirm({
-    title: '删除镜像',
-    content: `确认删除镜像 ${img.tags[0] || img.id.slice(0, 12)}？`,
+    title: i18n.global.t('container.common.deleteImageTitle'),
+    content: i18n.global.t('container.images.deleteConfirm', { name: img.tags[0] || img.id.slice(0, 12) }),
     onConfirm: async () => {
       try {
         await dockerExtApi.removeImage(img.id)
-        toast.success('已删除')
+        toast.success(i18n.global.t('container.common.deletedDone'))
         await load()
       }
       catch (e: any) {
-        toast.error('删除失败', { description: e?.message })
+        toast.error(i18n.global.t('container.common.deleteFailed'), { description: e?.message })
       }
     },
   })
@@ -139,7 +143,7 @@ async function pruneImages() {
     await load()
   }
   catch (e: any) {
-    toast.error('清理失败', { description: e?.message })
+    toast.error(i18n.global.t('container.common.pruneFailed'), { description: e?.message })
   }
 }
 
@@ -150,6 +154,130 @@ function fmtSize(mb: number) {
 function fmtTime(unix: number) {
   return new Date(unix * 1000).toLocaleString('zh-CN', { hour12: false })
 }
+
+// ---- M35：构建 ----
+const buildVisible = ref(false)
+const buildBusy = ref(false)
+const buildForm = ref({ contextDir: '', dockerfile: '', tag: '' })
+
+async function doBuild() {
+  if (!buildForm.value.contextDir || !buildForm.value.tag) {
+    toast.warning(i18n.global.t('container.images.buildRequired'))
+    return
+  }
+  buildBusy.value = true
+  try {
+    await dockerImgApi.build(buildForm.value)
+    toast.success(i18n.global.t('container.images.buildDone', { name: buildForm.value.tag }))
+    buildVisible.value = false
+    await load()
+  }
+  catch (e: any) {
+    toast.error(i18n.global.t('container.images.buildFailed'), { description: e?.message })
+  }
+  finally {
+    buildBusy.value = false
+  }
+}
+
+// ---- M35：导入 ----
+const importInputRef = ref<HTMLInputElement | null>(null)
+
+async function doImport(e: Event) {
+  const file = (e.target as HTMLInputElement).files?.[0]
+  if (!file) {
+    return
+  }
+  toast.info(i18n.global.t('container.images.importing'))
+  try {
+    await dockerImgApi.load(file)
+    toast.success(i18n.global.t('container.images.importDone'))
+    await load()
+  }
+  catch (e: any) {
+    toast.error(i18n.global.t('container.images.importFailed'), { description: e?.message })
+  }
+  finally {
+    if (importInputRef.value) {
+      importInputRef.value.value = ''
+    }
+  }
+}
+
+// ---- M35：导出 ----
+const saveBusy = ref('')
+
+async function doSave(img: DockerImage) {
+  const refName = img.tags[0] || img.id
+  saveBusy.value = img.id
+  try {
+    const out = await dockerImgApi.save([refName])
+    toast.success(i18n.global.t('container.images.exportDone', { file: out.file }))
+    const token = localStorage.getItem('token') || ''
+    window.open(`api/v1/files/download?path=${encodeURIComponent(out.file)}&token=${encodeURIComponent(token)}`)
+  }
+  catch (e: any) {
+    toast.error(i18n.global.t('container.images.exportFailed'), { description: e?.message })
+  }
+  finally {
+    saveBusy.value = ''
+  }
+}
+
+// ---- M35：打标签 ----
+const tagVisible = ref(false)
+const tagBusy = ref(false)
+const tagForm = ref({ src: '', dst: '' })
+
+function openTag(img: DockerImage) {
+  tagForm.value = { src: img.tags[0] || img.id, dst: '' }
+  tagVisible.value = true
+}
+
+async function doTag() {
+  if (!tagForm.value.dst) {
+    return
+  }
+  tagBusy.value = true
+  try {
+    await dockerImgApi.tag(tagForm.value.src, tagForm.value.dst)
+    toast.success(i18n.global.t('container.images.tagDone'))
+    tagVisible.value = false
+    await load()
+  }
+  catch (e: any) {
+    toast.error(i18n.global.t('container.images.tagFailed'), { description: e?.message })
+  }
+  finally {
+    tagBusy.value = false
+  }
+}
+
+// ---- M35：更新检查 ----
+const updatesVisible = ref(false)
+const updatesBusy = ref(false)
+const updates = ref<ImageUpdateCheck[]>([])
+
+async function doCheckUpdates() {
+  // 取当前筛选下前 30 个带 tag 的镜像（registry 检查限流保护）
+  const targets = filtered.value.filter(i => i.tags.length).slice(0, 30).map(i => i.tags[0])
+  if (!targets.length) {
+    toast.warning(i18n.global.t('container.images.noCheckTargets'))
+    return
+  }
+  updatesBusy.value = true
+  updatesVisible.value = true
+  try {
+    updates.value = await dockerImgApi.checkUpdates(targets)
+  }
+  catch (e: any) {
+    toast.error(i18n.global.t('container.images.checkFailed'), { description: e?.message })
+    updatesVisible.value = false
+  }
+  finally {
+    updatesBusy.value = false
+  }
+}
 </script>
 
 <template>
@@ -157,16 +285,26 @@ function fmtTime(unix: number) {
     <FaPageMain>
   <div>
     <div class="mb-3 flex flex-wrap items-center gap-2">
-      <FaInput v-model="search" placeholder="搜索 TAG/ID…" class="h-8 w-52!" />
+      <FaInput v-model="search" :placeholder="$t('container.images.searchPlaceholder')" class="h-8 w-52!" />
       <div class="ml-auto flex items-center gap-2">
-        <FaButton variant="outline" size="icon-sm" title="刷新" @click="load()">
+        <FaButton variant="outline" size="icon-sm" :title="$t('common.refresh')" @click="load()">
           <FaIcon name="i-lucide:refresh-cw" class="text-sm" :class="loading ? 'animate-spin' : ''" />
         </FaButton>
+        <FaButton variant="outline" size="sm" @click="doCheckUpdates" :loading="updatesBusy">
+          <FaIcon name="i-lucide:scan-search" class="mr-1" /> {{ $t('container.images.checkUpdates') }}
+        </FaButton>
+        <FaButton variant="outline" size="sm" @click="buildVisible = true">
+          <FaIcon name="i-lucide:hammer" class="mr-1" /> {{ $t('container.images.build') }}
+        </FaButton>
+        <label class="cursor-pointer rounded-md border px-3 py-1.5 text-sm transition-colors hover:bg-accent/50">
+          <FaIcon name="i-lucide:upload" class="mr-1" /> {{ $t('common.import') }}
+          <input ref="importInputRef" type="file" class="hidden" accept=".tar,.tar.gz,.tgz" @change="doImport">
+        </label>
         <FaButton variant="outline" size="sm" @click="pruneImages">
-          清理悬空镜像
+          {{ $t('container.images.pruneDangling') }}
         </FaButton>
         <FaButton size="sm" @click="pullVisible = true">
-          <FaIcon name="i-lucide:download" class="mr-1" /> 拉取镜像
+          <FaIcon name="i-lucide:download" class="mr-1" /> {{ $t('container.images.pull') }}
         </FaButton>
       </div>
     </div>
@@ -177,20 +315,20 @@ function fmtTime(unix: number) {
           <tr>
             <th class="px-3 py-2">TAG</th>
             <th class="px-3 py-2">ID</th>
-            <th class="px-3 py-2">大小</th>
-            <th class="hidden px-3 py-2 md:table-cell">创建时间</th>
-            <th class="px-3 py-2 text-right">操作</th>
+            <th class="px-3 py-2">{{ $t('common.size') }}</th>
+            <th class="hidden px-3 py-2 md:table-cell">{{ $t('container.common.createdAt') }}</th>
+            <th class="px-3 py-2 text-right">{{ $t('common.operation') }}</th>
           </tr>
         </thead>
         <tbody>
           <tr v-if="loading && !filtered.length">
             <td colspan="5" class="px-3 py-10 text-center text-muted-foreground">
-              加载中…
+              {{ $t('common.loading') }}
             </td>
           </tr>
           <tr v-else-if="!filtered.length">
             <td colspan="5" class="px-3 py-10 text-center text-muted-foreground">
-              暂无镜像
+              {{ $t('container.common.noImages') }}
             </td>
           </tr>
           <tr v-for="img in paged" :key="img.id" class="border-t transition-colors hover:bg-accent/30">
@@ -215,8 +353,14 @@ function fmtTime(unix: number) {
               {{ fmtTime(img.createdAt) }}
             </td>
             <td class="px-3 py-1.5 text-right">
+              <FaButton variant="ghost" size="sm" :disabled="!img.tags.length" :title="$t('container.images.tagTitle')" @click="openTag(img)">
+                {{ $t('container.images.tagBtn') }}
+              </FaButton>
+              <FaButton variant="ghost" size="sm" :loading="saveBusy === img.id" :disabled="!img.tags.length" :title="$t('container.images.exportTar')" @click="doSave(img)">
+                {{ $t('common.export') }}
+              </FaButton>
               <FaButton variant="outline" size="sm" @click="removeImage(img)">
-                删除
+                {{ $t('common.delete') }}
               </FaButton>
             </td>
           </tr>
@@ -225,29 +369,109 @@ function fmtTime(unix: number) {
     </div>
     <FaPagination v-model:page="page" v-model:size="size" :total="filtered.length" class="mt-3" />
 
-    <FaModal v-model="pullVisible" :title="pullTaskId ? `拉取进行中：${pullRef}` : '拉取镜像'" :destroy-on-close="true" :close-on-click-modal="false">
+    <FaModal v-model="pullVisible" :title="pullTaskId ? $t('container.images.pullRunning', { name: pullRef }) : $t('container.images.pull')" :destroy-on-close="true" :close-on-click-modal="false">
       <div v-if="!pullTaskId" class="flex flex-col gap-2">
-        <FaInput v-model="pullRef" placeholder="如 redis:alpine 或 registry/example/img:tag" class="w-full" @keyup.enter="doPull" />
-        <div class="text-xs text-muted-foreground">拉取为后台任务，可在「任务中心」查看历史进度</div>
+        <FaInput v-model="pullRef" :placeholder="$t('container.images.pullPlaceholder')" class="w-full" @keyup.enter="doPull" />
+        <div class="text-xs text-muted-foreground">{{ $t('container.images.pullHint') }}</div>
       </div>
       <div v-else class="flex flex-col gap-2">
-        <div class="text-xs text-muted-foreground">任务 #{{ pullTaskId }} · {{ pullTask?.status === 'success' ? '完成' : pullTask?.status === 'failed' ? '失败' : '拉取中…' }}</div>
+        <div class="text-xs text-muted-foreground">{{ $t('container.images.taskNo', { n: pullTaskId }) }} · {{ pullTask?.status === 'success' ? $t('container.images.statusDone') : pullTask?.status === 'failed' ? $t('common.failed') : $t('container.images.pulling') }}</div>
         <YdLogViewer :logs="pullTask?.logText || ''" height="280px" />
       </div>
       <template #footer>
         <template v-if="!pullTaskId">
           <FaButton variant="outline" @click="pullVisible = false">
-            取消
+            {{ $t('common.cancel') }}
           </FaButton>
           <FaButton :loading="pulling" @click="doPull">
-            创建拉取任务
+            {{ $t('container.images.createPullTask') }}
           </FaButton>
         </template>
         <template v-else>
           <FaButton variant="outline" @click="pullVisible = false">
-            {{ pullTask?.status === 'running' ? '后台运行' : '关闭' }}
+            {{ pullTask?.status === 'running' ? $t('container.images.backgroundRun') : $t('common.close') }}
           </FaButton>
         </template>
+      </template>
+    </FaModal>
+    <!-- M35：构建 -->
+    <FaModal v-model="buildVisible" :title="$t('container.images.buildTitle')" :destroy-on-close="true">
+      <div class="flex flex-col gap-3">
+        <label class="block space-y-1">
+          <span class="text-xs text-muted-foreground">{{ $t('container.images.contextLabel') }}</span>
+          <FaInput v-model="buildForm.contextDir" :placeholder="$t('container.images.contextPlaceholder')" class="w-full" />
+        </label>
+        <label class="block space-y-1">
+          <span class="text-xs text-muted-foreground">{{ $t('container.images.dockerfileLabel') }}</span>
+          <FaInput v-model="buildForm.dockerfile" placeholder="Dockerfile" class="w-full" />
+        </label>
+        <label class="block space-y-1">
+          <span class="text-xs text-muted-foreground">{{ $t('container.images.tagLabel') }}</span>
+          <FaInput v-model="buildForm.tag" :placeholder="$t('container.images.tagPlaceholder')" class="w-full" />
+        </label>
+        <div class="text-xs text-muted-foreground">{{ $t('container.images.buildHint') }}</div>
+      </div>
+      <template #footer>
+        <FaButton variant="outline" @click="buildVisible = false">
+          {{ $t('common.cancel') }}
+        </FaButton>
+        <FaButton :loading="buildBusy" @click="doBuild">
+          {{ $t('container.images.startBuild') }}
+        </FaButton>
+      </template>
+    </FaModal>
+
+    <!-- M35：打标签 -->
+    <FaModal v-model="tagVisible" :title="$t('container.images.tagModalTitle')" :destroy-on-close="true">
+      <div class="flex flex-col gap-3">
+        <div class="text-xs text-muted-foreground">{{ $t('container.images.source', { name: tagForm.src }) }}</div>
+        <FaInput v-model="tagForm.dst" :placeholder="$t('container.images.newTagPlaceholder')" class="w-full" @keyup.enter="doTag" />
+      </div>
+      <template #footer>
+        <FaButton variant="outline" @click="tagVisible = false">
+          {{ $t('common.cancel') }}
+        </FaButton>
+        <FaButton :loading="tagBusy" @click="doTag">
+          {{ $t('container.images.ok') }}
+        </FaButton>
+      </template>
+    </FaModal>
+
+    <!-- M35：更新检查结果 -->
+    <FaModal v-model="updatesVisible" :title="$t('container.images.updatesTitle')" class="max-w-3xl!" :destroy-on-close="true">
+      <div class="overflow-hidden rounded-lg border">
+        <table class="w-full text-sm">
+          <thead class="bg-muted/50 text-left text-xs text-muted-foreground">
+            <tr>
+              <th class="px-3 py-2">{{ $t('container.common.image') }}</th>
+              <th class="w-24 px-3 py-2">{{ $t('container.images.result') }}</th>
+              <th class="hidden px-3 py-2 md:table-cell">{{ $t('container.images.remoteDigest') }}</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-for="u in updates" :key="u.image" class="border-t">
+              <td class="px-3 py-2 font-mono text-xs break-all">
+                {{ u.image }}
+                <div v-if="u.error" class="text-xs text-red-500">
+                  {{ u.error }}
+                </div>
+              </td>
+              <td class="px-3 py-2">
+                <span v-if="!u.ok" class="rounded-full bg-muted px-2 py-0.5 text-xs text-muted-foreground">{{ $t('common.unknown') }}</span>
+                <span v-else-if="u.hasUpdate" class="rounded-full bg-amber-500/10 px-2 py-0.5 text-xs text-amber-600">{{ $t('container.images.hasUpdate') }}</span>
+                <span v-else class="rounded-full bg-emerald-500/10 px-2 py-0.5 text-xs text-emerald-600">{{ $t('container.images.upToDate') }}</span>
+              </td>
+              <td class="hidden px-3 py-2 font-mono text-xs text-muted-foreground md:table-cell">
+                {{ u.remoteDigest?.slice(0, 24) || '—' }}
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+      <template #footer>
+        <FaButton variant="outline" @click="updatesVisible = false">
+          {{ $t('common.close') }}
+        </FaButton>
       </template>
     </FaModal>
   </div>

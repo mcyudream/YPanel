@@ -27,6 +27,8 @@ const props = defineProps<DialogContentProps & {
   overlay?: boolean
   overlayBlur?: boolean
   class?: HTMLAttributes['class']
+  /** 弹窗挂载目标（默认 body）；多窗口宿主可传入所属窗口容器实现「窗口内模态」 */
+  portalTo?: string | HTMLElement
 }>()
 const emits = defineEmits<DialogContentEmits & {
   toggleMaximize: [val: boolean]
@@ -60,7 +62,7 @@ watch(showOverlay, (val) => {
 </script>
 
 <template>
-  <DialogPortal>
+  <DialogPortal :to="portalTo">
     <Transition
       v-bind="{
         enterActiveClass: 'ease-in-out duration-300',

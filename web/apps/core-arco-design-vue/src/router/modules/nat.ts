@@ -9,7 +9,7 @@ const routes: RouteRecordRaw = {
   component: Layout,
   name: 'nat',
   meta: {
-    title: 'NAT 转发',
+    title: 'menu.nat',
     icon: 'yd:network',
     auth: ['admin'],
   },
@@ -19,7 +19,7 @@ const routes: RouteRecordRaw = {
       name: 'natIndex',
       component: () => import('@/views/nat/index.vue'),
       meta: {
-        title: 'NAT 转发',
+        title: 'menu.nat',
         menu: false,
       },
     },

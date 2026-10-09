@@ -9,7 +9,7 @@ const routes: RouteRecordRaw = {
   component: Layout,
   name: 'terminal',
   meta: {
-    title: '终端',
+    title: 'menu.terminal',
     icon: 'yd:square-terminal',
   },
   children: [
@@ -18,7 +18,7 @@ const routes: RouteRecordRaw = {
       name: 'terminalIndex',
       component: () => import('@/views/terminal/index.vue'),
       meta: {
-        title: '终端',
+        title: 'menu.terminal',
         menu: false,
       },
     },

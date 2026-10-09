@@ -9,7 +9,7 @@ const routes: RouteRecordRaw = {
   component: Layout,
   name: 'sites',
   meta: {
-    title: '网站',
+    title: 'menu.sites',
     icon: 'yd:globe',
   },
   children: [
@@ -18,7 +18,7 @@ const routes: RouteRecordRaw = {
       name: 'sitesIndex',
       component: () => import('@/views/sites/index.vue'),
       meta: {
-        title: '网站',
+        title: 'menu.sites',
         // fa 单页约定：主导航平铺直达，无二级展开
         menu: false,
       },
@@ -28,7 +28,7 @@ const routes: RouteRecordRaw = {
       name: 'sitesDetail',
       component: () => import('@/views/sites/detail.vue'),
       meta: {
-        title: '站点配置',
+        title: 'menu.siteConfig',
         menu: false,
         activeMenu: '/sites',
       },

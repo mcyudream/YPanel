@@ -31,10 +31,10 @@ function goBack() {
             404
           </h1>
           <div class="text-xl text-secondary-foreground/50 mx-0 text-center">
-            哎呀，页面不存在
+            {{ $t('components.notFound.message') }}
           </div>
           <FaButton variant="link" class="text-unset" @click="goBack">
-            返回首页
+            {{ $t('components.notFound.backHome') }}
           </FaButton>
         </div>
       </div>

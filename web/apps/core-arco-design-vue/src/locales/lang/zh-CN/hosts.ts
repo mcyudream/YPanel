@@ -1,0 +1,63 @@
+// hosts 域词条（Hosts 解析记录）
+export default {
+  desc: 'hosts 可视化编辑：集中记录库 → 托管块分发到多节点 /etc/hosts（块外系统/手工条目不受影响）；正式解法见「工具 → 内网 DNS」，本功能用于兜底（PVE 宿主、硬编码 DNS 的设备、临时覆盖）',
+  applyToNodes: '应用到节点',
+  createRecord: '新建记录',
+  editRecord: '编辑解析记录',
+  // 托管节点状态
+  managedNodes: '托管节点',
+  refreshStatus: '刷新状态',
+  noManaged: '暂无托管节点：点击「应用到节点」纳管后，记录变更将自动同步到这些节点。',
+  reapply: '重新应用',
+  reapplied: '已重新应用',
+  // 节点状态枚举（tr 动态键，不存在回落原值）
+  state: {
+    match: '一致',
+    notApplied: '未应用',
+    drift: '已漂移',
+    offline: '离线',
+    error: '错误',
+  },
+  // 节点选项
+  localNode: '（本机）',
+  offlineNode: '（离线）',
+  // 记录表
+  hostnameCol: '主机名',
+  noRecords: '暂无解析记录',
+  footNote: '说明：记录保存在面板库中，托管节点上的 /etc/hosts 以「ypanel-managed」标记块承载，块外内容不受影响；记录变更自动重放全部托管节点（失败自动回滚）。hosts 不支持通配子域，通配需求请使用「工具 → 内网 DNS」。',
+  // 表单
+  ipPlaceholder: '如 192.168.100.2（IPv4/IPv6 均可）',
+  hostnamesPlaceholder: '多个用空格或逗号分隔，如 example.com www.example.com',
+  hostnamesHint: '同一 IP 可挂多个主机名；与其他启用记录重名会被拦截（hosts 按首条命中）',
+  optional: '选填',
+  sortStatus: '排序 / 状态',
+  smallFirst: '小值先应用',
+  saveApply: '保存并下发',
+  createApply: '创建并下发',
+  // 应用到节点弹窗
+  applyDesc: '选择要纳管的节点：将在其 /etc/hosts 追加托管块（已有块则替换），此后记录变更自动同步。',
+  applyNodes: '应用（{n} 个节点）',
+  // 校验与提示
+  requireIp: '请填写 IP 地址',
+  requireHostnames: '请填写至少一个主机名',
+  requireNodes: '请选择要应用的节点',
+  updated: '记录已更新并下发',
+  created: '记录已创建并下发',
+  saveFailed: '保存失败',
+  disabledDone: '已停用并下发',
+  enabledDone: '已启用并下发',
+  opFailed: '操作失败',
+  loadFailed: '记录加载失败',
+  deleteTitle: '删除解析记录',
+  deleteConfirm: '确认删除「{hostnames} → {ip}」？将立即下发到全部托管节点。',
+  deleted: '已删除',
+  deleteFailed: '删除失败',
+  partialFailed: '部分节点应用失败（{f}/{t}）',
+  failLine: '{node}：{message}',
+  appliedTo: '已应用到 {n} 个节点',
+  applyFailed: '应用失败',
+  unmanageTitle: '解除托管',
+  unmanageConfirm: '确认解除节点「{node}」的 hosts 托管？将删除该节点上的托管块并还原文件（面板记录保留）。',
+  unmanaged: '已解除托管',
+  unmanageFailed: '解除失败',
+}

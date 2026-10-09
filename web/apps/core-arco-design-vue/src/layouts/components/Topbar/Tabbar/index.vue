@@ -3,6 +3,7 @@ import type { TabbarRecordRaw } from '@fantastic-admin/types'
 import { useMagicKeys } from '@vueuse/core'
 import { useHotkeyBindings } from '@/hotkeys'
 import { useSlots } from '@/slots'
+import { i18n } from '@/locales'
 
 defineOptions({
   name: 'Tabbar',
@@ -72,12 +73,12 @@ watch(() => route, (val) => {
 function tabbarScrollTip() {
   if (tabContainerRef.value?.$el.clientWidth > (tabsRef.value?.ref?.$el.clientWidth ?? 0) && !localStorage.has('tabbarScrollTip')) {
     localStorage.setItem('tabbarScrollTip', '')
-    const tips = useFaToast().info('温馨提示', {
-      description: '标签栏数量超过展示区域范围，可以将鼠标移到标签栏上，通过鼠标滚轮滑动浏览',
+    const tips = useFaToast().info(i18n.global.t('layout.tabbar.tipTitle'), {
+      description: i18n.global.t('layout.tabbar.tipBody'),
       position: 'top-center',
       duration: Infinity,
       action: {
-        label: '知道了',
+        label: i18n.global.t('layout.tabbar.gotIt'),
         onClick: () => useFaToast().dismiss(tips),
       },
     })
@@ -87,13 +88,13 @@ function contextMenuItems(routeItem: TabbarRecordRaw) {
   return [
     [
       {
-        label: '重新加载',
+        label: i18n.global.t('layout.tabbar.reload'),
         icon: 'i-ri:refresh-line',
         disabled: routeItem.tabId !== activedTabId.value,
         handle: () => mainPage.reload(),
       },
       {
-        label: '关闭标签页',
+        label: i18n.global.t('layout.tabbar.closeTab'),
         icon: 'i-ri:close-line',
         disabled: !tabbar.checkClose(routeItem.tabId),
         handle: () => tabbar.closeById(routeItem.tabId),
@@ -101,7 +102,7 @@ function contextMenuItems(routeItem: TabbarRecordRaw) {
     ],
     [
       {
-        label: '关闭其它标签页',
+        label: i18n.global.t('layout.tabbar.closeOthers'),
         icon: 'i-mdi:close',
         disabled: !tabbar.checkCloseOtherSide(routeItem.tabId),
         handle: () => {
@@ -109,7 +110,7 @@ function contextMenuItems(routeItem: TabbarRecordRaw) {
         },
       },
       {
-        label: '关闭左侧标签页',
+        label: i18n.global.t('layout.tabbar.closeLeft'),
         icon: 'i-mdi:arrow-expand-left',
         disabled: !tabbar.checkCloseLeftSide(routeItem.tabId),
         handle: () => {
@@ -117,7 +118,7 @@ function contextMenuItems(routeItem: TabbarRecordRaw) {
         },
       },
       {
-        label: '关闭右侧标签页',
+        label: i18n.global.t('layout.tabbar.closeRight'),
         icon: 'i-mdi:arrow-expand-right',
         disabled: !tabbar.checkCloseRightSide(routeItem.tabId),
         handle: () => {

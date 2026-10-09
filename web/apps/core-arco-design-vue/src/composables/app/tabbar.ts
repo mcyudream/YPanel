@@ -1,3 +1,5 @@
+import { i18n } from '@/locales'
+
 export function useAppTabbar() {
   const route = useRoute()
   const router = useRouter()
@@ -80,13 +82,13 @@ export function useAppTabbar() {
     const index = appTabbarStore.list.findIndex(item => item.tabId === tabId)
     if (index < 0) {
       flag = false
-      !checkOnly && useFaToast().warning('关闭的标签页不存在', {
+      !checkOnly && useFaToast().warning(i18n.global.t('components.tabbar.tabNotFound'), {
         position: 'top-center',
       })
     }
     else if (appTabbarStore.list.length <= 1) {
       flag = false
-      !checkOnly && useFaToast().warning('当前只有一个标签页，不可关闭', {
+      !checkOnly && useFaToast().warning(i18n.global.t('components.tabbar.lastTabNotClosable'), {
         position: 'top-center',
       })
     }

@@ -66,3 +66,11 @@ export const scriptApi = {
   update: (id: number, data: { name?: string, content?: string }) => api.put(`api/v1/scripts/${id}`, data),
   remove: (id: number) => api.delete(`api/v1/scripts/${id}`),
 }
+
+// 手动运行脚本（M36）
+export const scriptRunApi = {
+  run: async (id: number) => {
+    const res = await api.post(`api/v1/scripts/${id}/run`)
+    return res.data as { success: boolean, output: string }
+  },
+}

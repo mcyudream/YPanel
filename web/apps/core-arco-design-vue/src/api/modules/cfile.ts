@@ -25,8 +25,10 @@ export default {
     api.post(`api/v1/docker/containers/${encodeURIComponent(containerId)}/files/rename`, { from, to }),
   delete: (containerId: string, paths: string[]) =>
     api.post(`api/v1/docker/containers/${encodeURIComponent(containerId)}/files/delete`, { paths }),
-  chmod: (containerId: string, path: string, mode: string) =>
-    api.post(`api/v1/docker/containers/${encodeURIComponent(containerId)}/files/chmod`, { path, mode }),
+  chmod: (containerId: string, path: string, mode: string, recursive?: boolean) =>
+    api.post(`api/v1/docker/containers/${encodeURIComponent(containerId)}/files/chmod`, { path, mode, recursive: !!recursive }),
+  chown: (containerId: string, path: string, owner: string, group: string, recursive?: boolean) =>
+    api.post(`api/v1/docker/containers/${encodeURIComponent(containerId)}/files/chown`, { path, owner, group, recursive: !!recursive }),
   upload: (containerId: string, dir: string, file: File, onProgress?: (percent: number) => void) => {
     const form = new FormData()
     form.append('file', file)

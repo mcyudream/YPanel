@@ -2,6 +2,7 @@
 import type { MetricSample, SystemOverview } from '@/api/modules/system'
 import apiSystem from '@/api/modules/system'
 import { fmtBytes } from '@/utils/format'
+import { i18n } from '@/locales'
 
 // 监控侧栏：系统/CPU(每核)/内存环形/网络(速率+趋势)/磁盘/负载，按节点轮询 overview+history。
 // active=false（面板收起）时暂停轮询。
@@ -26,7 +27,7 @@ async function loadOverview() {
     loadError.value = ''
   }
   catch (e: unknown) {
-    loadError.value = e && typeof e === 'object' && 'message' in e ? String((e as { message: unknown }).message) : '采集失败'
+    loadError.value = e && typeof e === 'object' && 'message' in e ? String((e as { message: unknown }).message) : i18n.global.t('components.ydMonitorSidebar.collectFailed')
   }
 }
 
@@ -87,12 +88,12 @@ function fmtUptime(sec: number) {
   const h = Math.floor((sec % 86400) / 3600)
   const m = Math.floor((sec % 3600) / 60)
   if (d > 0) {
-    return `${d} 天 ${h} 时`
+    return i18n.global.t('components.ydMonitorSidebar.uptimeDh', { d, h })
   }
   if (h > 0) {
-    return `${h} 时 ${m} 分`
+    return i18n.global.t('components.ydMonitorSidebar.uptimeHm', { h, m })
   }
-  return `${m} 分`
+  return i18n.global.t('components.ydMonitorSidebar.uptimeM', { m })
 }
 
 function pct(used: number, total: number) {
@@ -122,7 +123,7 @@ function sparkline(key: 'cpuPercent' | 'rxSpeedBps' | 'txSpeedBps', n = 60) {
     <!-- 头部 -->
     <div class="flex h-8 shrink-0 items-center gap-1 border-b bg-muted/40 px-2 text-[13px]">
       <YdMorphIcon name="activity" :size="14" class="text-muted-foreground" />
-      <span class="text-xs font-medium text-muted-foreground">监控</span>
+      <span class="text-xs font-medium text-muted-foreground">{{ $t('components.ydMonitorSidebar.title') }}</span>
       <span class="ml-auto truncate text-[11px] text-muted-foreground" :title="overview?.hostname">
         {{ overview?.hostname || '—' }}
       </span>
@@ -138,16 +139,16 @@ function sparkline(key: 'cpuPercent' | 'rxSpeedBps' | 'txSpeedBps', n = 60) {
         <div class="rounded-lg border bg-card p-2.5">
           <div class="mb-1.5 flex items-center gap-1.5 text-xs font-medium">
             <YdMorphIcon name="info" :size="13" class="text-emerald-500" />
-            系统
+            {{ $t('components.ydMonitorSidebar.system') }}
           </div>
           <div class="truncate text-sm" :title="overview.os">{{ overview.os || overview.platform }}</div>
           <div class="mt-1 flex flex-wrap gap-x-3 gap-y-0.5 text-[11px] text-muted-foreground">
             <span>{{ overview.arch }}</span>
             <span>CPU ×{{ overview.cpu.logicalCount }}</span>
-            <span>运行 {{ fmtUptime(overview.uptime) }}</span>
+            <span>{{ $t('components.ydMonitorSidebar.uptime', { time: fmtUptime(overview.uptime) }) }}</span>
           </div>
           <div class="mt-1 flex gap-3 text-[11px] text-muted-foreground">
-            <span>负载 {{ overview.load.load1.toFixed(2) }} / {{ overview.load.load5.toFixed(2) }} / {{ overview.load.load15.toFixed(2) }}</span>
+            <span>{{ $t('components.ydMonitorSidebar.load', { l1: overview.load.load1.toFixed(2), l5: overview.load.load5.toFixed(2), l15: overview.load.load15.toFixed(2) }) }}</span>
           </div>
         </div>
 
@@ -174,7 +175,7 @@ function sparkline(key: 'cpuPercent' | 'rxSpeedBps' | 'txSpeedBps', n = 60) {
               <span class="w-10 shrink-0 text-right text-[10px] tabular-nums text-muted-foreground">{{ c.toFixed(1) }}%</span>
             </div>
             <div v-if="(overview.cpu.perCore?.length ?? 0) > 16" class="text-right text-[10px] text-muted-foreground">
-              仅显示前 16 核
+              {{ $t('components.ydMonitorSidebar.first16Cores') }}
             </div>
           </div>
         </div>
@@ -184,7 +185,7 @@ function sparkline(key: 'cpuPercent' | 'rxSpeedBps' | 'txSpeedBps', n = 60) {
           <div class="mb-1.5 flex items-center justify-between">
             <div class="flex items-center gap-1.5 text-xs font-medium">
               <YdMorphIcon name="memory-stick" :size="13" class="text-emerald-500" />
-              内存
+              {{ $t('components.ydMonitorSidebar.memory') }}
             </div>
             <span class="text-[11px] tabular-nums text-muted-foreground">{{ fmtBytes(overview.memory.used) }} / {{ fmtBytes(overview.memory.total) }}</span>
           </div>
@@ -200,10 +201,10 @@ function sparkline(key: 'cpuPercent' | 'rxSpeedBps' | 'txSpeedBps', n = 60) {
             </svg>
             <div class="min-w-0 flex-1 space-y-1 text-[11px] text-muted-foreground">
               <div class="flex justify-between">
-                <span>已用</span><span class="tabular-nums">{{ fmtBytes(overview.memory.used) }}</span>
+                <span>{{ $t('components.ydMonitorSidebar.used') }}</span><span class="tabular-nums">{{ fmtBytes(overview.memory.used) }}</span>
               </div>
               <div class="flex justify-between">
-                <span>可用</span><span class="tabular-nums">{{ fmtBytes(overview.memory.available) }}</span>
+                <span>{{ $t('components.ydMonitorSidebar.available') }}</span><span class="tabular-nums">{{ fmtBytes(overview.memory.available) }}</span>
               </div>
               <div v-if="overview.swap.total > 0" class="flex justify-between">
                 <span>Swap</span><span class="tabular-nums">{{ fmtBytes(overview.swap.used) }} / {{ fmtBytes(overview.swap.total) }}</span>
@@ -216,25 +217,25 @@ function sparkline(key: 'cpuPercent' | 'rxSpeedBps' | 'txSpeedBps', n = 60) {
         <div class="rounded-lg border bg-card p-2.5">
           <div class="mb-1.5 flex items-center gap-1.5 text-xs font-medium">
             <YdMorphIcon name="network" :size="13" class="text-emerald-500" />
-            网络
+            {{ $t('components.ydMonitorSidebar.network') }}
           </div>
           <div class="grid grid-cols-2 gap-2 text-[11px]">
             <div class="rounded-md bg-muted/50 p-1.5">
               <div class="flex items-center gap-1 text-muted-foreground">
-                <span class="inline-block size-1.5 rounded-full bg-emerald-500" /> 上传
+                <span class="inline-block size-1.5 rounded-full bg-emerald-500" /> {{ $t('components.ydMonitorSidebar.upload') }}
               </div>
               <div class="mt-0.5 font-semibold tabular-nums">{{ fmtBytes(overview.network.txSpeedBps) }}/s</div>
-              <div class="text-[10px] text-muted-foreground">共 {{ fmtBytes(overview.network.txTotal) }}</div>
+              <div class="text-[10px] text-muted-foreground">{{ $t('components.ydMonitorSidebar.total', { n: fmtBytes(overview.network.txTotal) }) }}</div>
             </div>
             <div class="rounded-md bg-muted/50 p-1.5">
               <div class="flex items-center gap-1 text-muted-foreground">
-                <span class="inline-block size-1.5 rounded-full bg-sky-500" /> 下载
+                <span class="inline-block size-1.5 rounded-full bg-sky-500" /> {{ $t('components.ydMonitorSidebar.download') }}
               </div>
               <div class="mt-0.5 font-semibold tabular-nums">{{ fmtBytes(overview.network.rxSpeedBps) }}/s</div>
-              <div class="text-[10px] text-muted-foreground">共 {{ fmtBytes(overview.network.rxTotal) }}</div>
+              <div class="text-[10px] text-muted-foreground">{{ $t('components.ydMonitorSidebar.total', { n: fmtBytes(overview.network.rxTotal) }) }}</div>
             </div>
           </div>
-          <div class="mt-2 flex h-8 items-end gap-px" title="下载速率趋势（近 5 分钟）">
+          <div class="mt-2 flex h-8 items-end gap-px" :title="$t('components.ydMonitorSidebar.downloadTrend')">
             <div
               v-for="(h, i) in sparkline('rxSpeedBps')"
               :key="i"
@@ -248,7 +249,7 @@ function sparkline(key: 'cpuPercent' | 'rxSpeedBps' | 'txSpeedBps', n = 60) {
         <div class="rounded-lg border bg-card p-2.5">
           <div class="mb-1.5 flex items-center gap-1.5 text-xs font-medium">
             <YdMorphIcon name="hard-drive" :size="13" class="text-emerald-500" />
-            磁盘
+            {{ $t('components.ydMonitorSidebar.disk') }}
           </div>
           <div class="space-y-2">
             <div v-for="d in overview.disks" :key="d.mountpoint">
@@ -270,7 +271,7 @@ function sparkline(key: 'cpuPercent' | 'rxSpeedBps' | 'txSpeedBps', n = 60) {
       </template>
 
       <div v-else-if="!loadError" class="px-2 py-8 text-center text-xs text-muted-foreground">
-        采集中…
+        {{ $t('components.ydMonitorSidebar.collecting') }}
       </div>
     </div>
   </div>

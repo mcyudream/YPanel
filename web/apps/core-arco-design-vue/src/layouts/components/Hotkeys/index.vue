@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { hotkeyBindings } from '@/hotkeys'
 import eventBus from '@/utils/eventBus'
+import { tr } from '@/locales'
 
 defineOptions({
   name: 'HotkeysIntro',
@@ -11,23 +12,11 @@ const hotkeyContext = {
   settings: appSettingsStore.settings,
 }
 
-const helpGroupMeta = {
-  global: { title: '全局', order: 10 },
-  nav: { title: '主导航', order: 20 },
-  tabbar: { title: '标签栏', order: 30 },
-} as const
-
-const itemTitleMap: Record<string, string> = {
-  'global.system': '查看系统信息',
-  'global.search': '唤起导航搜索',
-  'nav.next': '激活下一个主导航',
-  'nav.prev': '激活上一个主导航',
-  'tabbar.prev': '切换到上一个标签页',
-  'tabbar.next': '切换到下一个标签页',
-  'tabbar.close': '关闭当前标签页',
-  'tabbar.n': '切换到第 n 个标签页',
-  'tabbar.last': '切换到最后一个标签页',
-} as const
+const helpGroupOrder: Record<string, number> = {
+  global: 10,
+  nav: 20,
+  tabbar: 30,
+}
 
 const isShow = ref(false)
 
@@ -53,17 +42,18 @@ const helpGroups = computed(() => {
       return
     }
 
-    const meta = helpGroupMeta[help.group as keyof typeof helpGroupMeta]
     const group = groups.get(help.group) ?? {
       id: help.group,
-      title: help.groupTitleKey ? itemTitleMap[help.groupTitleKey] ?? help.groupTitleKey : meta?.title ?? help.group,
-      order: meta?.order ?? 100,
+      title: help.groupTitleKey
+        ? tr(`layout.hotkeys.${help.groupTitleKey}`, help.groupTitleKey)
+        : tr(`layout.hotkeys.group.${help.group}`, help.group),
+      order: helpGroupOrder[help.group] ?? 100,
       items: [],
     }
 
     group.items.push({
       id: binding.id,
-      title: itemTitleMap[help.titleKey] ?? help.titleKey,
+      title: tr(`layout.hotkeys.${help.titleKey}`, help.titleKey),
       order: help.order ?? 0,
       displayKeys: appSettingsStore.os === 'mac' && help.displayKeys.mac
         ? help.displayKeys.mac
@@ -92,7 +82,7 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <FaModal v-model="isShow" title="快捷键" :footer="false">
+  <FaModal v-model="isShow" :title="$t('layout.hotkeys.title')" :footer="false">
     <div class="px-4">
       <div class="gap-4 grid sm-grid-cols-2">
         <div v-for="group in helpGroups" :key="group.id">

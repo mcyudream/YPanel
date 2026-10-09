@@ -3,6 +3,7 @@
 import type { NotificationItem } from '@/api/modules/ops'
 import { notificationApi } from '@/api/modules/ops'
 import { useNotificationCenterStore } from '@/store/modules/notificationCenter'
+import { i18n } from '@/locales'
 
 defineOptions({
   name: 'ToolbarNotificationCenter',
@@ -138,7 +139,7 @@ async function loadHistory() {
     historyUnread.value = count
   }
   catch (e: any) {
-    useFaToast().error('加载通知失败', { description: e?.message })
+    useFaToast().error(i18n.global.t('layout.notification.loadFailed'), { description: e?.message })
   }
   finally {
     historyLoading.value = false
@@ -209,7 +210,7 @@ onBeforeUnmount(() => {
 <template>
   <div v-if="appSettingsStore.mode === 'pc'" class="flex items-center">
     <FaPopover v-model:open="popVisible" align="end" :side-offset="8">
-      <FaButton variant="ghost" size="icon-sm" title="通知中心" class="relative!">
+      <FaButton variant="ghost" size="icon-sm" :title="$t('layout.notification.center')" class="relative!">
         <FaIcon name="i-lucide:bell" class="size-4" />
         <span
           v-if="unread > 0"
@@ -221,9 +222,9 @@ onBeforeUnmount(() => {
       <template #panel>
         <div class="w-80" @click.stop>
           <div class="flex items-center justify-between border-b px-3 py-2">
-            <span class="text-sm font-medium">通知</span>
+            <span class="text-sm font-medium">{{ $t('layout.notification.title') }}</span>
             <FaButton variant="ghost" size="sm" :disabled="!unread" @click="markAll">
-              全部已读
+              {{ $t('layout.notification.markAllRead') }}
             </FaButton>
           </div>
           <div class="max-h-80 overflow-y-auto">
@@ -241,12 +242,12 @@ onBeforeUnmount(() => {
               <span class="shrink-0 text-xs text-muted-foreground">{{ fmtTime(n.createdAt) }}</span>
             </div>
             <div v-if="!recent.length" class="px-3 py-8 text-center text-sm text-muted-foreground">
-              暂无通知
+              {{ $t('layout.notification.empty') }}
             </div>
           </div>
           <div class="border-t px-3 py-1.5 text-center">
             <FaButton variant="ghost" size="sm" class="w-full" @click="goAll">
-              查看全部
+              {{ $t('layout.notification.viewAll') }}
             </FaButton>
           </div>
         </div>
@@ -254,21 +255,21 @@ onBeforeUnmount(() => {
     </FaPopover>
 
     <!-- 通知历史弹窗（全局，概览页「查看全部」同样唤起） -->
-    <FaModal v-model="modalVisible" title="通知中心" class="max-w-2xl!" :close-on-click-modal="false">
+    <FaModal v-model="modalVisible" :title="$t('layout.notification.center')" class="max-w-2xl!" :close-on-click-modal="false">
       <div class="flex flex-col gap-3">
         <div class="flex flex-wrap items-center gap-2">
-          <span v-if="historyUnread" class="rounded-full bg-red-500/10 px-2 py-0.5 text-xs text-red-600">{{ historyUnread }} 未读</span>
-          <FaInput v-model="historyKeyword" placeholder="搜索通知…" class="w-44!" />
+          <span v-if="historyUnread" class="rounded-full bg-red-500/10 px-2 py-0.5 text-xs text-red-600">{{ $t('layout.notification.unread', { n: historyUnread }) }}</span>
+          <FaInput v-model="historyKeyword" :placeholder="$t('layout.notification.searchPlaceholder')" class="w-44!" />
           <FaButton class="ml-auto" variant="outline" size="sm" :disabled="!historyUnread" @click="markAllHistory">
-            全部已读
+            {{ $t('layout.notification.markAllRead') }}
           </FaButton>
         </div>
         <div class="max-h-[55vh] overflow-y-auto rounded-lg border">
           <div v-if="historyLoading && !history.length" class="p-8 text-center text-sm text-muted-foreground">
-            加载中…
+            {{ $t('common.loading') }}
           </div>
           <div v-else-if="!historyFiltered.length" class="p-8 text-center text-sm text-muted-foreground">
-            暂无通知
+            {{ $t('layout.notification.empty') }}
           </div>
           <div
             v-for="n in historyFiltered"
@@ -289,11 +290,11 @@ onBeforeUnmount(() => {
                 {{ n.content }}
               </div>
             </div>
-            <span class="shrink-0 text-xs tabular-nums text-muted-foreground">{{ new Date(n.createdAt).toLocaleString('zh-CN', { hour12: false }) }}</span>
+            <span class="shrink-0 text-xs tabular-nums text-muted-foreground">{{ new Date(n.createdAt).toLocaleString(i18n.global.locale.value, { hour12: false }) }}</span>
           </div>
         </div>
         <div class="text-xs text-muted-foreground">
-          点击未读通知即标记已读
+          {{ $t('layout.notification.readHint') }}
         </div>
       </div>
     </FaModal>

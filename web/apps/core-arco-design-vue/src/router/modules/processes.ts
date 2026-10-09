@@ -9,7 +9,7 @@ const routes: RouteRecordRaw = {
   component: Layout,
   name: 'processes',
   meta: {
-    title: '进程与服务',
+    title: 'menu.processes',
     icon: 'yd:cpu',
   },
   children: [
@@ -18,7 +18,7 @@ const routes: RouteRecordRaw = {
       name: 'processesIndex',
       component: () => import('@/views/processes/index.vue'),
       meta: {
-        title: '进程与服务',
+        title: 'menu.processes',
         menu: false,
       },
     },

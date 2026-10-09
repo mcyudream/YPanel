@@ -1,19 +1,58 @@
 <script setup lang="ts">
-import type { ComposeProject } from '@/api/modules/compose'
+import type { ComposeProject, ComposeTopology } from '@/api/modules/compose'
 import apiCompose from '@/api/modules/compose'
 import apiContainer, { LabelComposeProject, LabelComposeService, type ContainerItem } from '@/api/modules/container'
 import apiFile from '@/api/modules/file'
 import { storeApi, type StoreAppItem, type StoreInstall } from '@/api/modules/store'
+import { i18n, tr } from '@/locales'
 import FileEditorWorkspace from '@/views/file_management/editor/Workspace.vue'
+import { computed } from 'vue'
+import { closestWindowId, useYwEmbed } from '@/views/desktop/embed'
 
 // 应用详情（M23）：服务列表 + 配置文件（工作台编辑 + 服务端版本历史）+ 项目容器。
+// 桌面工作台承载时经 props 传入（launchOptions），经典模式走路由参数
+const props = defineProps<{
+  /** compose 项目名（webos 窗口承载时由 launchOptions 注入，优先于路由参数） */
+  project?: string
+}>()
+
 const route = useRoute()
 const router = useRouter()
 const toast = useFaToast()
 const fileEditorStore = useFileEditorStore()
 const appAccountStore = useAppAccountStore()
 
-const project = computed(() => String(route.params.project || ''))
+const project = computed(() => String(props.project ?? (route.params.project || '')))
+
+// 桌面承载：返回=关自己窗、下钻容器=开新窗；经典模式保持路由
+const ywEmbed = useYwEmbed()
+// 根元素 ref：用于窗口内定位自身窗 id。不能用 getCurrentInstance——computed 首次求值发生在
+// 点击期而非渲染期，届时拿不到实例，selfWinId 恒为 null，关闭窗会静默失效
+const rootRef = ref<HTMLElement | null>(null)
+const selfWinId = computed(() => closestWindowId(rootRef.value))
+
+function closeSelf() {
+  const id = selfWinId.value
+  if (id && ywEmbed) {
+    ywEmbed.closeWindow(id)
+  }
+}
+
+function openContainerDetailWin(containerId: string) {
+  if (ywEmbed) {
+    ywEmbed.openApp('container-detail', { title: i18n.global.t('container.common.containerTitle', { name: containerId.slice(0, 12) }), launchOptions: { id: containerId } })
+    return
+  }
+  router.push(`/container/detail/${containerId}`)
+}
+
+function onBack() {
+  if (ywEmbed) {
+    closeSelf()
+    return
+  }
+  router.push('/container/apps')
+}
 
 const info = ref<ComposeProject | null>(null)
 const install = ref<StoreInstall | null>(null)
@@ -56,6 +95,10 @@ async function load() {
         .filter(e => !e.isDir)
         .map(e => ({ name: e.name, path: e.path, isDir: e.isDir }))
     }
+    // 拓扑展开时跟随刷新（未展开不打扰，避免定时器白白跑两条 docker 命令）
+    if (topoOpen.value) {
+      loadTopo()
+    }
   }
   finally {
     loading.value = false
@@ -81,11 +124,11 @@ async function doUp() {
   acting.value = 'up'
   try {
     await apiCompose.up(info.value!.name, info.value!.managed ? '' : info.value!.dir)
-    toast.success(`已启动 ${project.value}`)
+    toast.success(i18n.global.t('container.common.started', { name: project.value }))
     await load()
   }
   catch (e: any) {
-    toast.error('启动失败', { description: e?.message })
+    toast.error(i18n.global.t('container.common.startFailed'), { description: e?.message })
   }
   finally {
     acting.value = ''
@@ -95,17 +138,17 @@ async function doUp() {
 function confirmDown() {
   const modal = useFaModal()
   modal.confirm({
-    title: '停止应用',
-    content: `确认停止 ${project.value}？其容器/网络将被移除（数据卷保留）。`,
+    title: i18n.global.t('container.common.stopAppTitle'),
+    content: i18n.global.t('container.common.stopAppConfirm', { name: project.value }),
     onConfirm: async () => {
       acting.value = 'down'
       try {
         await apiCompose.down(info.value!.name, info.value!.managed ? '' : info.value!.dir)
-        toast.success(`已停止 ${project.value}`)
+        toast.success(i18n.global.t('container.common.stopped', { name: project.value }))
         await load()
       }
       catch (e: any) {
-        toast.error('停止失败', { description: e?.message })
+        toast.error(i18n.global.t('container.common.stopFailed'), { description: e?.message })
       }
       finally {
         acting.value = ''
@@ -126,12 +169,12 @@ async function serviceAction(service: string, action: 'start' | 'stop' | 'restar
   acting.value = key
   try {
     await apiCompose.serviceAction(info.value!.name, service, action, info.value!.managed ? '' : info.value!.dir)
-    const label = action === 'up' ? '重建' : action === 'start' ? '启动' : action === 'stop' ? '停止' : '重启'
-    toast.success(`已${label}服务 ${service}`)
+    const msgKey = action === 'up' ? 'container.common.svcRebuilt' : action === 'start' ? 'container.common.svcStarted' : action === 'stop' ? 'container.common.svcStopped' : 'container.common.svcRestarted'
+    toast.success(i18n.global.t(msgKey, { name: service }))
     await load()
   }
   catch (e: any) {
-    toast.error(`服务 ${action} 失败`, { description: e?.message })
+    toast.error(i18n.global.t('container.appDetail.svcActionFailed', { action }), { description: e?.message })
   }
   finally {
     acting.value = ''
@@ -142,10 +185,10 @@ function dropdownItems(service: string) {
   const c = containerOf(service)
   const running = c?.state === 'running'
   return [[
-    ...(running ? [] : [{ label: '启动', icon: 'i-lucide:play', handle: () => serviceAction(service, 'start') }]),
-    ...(running ? [{ label: '重启', icon: 'i-lucide:rotate-cw', handle: () => serviceAction(service, 'restart') }] : []),
-    ...(running ? [{ label: '停止', icon: 'i-lucide:square', handle: () => serviceAction(service, 'stop') }] : []),
-    { label: '重建（按编排定义）', icon: 'i-lucide:hammer', handle: () => serviceAction(service, 'up') },
+    ...(running ? [] : [{ label: i18n.global.t('common.start'), icon: 'i-lucide:play', handle: () => serviceAction(service, 'start') }]),
+    ...(running ? [{ label: i18n.global.t('common.restart'), icon: 'i-lucide:rotate-cw', handle: () => serviceAction(service, 'restart') }] : []),
+    ...(running ? [{ label: i18n.global.t('common.stop'), icon: 'i-lucide:square', handle: () => serviceAction(service, 'stop') }] : []),
+    { label: i18n.global.t('container.common.recreateByCompose'), icon: 'i-lucide:hammer', handle: () => serviceAction(service, 'up') },
   ]]
 }
 
@@ -201,7 +244,7 @@ async function loadServiceLogs(service: string, follow: boolean) {
   }
   catch (e: any) {
     if (e?.name !== 'AbortError') {
-      svcLogsContent.value += `\n[日志流错误] ${e?.message || e}`
+      svcLogsContent.value += `\n${i18n.global.t('container.common.logStreamError', { msg: e?.message || e })}`
     }
   }
   finally {
@@ -217,15 +260,15 @@ function closeServiceLogs() {
 function openServiceTerminal(service: string) {
   const c = containerOf(service)
   if (!c) {
-    toast.warning(`服务 ${service} 当前没有运行中的容器`)
+    toast.warning(i18n.global.t('container.appDetail.svcNoContainer', { name: service }))
     return
   }
   fileEditorStore.openWorkspace(undefined, 'local', c.id)
   fileEditorStore.layout.terminalVisible = true
 }
 
-function openFile(path: string) {
-  fileEditorStore.openWorkspace(path, 'local')
+function openFile(path: string, dir?: string) {
+  fileEditorStore.openWorkspace(path, 'local', undefined, dir)
 }
 
 const stateStyle: Record<string, string> = {
@@ -235,6 +278,48 @@ const stateStyle: Record<string, string> = {
   created: 'text-blue-600 bg-blue-500/10',
   restarting: 'text-amber-600 bg-amber-500/10',
   dead: 'text-red-600 bg-red-500/10',
+}
+
+// ---- 服务拓扑（M26 P1：depends_on 依赖视图，多服务时展示） ----
+const topoOpen = ref(false)
+const topo = ref<ComposeTopology | null>(null)
+const topoLoading = ref(false)
+const topoError = ref('')
+const showTopo = computed(() => (info.value?.services?.length || 0) > 1)
+
+async function loadTopo() {
+  if (!info.value) {
+    return
+  }
+  topoLoading.value = true
+  topoError.value = ''
+  try {
+    topo.value = await apiCompose.topology(info.value.name, info.value.managed ? '' : info.value.dir)
+  }
+  catch (e: any) {
+    topoError.value = e?.message || i18n.global.t('container.appDetail.topoLoadFailed')
+  }
+  finally {
+    topoLoading.value = false
+  }
+}
+
+watch(topoOpen, (v) => {
+  if (v && !topo.value && !topoLoading.value) {
+    loadTopo()
+  }
+})
+
+// 点击拓扑节点：滚动定位到服务表行并短暂高亮
+const highlightSvc = ref('')
+function onTopoNodeClick(name: string) {
+  highlightSvc.value = name
+  document.getElementById(`svc-row-${name}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+  setTimeout(() => {
+    if (highlightSvc.value === name) {
+      highlightSvc.value = ''
+    }
+  }, 1800)
 }
 
 // ---- 版本历史 ----
@@ -256,11 +341,11 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div>
+  <div ref="rootRef">
     <FaPageHeader>
       <template #title>
         <div class="flex min-w-0 items-center gap-2.5">
-          <FaButton variant="ghost" size="icon-sm" title="返回" @click="router.push('/container?tab=apps')">
+          <FaButton variant="ghost" size="icon-sm" :title="$t('container.appDetail.closeTitle')" @click="onBack">
             <FaIcon name="i-lucide:arrow-left" class="text-base" />
           </FaButton>
           <YdAppIcon :image="iconUrl" :name="project" :size="26" />
@@ -269,7 +354,7 @@ onBeforeUnmount(() => {
             class="shrink-0 rounded-full px-2 py-0.5 text-xs"
             :class="install ? 'bg-violet-500/10 text-violet-600' : info?.managed ? 'bg-primary/10 text-primary' : 'bg-muted text-muted-foreground'"
           >
-            {{ install ? '商店' : info?.managed ? '托管' : '外部' }}
+            {{ install ? $t('container.common.srcStore') : info?.managed ? $t('container.common.srcManaged') : $t('container.common.srcExternal') }}
           </span>
           <span v-if="install" class="shrink-0 rounded-full bg-muted px-2 py-0.5 font-mono text-xs text-muted-foreground">
             v{{ install.version }}
@@ -277,59 +362,63 @@ onBeforeUnmount(() => {
         </div>
       </template>
       <template #description>
-        <span class="font-mono text-xs">{{ info?.dir || project }} · {{ running }}/{{ total }} 运行中</span>
+        <span class="font-mono text-xs">{{ info?.dir || project }}<template v-if="total > 0"> · {{ $t('container.appDetail.runningStats', { running, total }) }}</template><template v-else> · {{ $t('container.appDetail.undeployedHint') }}</template></span>
       </template>
       <div class="flex items-center gap-2">
-        <FaButton variant="outline" size="icon-sm" title="刷新" @click="load()">
+        <FaButton variant="outline" size="icon-sm" :title="$t('common.refresh')" @click="load()">
           <FaIcon name="i-lucide:refresh-cw" class="text-sm" :class="loading ? 'animate-spin' : ''" />
         </FaButton>
         <FaButton v-if="running === 0" size="sm" :loading="acting === 'up'" @click="doUp">
-          启动
+          {{ $t('common.start') }}
         </FaButton>
         <template v-else>
-          <FaButton variant="outline" size="sm" :loading="acting === 'up'" title="按当前配置重建并启动" @click="doUp">
-            重建
+          <FaButton variant="outline" size="sm" :loading="acting === 'up'" :title="$t('container.common.recreateTitle')" @click="doUp">
+            {{ $t('container.common.recreate') }}
           </FaButton>
           <FaButton variant="outline" size="sm" :loading="acting === 'down'" @click="confirmDown">
-            停止
+            {{ $t('common.stop') }}
           </FaButton>
         </template>
-        <FaButton v-if="mainYaml" variant="outline" size="sm" @click="openFile(mainYaml)">
-          <FaIcon name="i-lucide:pen-line" class="mr-1" /> 编辑配置
+        <FaButton v-if="mainYaml" variant="outline" size="sm" @click="openFile(mainYaml, info?.dir)">
+          <FaIcon name="i-lucide:pen-line" class="mr-1" /> {{ $t('container.common.editConfig') }}
         </FaButton>
         <FaButton v-if="mainYaml" variant="outline" size="sm" @click="revisionVisible = true">
-          <FaIcon name="i-lucide:history" class="mr-1" /> 版本历史
+          <FaIcon name="i-lucide:history" class="mr-1" /> {{ $t('container.common.revisionHistory') }}
         </FaButton>
       </div>
     </FaPageHeader>
 
     <FaPageMain>
       <div v-if="!info" class="rounded-lg border p-10 text-center text-sm text-muted-foreground">
-        应用 {{ project }} 不存在或已移除
+        {{ $t('container.appDetail.notFound', { name: project }) }}
       </div>
       <template v-else>
         <!-- 服务列表 -->
         <div class="mb-3 text-xs font-medium text-muted-foreground">
-          服务（{{ info.services.length }}）
+          {{ $t('container.appDetail.services', { n: info.services.length }) }}
         </div>
         <div class="mb-6 overflow-hidden rounded-lg border">
           <table class="w-full text-sm">
             <thead class="bg-muted/50 text-left text-xs text-muted-foreground">
               <tr>
-                <th class="px-3 py-2">服务</th>
-                <th class="px-3 py-2">镜像</th>
-                <th class="px-3 py-2">状态</th>
-                <th class="hidden px-3 py-2 lg:table-cell">容器</th>
-                <th class="px-3 py-2 text-right">操作</th>
+                <th class="px-3 py-2">{{ $t('container.appDetail.service') }}</th>
+                <th class="px-3 py-2">{{ $t('container.common.image') }}</th>
+                <th class="px-3 py-2">{{ $t('common.status') }}</th>
+                <th class="hidden px-3 py-2 lg:table-cell">{{ $t('container.common.containerCol') }}</th>
+                <th class="px-3 py-2 text-right">{{ $t('common.operation') }}</th>
               </tr>
             </thead>
             <tbody>
               <tr v-if="!info.services.length">
                 <td colspan="5" class="px-3 py-8 text-center text-muted-foreground">
-                  应用未部署（启动后显示服务）
+                  {{ $t('container.appDetail.noServices') }}
                 </td>
               </tr>
-              <tr v-for="s in info.services" :key="s.name" class="border-t transition-colors hover:bg-accent/30">
+              <tr
+                v-for="s in info.services" :key="s.name" :id="`svc-row-${s.name}`"
+                class="border-t transition-colors hover:bg-accent/30"
+                :class="highlightSvc === s.name ? 'bg-primary/5 ring-1 ring-inset ring-primary/40' : ''"
+              >
                 <td class="px-3 py-2">
                   <div class="flex items-center gap-2">
                     <YdAppIcon :name="s.image" :size="18" />
@@ -342,7 +431,7 @@ onBeforeUnmount(() => {
                 <td class="px-3 py-2">
                   <span class="inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-xs" :class="stateStyle[s.state] || stateStyle.exited">
                     <span class="inline-block size-1.5 rounded-full" :class="s.state === 'running' ? 'animate-pulse bg-current' : 'bg-current'" />
-                    {{ s.state }}
+                    {{ tr(`container.state.${s.state}`) }}
                   </span>
                 </td>
                 <td class="hidden px-3 py-2 font-mono text-xs text-muted-foreground lg:table-cell">
@@ -350,22 +439,22 @@ onBeforeUnmount(() => {
                 </td>
                 <td class="px-3 py-2">
                   <div class="flex items-center justify-end gap-1">
-                    <FaButton variant="ghost" size="sm" title="服务日志" @click="openServiceLogs(s.name)">
+                    <FaButton variant="ghost" size="sm" :title="$t('container.common.svcLogs')" @click="openServiceLogs(s.name)">
                       <FaIcon name="i-lucide:scroll-text" class="text-sm" />
                     </FaButton>
-                    <FaButton variant="ghost" size="sm" title="进入终端" @click="openServiceTerminal(s.name)">
+                    <FaButton variant="ghost" size="sm" :title="$t('container.common.openTerminal')" @click="openServiceTerminal(s.name)">
                       <FaIcon name="i-lucide:square-terminal" class="text-sm" />
                     </FaButton>
                     <FaButton
-                      v-if="containerOf(s.name)" variant="ghost" size="sm" title="容器详情"
-                      @click="router.push(`/container/detail/${containerOf(s.name)!.id}`)"
+                      v-if="containerOf(s.name)" variant="ghost" size="sm" :title="$t('container.common.containerDetail')"
+                      @click="openContainerDetailWin(containerOf(s.name)!.id)"
                     >
                       <FaIcon name="i-lucide:info" class="text-sm" />
                     </FaButton>
                     <FaDropdown
                       :items="dropdownItems(s.name)"
                     >
-                      <FaButton variant="outline" size="sm" :loading="acting === `svc-${s.name}-start` || acting === `svc-${s.name}-restart` || acting === `svc-${s.name}-stop` || acting === `svc-${s.name}-up`" title="电源操作">
+                      <FaButton variant="outline" size="sm" :loading="acting === `svc-${s.name}-start` || acting === `svc-${s.name}-restart` || acting === `svc-${s.name}-stop` || acting === `svc-${s.name}-up`" :title="$t('container.common.powerActions')">
                         <FaIcon name="i-lucide:power" class="text-sm" />
                       </FaButton>
                     </FaDropdown>
@@ -376,44 +465,67 @@ onBeforeUnmount(() => {
           </table>
         </div>
 
+        <!-- 服务拓扑（M26 P1：depends_on 依赖视图，多服务时展示） -->
+        <template v-if="showTopo">
+          <div class="mb-3 flex items-center gap-1 text-xs font-medium text-muted-foreground">
+            <button type="button" class="flex cursor-pointer items-center gap-1 transition-colors hover:text-primary" @click="topoOpen = !topoOpen">
+              <FaIcon :name="topoOpen ? 'i-lucide:chevron-down' : 'i-lucide:chevron-right'" class="text-sm" />
+              {{ $t('container.appDetail.topology') }}
+            </button>
+            <FaButton v-if="topoOpen" variant="ghost" size="icon-sm" :title="$t('container.appDetail.refreshTopo')" @click="loadTopo()">
+              <FaIcon name="i-lucide:refresh-cw" class="text-xs" :class="topoLoading ? 'animate-spin' : ''" />
+            </FaButton>
+            <span class="text-[11px] font-normal">{{ $t('container.appDetail.topoHint') }}</span>
+          </div>
+          <div v-show="topoOpen" class="mb-6 rounded-lg border p-4">
+            <div v-if="topoError" class="py-6 text-center text-xs text-red-500">
+              {{ topoError }}
+            </div>
+            <div v-else-if="topoLoading && !topo" class="py-6 text-center text-xs text-muted-foreground">
+              {{ $t('container.appDetail.topoLoading') }}
+            </div>
+            <YdTopology v-else-if="topo" :nodes="topo.nodes" :edges="topo.edges" @node-click="onTopoNodeClick" />
+          </div>
+        </template>
+
         <!-- 配置文件 -->
         <template v-if="info.managed">
           <div class="mb-3 text-xs font-medium text-muted-foreground">
-            配置文件（点击在工作台打开，保存自动存版本）
+            {{ $t('container.appDetail.configFiles') }}
           </div>
           <div class="mb-6 flex flex-wrap gap-2">
             <button
               v-for="f in dirFiles" :key="f.path" type="button"
               class="inline-flex cursor-pointer items-center gap-1.5 rounded-md border bg-background px-3 py-1.5 font-mono text-xs transition-colors hover:border-primary hover:text-primary"
-              @click="openFile(f.path)"
+              @click="openFile(f.path, info.dir)"
             >
               <FaIcon name="i-lucide:file-text" class="text-sm" />
               {{ f.name }}
             </button>
             <span v-if="!dirFiles.length" class="text-xs text-muted-foreground">
-              配置目录为空或读取失败
+              {{ $t('container.appDetail.configDirEmpty') }}
             </span>
           </div>
         </template>
 
         <!-- 项目容器 -->
         <div class="mb-3 text-xs font-medium text-muted-foreground">
-          项目容器（{{ containers.length }}）
+          {{ $t('container.appDetail.projectContainers', { n: containers.length }) }}
         </div>
         <div class="overflow-hidden rounded-lg border">
           <table class="w-full text-sm">
             <thead class="bg-muted/50 text-left text-xs text-muted-foreground">
               <tr>
-                <th class="px-3 py-2">容器</th>
-                <th class="px-3 py-2">状态</th>
-                <th class="hidden px-3 py-2 lg:table-cell">端口</th>
-                <th class="px-3 py-2 text-right">操作</th>
+                <th class="px-3 py-2">{{ $t('container.common.containerCol') }}</th>
+                <th class="px-3 py-2">{{ $t('common.status') }}</th>
+                <th class="hidden px-3 py-2 lg:table-cell">{{ $t('container.common.ports') }}</th>
+                <th class="px-3 py-2 text-right">{{ $t('common.operation') }}</th>
               </tr>
             </thead>
             <tbody>
               <tr v-if="!containers.length">
                 <td colspan="4" class="px-3 py-8 text-center text-muted-foreground">
-                  暂无容器
+                  {{ $t('container.common.noContainers') }}
                 </td>
               </tr>
               <tr v-for="c in containers" :key="c.id" class="border-t transition-colors hover:bg-accent/30">
@@ -422,15 +534,15 @@ onBeforeUnmount(() => {
                 </td>
                 <td class="px-3 py-2">
                   <span class="inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-xs" :class="stateStyle[c.state] || stateStyle.exited">
-                    {{ c.state }}
+                    {{ tr(`container.state.${c.state}`) }}
                   </span>
                 </td>
                 <td class="hidden px-3 py-2 font-mono text-xs text-muted-foreground lg:table-cell">
                   {{ c.ports?.filter(p => p.hostPort).map(p => `${p.hostPort}→${p.containerPort}/${p.proto}`).join('  ') || '—' }}
                 </td>
                 <td class="px-3 py-2 text-right">
-                  <FaButton variant="ghost" size="sm" @click="router.push(`/container/detail/${c.id}`)">
-                    详情
+                  <FaButton variant="ghost" size="sm" @click="openContainerDetailWin(c.id)">
+                    {{ $t('common.detail') }}
                   </FaButton>
                 </td>
               </tr>
@@ -449,7 +561,7 @@ onBeforeUnmount(() => {
     <!-- 服务日志 -->
     <FaModal
       v-model="svcLogsVisible"
-      :title="`服务日志：${svcLogsTarget}`"
+      :title="$t('container.common.svcLogsTitle', { name: svcLogsTarget })"
       class="max-w-5xl!"
       :destroy-on-close="true"
       @close="closeServiceLogs"
@@ -457,19 +569,19 @@ onBeforeUnmount(() => {
       <div class="mb-2 flex items-center gap-2">
         <FaButton size="sm" :variant="svcLogsFollowing ? 'default' : 'outline'" @click="loadServiceLogs(svcLogsTarget, !svcLogsFollowing)">
           <FaIcon name="i-lucide:radio" class="mr-1" :class="svcLogsFollowing ? 'animate-pulse' : ''" />
-          {{ svcLogsFollowing ? '跟踪中（点击停止）' : '跟踪日志' }}
+          {{ svcLogsFollowing ? $t('container.common.following') : $t('container.common.followLogs') }}
         </FaButton>
         <FaButton variant="outline" size="sm" @click="loadServiceLogs(svcLogsTarget, false)">
-          刷新
+          {{ $t('common.refresh') }}
         </FaButton>
         <span v-if="containerOf(svcLogsTarget)" class="text-xs text-muted-foreground">
-          容器：{{ containerOf(svcLogsTarget)!.name }} · {{ containerOf(svcLogsTarget)!.state }}
+          {{ $t('container.appDetail.containerPrefix') }}{{ containerOf(svcLogsTarget)!.name }} · {{ tr(`container.state.${containerOf(svcLogsTarget)!.state}`) }}
         </span>
       </div>
-      <pre id="svc-logs-box" class="h-96 overflow-auto rounded-md bg-muted/60 p-3 font-mono text-xs leading-relaxed">{{ svcLogsContent || '暂无日志' }}</pre>
+      <YdLogViewer :logs="svcLogsContent" height="384px" :loading="svcLogsFollowing" />
       <template #footer>
         <FaButton variant="outline" @click="closeServiceLogs">
-          关闭
+          {{ $t('common.close') }}
         </FaButton>
       </template>
     </FaModal>

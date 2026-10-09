@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { toTypedSchema } from '@vee-validate/zod'
 import * as z from 'zod'
+import { i18n } from '@/locales'
 
 defineOptions({
   name: 'LoginForm',
@@ -34,8 +35,8 @@ const needOtp = ref(false)
 const otpCode = ref('')
 
 const validationSchema = toTypedSchema(z.object({
-  account: z.string().min(1, '请输入用户名'),
-  password: z.string().min(1, '请输入密码'),
+  account: z.string().min(1, i18n.global.t('login.usernameRequired')),
+  password: z.string().min(1, i18n.global.t('login.passwordRequired')),
 }))
 
 function onSubmit(values: LoginModel) {
@@ -58,10 +59,10 @@ function onSubmit(values: LoginModel) {
   <div class="p-12 flex-col-stretch-center min-h-500px w-full">
     <div class="mb-6 space-y-2">
       <h3 class="text-4xl font-bold">
-        欢迎回来 👋🏻
+        {{ $t('login.welcome') }}
       </h3>
       <p class="text-sm text-muted-foreground lg:text-base">
-        {{ title }} · 服务器管理面板
+        {{ title }} · {{ $t('login.subtitle') }}
       </p>
     </div>
     <FaForm
@@ -71,32 +72,34 @@ function onSubmit(values: LoginModel) {
       @submit="onSubmit"
     >
       <FaFormItem name="account">
-        <FaInput type="text" placeholder="用户名" class="w-full">
+        <FaInput type="text" :placeholder="$t('login.accountPlaceholder')" class="w-full">
           <template #start>
             <FaIcon name="i-lucide:user" />
           </template>
         </FaInput>
       </FaFormItem>
       <FaFormItem name="password">
-        <FaInput type="password" placeholder="密码" class="w-full">
+        <FaInput type="password" :placeholder="$t('login.passwordPlaceholder')" class="w-full">
           <template #start>
             <FaIcon name="i-lucide:lock" />
           </template>
         </FaInput>
       </FaFormItem>
       <FaFormItem v-if="needOtp" name="otpCode">
-        <FaInput v-model="otpCode" type="text" inputmode="numeric" maxlength="6" placeholder="两步验证码（6 位）" class="w-full">
+        <FaInput v-model="otpCode" type="text" inputmode="numeric" maxlength="6" :placeholder="$t('login.otpPlaceholder')" class="w-full">
           <template #start>
             <FaIcon name="i-lucide:shield-check" />
           </template>
         </FaInput>
       </FaFormItem>
       <FaButton :loading="loading" size="lg" class="w-full" type="submit">
-        登 录
+        {{ $t('login.submit') }}
       </FaButton>
-      <div class="text-sm mt-4 text-center text-secondary-foreground op-50">
-        忘记密码？请在服务器执行 <code>ypanel -reset-admin admin</code> 重置
-      </div>
+      <i18n-t keypath="login.resetHint" tag="div" class="text-sm mt-4 text-center text-secondary-foreground op-50">
+        <template #cmd>
+          <code>{{ $t('login.resetCmd') }}</code>
+        </template>
+      </i18n-t>
     </FaForm>
   </div>
 </template>

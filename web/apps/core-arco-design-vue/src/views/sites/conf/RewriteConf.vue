@@ -3,6 +3,7 @@ import type { RewriteTemplate, SiteItem } from '@/api/modules/site'
 import { extApi } from '@/api/modules/site'
 import type { SiteRewriteConf } from '@/api/modules/siteconf'
 import { siteConfApi } from '@/api/modules/siteconf'
+import { i18n } from '@/locales'
 
 const props = defineProps<{ site: SiteItem }>()
 const emit = defineEmits<{ changed: [] }>()
@@ -22,7 +23,7 @@ async function load() {
     edit.value = { ...conf.value }
   }
   catch (e: any) {
-    toast.error('读取伪静态配置失败', { description: e?.message })
+    toast.error(i18n.global.t('sites.conf.rewrite.loadFailed'), { description: e?.message })
   }
   finally {
     loading.value = false
@@ -51,11 +52,11 @@ async function save() {
   try {
     conf.value = await siteConfApi.updateRewrite(props.site.id, edit.value)
     edit.value = { ...conf.value }
-    toast.success('伪静态已保存并重载 nginx')
+    toast.success(i18n.global.t('sites.conf.rewrite.saved'))
     emit('changed')
   }
   catch (e: any) {
-    toast.error('保存失败', { description: e?.message })
+    toast.error(i18n.global.t('sites.shared.saveFailed'), { description: e?.message })
   }
   finally {
     saving.value = false
@@ -74,7 +75,7 @@ onMounted(() => {
   <div class="space-y-5">
     <div class="rounded-lg border p-4">
       <div class="mb-3 flex flex-wrap items-center gap-1.5">
-        <span class="mr-1 text-sm font-medium">预设模板</span>
+        <span class="mr-1 text-sm font-medium">{{ $t('sites.conf.rewrite.templates') }}</span>
         <button
           v-for="t in templates"
           :key="t.name"
@@ -90,7 +91,7 @@ onMounted(() => {
           class="ml-auto cursor-pointer rounded-full border px-2.5 py-0.5 text-xs text-red-500 transition-colors hover:bg-red-500/10"
           @click="clearRewrite"
         >
-          清空
+          {{ $t('common.clear') }}
         </button>
       </div>
       <textarea
@@ -100,13 +101,13 @@ onMounted(() => {
         spellcheck="false"
       />
       <p class="mt-2 text-xs text-muted-foreground">
-        仅填 location 块内容，保存时自动注入 server 块并通过 nginx -t 校验（失败自动回滚）
+        {{ $t('sites.conf.rewrite.hint') }}
       </p>
     </div>
 
     <div class="flex justify-end">
       <FaButton :loading="saving" :disabled="!dirty" @click="save">
-        保存并生效
+        {{ $t('sites.shared.saveApply') }}
       </FaButton>
     </div>
   </div>

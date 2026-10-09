@@ -1,15 +1,16 @@
 <script setup lang="ts">
 import EditPassword from '@/components/AppAccountForm/edit-password.vue'
+import { i18n } from '@/locales'
 
 const active = ref(0)
-const tabs = ref([
+const tabs = computed(() => [
   {
-    title: '基本设置',
-    description: '账号的基本信息，头像、昵称等',
+    title: i18n.global.t('layout.account.tabBasic'),
+    description: i18n.global.t('layout.account.tabBasicDesc'),
   },
   {
-    title: '安全设置',
-    description: '定期修改密码可以提高帐号安全性',
+    title: i18n.global.t('layout.account.tabSecurity'),
+    description: i18n.global.t('layout.account.tabSecurityDesc'),
   },
 ])
 </script>
@@ -28,7 +29,7 @@ const tabs = ref([
     </div>
     <div class="p-10 pt-20 flex-col-center min-h-full md:(ms-40 pt-10)">
       <div v-if="active === 0">
-        请开发者自行扩展
+        {{ $t('layout.account.extendPlaceholder') }}
       </div>
       <EditPassword v-if="active === 1" />
     </div>

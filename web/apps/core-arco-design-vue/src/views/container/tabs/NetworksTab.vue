@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import type { DockerNetwork } from '@/api/modules/dockerext'
 import { dockerExtApi } from '@/api/modules/dockerext'
+import { i18n } from '@/locales'
 
 // 网络管理（自 Docker 管理页迁入，M23）。
 const toast = useFaToast()
@@ -19,7 +20,7 @@ async function load() {
     networks.value = await dockerExtApi.networks()
   }
   catch (e: any) {
-    toast.error('网络列表加载失败', { description: e?.message })
+    toast.error(i18n.global.t('container.networks.loadFailed'), { description: e?.message })
   }
   finally {
     loading.value = false
@@ -34,28 +35,28 @@ const form = ref({ name: '', driver: 'bridge' })
 async function doCreate() {
   try {
     await dockerExtApi.createNetwork(form.value.name, form.value.driver)
-    toast.success('网络已创建')
+    toast.success(i18n.global.t('container.networks.created'))
     visible.value = false
     await load()
   }
   catch (e: any) {
-    toast.error('创建失败', { description: e?.message })
+    toast.error(i18n.global.t('container.common.createFailed'), { description: e?.message })
   }
 }
 
 function remove(n: DockerNetwork) {
   const modal = useFaModal()
   modal.confirm({
-    title: '删除网络',
-    content: `确认删除网络 ${n.name}？`,
+    title: i18n.global.t('container.networks.deleteTitle'),
+    content: i18n.global.t('container.networks.deleteConfirm', { name: n.name }),
     onConfirm: async () => {
       try {
         await dockerExtApi.removeNetwork(n.name)
-        toast.success('已删除')
+        toast.success(i18n.global.t('container.common.deletedDone'))
         await load()
       }
       catch (e: any) {
-        toast.error('删除失败', { description: e?.message })
+        toast.error(i18n.global.t('container.common.deleteFailed'), { description: e?.message })
       }
     },
   })
@@ -68,9 +69,9 @@ function remove(n: DockerNetwork) {
   <div>
     <div class="mb-3 flex items-center gap-2">
       <FaButton class="ml-auto" size="sm" @click="visible = true">
-        <FaIcon name="i-lucide:plus" class="mr-1" /> 创建网络
+        <FaIcon name="i-lucide:plus" class="mr-1" /> {{ $t('container.networks.create') }}
       </FaButton>
-      <FaButton variant="outline" size="icon-sm" title="刷新" @click="load()">
+      <FaButton variant="outline" size="icon-sm" :title="$t('common.refresh')" @click="load()">
         <FaIcon name="i-lucide:refresh-cw" class="text-sm" :class="loading ? 'animate-spin' : ''" />
       </FaButton>
     </div>
@@ -79,17 +80,17 @@ function remove(n: DockerNetwork) {
       <table class="w-full text-sm">
         <thead class="bg-muted/50 text-left text-xs text-muted-foreground">
           <tr>
-            <th class="px-3 py-2">名称</th>
-            <th class="px-3 py-2">驱动</th>
-            <th class="hidden px-3 py-2 md:table-cell">子网</th>
+            <th class="px-3 py-2">{{ $t('common.name') }}</th>
+            <th class="px-3 py-2">{{ $t('container.common.driver') }}</th>
+            <th class="hidden px-3 py-2 md:table-cell">{{ $t('container.networks.subnet') }}</th>
             <th class="hidden px-3 py-2 lg:table-cell">ID</th>
-            <th class="px-3 py-2 text-right">操作</th>
+            <th class="px-3 py-2 text-right">{{ $t('common.operation') }}</th>
           </tr>
         </thead>
         <tbody>
           <tr v-if="loading && !networks.length">
             <td colspan="5" class="px-3 py-10 text-center text-muted-foreground">
-              加载中…
+              {{ $t('common.loading') }}
             </td>
           </tr>
           <tr v-for="n in paged" :key="n.id" class="border-t transition-colors hover:bg-accent/30">
@@ -114,7 +115,7 @@ function remove(n: DockerNetwork) {
                 :disabled="n.name === 'bridge' || n.name === 'host' || n.name === 'none'"
                 @click="remove(n)"
               >
-                删除
+                {{ $t('common.delete') }}
               </FaButton>
             </td>
           </tr>
@@ -123,14 +124,14 @@ function remove(n: DockerNetwork) {
     </div>
     <FaPagination v-model:page="page" v-model:size="size" :total="networks.length" class="mt-3" />
 
-    <FaModal v-model="visible" title="创建网络" :destroy-on-close="true">
+    <FaModal v-model="visible" :title="$t('container.networks.create')" :destroy-on-close="true">
       <div class="flex flex-col gap-3">
         <div class="flex items-center gap-3">
-          <span class="w-20 shrink-0 text-sm text-muted-foreground">名称</span>
-          <FaInput v-model="form.name" placeholder="如 my-net" class="flex-1" />
+          <span class="w-20 shrink-0 text-sm text-muted-foreground">{{ $t('common.name') }}</span>
+          <FaInput v-model="form.name" :placeholder="$t('container.networks.namePlaceholder')" class="flex-1" />
         </div>
         <div class="flex items-center gap-3">
-          <span class="w-20 shrink-0 text-sm text-muted-foreground">驱动</span>
+          <span class="w-20 shrink-0 text-sm text-muted-foreground">{{ $t('container.common.driver') }}</span>
           <select v-model="form.driver" class="h-9 flex-1 rounded-md border bg-background px-2 text-sm outline-none">
             <option value="bridge">bridge</option>
             <option value="host">host</option>
@@ -140,10 +141,10 @@ function remove(n: DockerNetwork) {
       </div>
       <template #footer>
         <FaButton variant="outline" @click="visible = false">
-          取消
+          {{ $t('common.cancel') }}
         </FaButton>
         <FaButton @click="doCreate">
-          创建
+          {{ $t('common.create') }}
         </FaButton>
       </template>
     </FaModal>

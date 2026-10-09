@@ -1,5 +1,6 @@
 <script setup lang="ts">
 // AI 供应商（智能/供应商）：LobeHub 风格预设网格 + 已配置列表 + 编辑弹窗。
+import { i18n } from '@/locales'
 import type { AIProvider } from '@/api/modules/ai'
 import aiApi from '@/api/modules/ai'
 import { providerPresets } from '@/api/modules/ai'
@@ -18,24 +19,24 @@ const fetchingModels = ref(false)
 
 async function fetchModels() {
   if (!provForm.value.id) {
-    toast.warning('请先保存供应商（需已存 API Key）再拉取模型列表')
+    toast.warning(i18n.global.t('ai.providers.saveBeforeFetch'))
     return
   }
   fetchingModels.value = true
   try {
     const list = await aiApi.providerModels(provForm.value.id)
     if (!list.length) {
-      toast.warning('供应商未返回模型列表')
+      toast.warning(i18n.global.t('ai.providers.noModelsReturned'))
       return
     }
     provForm.value.models = list.join(',')
     if (!provForm.value.model || !list.includes(provForm.value.model)) {
       provForm.value.model = list[0]
     }
-    toast.success(`已拉取 ${list.length} 个模型`)
+    toast.success(i18n.global.t('ai.providers.fetchedModels', { n: list.length }))
   }
   catch (e: any) {
-    toast.error('拉取失败', { description: e?.message })
+    toast.error(i18n.global.t('ai.providers.fetchFailed'), { description: e?.message })
   }
   finally {
     fetchingModels.value = false
@@ -88,10 +89,10 @@ async function saveProv() {
   try {
     providers.value = ((await aiApi.saveProvider(provForm.value)).data as any) || []
     provVisible.value = false
-    toast.success('供应商已保存')
+    toast.success(i18n.global.t('ai.providers.saved'))
   }
   catch (e: any) {
-    toast.error('保存失败', { description: e?.message })
+    toast.error(i18n.global.t('ai.providers.saveFailed'), { description: e?.message })
   }
   finally {
     provSaving.value = false
@@ -102,10 +103,10 @@ async function removeProv(id: number) {
   try {
     await aiApi.removeProvider(id)
     providers.value = providers.value.filter(p => p.id !== id)
-    toast.success('已删除')
+    toast.success(i18n.global.t('ai.providers.deleted'))
   }
   catch (e: any) {
-    toast.error('删除失败', { description: e?.message })
+    toast.error(i18n.global.t('ai.providers.deleteFailed'), { description: e?.message })
   }
 }
 
@@ -127,7 +128,7 @@ onActivated(loadProviders)
         <!-- 已配置 -->
         <div v-if="providers.length" class="space-y-2">
           <div class="text-sm font-medium">
-            已配置（{{ providers.length }}）
+            {{ $t('ai.providers.configured', { n: providers.length }) }}
           </div>
           <div v-for="p in providers" :key="p.id" class="flex items-center justify-between rounded-lg border p-3">
             <div class="flex items-center gap-3">
@@ -136,7 +137,7 @@ onActivated(loadProviders)
               <div>
                 <div class="flex items-center gap-2 text-sm font-medium">
                   {{ p.name }}
-                  <span v-if="p.isDefault" class="rounded-full bg-emerald-500/10 px-2 py-0.5 text-xs text-emerald-600">默认</span>
+                  <span v-if="p.isDefault" class="rounded-full bg-emerald-500/10 px-2 py-0.5 text-xs text-emerald-600">{{ $t('common.default') }}</span>
                 </div>
                 <div class="font-mono text-xs text-muted-foreground">
                   {{ p.baseURL }} · {{ modelsFor(p).join(' / ') }}
@@ -145,10 +146,10 @@ onActivated(loadProviders)
             </div>
             <div class="flex gap-1">
               <FaButton variant="ghost" size="sm" @click="openProv(p)">
-                编辑
+                {{ $t('common.edit') }}
               </FaButton>
               <FaButton variant="ghost" size="sm" class="text-red-500!" @click="removeProv(p.id)">
-                删除
+                {{ $t('common.delete') }}
               </FaButton>
             </div>
           </div>
@@ -157,7 +158,7 @@ onActivated(loadProviders)
         <!-- 可添加的供应商（LobeHub 风格网格卡片） -->
         <div class="space-y-2">
           <div class="text-sm font-medium">
-            添加供应商
+            {{ $t('ai.providers.addProvider') }}
           </div>
           <div class="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
             <button
@@ -169,8 +170,8 @@ onActivated(loadProviders)
                 <FaIcon name="i-lucide:plus" class="text-sm" />
               </span>
               <span class="min-w-0">
-                <span class="block text-sm">自定义供应商</span>
-                <span class="block truncate text-[11px] text-muted-foreground">任意 OpenAI 兼容 / Anthropic 端点</span>
+                <span class="block text-sm">{{ $t('ai.providers.customProvider') }}</span>
+                <span class="block truncate text-[11px] text-muted-foreground">{{ $t('ai.providers.customProviderDesc') }}</span>
               </span>
             </button>
             <button
@@ -189,7 +190,7 @@ onActivated(loadProviders)
                 <span class="block truncate font-mono text-[11px] text-muted-foreground">{{ preset.model }}</span>
               </span>
               <span v-if="presetCount(preset.name)" class="ml-auto shrink-0 rounded-full bg-emerald-500/10 px-1.5 py-0.5 text-[10px] text-emerald-600">
-                已配置 ×{{ presetCount(preset.name) }}
+                {{ $t('ai.providers.configuredCount', { n: presetCount(preset.name) }) }}
               </span>
             </button>
           </div>
@@ -198,10 +199,10 @@ onActivated(loadProviders)
     </FaPageMain>
 
     <!-- 供应商弹窗 -->
-    <FaModal v-model="provVisible" title="AI 供应商" class="max-w-2xl!" :destroy-on-close="true">
+    <FaModal v-model="provVisible" :title="$t('ai.providers.modalTitle')" class="max-w-2xl!" :destroy-on-close="true">
       <div class="space-y-3 text-sm">
         <div class="flex flex-wrap items-center gap-1.5">
-          <span class="mr-1 text-xs text-muted-foreground">内置预设</span>
+          <span class="mr-1 text-xs text-muted-foreground">{{ $t('ai.providers.builtinPresets') }}</span>
           <button
             v-for="p in providerPresets"
             :key="p.name"
@@ -213,59 +214,59 @@ onActivated(loadProviders)
           </button>
         </div>
         <div class="flex items-center gap-3">
-          <span class="w-24 shrink-0 text-muted-foreground">名称</span>
+          <span class="w-24 shrink-0 text-muted-foreground">{{ $t('common.name') }}</span>
           <FaInput v-model="provForm.name" class="flex-1" />
         </div>
         <div class="flex items-center gap-3">
-          <span class="w-24 shrink-0 text-muted-foreground">API 类型</span>
+          <span class="w-24 shrink-0 text-muted-foreground">{{ $t('ai.providers.apiType') }}</span>
           <select v-model="provForm.apiType" class="h-9 flex-1 rounded-md border bg-background px-2 outline-none">
-            <option value="openai">OpenAI Chat Completions（兼容智谱/DeepSeek/Ollama 等）</option>
-            <option value="anthropic">Anthropic Messages</option>
+            <option value="openai">{{ $t('ai.providers.apiTypeOpenai') }}</option>
+            <option value="anthropic">{{ $t('ai.providers.apiTypeAnthropic') }}</option>
           </select>
         </div>
         <div class="flex items-center gap-3">
-          <span class="w-24 shrink-0 text-muted-foreground">Base URL</span>
+          <span class="w-24 shrink-0 text-muted-foreground">{{ $t('ai.providers.baseURL') }}</span>
           <FaInput v-model="provForm.baseURL" class="flex-1" />
         </div>
         <div class="flex items-center gap-3">
-          <span class="w-24 shrink-0 text-muted-foreground">默认模型</span>
+          <span class="w-24 shrink-0 text-muted-foreground">{{ $t('ai.providers.defaultModel') }}</span>
           <FaInput v-model="provForm.model" class="flex-1" />
         </div>
         <div class="flex items-start gap-3">
-          <span class="w-24 shrink-0 pt-1.5 text-muted-foreground">可用模型</span>
+          <span class="w-24 shrink-0 pt-1.5 text-muted-foreground">{{ $t('ai.providers.availableModels') }}</span>
           <div class="min-w-0 flex-1 space-y-1">
             <FaInput
               v-model="provForm.models"
-              placeholder="逗号分隔，如 deepseek-chat,deepseek-reasoner,deepseek-flash"
+              :placeholder="$t('ai.providers.modelsPlaceholder')"
             />
             <div class="flex items-center gap-2 text-xs text-muted-foreground">
-              <span>对话页可从这些模型中切换；留空则只有默认模型</span>
+              <span>{{ $t('ai.providers.modelsHint') }}</span>
               <FaButton
                 variant="ghost"
                 size="sm"
                 :loading="fetchingModels"
-                :title="provForm.id ? '从供应商 API 拉取模型列表' : '先保存供应商后才能拉取'"
+                :title="provForm.id ? $t('ai.providers.fetchTitle') : $t('ai.providers.fetchTitleNeedSave')"
                 @click="fetchModels"
               >
-                <FaIcon name="i-lucide:refresh-cw" class="mr-1" /> 从 API 拉取
+                <FaIcon name="i-lucide:refresh-cw" class="mr-1" /> {{ $t('ai.providers.fetchFromApi') }}
               </FaButton>
             </div>
           </div>
         </div>
         <div class="flex items-center gap-3">
-          <span class="w-24 shrink-0 text-muted-foreground">API Key</span>
-          <FaInput v-model="provForm.apiKey" type="password" :placeholder="provForm.id ? '留空不修改' : ''" class="flex-1" />
+          <span class="w-24 shrink-0 text-muted-foreground">{{ $t('ai.providers.apiKey') }}</span>
+          <FaInput v-model="provForm.apiKey" type="password" :placeholder="provForm.id ? $t('ai.providers.apiKeyPlaceholder') : ''" class="flex-1" />
         </div>
         <label class="flex cursor-pointer items-center gap-2 text-sm">
-          <input v-model="provForm.isDefault" type="checkbox"> 设为默认
+          <input v-model="provForm.isDefault" type="checkbox"> {{ $t('ai.providers.setDefault') }}
         </label>
       </div>
       <template #footer>
         <FaButton variant="outline" @click="provVisible = false">
-          取消
+          {{ $t('common.cancel') }}
         </FaButton>
         <FaButton :loading="provSaving" @click="saveProv">
-          保存
+          {{ $t('common.save') }}
         </FaButton>
       </template>
     </FaModal>

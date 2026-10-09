@@ -9,7 +9,7 @@ const routes: RouteRecordRaw = {
   component: Layout,
   name: 'database',
   meta: {
-    title: '数据库',
+    title: 'menu.database',
     icon: 'yd:database',
   },
   children: [
@@ -18,7 +18,7 @@ const routes: RouteRecordRaw = {
       name: 'databaseIndex',
       component: () => import('@/views/database/index.vue'),
       meta: {
-        title: '数据库',
+        title: 'menu.database',
         menu: false,
       },
     },

@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import type { FileEditorGroup } from '@/store/modules/fileEditor'
 import { useFileEditorStore } from '@/store/modules/fileEditor'
+import { i18n } from '@/locales'
 
 // 编辑器组标签栏：点击激活、脏标记、中键/×关闭、拖拽排序与跨组拖动。
 const props = defineProps<{
@@ -33,8 +34,8 @@ function onTabMouseDown(e: MouseEvent, tabId: string) {
 
 function confirmClose(tabId: string) {
   useFaModal().confirm({
-    title: '未保存的修改',
-    content: `“${tabId.split('::').pop()}” 有未保存的修改，关闭将丢失。`,
+    title: i18n.global.t('files.editor.unsavedTitle'),
+    content: i18n.global.t('files.editor.unsavedTabContent', { name: tabId.split('::').pop() }),
     onConfirm: () => {
       store.closeTab(tabId, props.group.id, true)
     },
@@ -109,12 +110,12 @@ function onDragOver(e: DragEvent, tabId: string) {
       <span
         v-if="tabOf(tabId) && tabOf(tabId)!.node !== 'local'"
         class="shrink-0 rounded bg-primary/10 px-1 text-[10px] leading-4 text-primary"
-        :title="`来自节点 ${tabOf(tabId)!.node}`"
+        :title="$t('files.editor.fromNode', { node: tabOf(tabId)!.node })"
       >@{{ tabOf(tabId)!.node }}</span>
-      <span v-if="tabOf(tabId)?.dirty" class="text-primary" title="未保存">●</span>
+      <span v-if="tabOf(tabId)?.dirty" class="text-primary" :title="$t('files.editor.unsavedDot')">●</span>
       <span
         class="inline-flex size-4 shrink-0 cursor-pointer items-center justify-center rounded-full opacity-0 transition-opacity group-hover:opacity-60 hover:!opacity-100 hover:bg-accent"
-        title="关闭 (中键)"
+        :title="$t('files.editor.closeTab')"
         @click.stop="onClose(tabId)"
       >
         <FaIcon name="i-lucide:x" class="text-[10px]" />

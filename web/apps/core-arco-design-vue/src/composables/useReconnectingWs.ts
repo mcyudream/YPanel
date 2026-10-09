@@ -1,6 +1,7 @@
 // F6：可重连 WebSocket 封装（指数退避 + 心跳）。
 // 终端/容器 exec 等 PTY 场景复用；组件卸载自动关闭。
 import { onBeforeUnmount } from 'vue'
+import { i18n } from '@/locales'
 
 export interface ReconnectingWsOptions {
   /** 连接地址 */
@@ -67,7 +68,7 @@ export function useReconnectingWs(options: ReconnectingWsOptions) {
         return
       }
       if (retries >= maxRetries) {
-        options.onGiveUp?.(`连接已断开（重试 ${retries} 次未成功）`)
+        options.onGiveUp?.(i18n.global.t('components.useReconnectingWs.gaveUp', { n: retries }))
         return
       }
       const delay = Math.min(30000, 1000 * 2 ** retries)

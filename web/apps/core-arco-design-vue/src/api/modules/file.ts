@@ -31,6 +31,11 @@ export interface FileReadResp {
   isBinary?: boolean
 }
 
+export interface FileOwnersResp {
+  users: Array<{ name: string, id: string }>
+  groups: Array<{ name: string, id: string }>
+}
+
 export interface FileWriteReq {
   path: string
   content: string
@@ -68,9 +73,19 @@ export default {
   },
   mkdir: (path: string, node?: string) => api.post(`api/v1/files/mkdir${nodeQ2(node)}`, { path }),
   rename: (from: string, to: string, node?: string) => api.post(`api/v1/files/rename${nodeQ2(node)}`, { from, to }),
+  copy: (from: string, to: string, node?: string, overwrite?: boolean) =>
+    api.post(`api/v1/files/copy${nodeQ2(node)}`, { from, to, overwrite: !!overwrite }),
   delete: (paths: string[], node?: string) => api.post(`api/v1/files/delete${nodeQ2(node)}`, { paths }),
-  chmod: (path: string, mode: string, node?: string) => api.post(`api/v1/files/chmod${nodeQ2(node)}`, { path, mode }),
-  compress: (src: string, dest: string, node?: string) => api.post(`api/v1/files/compress${nodeQ2(node)}`, { src, dest }, { timeout: 600000 }),
+  chmod: (path: string, mode: string, node?: string, recursive?: boolean) =>
+    api.post(`api/v1/files/chmod${nodeQ2(node)}`, { path, mode, recursive: !!recursive }),
+  chown: (path: string, owner: string, group: string, node?: string, recursive?: boolean) =>
+    api.post(`api/v1/files/chown${nodeQ2(node)}`, { path, owner, group, recursive: !!recursive }),
+  owners: async (node?: string) => {
+    const res = await api.get(`api/v1/files/owners?1=1${nodeQ(node)}`)
+    return res.data as FileOwnersResp
+  },
+  compress: (srcs: string[], dest: string, node?: string) =>
+    api.post(`api/v1/files/compress${nodeQ2(node)}`, { srcs, dest }, { timeout: 600000 }),
   decompress: (archive: string, destDir: string, node?: string) => api.post(`api/v1/files/decompress${nodeQ2(node)}`, { archive, destDir }, { timeout: 600000 }),
   search: async (dir: string, keyword: string, node?: string) => {
     const res = await api.get(`api/v1/files/search?dir=${encodeURIComponent(dir)}&keyword=${encodeURIComponent(keyword)}${nodeQ(node)}`, { timeout: 120000 })
@@ -97,4 +112,62 @@ export default {
 function nodeQ2(node?: string) {
   const q = nodeQ(node)
   return q ? `?${q.slice(1)}` : ''
+}
+
+// ---- M38：回收站 / 收藏 / 分享 / 远程下载 ----
+export interface TrashItem {
+  original: string
+  name: string
+  isDir: boolean
+  size: number
+  trashedAt: string
+}
+
+export interface FileFavorite {
+  id: number
+  path: string
+  name: string
+  createdAt: string
+}
+
+export interface FileShareRow {
+  id: number
+  path: string
+  name: string
+  expireAt: string | null
+  enabled: boolean
+  valid: boolean
+}
+
+export const fileExtApi = {
+  trash: (paths: string[]) => api.post('api/v1/files/trash', { paths }),
+  trashList: async () => {
+    const res = await api.get('api/v1/files/trash/list', { silent: true })
+    return res.data as TrashItem[]
+  },
+  trashRestore: (names: string[]) => api.post('api/v1/files/trash/restore', { names }),
+  trashPurge: (names: string[]) => api.post('api/v1/files/trash/purge', { names }),
+  trashClear: async () => {
+    const res = await api.post('api/v1/files/trash/clear')
+    return res.data as { count: number }
+  },
+  favorites: async () => {
+    const res = await api.get('api/v1/files/favorites', { silent: true })
+    return res.data as FileFavorite[]
+  },
+  addFavorite: (path: string) => api.post('api/v1/files/favorites', { path }),
+  removeFavorite: (id: number) => api.delete(`api/v1/files/favorites/${id}`),
+  shares: async () => {
+    const res = await api.get('api/v1/files/shares', { silent: true })
+    return res.data as FileShareRow[]
+  },
+  createShare: async (path: string, days: number) => {
+    const res = await api.post('api/v1/files/shares', { path, days })
+    return res.data as { id: number, token: string, name: string }
+  },
+  revokeShare: (id: number) => api.delete(`api/v1/files/shares/${id}`),
+  remoteDownload: async (url: string, destDir: string) => {
+    const res = await api.post('api/v1/files/remote-download', { url, destDir })
+    return res.data as { file: string, dir: string }
+  },
 }

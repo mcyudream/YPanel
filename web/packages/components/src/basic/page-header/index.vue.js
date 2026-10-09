@@ -14,10 +14,10 @@ let __VLS_components;
 let __VLS_intrinsics;
 let __VLS_directives;
 __VLS_asFunctionalElement1(__VLS_intrinsics.div, __VLS_intrinsics.div)({
-    ...{ class: (__VLS_ctx.cn('mb-4 flex flex-wrap items-center justify-between gap-5 border-b bg-background px-5 py-4', props.class)) },
+    ...{ class: (__VLS_ctx.cn('yp-page-header mb-4 flex flex-wrap items-center justify-between gap-5 border-b bg-background px-5 py-4', props.class)) },
 });
 __VLS_asFunctionalElement1(__VLS_intrinsics.div, __VLS_intrinsics.div)({
-    ...{ class: (__VLS_ctx.cn('flex-[1_1_70%]', props.mainClass)) },
+    ...{ class: (__VLS_ctx.cn('yp-page-header-main flex-[1_1_70%]', props.mainClass)) },
 });
 __VLS_asFunctionalElement1(__VLS_intrinsics.div, __VLS_intrinsics.div)({
     ...{ class: "text-2xl" },
@@ -36,7 +36,7 @@ __VLS_asFunctionalSlot(slots.description)({});
 (__VLS_ctx.description);
 if (!!slots.default) {
     __VLS_asFunctionalElement1(__VLS_intrinsics.div, __VLS_intrinsics.div)({
-        ...{ class: (__VLS_ctx.cn('ml-a flex-none', props.defaultClass)) },
+        ...{ class: (__VLS_ctx.cn('yp-page-header-actions ml-a flex-none', props.defaultClass)) },
     });
     __VLS_asFunctionalSlot(slots['default'])({});
 }

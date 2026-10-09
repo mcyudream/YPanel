@@ -9,7 +9,7 @@ const routes: RouteRecordRaw = {
   component: Layout,
   name: 'nodes',
   meta: {
-    title: '节点管理',
+    title: 'menu.nodes',
     icon: 'yd:network',
     auth: ['admin'],
   },
@@ -19,7 +19,7 @@ const routes: RouteRecordRaw = {
       name: 'nodesIndex',
       component: () => import('@/views/nodes/index.vue'),
       meta: {
-        title: '节点管理',
+        title: 'menu.nodes',
         menu: false,
       },
     },

@@ -3,6 +3,7 @@ import type { FileHistoryEntry } from '@/composables/useFileHistory'
 import { encodingLabel } from '@/composables/useTextEncoding'
 import { fmtBytes } from '@/utils/format'
 import { loadMonaco } from '@/utils/monacoLoader'
+import { i18n } from '@/locales'
 
 // 历史版本弹窗：本地快照（IndexedDB）+ 服务器版本（受管配置的服务端快照，M23）。
 const props = defineProps<{
@@ -61,7 +62,7 @@ async function restore(entry: FileHistoryEntry) {
     const monaco = await loadMonaco()
     tab.value.eol = entry.eol
     m.setEOL(entry.eol === 'crlf' ? monaco.editor.EndOfLineSequence.CRLF : monaco.editor.EndOfLineSequence.LF)
-    useFaToast().success('已恢复此版本（未保存，可 Ctrl+S 写盘）')
+    useFaToast().success(i18n.global.t('files.editor.restored'))
     visible.value = false
   }
   finally {
@@ -71,7 +72,7 @@ async function restore(entry: FileHistoryEntry) {
 </script>
 
 <template>
-  <FaModal v-model="visible" title="历史版本" class="max-w-4xl!" :destroy-on-close="true">
+  <FaModal v-model="visible" :title="$t('files.editor.history')" class="max-w-4xl!" :destroy-on-close="true">
     <div class="mb-2 flex items-center gap-2">
       <div class="flex overflow-hidden rounded-md border text-xs">
         <button
@@ -79,14 +80,14 @@ async function restore(entry: FileHistoryEntry) {
           :class="source === 'local' ? 'bg-primary text-primary-foreground' : 'hover:bg-accent/50'"
           @click="source = 'local'"
         >
-          本地快照
+          {{ $t('files.editor.localSnapshots') }}
         </button>
         <button
           v-if="managed" type="button" class="px-2.5 py-1 transition-colors"
           :class="source === 'server' ? 'bg-primary text-primary-foreground' : 'hover:bg-accent/50'"
           @click="source = 'server'"
         >
-          服务器版本
+          {{ $t('files.editor.serverVersions') }}
         </button>
       </div>
       <span class="truncate text-xs text-muted-foreground">{{ tab?.path }}</span>
@@ -94,7 +95,7 @@ async function restore(entry: FileHistoryEntry) {
 
     <!-- 本地快照（IndexedDB，仅本机） -->
     <div v-if="source === 'local'" class="text-xs text-muted-foreground">
-      每次保存自动记录快照（本机 IndexedDB，按文件保留最近 30 份）。
+      {{ $t('files.editor.snapshotHint') }}
     </div>
     <div v-if="source === 'local'" class="mt-2 flex gap-2">
       <!-- 列表 -->
@@ -111,7 +112,7 @@ async function restore(entry: FileHistoryEntry) {
           <div class="text-muted-foreground">{{ fmtBytes(e.size) }} · {{ encodingLabel(e.encoding) }}</div>
         </button>
         <div v-if="!entries.length" class="px-2 py-8 text-center text-muted-foreground">
-          暂无快照，保存后自动记录
+          {{ $t('files.editor.noSnapshots') }}
         </div>
       </div>
       <!-- diff 预览 -->
@@ -120,7 +121,7 @@ async function restore(entry: FileHistoryEntry) {
           <YdCodeEditor :model="model" :diff-original="selected.content" class="h-full" />
         </template>
         <div v-else class="flex h-full items-center justify-center text-sm text-muted-foreground">
-          选择左侧快照查看与当前内容的差异
+          {{ $t('files.editor.diffHint') }}
         </div>
       </div>
     </div>
@@ -132,10 +133,10 @@ async function restore(entry: FileHistoryEntry) {
 
     <template #footer>
       <FaButton variant="outline" @click="visible = false">
-        关闭
+        {{ $t('common.close') }}
       </FaButton>
       <FaButton v-if="source === 'local'" :disabled="!selected" :loading="restoring" @click="selected && restore(selected)">
-        恢复此版本
+        {{ $t('files.editor.restoreVersion') }}
       </FaButton>
     </template>
   </FaModal>

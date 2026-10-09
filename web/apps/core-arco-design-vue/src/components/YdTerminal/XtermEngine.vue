@@ -11,6 +11,8 @@ const props = defineProps<{
 const emits = defineEmits<{
   input: [data: string]
   size: [cols: number, rows: number]
+  /** shell 经 OSC 7 上报的当前目录（bash rcfile 集成注入） */
+  cwd: [path: string]
 }>()
 
 const hostRef = useTemplateRef<HTMLDivElement>('host')
@@ -43,6 +45,17 @@ onMounted(() => {
   term.open(el)
   term.onData((data) => {
     emits('input', data)
+  })
+  // OSC 7：shell 提示符处上报 cwd（payload 形如 file://host/path），返回 false 不阻断后续处理器
+  term.parser.registerOscHandler(7, (data) => {
+    try {
+      const u = new URL(data)
+      if (u.protocol === 'file:') {
+        emits('cwd', decodeURIComponent(u.pathname))
+      }
+    }
+    catch {}
+    return false
   })
   try {
     fit.fit()

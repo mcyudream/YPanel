@@ -42,10 +42,60 @@ function nodeQ(node?: string) {
   return node && node !== 'local' ? `&node=${encodeURIComponent(node)}` : ''
 }
 
+export interface HostEntry { ip: string, hosts: string[] }
+
+// ---- M44 首页聚合 ----
+export interface DashboardExpiringCert {
+  id: number
+  certName: string
+  domain: string
+  notAfter: string
+  daysLeft: number
+  status: 'expiring' | 'expired'
+}
+
+export interface DashboardNotification {
+  id: number
+  level: 'info' | 'success' | 'warning' | 'error'
+  title: string
+  content: string
+  read: boolean
+  createdAt: string
+}
+
+export interface Dashboard {
+  sites: number
+  databases: number
+  containersTotal: number
+  containersRunning: number
+  images: number
+  volumes: number
+  networks: number
+  certsOK: number
+  certsExpiring: number
+  certsExpired: number
+  cronTasks: number
+  nodesTotal: number
+  nodesOnline: number
+  dockerAvailable: boolean
+  expiringCerts: DashboardExpiringCert[]
+  recentNotifications: DashboardNotification[]
+  collectedAt: string
+}
+
 export default {
+  hostEntries: async () => {
+    const res = await api.get('api/v1/system/hosts', { silent: true })
+    return res.data as HostEntry[]
+  },
   overview: async (node?: string) => {
     const res = await api.get(`api/v1/system/overview?1=1${nodeQ(node)}`)
     return res.data as SystemOverview
+  },
+  // M44 首页聚合（面板级计数 + local docker + 到期证书 + 最近通知）
+  dashboard: async () => {
+    const res = await api.get('api/v1/system/dashboard', { silent: true })
+    return res.data as Dashboard
   },
   history: async (seconds = 600, node?: string) => {
     const res = await api.get(`api/v1/system/history?seconds=${seconds}${nodeQ(node)}`)

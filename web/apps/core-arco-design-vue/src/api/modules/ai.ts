@@ -20,7 +20,57 @@ export interface ChatMsg {
 export interface AiToolInfo {
   name: string
   description: string
+  /** 所属功能模块 key（M31：目录式按需加载） */
+  module: string
+  moduleTitle: string
+  /** 风险分级：read 查询 / write 写入 / danger 危险 */
+  risk: 'read' | 'write' | 'danger'
   enabled: boolean
+}
+
+/** 危险操作确认请求（SSE ask 事件载荷） */
+export interface AiAskPayload {
+  id: string
+  tool: string
+  module: string
+  risk: 'write' | 'danger'
+  args: string
+}
+
+/** 交互提问（ask_user 工具）：问题/选项/多选，参照 ZCode AskUserQuestion */
+export interface AiAskQuestionOption {
+  label: string
+  description?: string
+}
+export interface AiAskQuestion {
+  question: string
+  header?: string
+  multiSelect?: boolean
+  options?: AiAskQuestionOption[]
+}
+export interface AiAskQuestionPayload {
+  id: string
+  questions: AiAskQuestion[]
+}
+
+/** AI 操作审计记录（write/danger 工具执行与 ask 结果） */
+export interface AiOperationLog {
+  id: number
+  createdAt: string
+  tool: string
+  module: string
+  risk: string
+  action: string
+  args: string
+  result: string
+  success: boolean
+}
+
+export interface AiOperationLogPage {
+  total: number
+  page: number
+  pageSize: number
+  items: AiOperationLog[]
 }
 
 export default {
@@ -47,6 +97,28 @@ export default {
   setToolFlag: async (name: string, enabled: boolean) => {
     const res = await api.post('api/v1/ai/tools/flag', { name, enabled })
     return res.data as AiToolInfo[]
+  },
+
+  // 危险操作确认（M31 ask 机制）
+  resolveAsk: (id: string, approve: boolean) => api.post(`api/v1/ai/ask/${id}`, { approve }),
+
+  // 交互提问回执（ask_user 工具）
+  resolveAskQuestion: (id: string, answers: unknown) => api.post(`api/v1/ai/ask-question/${id}`, { answers }),
+
+  // AI 操作审计
+  operationLogs: async (page = 1, pageSize = 20) => {
+    const res = await api.get(`api/v1/ai/oplogs?page=${page}&pageSize=${pageSize}`, { silent: true })
+    return res.data as AiOperationLogPage
+  },
+
+  // 确认模式：strict = 写入+危险都确认（默认）；danger_only = 仅危险操作确认
+  askMode: async () => {
+    const res = await api.get('api/v1/ai/tools/ask-mode', { silent: true })
+    return (res.data as any)?.mode as 'strict' | 'danger_only'
+  },
+  setAskMode: async (mode: 'strict' | 'danger_only') => {
+    const res = await api.post('api/v1/ai/tools/ask-mode', { mode })
+    return (res.data as any)?.mode as 'strict' | 'danger_only'
   },
 
   // SSE 流式对话（fetch 流解析，返回增量回调）
@@ -251,4 +323,25 @@ export const mcpApi = {
     return res.data as { connected: boolean, tools: string[] }
   },
   close: (name: string) => api.delete(`api/v1/ai/mcp/${encodeURIComponent(name)}`),
+}
+
+// ---- M45：MCP 写操作审批 ----
+export interface MCPOperation {
+  id: number
+  token: string
+  tool: string
+  args: string
+  state: 'pending' | 'approved' | 'executing' | 'succeeded' | 'failed' | 'rejected' | 'expired'
+  result: string
+  approvedBy: string
+  expiresAt: string
+  createdAt: string
+}
+
+export const mcpOpsApi = {
+  list: async (state = '') => {
+    const res = await api.get(`api/v1/mcp/operations?state=${encodeURIComponent(state)}`, { silent: true })
+    return res.data as MCPOperation[]
+  },
+  approve: (id: number, approve: boolean) => api.put(`api/v1/mcp/operations/${id}`, { approve }),
 }

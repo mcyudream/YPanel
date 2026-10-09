@@ -69,7 +69,7 @@ watch(() => props.name, () => loadRegistry())
     v-else-if="placeholderVisible"
     class="inline-block shrink-0 rounded-full border border-current opacity-40"
     :style="{ width: `${size ?? 18}px`, height: `${size ?? 18}px`, borderWidth: `${strokeWidth ?? 2}px` }"
-    :title="`未知图标: ${name}`"
+    :title="$t('components.ydMorphIcon.unknownIcon', { name })"
   />
   <span v-else class="inline-block shrink-0" :style="{ width: `${size ?? 18}px`, height: `${size ?? 18}px` }" />
 </template>

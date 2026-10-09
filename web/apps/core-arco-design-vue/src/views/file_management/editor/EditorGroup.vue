@@ -70,7 +70,7 @@ function onDropToBody(e: DragEvent) {
     <div class="flex items-stretch" :class="store.groups.length > 1 ? '' : 'flex-col'">
       <EditorTabs :group="group" :active="store.activeGroupId === group.id" class="flex-1" />
       <div v-if="store.groups.length > 1" class="flex items-center border-b bg-muted/40 px-1">
-        <FaButton variant="ghost" size="icon-sm" title="关闭此编辑器组" @click="store.closeGroup(group.id)">
+        <FaButton variant="ghost" size="icon-sm" :title="$t('files.editor.closeGroup')" @click="store.closeGroup(group.id)">
           <FaIcon name="i-lucide:x" class="text-xs" />
         </FaButton>
       </div>
@@ -81,7 +81,7 @@ function onDropToBody(e: DragEvent) {
       v-if="activeTab?.truncated"
       class="border-b border-amber-300 bg-amber-50 px-3 py-1 text-xs text-amber-700 dark:border-amber-700 dark:bg-amber-950/30 dark:text-amber-400"
     >
-      文件较大，仅加载前 1 MiB；保存将覆盖整个文件，请谨慎操作。
+      {{ $t('files.editor.truncated') }}
     </div>
 
     <!-- 编辑器 / 欢迎页（编辑器等弹窗动画结束再挂载，保证 monaco 首测尺寸真实） -->
@@ -105,11 +105,11 @@ function onDropToBody(e: DragEvent) {
     <div v-if="!activeTab" class="flex flex-1 select-none flex-col items-center justify-center gap-3 text-muted-foreground" @dragover.prevent @drop="onDropToBody">
       <YdMorphIcon name="file-code" :size="56" class="opacity-30" />
       <div class="text-sm">
-        从左侧文件树打开文件，或把标签拖到这里切分
+        {{ $t('files.editor.welcome') }}
       </div>
       <div class="space-y-1 text-center text-xs opacity-70">
-        <div>Ctrl+S 保存 · Ctrl+\ 切分编辑器</div>
-        <div>Ctrl+B 侧栏 · Ctrl+J 终端面板</div>
+        <div>{{ $t('files.editor.shortcutSaveSplit') }}</div>
+        <div>{{ $t('files.editor.shortcutPanels') }}</div>
       </div>
     </div>
   </Pane>

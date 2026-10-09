@@ -2,8 +2,9 @@
 // YdAiProcess：工具/步骤流程时间线（竖向连线 + 状态节点 + 工具卡片）。
 // 每张卡片三态：执行中（spinner，蓝）/ 完成（✓，绿）/ 失败（✗，红）；工具按名称单独设计图标与文案。
 // 点击卡片展开完整入参与结果详情。
-import { ref } from 'vue'
+import { computed, ref } from 'vue'
 import type { AiChatStep } from '@/composables/useAiChat'
+import { i18n } from '@/locales'
 import { toolMetaOf } from '@/components/YdAiChat/toolMeta'
 
 const props = withDefaults(defineProps<{
@@ -15,6 +16,7 @@ const props = withDefaults(defineProps<{
 
 // 展开详情的卡片（索引集合）
 const expanded = ref(new Set<number>())
+
 
 function toggle(i: number) {
   const next = new Set(expanded.value)
@@ -30,7 +32,13 @@ function toggle(i: number) {
 // 内置工具元数据由 toolMeta.ts 共享（系统工具管理页同源）
 function meta(s: AiChatStep) {
   if (s.type === 'scene') {
-    return { label: '读取页面数据', icon: 'i-lucide:eye' }
+    return { label: i18n.global.t('components.ydAiChat.stepReadPage'), icon: 'i-lucide:eye' }
+  }
+  if (s.type === 'ask') {
+    return { label: i18n.global.t('components.ydAiChat.pendingConfirm', { tool: toolMetaOf(s.name || '').label }), icon: 'i-lucide:shield-alert' }
+  }
+  if (s.type === 'question') {
+    return { label: i18n.global.t('components.ydAiChat.stepAskUser'), icon: 'i-lucide:help-circle' }
   }
   if (s.type === 'tool' || s.type === 'tool_result' || s.type === 'action') {
     return toolMetaOf(s.name || '')
@@ -41,7 +49,7 @@ function meta(s: AiChatStep) {
 type StepState = 'running' | 'done' | 'error' | 'stopped'
 
 function state(s: AiChatStep): StepState {
-  if (s.status === '失败') {
+  if (s.status === '失败' || s.status === '已拒绝' || s.status === '已超时' || s.status === '已取消') {
     return 'error'
   }
   if (s.done || s.status === '完成') {
@@ -50,12 +58,13 @@ function state(s: AiChatStep): StepState {
   return props.streaming ? 'running' : 'stopped'
 }
 
-const stateLabel: Record<StepState, string> = {
-  running: '执行中',
-  done: '完成',
-  error: '失败',
-  stopped: '已中断',
-}
+// 展示态文案（数据里的 status 中文枚举是后端/前端写入的数据值，不在此翻译）
+const stateLabel = computed<Record<StepState, string>>(() => ({
+  running: i18n.global.t('components.ydAiChat.stateRunning'),
+  done: i18n.global.t('components.ydAiChat.stateDone'),
+  error: i18n.global.t('components.ydAiChat.stateError'),
+  stopped: i18n.global.t('components.ydAiChat.stateStopped'),
+}))
 
 const stateClass: Record<StepState, string> = {
   running: 'border-primary/40 bg-primary/10 text-primary',
@@ -119,15 +128,19 @@ const stateTextClass: Record<StepState, string> = {
         <!-- 展开态：完整入参与结果 -->
         <div v-if="expanded.has(i)" class="mt-1 space-y-1.5">
           <div v-if="s.detail">
-            <div class="text-[10px] font-medium text-muted-foreground/70">入参</div>
+            <div class="text-[10px] font-medium text-muted-foreground/70">{{ $t('components.ydAiChat.args') }}</div>
             <div class="mt-0.5 max-h-40 overflow-y-auto whitespace-pre-wrap break-words rounded bg-background/60 px-2 py-1.5 text-[11px] leading-relaxed text-muted-foreground">{{ s.detail }}</div>
           </div>
-          <div v-if="s.summary">
-            <div class="text-[10px] font-medium" :class="s.status === '失败' ? 'text-red-500' : 'text-emerald-600'">结果（{{ s.status || '已结束' }}）</div>
+          <div v-if="s.output">
+            <div class="text-[10px] font-medium" :class="s.status === '失败' ? 'text-red-500' : 'text-emerald-600'">{{ $t('components.ydAiChat.rawOutputWithStatus', { status: s.status || $t('components.ydAiChat.stateEnded') }) }}</div>
+            <div class="mt-0.5 max-h-60 overflow-y-auto whitespace-pre-wrap break-words rounded bg-background/60 px-2 py-1.5 font-mono text-[11px] leading-relaxed text-muted-foreground">{{ s.output }}</div>
+          </div>
+          <div v-else-if="s.summary">
+            <div class="text-[10px] font-medium" :class="s.status === '失败' ? 'text-red-500' : 'text-emerald-600'">{{ $t('components.ydAiChat.resultWithStatus', { status: s.status || $t('components.ydAiChat.stateEnded') }) }}</div>
             <div class="mt-0.5 max-h-60 overflow-y-auto whitespace-pre-wrap break-words rounded bg-background/60 px-2 py-1.5 text-[11px] leading-relaxed text-muted-foreground">{{ s.summary }}</div>
           </div>
           <div v-if="!s.detail && !s.summary" class="text-[11px] text-muted-foreground/60">
-            （无详情）
+            {{ $t('components.ydAiChat.noDetail') }}
           </div>
         </div>
       </div>

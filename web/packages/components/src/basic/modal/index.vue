@@ -2,7 +2,7 @@
 import type { VNode } from 'vue'
 import type { ModalEmits, ModalProps } from '.'
 import { VisuallyHidden } from 'reka-ui'
-import { computed, nextTick, ref, shallowRef, useId, useTemplateRef, watch } from 'vue'
+import { computed, inject, nextTick, ref, shallowRef, useId, useTemplateRef, watch } from 'vue'
 import { cn } from '#utils'
 import Button from '../button/index.vue'
 import Icon from '../icon/index.vue'
@@ -51,6 +51,15 @@ const props = withDefaults(
 )
 
 const emits = defineEmits<ModalEmits>()
+
+/** 弹窗挂载容器注入键（宿主可 provide 聚焦窗口的 body 实现窗口内模态） */
+const injectedContainer = inject<import('vue').Ref<(string | HTMLElement) | undefined> | undefined>('fa:modal-container', undefined)
+
+const portalTarget = computed(() =>
+  typeof injectedContainer?.value === 'object' || typeof injectedContainer?.value === 'string'
+    ? injectedContainer.value
+    : undefined,
+)
 
 const slots = defineSlots<{
   header?: () => VNode
@@ -222,6 +231,7 @@ function handleAnimationEnd() {
     <DialogContent
       ref="dialogContentRef"
       :modal-id="modalId"
+      :portal-to="portalTarget"
       :open="isOpen"
       :z-index="props.zIndex"
       :closable="props.closable"

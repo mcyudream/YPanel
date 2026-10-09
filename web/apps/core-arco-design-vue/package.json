@@ -54,6 +54,7 @@
     "vconsole": "catalog:",
     "vee-validate": "catalog:",
     "vue": "catalog:",
+    "vue-i18n": "catalog:",
     "vue-router": "catalog:",
     "yaml": "catalog:",
     "zod": "catalog:"

@@ -19,7 +19,7 @@ defineOptions({
             <FaIcon name="i-tdesign:mobile-blocked-filled" />
           </h1>
           <div class="text-xl text-secondary-foreground/50 mx-0 text-center">
-            抱歉，本网站不支持移动设备访问，请切换到桌面设备
+            {{ $t('components.appNotSupportedMobile.message') }}
           </div>
         </div>
       </div>

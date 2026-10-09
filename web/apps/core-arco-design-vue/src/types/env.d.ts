@@ -49,3 +49,4 @@ interface ImportMetaEnv {
    */
   readonly VITE_LAUNCH_EDITOR: string
 }
+

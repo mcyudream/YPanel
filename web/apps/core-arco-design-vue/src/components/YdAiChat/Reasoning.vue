@@ -29,11 +29,11 @@ const chars = computed(() => props.reasoning.length)
       @click="expanded = !expanded"
     >
       <FaIcon name="i-lucide:brain" class="text-[11px]" />
-      <span class="font-medium">深度思考</span>
+      <span class="font-medium">{{ $t('components.ydAiChat.reasoning') }}</span>
       <span v-if="streaming" class="flex items-center gap-1">
-        · <span class="animate-pulse">思考中</span>
+        · <span class="animate-pulse">{{ $t('components.ydAiChat.thinking') }}</span>
       </span>
-      <span v-else-if="chars" class="text-[10px] opacity-70">{{ chars }} 字</span>
+      <span v-else-if="chars" class="text-[10px] opacity-70">{{ $t('components.ydAiChat.charCount', { n: chars }) }}</span>
       <FaIcon
         :name="expanded ? 'i-lucide:chevron-up' : 'i-lucide:chevron-down'"
         class="ml-auto text-[11px]"
@@ -43,7 +43,7 @@ const chars = computed(() => props.reasoning.length)
       v-show="expanded"
       class="max-h-60 overflow-y-auto whitespace-pre-wrap border-t border-border/40 px-2.5 py-2 text-xs leading-relaxed text-muted-foreground"
     >
-      {{ reasoning || '（空）' }}
+      {{ reasoning || $t('components.ydAiChat.emptyContent') }}
     </div>
   </div>
 </template>

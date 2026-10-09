@@ -1,21 +1,25 @@
 // 文件编码检测/解码（与 agent 端 x/text 白名单对齐）。
 // 检测顺序：UTF-8 严格 → GB18030 → Big5 → Shift-JIS → Windows-1252（均严格，失败落兜底）。
+import { tr } from '@/locales'
 
 export interface FileEncodingOption {
   id: string
-  label: string
+  /** 展示名词条键（调用处经 encodingLabel() 求值，模块顶层不做 i18n 求值） */
+  labelKey: string
 }
 
+// id 为 TextDecoder 标签（数据值）；展示名走 components.textEncoding.* 词条
 export const FILE_ENCODINGS: FileEncodingOption[] = [
-  { id: 'utf-8', label: 'UTF-8' },
-  { id: 'gb18030', label: 'GB18030（GBK 兼容）' },
-  { id: 'big5', label: 'Big5（繁体中文）' },
-  { id: 'shift_jis', label: 'Shift-JIS（日文）' },
-  { id: 'windows-1252', label: 'Windows-1252（西文）' },
+  { id: 'utf-8', labelKey: 'components.textEncoding.utf8' },
+  { id: 'gb18030', labelKey: 'components.textEncoding.gb18030' },
+  { id: 'big5', labelKey: 'components.textEncoding.big5' },
+  { id: 'shift_jis', labelKey: 'components.textEncoding.shiftJis' },
+  { id: 'windows-1252', labelKey: 'components.textEncoding.windows1252' },
 ]
 
 export function encodingLabel(id: string) {
-  return FILE_ENCODINGS.find(e => e.id === id)?.label ?? id
+  const e = FILE_ENCODINGS.find(x => x.id === id)
+  return e ? tr(e.labelKey, id) : id
 }
 
 // base64 → 字节

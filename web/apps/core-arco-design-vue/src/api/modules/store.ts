@@ -44,6 +44,9 @@ export interface StoreApp {
   arch: string
   versionsJson: string
   reverseProxy: string
+  website: string
+  sourceUrl: string
+  document: string
   latestVersion: string
   lastModified: number
 }
@@ -56,6 +59,24 @@ export interface StoreInstall {
   version: string
   composeProject: string
   remark: string
+  createdAt: string
+}
+
+export interface StoreInstallInfo {
+  id: number
+  sourceId: number
+  key: string
+  name: string
+  remark: string
+  appName: string
+  iconUrl: string
+  version: string
+  latestVersion: string
+  upgradable: boolean
+  composeProject: string
+  running: boolean
+  ports: number[]
+  params: Record<string, string>
   createdAt: string
 }
 
@@ -153,14 +174,33 @@ export const storeApi = {
   },
   installed: async () => {
     const res = await api.get('api/v1/store/installed', { silent: true })
-    return res.data as StoreInstall[]
+    return res.data as StoreInstallInfo[]
   },
-  install: async (data: { sourceId: number, key: string, version: string, name: string, params: Record<string, string>, domain?: string }) => {
+  installedAction: (project: string, action: 'start' | 'stop' | 'restart' | 'rebuild') =>
+    api.post(`api/v1/store/installed/${encodeURIComponent(project)}/${action}`, null, { timeout: 300000 }),
+  installEnv: async (project: string) => {
+    const res = await api.get(`api/v1/store/installed/${encodeURIComponent(project)}/env`, { silent: true })
+    return res.data as Record<string, string>
+  },
+  saveInstallEnv: (project: string, content: string) =>
+    api.put(`api/v1/store/installed/${encodeURIComponent(project)}/env`, { content }, { timeout: 300000 }),
+  install: async (data: { sourceId: number, key: string, version: string, name: string, params: Record<string, string>, domain?: string, network?: string, createNetwork?: boolean, timezone?: string, extraHosts?: string[], mountHostsFile?: boolean, externalDB?: { instanceId: number, database?: string, user?: string, createIfMissing?: boolean } }) => {
     const res = await api.post('api/v1/store/install', data, { timeout: 60000 })
     return res.data as { taskId: number, project: string }
   },
-  uninstall: async (project: string) => {
-    const res = await api.delete(`api/v1/store/install/${encodeURIComponent(project)}`)
+  uninstall: async (project: string, opts: { purgeData?: boolean, rmi?: boolean, cascadeDB?: boolean } = {}) => {
+    const q = new URLSearchParams()
+    if (opts.purgeData) {
+      q.set('purgeData', 'true')
+    }
+    if (opts.rmi) {
+      q.set('rmi', 'true')
+    }
+    if (opts.cascadeDB) {
+      q.set('cascadeDB', 'true')
+    }
+    const qs = q.toString() ? `?${q.toString()}` : ''
+    const res = await api.delete(`api/v1/store/install/${encodeURIComponent(project)}${qs}`)
     return res.data as { taskId: number, project: string }
   },
 }

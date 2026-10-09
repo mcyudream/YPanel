@@ -9,7 +9,7 @@ const routes: RouteRecordRaw = {
   component: Layout,
   name: 'fileManagement',
   meta: {
-    title: '文件管理',
+    title: 'menu.file',
     icon: 'yd:folder-open',
   },
   children: [
@@ -18,7 +18,7 @@ const routes: RouteRecordRaw = {
       name: 'fileManagementIndex',
       component: () => import('@/views/file_management/index.vue'),
       meta: {
-        title: '文件管理',
+        title: 'menu.file',
         menu: false,
       },
     },

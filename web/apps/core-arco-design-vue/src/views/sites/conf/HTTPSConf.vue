@@ -4,6 +4,7 @@ import type { SiteHTTPSConf, SiteHTTPSUpdate } from '@/api/modules/siteconf'
 import { siteConfApi } from '@/api/modules/siteconf'
 import { certApi } from '@/api/modules/cert'
 import type { Certificate } from '@/api/modules/cert'
+import { i18n } from '@/locales'
 
 // B23 HTTPS 完整设置（对齐 1Panel）：证书库选择 / HTTP 模式 / HSTS / TLS 版本 / 加密算法 / HTTP2。
 
@@ -26,18 +27,18 @@ const http2 = ref(true)
 const tlsVersions = ref<string[]>(['1.3', '1.2'])
 const ciphers = ref('')
 
-const tlsOptions = [
+const tlsOptions = computed(() => [
   { v: '1.3', label: 'TLS 1.3' },
   { v: '1.2', label: 'TLS 1.2' },
-  { v: '1.1', label: 'TLS 1.1（不安全）' },
-  { v: '1.0', label: 'TLS 1.0（不安全）' },
-]
+  { v: '1.1', label: i18n.global.t('sites.conf.https.tls11Unsafe') },
+  { v: '1.0', label: i18n.global.t('sites.conf.https.tls10Unsafe') },
+])
 
-const httpModeOptions = [
-  { v: 'redirect', label: '访问 HTTP 自动跳转到 HTTPS' },
-  { v: 'both', label: 'HTTP 与 HTTPS 均可访问' },
-  { v: 'deny', label: '停止 HTTP 访问' },
-]
+const httpModeOptions = computed(() => [
+  { v: 'redirect', label: i18n.global.t('sites.conf.https.modeRedirect') },
+  { v: 'both', label: i18n.global.t('sites.conf.https.modeBoth') },
+  { v: 'deny', label: i18n.global.t('sites.conf.https.modeDeny') },
+])
 
 function applyConf(c: SiteHTTPSConf) {
   conf.value = c
@@ -61,7 +62,7 @@ async function load() {
     applyConf(c)
   }
   catch (e: any) {
-    toast.error('读取 HTTPS 配置失败', { description: e?.message })
+    toast.error(i18n.global.t('sites.conf.https.loadFailed'), { description: e?.message })
   }
   finally {
     loading.value = false
@@ -78,7 +79,7 @@ function toggleTLS(v: string) {
 
 async function save() {
   if (!tlsVersions.value.length) {
-    toast.warning('至少选择一个 TLS 协议版本')
+    toast.warning(i18n.global.t('sites.conf.https.needTls'))
     return
   }
   saving.value = true
@@ -95,16 +96,16 @@ async function save() {
       body.certId = selCertId.value
     }
     else if (!conf.value?.enable) {
-      toast.warning('请先在「证书」页申请证书，或到站点 HTTPS 选择证书来源')
+      toast.warning(i18n.global.t('sites.conf.https.needCert'))
       return
     }
     const res = await siteConfApi.updateHTTPS(props.site.id, body)
     applyConf(res)
-    toast.success('HTTPS 设置已保存并重载 nginx')
+    toast.success(i18n.global.t('sites.conf.https.saved'))
     emit('changed')
   }
   catch (e: any) {
-    toast.error('保存失败', { description: e?.message })
+    toast.error(i18n.global.t('sites.shared.saveFailed'), { description: e?.message })
   }
   finally {
     saving.value = false
@@ -114,8 +115,8 @@ async function save() {
 function disable() {
   const modal = useFaModal()
   modal.confirm({
-    title: '停用 HTTPS',
-    content: '停用后 443 将不再监听，HTTPS 访问会失败，确认停用？',
+    title: i18n.global.t('sites.conf.https.disableTitle'),
+    content: i18n.global.t('sites.conf.https.disableConfirm'),
     onConfirm: async () => {
       saving.value = true
       try {
@@ -129,11 +130,11 @@ function disable() {
           http2: http2.value,
         })
         applyConf(res)
-        toast.success('HTTPS 已停用')
+        toast.success(i18n.global.t('sites.conf.https.disabled'))
         emit('changed')
       }
       catch (e: any) {
-        toast.error('停用失败', { description: e?.message })
+        toast.error(i18n.global.t('sites.conf.https.disableFailed'), { description: e?.message })
       }
       finally {
         saving.value = false
@@ -161,83 +162,83 @@ onMounted(load)
     <div class="rounded-lg border p-4">
       <div class="flex items-center justify-between">
         <div class="flex items-center gap-2 text-sm font-medium">
-          HTTPS 状态
+          {{ $t('sites.conf.https.status') }}
           <span
             class="rounded-full px-2 py-0.5 text-xs"
             :class="conf?.enable ? 'bg-emerald-500/10 text-emerald-600' : 'bg-muted text-muted-foreground'"
           >
-            {{ conf?.enable ? '已启用' : '未启用' }}
+            {{ conf?.enable ? $t('common.enabled') : $t('sites.conf.https.notEnabled') }}
           </span>
           <span v-if="conf?.enable" class="font-mono text-xs text-muted-foreground">{{ conf.certDomain }}</span>
         </div>
         <FaButton v-if="conf?.enable" variant="outline" size="sm" :loading="saving" class="text-red-500!" @click="disable">
-          停用 HTTPS
+          {{ $t('sites.conf.https.disableBtn') }}
         </FaButton>
       </div>
       <p class="mt-1 text-xs text-muted-foreground">
-        HTTPS 端口 443；证书在「证书」页统一管理（申请 / 上传 / 续签）
+        {{ $t('sites.conf.https.statusHint') }}
       </p>
     </div>
 
     <div class="rounded-lg border p-4">
-      <div class="mb-1 text-sm font-medium">证书来源</div>
+      <div class="mb-1 text-sm font-medium">{{ $t('sites.conf.https.certSource') }}</div>
       <p class="mb-3 text-xs text-muted-foreground">
-        从证书库选择证书（主域名或其他域名需覆盖 {{ site.domain }}；缺少合适证书时请先到「网站 → 证书」申请）
+        {{ $t('sites.conf.https.certSourceDesc', { domain: site.domain }) }}
       </p>
       <select v-model.number="selCertId" class="h-9 w-96 rounded-md border bg-background px-2 text-sm outline-none focus:border-primary">
-        <option :value="0" disabled>请选择证书</option>
+        <option :value="0" disabled>{{ $t('sites.conf.https.pickCert') }}</option>
         <option v-for="c in certs" :key="c.id" :value="c.id">
           {{ c.domain }}{{ c.altDomains?.length ? ` (+${c.altDomains.length})` : '' }} · {{ c.issuer || c.provider }}
         </option>
       </select>
       <div v-if="selCert" class="mt-2 flex items-center gap-3 text-xs text-muted-foreground">
-        <span>颁发组织：{{ selCert.issuer || '—' }}</span>
-        <span v-if="selCert.notAfter">过期时间：
+        <span>{{ $t('sites.conf.https.issuer', { org: selCert.issuer || '—' }) }}</span>
+        <span v-if="selCert.notAfter">{{ $t('sites.conf.https.expires') }}
           <span :class="notAfterText(selCert)?.cls">{{ notAfterText(selCert)?.date }}</span>
         </span>
-        <span>自动续签：{{ selCert.autoRenew ? '已开启' : '关闭' }}</span>
+        <span>{{ $t('sites.conf.https.autoRenew') }}{{ selCert.autoRenew ? $t('common.on') : $t('common.off') }}</span>
       </div>
     </div>
 
     <div class="rounded-lg border p-4">
-      <div class="mb-3 text-sm font-medium">HTTP 选项</div>
+      <div class="mb-3 text-sm font-medium">{{ $t('sites.conf.https.httpOptions') }}</div>
       <select v-model="httpMode" class="h-9 w-96 rounded-md border bg-background px-2 text-sm outline-none focus:border-primary">
         <option v-for="o in httpModeOptions" :key="o.v" :value="o.v">{{ o.label }}</option>
       </select>
       <div class="mt-4 space-y-3">
         <label class="flex cursor-pointer items-center gap-2 text-sm">
           <input v-model="http2" type="checkbox"> HTTP/2
-          <span class="text-xs text-muted-foreground">（HTTP/2 提供更快的连接复用，nginx http2 指令）</span>
+          <span class="text-xs text-muted-foreground">{{ $t('sites.conf.https.http2Hint') }}</span>
         </label>
         <label class="flex cursor-pointer items-center gap-2 text-sm">
           <input v-model="hsts" type="checkbox"> HSTS
-          <span class="text-xs text-muted-foreground">开启 HSTS 可以增加网站安全性（Strict-Transport-Security）</span>
+          <span class="text-xs text-muted-foreground">{{ $t('sites.conf.https.hstsHint') }}</span>
         </label>
         <label v-if="hsts" class="flex cursor-pointer items-center gap-2 pl-6 text-sm">
-          <input v-model="hstsSubdomain" type="checkbox"> HSTS 子域
-          <span class="text-xs text-muted-foreground">启用后，HSTS 策略将应用于当前域名的所有子域名（includeSubDomains）</span>
+          <input v-model="hstsSubdomain" type="checkbox"> {{ $t('sites.conf.https.hstsSub') }}
+          <span class="text-xs text-muted-foreground">{{ $t('sites.conf.https.hstsSubHint') }}</span>
         </label>
       </div>
     </div>
 
     <div class="rounded-lg border p-4">
-      <div class="mb-1 text-sm font-medium">SSL 协议设置</div>
-      <div class="mb-1 text-xs text-muted-foreground">支持的协议版本</div>
+      <div class="mb-1 text-sm font-medium">{{ $t('sites.conf.https.sslProtocols') }}</div>
+      <div class="mb-1 text-xs text-muted-foreground">{{ $t('sites.conf.https.supportedVersions') }}</div>
       <div class="mb-3 flex flex-wrap gap-4">
         <label v-for="o in tlsOptions" :key="o.v" class="flex cursor-pointer items-center gap-1.5 text-sm">
           <input type="checkbox" :checked="tlsVersions.includes(o.v)" @change="toggleTLS(o.v)"> {{ o.label }}
         </label>
       </div>
-      <div class="mb-1 text-xs text-muted-foreground">加密算法（留空使用现代默认套件）</div>
+      <div class="mb-1 text-xs text-muted-foreground">{{ $t('sites.conf.https.ciphers') }}</div>
       <textarea
         v-model="ciphers"
         class="h-20 w-full rounded-md border border-input bg-background p-2 font-mono text-xs outline-none focus:ring-1 focus:ring-primary"
-        placeholder="ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384:…（ssl_ciphers 指令）"
+        :placeholder="$t('sites.conf.https.ciphersPlaceholder')"
       />
     </div>
 
     <div class="flex justify-end">
-      <FaButton :loading="saving" @click="save">保存并重载</FaButton>
+      <FaButton :loading="saving" @click="save">{{ $t('sites.shared.saveReload') }}</FaButton>
     </div>
   </div>
 </template>

@@ -23,8 +23,12 @@ let __VLS_0;
 /** @ts-ignore @type { | typeof __VLS_components.DialogPortal | typeof __VLS_components.DialogPortal} */
 DialogPortal;
 // @ts-ignore
-const __VLS_1 = __VLS_asFunctionalComponent1(__VLS_0, new __VLS_0({}));
-const __VLS_2 = __VLS_1({}, ...__VLS_functionalComponentArgsRest(__VLS_1));
+const __VLS_1 = __VLS_asFunctionalComponent1(__VLS_0, new __VLS_0({
+    to: (__VLS_ctx.portalTo),
+}));
+const __VLS_2 = __VLS_1({
+    to: (__VLS_ctx.portalTo),
+}, ...__VLS_functionalComponentArgsRest(__VLS_1));
 var __VLS_5;
 const { default: __VLS_6 } = __VLS_3.slots;
 let __VLS_7;
@@ -111,7 +115,7 @@ __VLS_asFunctionalElement1(__VLS_intrinsics.span, __VLS_intrinsics.span)({
 });
 /** @type {__VLS_StyleScopedClasses['sr-only']} */ ;
 // @ts-ignore
-[cn, $attrs, forwarded,];
+[portalTo, cn, $attrs, forwarded,];
 var __VLS_26;
 // @ts-ignore
 [];

@@ -9,7 +9,7 @@ const routes: RouteRecordRaw = {
   component: Layout,
   name: 'icons',
   meta: {
-    title: '图标库',
+    title: 'menu.icons',
     icon: 'yd:shapes',
   },
   children: [
@@ -18,7 +18,7 @@ const routes: RouteRecordRaw = {
       name: 'iconsIndex',
       component: () => import('@/views/icons/index.vue'),
       meta: {
-        title: '图标库',
+        title: 'menu.icons',
       },
     },
   ],

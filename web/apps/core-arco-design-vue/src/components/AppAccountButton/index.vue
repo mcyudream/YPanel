@@ -46,16 +46,16 @@ const profileModal = useFaModal().create({
         ...(appSettingsStore.settings.app.home.enable
           ? [{ label: generateTitle(appSettingsStore.settings.app.home.title), icon: 'i-mdi:home', handle: () => router.push({ path: appSettingsStore.settings.app.home.fullPath }) }]
           : []),
-        { label: '个人设置', icon: 'i-mdi:account', handle: () => profileModal.open() },
+        { label: $t('layout.account.profile'), icon: 'i-mdi:account', handle: () => profileModal.open() },
       ],
       [
         ...(appSettingsStore.mode === 'pc'
-          ? [{ label: '快捷键', icon: 'i-mdi:keyboard', handle: () => eventBus.emit('global-hotkeys-intro-toggle') }]
+          ? [{ label: $t('layout.account.hotkeys'), icon: 'i-mdi:keyboard', handle: () => eventBus.emit('global-hotkeys-intro-toggle') }]
           : []),
       ],
       [
         {
-          label: '退出登录',
+          label: $t('layout.account.logout'),
           icon: 'i-mdi:logout',
           handle: () => appAccountStore.logout(appSettingsStore.settings.app.home.fullPath),
         },

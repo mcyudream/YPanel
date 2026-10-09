@@ -1,11 +1,13 @@
 <script setup lang="ts">
 import apiFile from '@/api/modules/file'
 import apiCFile from '@/api/modules/cfile'
+import YdChmodDialog from '@/components/YdChmodDialog/index.vue'
 import type { FileEntry } from '@/api/modules/file'
 import type { FileTreeApi, FileTreeMenuItem, FileTreeNode } from './types'
 import { fmtBytes } from '@/utils/format'
 import { Pane } from 'splitpanes'
 import FileTreeRow from './FileTreeRow.vue'
+import { i18n } from '@/locales'
 
 // 文件树侧栏：懒加载目录树 + 右键操作 + 子树过滤 + 全局搜索。
 // currentContainer 非空时切换为容器内文件系统（docker tar 归档 API；压缩/解压/搜索不可用）。
@@ -13,7 +15,7 @@ const appAccountStore = useAppAccountStore()
 const store = useFileEditorStore()
 
 const isContainer = computed(() => !!store.currentContainer)
-const containerLabel = computed(() => `容器 · ${store.currentContainer.slice(0, 12)}`)
+const containerLabel = computed(() => i18n.global.t('files.tree.container', { id: store.currentContainer.slice(0, 12) }))
 
 const roots = ref<FileTreeNode[]>([])
 const rootLoading = ref(false)
@@ -23,7 +25,7 @@ const searchKeyword = ref('')
 const searchResults = ref<FileEntry[]>([])
 
 const nodeOptions = computed(() => store.nodes.map(n => ({
-  label: n.hostname ? `${n.hostname}${n.online ? '' : '（离线）'}` : n.id,
+  label: n.hostname ? (n.online ? n.hostname : `${n.hostname}${i18n.global.t('files.common.offline')}`) : n.id,
   value: n.id,
   disabled: !n.online,
 })))
@@ -56,7 +58,7 @@ async function loadChildren(node: FileTreeNode) {
   }
   catch (e: unknown) {
     node.children = []
-    useFaToast().error('目录读取失败', { description: msg(e) })
+    useFaToast().error(i18n.global.t('files.common.readFailed'), { description: msg(e) })
   }
   finally {
     node.loading = false
@@ -66,19 +68,20 @@ async function loadChildren(node: FileTreeNode) {
 async function loadRoots() {
   rootLoading.value = true
   try {
-    const res = await listDir('/')
+    // 初始目录：编排/配置等入口打开时定位到所编辑文件的工作目录（store.initialDir），避免全盘浏览
+    const res = await listDir(store.initialDir || '/')
     roots.value = sortEntries(res.entries).map(toNode)
   }
   catch (e: unknown) {
     roots.value = []
-    useFaToast().error('目录读取失败', { description: msg(e) })
+    useFaToast().error(i18n.global.t('files.common.readFailed'), { description: msg(e) })
   }
   finally {
     rootLoading.value = false
   }
 }
 
-watch(() => [store.currentNode, store.currentContainer], loadRoots, { immediate: true })
+watch(() => [store.currentNode, store.currentContainer, store.initialDir], loadRoots, { immediate: true })
 
 const treeApi: FileTreeApi = {
   toggle(node) {
@@ -100,25 +103,25 @@ function menuItems(node: FileTreeNode): FileTreeMenuItem[][] {
   const items: FileTreeMenuItem[] = [
     ...(entry.isDir
       ? [
-          { label: '新建文件', icon: 'i-lucide:file-plus', handle: () => promptNewFile(entry.path) },
-          { label: '新建目录', icon: 'i-lucide:folder-plus', handle: () => promptMkdir(entry.path) },
+          { label: i18n.global.t('files.tree.newFile'), icon: 'i-lucide:file-plus', handle: () => promptNewFile(entry.path) },
+          { label: i18n.global.t('files.common.newDir'), icon: 'i-lucide:folder-plus', handle: () => promptMkdir(entry.path) },
         ]
       : [
-          { label: '打开', icon: 'i-lucide:external-link', handle: () => treeApi.openFile(node) },
-          { label: '下载', icon: 'i-lucide:download', handle: () => download(entry) },
+          { label: i18n.global.t('files.tree.open'), icon: 'i-lucide:external-link', handle: () => treeApi.openFile(node) },
+          { label: i18n.global.t('common.download'), icon: 'i-lucide:download', handle: () => download(entry) },
         ]),
-    { label: '重命名', icon: 'i-lucide:text-cursor-input', handle: () => promptRename(entry) },
-    { label: '权限', icon: 'i-lucide:lock', handle: () => promptChmod(entry) },
+    { label: i18n.global.t('files.common.rename'), icon: 'i-lucide:text-cursor-input', handle: () => promptRename(entry) },
+    { label: i18n.global.t('files.common.permissions'), icon: 'i-lucide:lock', handle: () => openChmodDialog(entry) },
     // 容器模式无压缩/解压能力，隐藏
     ...(!isContainer.value
       ? [
-          { label: '压缩为 tar.gz', icon: 'i-lucide:package', handle: () => promptCompress(entry) },
+          { label: i18n.global.t('files.tree.compressTar'), icon: 'i-lucide:package', handle: () => promptCompress(entry) },
           ...(/\.(tar\.gz|tgz|tar|zip)$/i.test(entry.name)
-            ? [{ label: '解压到此处', icon: 'i-lucide:package-open', handle: () => decompressHere(entry) }]
+            ? [{ label: i18n.global.t('files.tree.extractHere'), icon: 'i-lucide:package-open', handle: () => decompressHere(entry) }]
             : []),
         ]
       : []),
-    { label: '删除', icon: 'i-lucide:trash', variant: 'destructive' as const, handle: () => confirmDelete(entry) },
+    { label: i18n.global.t('common.delete'), icon: 'i-lucide:trash', variant: 'destructive' as const, handle: () => confirmDelete(entry) },
   ]
   return [items]
 }
@@ -129,11 +132,11 @@ const prompt = reactive({
   title: '',
   label: '',
   value: '',
-  okText: '确定',
+  okText: i18n.global.t('files.common.ok'),
   onOk: null as null | (() => Promise<void> | void),
 })
 
-function openPrompt(title: string, label: string, value: string, onOk: () => Promise<void> | void, okText = '确定') {
+function openPrompt(title: string, label: string, value: string, onOk: () => Promise<void> | void, okText = i18n.global.t('files.common.ok')) {
   prompt.title = title
   prompt.label = label
   prompt.value = value
@@ -188,7 +191,7 @@ async function refreshDir(dir: string) {
 
 // ---- 各操作 ----
 function promptNewFile(dir: string) {
-  openPrompt('新建文件', `位置：${dir}`, '', async () => {
+  openPrompt(i18n.global.t('files.tree.newFile'), i18n.global.t('files.tree.location', { path: dir }), '', async () => {
     const path = join(dir, prompt.value.trim())
     try {
       if (isContainer.value) {
@@ -201,13 +204,13 @@ function promptNewFile(dir: string) {
       store.open(path, store.currentNode)
     }
     catch (e: unknown) {
-      useFaToast().error('创建失败', { description: msg(e) })
+      useFaToast().error(i18n.global.t('files.tree.createFailed'), { description: msg(e) })
     }
-  }, '创建')
+  }, i18n.global.t('files.common.create'))
 }
 
 function promptMkdir(dir: string) {
-  openPrompt('新建目录', `位置：${dir}`, '', async () => {
+  openPrompt(i18n.global.t('files.common.newDir'), i18n.global.t('files.tree.location', { path: dir }), '', async () => {
     try {
       const path = join(dir, prompt.value.trim())
       if (isContainer.value) {
@@ -219,13 +222,13 @@ function promptMkdir(dir: string) {
       await refreshDir(dir)
     }
     catch (e: unknown) {
-      useFaToast().error('创建失败', { description: msg(e) })
+      useFaToast().error(i18n.global.t('files.tree.createFailed'), { description: msg(e) })
     }
-  }, '创建')
+  }, i18n.global.t('files.common.create'))
 }
 
 function promptRename(entry: FileEntry) {
-  openPrompt('重命名', entry.path, entry.name, async () => {
+  openPrompt(i18n.global.t('files.common.rename'), entry.path, entry.name, async () => {
     const to = join(parentOf(entry.path), prompt.value.trim())
     try {
       if (isContainer.value) {
@@ -247,64 +250,60 @@ function promptRename(entry: FileEntry) {
           store.open(to, store.currentNode)
         }
         else {
-          useFaToast().info('文件已重命名，当前标签内容未保存，保存前请注意路径变化')
+          useFaToast().info(i18n.global.t('files.tree.renamedDirtyHint'))
         }
       }
     }
     catch (e: unknown) {
-      useFaToast().error('重命名失败', { description: msg(e) })
+      useFaToast().error(i18n.global.t('files.tree.renameFailed'), { description: msg(e) })
     }
-  }, '重命名')
+  }, i18n.global.t('files.common.rename'))
 }
 
-function promptChmod(entry: FileEntry) {
-  openPrompt('修改权限', `${entry.path}（3 位八进制，如 755；仅该项自身）`, entry.modeOct.slice(-3) || '644', async () => {
-    if (!/^[0-7]{3}$/.test(prompt.value.trim())) {
-      useFaToast().error('权限格式错误（3 位八进制，如 755）')
-      return
-    }
-    try {
-      if (isContainer.value) {
-        await apiCFile.chmod(store.currentContainer, entry.path, prompt.value.trim())
-      }
-      else {
-        await apiFile.chmod(entry.path, prompt.value.trim(), store.currentNode)
-      }
-      await refreshDir(parentOf(entry.path))
-    }
-    catch (e: unknown) {
-      useFaToast().error('修改失败', { description: msg(e) })
-    }
-  })
+// ---- 权限编辑（YdChmodDialog：矩阵 + 属主 + 递归） ----
+const chmodVisible = ref(false)
+const chmodPaths = ref<string[]>([])
+const chmodEntries = ref<FileEntry[]>([])
+const chmodParent = ref('/')
+
+function openChmodDialog(entry: FileEntry) {
+  chmodPaths.value = [entry.path]
+  chmodEntries.value = [entry]
+  chmodParent.value = parentOf(entry.path)
+  chmodVisible.value = true
+}
+
+async function onChmodDone() {
+  await refreshDir(chmodParent.value)
 }
 
 function promptCompress(entry: FileEntry) {
-  openPrompt('压缩为 tar.gz', entry.path, `${entry.path}.tar.gz`, async () => {
+  openPrompt(i18n.global.t('files.tree.compressTar'), entry.path, `${entry.path}.tar.gz`, async () => {
     try {
-      await apiFile.compress(entry.path, prompt.value.trim(), store.currentNode)
-      useFaToast().success('压缩完成')
+      await apiFile.compress([entry.path], prompt.value.trim(), store.currentNode)
+      useFaToast().success(i18n.global.t('files.common.compressDone'))
       await refreshDir(parentOf(prompt.value.trim()))
     }
     catch (e: unknown) {
-      useFaToast().error('压缩失败', { description: msg(e) })
+      useFaToast().error(i18n.global.t('files.common.compressFailed'), { description: msg(e) })
     }
-  }, '开始压缩')
+  }, i18n.global.t('files.dialogs.startCompress'))
 }
 
 function decompressHere(entry: FileEntry) {
   const dest = parentOf(entry.path)
   apiFile.decompress(entry.path, dest, store.currentNode)
     .then(() => {
-      useFaToast().success('解压完成')
+      useFaToast().success(i18n.global.t('files.common.decompressDone'))
       return refreshDir(dest)
     })
-    .catch((e: unknown) => useFaToast().error('解压失败', { description: msg(e) }))
+    .catch((e: unknown) => useFaToast().error(i18n.global.t('files.common.decompressFailed'), { description: msg(e) }))
 }
 
 function confirmDelete(entry: FileEntry) {
   useFaModal().confirm({
-    title: '删除确认',
-    content: `确认删除 ${entry.path}？${entry.isDir ? '目录将递归删除，' : ''}不可恢复。`,
+    title: i18n.global.t('files.common.deleteConfirmTitle'),
+    content: i18n.global.t(entry.isDir ? 'files.tree.deleteContentDir' : 'files.tree.deleteContentFile', { path: entry.path }),
     onConfirm: async () => {
       try {
         if (isContainer.value) {
@@ -323,7 +322,7 @@ function confirmDelete(entry: FileEntry) {
         }
       }
       catch (e: unknown) {
-        useFaToast().error('删除失败', { description: msg(e) })
+        useFaToast().error(i18n.global.t('files.tree.deleteFailed'), { description: msg(e) })
       }
     },
   })
@@ -344,7 +343,7 @@ async function doSearch() {
     searchResults.value = await apiFile.search('/', kw, store.currentNode)
   }
   catch (e: unknown) {
-    useFaToast().error('搜索失败', { description: msg(e) })
+    useFaToast().error(i18n.global.t('files.common.searchFailed'), { description: msg(e) })
   }
   finally {
     searching.value = false
@@ -382,7 +381,7 @@ function msg(e: unknown) {
         :disabled="!nodeOptions.length"
       />
       <div class="ml-auto flex shrink-0 items-center gap-0.5">
-        <FaButton variant="ghost" size="icon-sm" class="size-5!" title="刷新" @click="loadRoots">
+        <FaButton variant="ghost" size="icon-sm" class="size-5!" :title="$t('common.refresh')" @click="loadRoots">
           <FaIcon name="i-lucide:refresh-cw" class="text-xs" />
         </FaButton>
       </div>
@@ -390,15 +389,15 @@ function msg(e: unknown) {
 
     <!-- 过滤 -->
     <div class="shrink-0 space-y-1 p-2">
-      <FaInput v-model="filter" placeholder="过滤已加载文件…" class="h-7! text-xs" />
+      <FaInput v-model="filter" :placeholder="$t('files.tree.filterPlaceholder')" class="h-7! text-xs" />
       <div v-if="!isContainer" class="flex gap-1">
         <FaInput
           v-model="searchKeyword"
-          placeholder="全盘搜索文件名，回车执行"
+          :placeholder="$t('files.tree.searchPlaceholder')"
           class="h-7! flex-1 text-xs"
           @keyup.enter="doSearch"
         />
-        <FaButton variant="outline" size="icon-sm" class="size-7!" :loading="searching" title="搜索" @click="doSearch">
+        <FaButton variant="outline" size="icon-sm" class="size-7!" :loading="searching" :title="$t('common.search')" @click="doSearch">
           <FaIcon name="i-lucide:search" class="text-xs" />
         </FaButton>
       </div>
@@ -407,7 +406,7 @@ function msg(e: unknown) {
     <!-- 树 -->
     <div class="min-h-0 flex-1 overflow-auto px-1 pb-2">
       <div v-if="rootLoading" class="px-2 py-4 text-center text-xs text-muted-foreground">
-        加载中…
+        {{ $t('common.loading') }}
       </div>
       <template v-else>
         <FileTreeRow
@@ -418,7 +417,7 @@ function msg(e: unknown) {
           :filter="filter"
         />
         <div v-if="!roots.length" class="px-2 py-4 text-center text-xs text-muted-foreground">
-          目录为空
+          {{ $t('files.common.emptyDir') }}
         </div>
       </template>
     </div>
@@ -426,9 +425,9 @@ function msg(e: unknown) {
     <!-- 搜索结果 -->
     <div v-if="searchResults.length" class="max-h-48 shrink-0 overflow-auto border-t bg-muted/20">
       <div class="flex items-center justify-between px-2 py-1 text-xs text-muted-foreground">
-        <span>搜索结果（{{ searchResults.length }}）</span>
+        <span>{{ $t('files.tree.searchResults', { n: searchResults.length }) }}</span>
         <button type="button" class="cursor-pointer hover:text-foreground" @click="searchResults = []">
-          清除
+          {{ $t('files.tree.clearResults') }}
         </button>
       </div>
       <button
@@ -454,12 +453,22 @@ function msg(e: unknown) {
       </div>
       <template #footer>
         <FaButton variant="outline" @click="prompt.visible = false">
-          取消
+          {{ $t('common.cancel') }}
         </FaButton>
         <FaButton @click="submitPrompt">
           {{ prompt.okText }}
         </FaButton>
       </template>
     </FaModal>
+
+    <!-- 权限编辑弹窗（宿主/容器双模式） -->
+    <YdChmodDialog
+      v-model:visible="chmodVisible"
+      :paths="chmodPaths"
+      :entries="chmodEntries"
+      :node="store.currentNode"
+      :container-id="store.currentContainer"
+      @done="onChmodDone"
+    />
   </Pane>
 </template>

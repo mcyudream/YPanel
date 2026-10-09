@@ -30,7 +30,7 @@ let __VLS_components;
 let __VLS_intrinsics;
 let __VLS_directives;
 __VLS_asFunctionalElement1(__VLS_intrinsics.div, __VLS_intrinsics.div)({
-    ...{ class: (__VLS_ctx.cn('m-4 flex flex-col overflow-hidden rounded-lg border bg-card transition-[background-color,border-color]', {
+    ...{ class: (__VLS_ctx.cn('yp-page-main m-4 flex flex-col overflow-hidden rounded-lg border bg-card transition-[background-color,border-color]', {
             'overflow-hidden': __VLS_ctx.collaspe,
         }, props.class)) },
 });

@@ -1,5 +1,5 @@
 import { VisuallyHidden } from 'reka-ui';
-import { computed, nextTick, ref, shallowRef, useId, useTemplateRef, watch } from 'vue';
+import { computed, inject, nextTick, ref, shallowRef, useId, useTemplateRef, watch } from 'vue';
 import { cn } from '#utils';
 import Button from '../button/index.vue';
 import Icon from '../icon/index.vue';
@@ -35,6 +35,11 @@ const props = withDefaults(defineProps(), {
     openAutoFocus: false,
 });
 const emits = defineEmits();
+/** 弹窗挂载容器注入键（宿主可 provide 聚焦窗口的 body 实现窗口内模态） */
+const injectedContainer = inject('fa:modal-container', undefined);
+const portalTarget = computed(() => typeof injectedContainer?.value === 'object' || typeof injectedContainer?.value === 'string'
+    ? injectedContainer.value
+    : undefined);
 const slots = defineSlots();
 const dialogContentRef = useTemplateRef({});
 const dialogHeaderRef = ref();
@@ -235,6 +240,7 @@ const __VLS_10 = __VLS_asFunctionalComponent1(__VLS_9, new __VLS_9({
     ...{ 'onAnimationEnd': {} },
     ref: "dialogContentRef",
     modalId: (__VLS_ctx.modalId),
+    portalTo: (__VLS_ctx.portalTarget),
     open: (__VLS_ctx.isOpen),
     zIndex: (props.zIndex),
     closable: (props.closable),
@@ -261,6 +267,7 @@ const __VLS_11 = __VLS_10({
     ...{ 'onAnimationEnd': {} },
     ref: "dialogContentRef",
     modalId: (__VLS_ctx.modalId),
+    portalTo: (__VLS_ctx.portalTarget),
     open: (__VLS_ctx.isOpen),
     zIndex: (props.zIndex),
     closable: (props.closable),
@@ -353,7 +360,7 @@ if (__VLS_ctx.header) {
         const __VLS_46 = __VLS_asFunctionalComponent1(__VLS_45, new __VLS_45({}));
         const __VLS_47 = __VLS_46({}, ...__VLS_functionalComponentArgsRest(__VLS_46));
         // @ts-ignore
-        [isOpen, isOpen, updateOpen, modalId, isMaximize, isMaximize, forceMount, cn, cn, isDragging, isClosed, handleOpenAutoFocus, handleFocusOutside, handleFocusOutside, handleClickOutside, handleClickOutside, handleEscapeKeyDown, handleMaximize, handleAnimationEnd, header,];
+        [isOpen, isOpen, updateOpen, modalId, portalTarget, isMaximize, isMaximize, forceMount, cn, cn, isDragging, isClosed, handleOpenAutoFocus, handleFocusOutside, handleFocusOutside, handleClickOutside, handleClickOutside, handleEscapeKeyDown, handleMaximize, handleAnimationEnd, header,];
         var __VLS_37;
     }
     __VLS_asFunctionalSlot(slots.header)({});

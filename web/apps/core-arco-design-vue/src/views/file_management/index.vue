@@ -1,40 +1,63 @@
 <script setup lang="ts">
 import type { FileEntry } from '@/api/modules/file'
-import apiFile from '@/api/modules/file'
+import apiFile, { fileExtApi } from '@/api/modules/file'
+import type { TrashItem, FileFavorite, FileShareRow } from '@/api/modules/file'
 import apiNode from '@/api/modules/node'
 import { fmtBytes } from '@/utils/format'
 import { useFaModal } from '@fantastic-admin/components'
+import YdChmodDialog from '@/components/YdChmodDialog/index.vue'
+import YdDirPicker from '@/components/YdDirPicker/index.vue'
 import FileEditorWorkspace from './editor/Workspace.vue'
+import { useYwEmbed } from '@/views/desktop/embed'
+import { i18n } from '@/locales'
 
 defineOptions({
   name: 'FileManagementIndex',
 })
+
+// 桌面工作台承载时经 props 传入初始目录/节点（launchOptions），经典模式走路由参数
+const props = defineProps<{
+  /** 初始目录（webos 窗口承载时由 launchOptions 注入） */
+  initialDir?: string
+  /** 初始节点（webos 窗口承载时由 launchOptions 注入） */
+  initialNode?: string
+}>()
 
 const appAccountStore = useAppAccountStore()
 const fileEditorStore = useFileEditorStore()
 
 const route = useRoute()
 const router = useRouter()
+/** 跨窗口拖拽的实例标识：drop 回自己时忽略；移动完成通知源窗口刷新 */
+const instanceId = `fm-${Math.random().toString(36).slice(2, 8)}`
+const embed = useYwEmbed()
 
-const cwd = ref('/')
+const cwd = ref(props.initialDir ?? '/')
 const entries = ref<FileEntry[]>([])
 const loading = ref(false)
 const selected = ref<Set<string>>(new Set())
 const errorMsg = ref('')
 
 // ---- 节点选择（?node= 进入指定节点，默认本机） ----
-const nodeId = ref<string>((route.query.node as string) || 'local')
+const nodeId = ref<string>(props.initialNode ?? ((route.query.node as string) || 'local'))
 const nodes = ref<{ id: string, name: string, online: boolean }[]>([])
 
 async function loadNodes() {
   try {
     const list = await apiNode.list()
-    nodes.value = list.map(n => ({ id: n.id, name: n.online ? n.name : `${n.name}（离线）`, online: n.online }))
+    nodes.value = list.map(n => ({ id: n.id, name: n.online ? n.name : `${n.name}${i18n.global.t('files.common.offline')}`, online: n.online }))
   }
   catch {}
 }
 
-const currentNodeName = computed(() => nodes.value.find(n => n.id === nodeId.value)?.name || '本机')
+const currentNodeName = computed(() => nodes.value.find(n => n.id === nodeId.value)?.name || i18n.global.t('files.common.local'))
+
+/** 节点下拉（FaDropdown：原生 select 展开层不可主题化，深色窗口里突兀） */
+const nodeMenuItems = computed(() => [nodes.value.map(n => ({
+  label: n.id === 'local' ? i18n.global.t('files.common.localNode', { name: n.name }) : n.name,
+  disabled: !n.online,
+  handle: () => pickNode(n.id),
+}))])
 
 function pickNode(id: string) {
   nodeId.value = id
@@ -71,7 +94,7 @@ async function load(path = cwd.value) {
     selected.value = new Set()
   }
   catch (e: any) {
-    errorMsg.value = e?.message || '目录读取失败'
+    errorMsg.value = e?.message || i18n.global.t('files.common.readFailed')
   }
   finally {
     loading.value = false
@@ -117,7 +140,7 @@ async function doMkdir() {
   await apiFile.mkdir(target, nodeId.value)
   mkdirVisible.value = false
   mkdirName.value = ''
-  useFaToast().success('目录已创建')
+  useFaToast().success(i18n.global.t('files.list.dirCreated'))
   load()
 }
 
@@ -137,7 +160,7 @@ async function doRename() {
   }
   await apiFile.rename(renameTarget.value.path, joinPath(cwd.value, renameName.value.trim()), nodeId.value)
   renameVisible.value = false
-  useFaToast().success('已重命名')
+  useFaToast().success(i18n.global.t('files.list.renamed'))
   load()
 }
 
@@ -148,14 +171,199 @@ async function doDelete() {
   const paths = [...selected.value]
   const modal = useFaModal()
   modal.confirm({
-    title: '删除确认',
-    content: `确认删除选中的 ${paths.length} 项？目录将递归删除，不可恢复。`,
+    title: i18n.global.t('files.common.deleteConfirmTitle'),
+    content: i18n.global.t('files.list.deleteSelectedContent', { n: paths.length }),
     onConfirm: async () => {
-      await apiFile.delete(paths, nodeId.value)
-      useFaToast().success('已删除')
+      if (nodeId.value === 'local') {
+        await fileExtApi.trash(paths)
+      }
+      else {
+        await apiFile.delete(paths, nodeId.value) // 远程节点暂无回收站通道
+      }
+      useFaToast().success(i18n.global.t('files.list.movedToTrash'))
       load()
     },
   })
+}
+
+// ---- M38：回收站 / 收藏 / 分享 / 远程下载 / 预览 ----
+const trashVisible = ref(false)
+const trashItems = ref<TrashItem[]>([])
+const trashLoading = ref(false)
+
+async function openTrash() {
+  trashVisible.value = true
+  await loadTrash()
+}
+
+async function loadTrash() {
+  trashLoading.value = true
+  try {
+    trashItems.value = await fileExtApi.trashList()
+  }
+  finally {
+    trashLoading.value = false
+  }
+}
+
+async function trashRestore(n: string) {
+  await fileExtApi.trashRestore([n])
+  useFaToast().success(i18n.global.t('files.list.restored'))
+  await loadTrash()
+}
+
+function trashPurge(n: string) {
+  useFaModal().confirm({
+    title: i18n.global.t('files.dialogs.purgeTitle'),
+    content: i18n.global.t('files.dialogs.purgeContent', { name: n }),
+    onConfirm: async () => {
+      await fileExtApi.trashPurge([n])
+      await loadTrash()
+    },
+  })
+}
+
+function trashClear() {
+  useFaModal().confirm({
+    title: i18n.global.t('files.dialogs.clearTitle'),
+    content: i18n.global.t('files.dialogs.clearContent'),
+    onConfirm: async () => {
+      const out = await fileExtApi.trashClear()
+      useFaToast().success(i18n.global.t('files.dialogs.cleared', { n: out.count }))
+      await loadTrash()
+    },
+  })
+}
+
+const favorites = ref<FileFavorite[]>([])
+
+async function loadFavorites() {
+  try {
+    favorites.value = await fileExtApi.favorites()
+  }
+  catch {}
+}
+
+function favOf(p: string) {
+  return favorites.value.find(f => f.path === p)
+}
+
+async function toggleFav(e: FileEntry) {
+  const f = favOf(e.path)
+  if (f) {
+    await fileExtApi.removeFavorite(f.id)
+    useFaToast().success(i18n.global.t('files.list.unfavDone'))
+  }
+  else {
+    await fileExtApi.addFavorite(e.path)
+    useFaToast().success(i18n.global.t('files.list.favDone'))
+  }
+  await loadFavorites()
+}
+
+async function removeFav(f: FileFavorite) {
+  await fileExtApi.removeFavorite(f.id)
+  await loadFavorites()
+}
+
+const shareVisible = ref(false)
+const shares = ref<FileShareRow[]>([])
+const shareForm = ref({ path: '', days: 7 })
+const lastShareLink = ref('')
+
+async function openShares() {
+  shareVisible.value = true
+  await loadShares()
+}
+
+async function loadShares() {
+  shares.value = await fileExtApi.shares()
+}
+
+function quickShare(e: FileEntry) {
+  shareForm.value = { path: e.path, days: 7 }
+  lastShareLink.value = ''
+  openShares()
+}
+
+async function createShare() {
+  if (!shareForm.value.path) {
+    useFaToast().warning(i18n.global.t('files.list.shareNeedPath'))
+    return
+  }
+  try {
+    const out = await fileExtApi.createShare(shareForm.value.path, shareForm.value.days)
+    lastShareLink.value = `${location.origin}/api/v1/s/${out.token}`
+    await loadShares()
+  }
+  catch (e: any) {
+    useFaToast().error(i18n.global.t('files.list.shareCreateFailed'), { description: e?.message })
+  }
+}
+
+async function revokeShare(id: number) {
+  await fileExtApi.revokeShare(id)
+  useFaToast().success(i18n.global.t('files.list.shareRevoked'))
+  await loadShares()
+}
+
+function copyShareLink(link: string) {
+  void navigator.clipboard.writeText(link)
+  useFaToast().success(i18n.global.t('files.list.linkCopied'))
+}
+
+const remoteVisible = ref(false)
+const remoteForm = ref({ url: '', destDir: '' })
+const remoteBusy = ref(false)
+
+function openRemote() {
+  remoteForm.value = { url: '', destDir: cwd.value }
+  remoteVisible.value = true
+}
+
+async function doRemoteDownload() {
+  if (!remoteForm.value.url || !remoteForm.value.destDir) {
+    useFaToast().warning(i18n.global.t('files.list.remoteNeedUrl'))
+    return
+  }
+  remoteBusy.value = true
+  useFaToast().info(i18n.global.t('files.list.downloading'))
+  try {
+    const out = await fileExtApi.remoteDownload(remoteForm.value.url, remoteForm.value.destDir)
+    useFaToast().success(i18n.global.t('files.list.downloadDone', { path: `${out.dir}/${out.file}` }))
+    remoteVisible.value = false
+    load()
+  }
+  catch (e: any) {
+    useFaToast().error(i18n.global.t('files.list.downloadFailed'), { description: e?.message })
+  }
+  finally {
+    remoteBusy.value = false
+  }
+}
+
+const moreMenuItems = computed(() => [[
+  { label: i18n.global.t('files.trash'), icon: 'i-lucide:trash-2', handle: () => openTrash() },
+  { label: i18n.global.t('files.remoteDownload'), icon: 'i-lucide:cloud-download', handle: () => openRemote() },
+  { label: i18n.global.t('files.share'), icon: 'i-lucide:share-2', handle: () => { shareForm.value = { path: cwd.value, days: 7 }; lastShareLink.value = ''; openShares() } },
+]])
+
+// 预览
+const previewVisible = ref(false)
+const previewEntry = ref<FileEntry | null>(null)
+
+function previewKind(name: string): '' | 'image' | 'video' | 'audio' | 'pdf' {
+  const ext = name.split('.').pop()?.toLowerCase() || ''
+  if (['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg', 'bmp', 'ico'].includes(ext)) return 'image'
+  if (['mp4', 'webm', 'mkv', 'mov'].includes(ext)) return 'video'
+  if (['mp3', 'wav', 'ogg', 'flac', 'm4a'].includes(ext)) return 'audio'
+  if (ext === 'pdf') return 'pdf'
+  return ''
+}
+
+function openPreview(e: FileEntry) {
+  previewEntry.value = e
+  previewVisible.value = true
 }
 
 // ---- 编辑器（VS Code 式工作台弹窗） ----
@@ -186,11 +394,11 @@ async function onUploadChange(ev: Event) {
         uploadPercent.value = p
       }, nodeId.value)
     }
-    useFaToast().success('上传完成')
+    useFaToast().success(i18n.global.t('files.list.uploadDone'))
     load()
   }
   catch (e: any) {
-    useFaToast().error('上传失败', { description: e?.message })
+    useFaToast().error(i18n.global.t('files.list.uploadFailed'), { description: e?.message })
   }
   finally {
     uploading.value = false
@@ -207,59 +415,136 @@ function openDownload(entry: FileEntry) {
   window.open(downloadURL(entry))
 }
 
-// ---- 权限 ----
-const chmodVisible = ref(false)
-const chmodTarget = ref<FileEntry | null>(null)
-const chmodMode = ref('')
+// ---- 批量操作（移动/复制/压缩/权限/删除） ----
+const selectedEntries = computed(() => entries.value.filter(e => selected.value.has(e.path)))
 
-function openChmod(entry: FileEntry) {
-  chmodTarget.value = entry
-  // modeOct 形如 0755，取后三位
-  chmodMode.value = entry.modeOct.slice(-3) || '644'
-  chmodVisible.value = true
+const batchMenuItems = computed(() => [[
+  { label: i18n.global.t('files.list.moveTo'), icon: 'i-lucide:folder-input', handle: () => openBatchTransfer('move') },
+  { label: i18n.global.t('files.list.copyTo'), icon: 'i-lucide:folder-output', handle: () => openBatchTransfer('copy') },
+  { label: i18n.global.t('files.list.compressMenu'), icon: 'i-lucide:package', handle: () => openCompress([...selected.value]) },
+  { label: i18n.global.t('files.list.permMenu'), icon: 'i-lucide:lock', handle: () => openChmod([...selected.value], selectedEntries.value) },
+  { label: i18n.global.t('common.delete'), icon: 'i-lucide:trash', variant: 'destructive' as const, handle: () => doDelete() },
+]])
+
+// ---- 权限编辑（单项/批量共用 YdChmodDialog） ----
+const chmodDialogVisible = ref(false)
+const chmodPaths = ref<string[]>([])
+const chmodEntries = ref<FileEntry[]>([])
+
+function openChmod(paths: string[], ents: FileEntry[]) {
+  chmodPaths.value = paths
+  chmodEntries.value = ents
+  chmodDialogVisible.value = true
 }
 
-async function doChmod() {
-  if (!chmodTarget.value || !/^[0-7]{3}$/.test(chmodMode.value)) {
-    useFaToast().error('权限格式错误（3 位八进制，如 755）')
-    return
+const dirPickerVisible = ref(false)
+const batchTransfer = reactive({
+  visible: false,
+  mode: 'move' as 'move' | 'copy',
+  target: '',
+  overwrite: false,
+  running: false,
+})
+
+function openBatchTransfer(mode: 'move' | 'copy') {
+  batchTransfer.mode = mode
+  dirPickerVisible.value = true
+}
+
+function onBatchDirPicked(path: string) {
+  batchTransfer.target = path
+  batchTransfer.overwrite = false
+  batchTransfer.visible = true
+}
+
+async function runBatchTransfer() {
+  const move = batchTransfer.mode === 'move'
+  const targetDir = batchTransfer.target
+  const list = selectedEntries.value
+  // 目标不能是选中项自身或其内部（防自环）
+  for (const e of list) {
+    if (targetDir === e.path || targetDir.startsWith(`${e.path}/`)) {
+      useFaToast().error(i18n.global.t(move ? 'files.list.transferFailedMove' : 'files.list.transferFailedCopy'), { description: i18n.global.t('files.list.targetInside', { name: e.name }) })
+      return
+    }
   }
+  batchTransfer.running = true
+  let done = 0
+  let skipped = 0
   try {
-    await apiFile.chmod(chmodTarget.value.path, chmodMode.value, nodeId.value)
-    chmodVisible.value = false
-    useFaToast().success('权限已修改')
-    load()
+    // 预读目标目录同名集合（失败不阻塞，逐项再验）
+    let names = new Set<string>()
+    try {
+      names = new Set((await apiFile.list(targetDir, nodeId.value)).entries.map(x => x.name))
+    }
+    catch {}
+    for (const e of list) {
+      const to = joinPath(targetDir, e.name)
+      try {
+        if (e.path === to) {
+          skipped++
+          continue
+        }
+        if (names.has(e.name) && !batchTransfer.overwrite) {
+          skipped++
+          continue
+        }
+        if (move) {
+          await apiFile.rename(e.path, to, nodeId.value)
+        }
+        else {
+          await apiFile.copy(e.path, to, nodeId.value, batchTransfer.overwrite)
+        }
+        names.add(e.name)
+        done++
+      }
+      catch {
+        skipped++
+      }
+    }
   }
-  catch (e: any) {
-    useFaToast().error('修改失败', { description: e?.message })
+  finally {
+    batchTransfer.running = false
+    batchTransfer.visible = false
   }
+  if (done || skipped) {
+    useFaToast().success(i18n.global.t(move ? 'files.list.transferDoneMove' : 'files.list.transferDoneCopy', { n: done }) + (skipped ? i18n.global.t('files.list.skippedSuffix', { n: skipped }) : ''))
+  }
+  load()
 }
 
-// ---- 压缩 / 解压 ----
+// ---- 批量/单项压缩（多源打成一个 tar.gz） ----
 const compressVisible = ref(false)
-const compressTarget = ref<FileEntry | null>(null)
+const compressSrcs = ref<string[]>([])
 const compressDest = ref('')
 const compressing = ref(false)
 
-function openCompress(entry: FileEntry) {
-  compressTarget.value = entry
-  compressDest.value = joinPath(cwd.value, `${entry.name}.tar.gz`)
+function openCompress(srcs: string[]) {
+  compressSrcs.value = srcs
+  // 默认名：单项取条目名，多项 archive.tar.gz；与当前目录重名时递增后缀
+  const base = srcs.length === 1 ? srcs[0].split('/').filter(Boolean).pop() || 'archive' : 'archive'
+  const names = new Set(entries.value.map(e => e.name))
+  let name = `${base}.tar.gz`
+  for (let i = 2; names.has(name); i++) {
+    name = `${base}-${i}.tar.gz`
+  }
+  compressDest.value = joinPath(cwd.value, name)
   compressVisible.value = true
 }
 
 async function doCompress() {
-  if (!compressTarget.value || !compressDest.value.trim()) {
+  if (!compressSrcs.value.length || !compressDest.value.trim()) {
     return
   }
   compressing.value = true
   try {
-    await apiFile.compress(compressTarget.value.path, compressDest.value.trim(), nodeId.value)
+    await apiFile.compress(compressSrcs.value, compressDest.value.trim(), nodeId.value)
     compressVisible.value = false
-    useFaToast().success('压缩完成')
+    useFaToast().success(i18n.global.t('files.common.compressDone'))
     load()
   }
   catch (e: any) {
-    useFaToast().error('压缩失败', { description: e?.message })
+    useFaToast().error(i18n.global.t('files.common.compressFailed'), { description: e?.message })
   }
   finally {
     compressing.value = false
@@ -291,11 +576,11 @@ async function doDecompress() {
   try {
     await apiFile.decompress(decompressTarget.value.path, decompressDest.value.trim(), nodeId.value)
     decompressVisible.value = false
-    useFaToast().success('解压完成')
+    useFaToast().success(i18n.global.t('files.common.decompressDone'))
     load()
   }
   catch (e: any) {
-    useFaToast().error('解压失败', { description: e?.message })
+    useFaToast().error(i18n.global.t('files.common.decompressFailed'), { description: e?.message })
   }
   finally {
     decompressing.value = false
@@ -319,7 +604,7 @@ async function doSearch() {
     searchVisible.value = true
   }
   catch (e: any) {
-    useFaToast().error('搜索失败', { description: e?.message })
+    useFaToast().error(i18n.global.t('files.common.searchFailed'), { description: e?.message })
   }
   finally {
     searching.value = false
@@ -333,56 +618,160 @@ function joinPath(dir: string, name: string) {
   return `${dir}/${name}`
 }
 
+// ---- 跨窗口拖拽：文件行可拖出（携带路径/节点），其它文件窗口拖入即移动到当前目录 ----
+interface DragPayload {
+  srcId: string
+  node: string
+  fromCwd: string
+  items: Array<{ path: string, name: string, isDir: boolean }>
+}
+const DRAG_MIME = 'application/x-ypanel-files'
+
+function onFileDragStart(entry: FileEntry, e: DragEvent) {
+  // 拖动的行若在多选集里则携带整个选区，否则只带该行
+  const items = selected.value.has(entry.path) && selected.value.size > 1
+    ? entries.value.filter(x => selected.value.has(x.path)).map(x => ({ path: x.path, name: x.name, isDir: x.isDir }))
+    : [{ path: entry.path, name: entry.name, isDir: entry.isDir }]
+  const payload: DragPayload = { srcId: instanceId, node: nodeId.value, fromCwd: cwd.value, items }
+  e.dataTransfer?.setData(DRAG_MIME, JSON.stringify(payload))
+  e.dataTransfer?.setData('text/plain', items.map(x => x.path).join('\n'))
+  if (e.dataTransfer) {
+    e.dataTransfer.effectAllowed = 'copyMove'
+  }
+}
+
+function onDropToFiles(e: DragEvent) {
+  const raw = e.dataTransfer?.getData(DRAG_MIME)
+  if (!raw) {
+    return
+  }
+  let payload: DragPayload
+  try {
+    payload = JSON.parse(raw) as DragPayload
+  }
+  catch {
+    return
+  }
+  // 拖回原窗口（或跨节点）不处理
+  if (payload.srcId === instanceId || payload.node !== nodeId.value) {
+    return
+  }
+  const targets = payload.items
+    .filter(x => x.path !== joinPath(cwd.value, x.name))
+    .map(x => ({ from: x.path, to: joinPath(cwd.value, x.name), name: x.name }))
+  if (!targets.length) {
+    return
+  }
+  // 默认复制（安全语义）；按住 Shift/Alt 拖放为移动
+  const move = e.shiftKey || e.altKey
+  void transferInto(targets, move, payload.fromCwd)
+}
+
+async function transferInto(targets: Array<{ from: string, to: string, name: string }>, move: boolean, fromCwd: string) {
+  let done = 0
+  let skipped = 0
+  for (const t of targets) {
+    try {
+      // 目标同名已存在则跳过（覆盖有风险，宁跳过）
+      const exist = await apiFile.list(cwd.value, nodeId.value)
+      if (exist.entries.some(x => x.name === t.name)) {
+        skipped++
+        continue
+      }
+      if (move) {
+        await apiFile.rename(t.from, t.to, nodeId.value)
+      }
+      else {
+        await apiFile.copy(t.from, t.to, nodeId.value)
+      }
+      done++
+    }
+    catch {
+      skipped++
+    }
+  }
+  if (done) {
+    load()
+  }
+  if (done || skipped) {
+    useFaToast().success(i18n.global.t(move ? 'files.list.transferDoneMove' : 'files.list.transferDoneCopy', { n: done }) + (skipped ? i18n.global.t('files.list.skippedSuffixReason', { n: skipped }) : ''))
+  }
+  // 移动改变源目录内容——通知源窗口刷新；复制不影响源
+  if (move) {
+    window.dispatchEvent(new CustomEvent('ypanel:files:moved', { detail: { srcId: instanceId, node: nodeId.value, fromCwd } }))
+  }
+}
+
+function onSourceMoved(e: Event) {
+  const detail = (e as CustomEvent).detail as { srcId: string, node: string, fromCwd: string }
+  if (detail.srcId !== instanceId && detail.node === nodeId.value && detail.fromCwd === cwd.value) {
+    load()
+  }
+}
+
+/** 目录在新窗口打开（桌面工作台承载时） */
+function openDirInNewWindow(entry: FileEntry) {
+  embed?.openApp('file', { title: entry.name, launchOptions: { dir: entry.path, node: nodeId.value } })
+}
+
 onMounted(() => {
   loadNodes()
-  load('/')
+  load(cwd.value)
+  window.addEventListener('ypanel:files:moved', onSourceMoved)
+})
+
+onBeforeUnmount(() => {
+  window.removeEventListener('ypanel:files:moved', onSourceMoved)
 })
 </script>
 
 <template>
-  <div>
+  <div @dragover.prevent @drop.prevent="onDropToFiles">
     <FaPageHeader>
       <template #title>
         <div class="flex items-center gap-2">
           <YdMorphIcon name="folder-open" :size="24" />
-          <span>文件管理</span>
+          <span>{{ $t('files.list.title') }}</span>
         </div>
       </template>
       <template #description>
-        <span>浏览、编辑与管理服务器文件（默认根目录为全盘）</span>
+        <span>{{ $t('files.list.description') }}</span>
       </template>
       <div class="flex flex-wrap items-center gap-2">
-        <select
-          v-if="nodes.some(n => n.id !== 'local')"
-          :value="nodeId"
-          class="h-8 rounded-md border bg-background px-2 text-sm outline-none"
-          @change="pickNode(($event.target as HTMLSelectElement).value)"
-        >
-          <option v-for="n in nodes" :key="n.id" :value="n.id" :disabled="!n.online">
-            {{ n.id === 'local' ? `${n.name}（本机）` : n.name }}
-          </option>
-        </select>
+        <FaDropdown v-if="nodes.some(n => n.id !== 'local')" :items="nodeMenuItems">
+          <FaButton variant="outline" size="sm" class="h-8">
+            {{ nodeId === 'local' ? $t('files.common.localNode', { name: currentNodeName }) : currentNodeName }}
+            <FaIcon name="i-lucide:chevron-down" class="ml-1 text-xs text-muted-foreground" />
+          </FaButton>
+        </FaDropdown>
         <div class="flex items-center gap-1">
           <FaInput
             v-model="searchKeyword"
-            placeholder="在当前目录下搜索…"
+            :placeholder="$t('files.list.searchPlaceholder')"
             class="w-44!"
             @keyup.enter="doSearch"
           />
           <FaButton variant="outline" size="sm" :loading="searching" @click="doSearch">
-            <FaIcon name="i-lucide:search" class="mr-1" /> 搜索
+            <FaIcon name="i-lucide:search" class="mr-1" /> {{ $t('common.search') }}
           </FaButton>
         </div>
         <FaButton variant="outline" size="sm" @click="mkdirVisible = true">
-          <FaIcon name="i-lucide:folder-plus" class="mr-1" /> 新建目录
+          <FaIcon name="i-lucide:folder-plus" class="mr-1" /> {{ $t('files.common.newDir') }}
         </FaButton>
         <FaButton variant="outline" size="sm" :disabled="uploading" @click="pickUpload">
-          <FaIcon name="i-lucide:upload" class="mr-1" /> {{ uploading ? `上传中 ${uploadPercent}%` : '上传文件' }}
+          <FaIcon name="i-lucide:upload" class="mr-1" /> {{ uploading ? $t('files.list.uploading', { n: uploadPercent }) : $t('files.list.uploadFile') }}
         </FaButton>
-        <FaButton variant="outline" size="sm" :disabled="!selected.size" @click="doDelete">
-          <FaIcon name="i-lucide:trash-2" class="mr-1" /> 删除 ({{ selected.size }})
-        </FaButton>
-        <FaButton variant="outline" size="icon-sm" title="刷新" @click="load()">
+        <FaDropdown :items="batchMenuItems">
+          <FaButton variant="outline" size="sm" :disabled="!selected.size">
+            <FaIcon name="i-lucide:list-checks" class="mr-1" /> {{ $t('files.list.batch') }} ({{ selected.size }})
+          </FaButton>
+        </FaDropdown>
+        <FaDropdown :items="moreMenuItems">
+          <FaButton variant="outline" size="sm">
+            {{ $t('files.more') }} <FaIcon name="i-lucide:chevron-down" class="ml-1 text-xs text-muted-foreground" />
+          </FaButton>
+        </FaDropdown>
+        <FaButton variant="outline" size="icon-sm" :title="$t('common.refresh')" @click="load()">
           <FaIcon name="i-lucide:refresh-cw" class="text-sm" />
         </FaButton>
       </div>
@@ -405,7 +794,21 @@ onMounted(() => {
             {{ c.name }}
           </button>
         </template>
-        <span class="ml-auto text-xs text-muted-foreground">共 {{ entries.length }} 项</span>
+        <span class="ml-auto text-xs text-muted-foreground">{{ $t('files.list.totalItems', { n: entries.length }) }}</span>
+      </div>
+
+      <!-- M38：收藏栏 -->
+      <div v-if="favorites.length" class="mb-3 flex flex-wrap items-center gap-1.5">
+        <FaIcon name="i-lucide:star" class="text-xs text-amber-500" />
+        <span
+          v-for="f in favorites" :key="f.id"
+          class="group inline-flex cursor-pointer items-center gap-1 rounded-full border bg-muted/30 px-2 py-0.5 text-xs transition-colors hover:bg-accent/60"
+          :title="f.path"
+          @click="load(f.path)"
+        >
+          {{ f.name }}
+          <button type="button" class="opacity-40 group-hover:opacity-100" @click.stop="removeFav(f)">×</button>
+        </span>
       </div>
 
       <div v-if="errorMsg" class="mb-3 rounded-md border border-red-300 bg-red-50 p-3 text-sm text-red-600 dark:bg-red-950/30">
@@ -420,17 +823,17 @@ onMounted(() => {
               <th class="w-10 px-3 py-2">
                 <input type="checkbox" :checked="allSelected" @change="toggleAll">
               </th>
-              <th class="px-3 py-2">名称</th>
-              <th class="hidden w-40 px-3 py-2 md:table-cell">大小</th>
-              <th class="hidden w-56 px-3 py-2 lg:table-cell">属主 / 权限</th>
-              <th class="hidden w-44 px-3 py-2 sm:table-cell">修改时间</th>
-              <th class="w-48 px-3 py-2 text-right">操作</th>
+              <th class="px-3 py-2">{{ $t('common.name') }}</th>
+              <th class="hidden w-40 px-3 py-2 md:table-cell">{{ $t('common.size') }}</th>
+              <th class="hidden w-56 px-3 py-2 lg:table-cell">{{ $t('files.list.ownerPerm') }}</th>
+              <th class="hidden w-44 px-3 py-2 sm:table-cell">{{ $t('files.list.modifiedAt') }}</th>
+              <th class="w-48 px-3 py-2 text-right">{{ $t('common.operation') }}</th>
             </tr>
           </thead>
           <tbody>
             <tr v-if="loading">
               <td colspan="6" class="px-3 py-10 text-center text-muted-foreground">
-                加载中…
+                {{ $t('common.loading') }}
               </td>
             </tr>
             <tr v-else-if="!cwd || cwd !== '/'">
@@ -450,6 +853,8 @@ onMounted(() => {
               :key="e.path"
               class="border-t transition-colors hover:bg-accent/30"
               :class="selected.has(e.path) ? 'bg-primary/5' : ''"
+              draggable="true"
+              @dragstart="onFileDragStart(e, $event)"
             >
               <td class="px-3 py-1.5">
                 <input type="checkbox" :checked="selected.has(e.path)" @change="toggleSelect(e)">
@@ -476,22 +881,37 @@ onMounted(() => {
               </td>
               <td class="px-3 py-1.5 text-right">
                 <div class="inline-flex items-center gap-0.5">
-                  <FaButton v-if="!e.isDir" variant="ghost" size="icon-sm" title="编辑" @click="openEditor(e)">
+                  <FaButton v-if="!e.isDir" variant="ghost" size="icon-sm" :title="$t('common.edit')" @click="openEditor(e)">
                     <FaIcon name="i-lucide:pen-line" class="text-sm" />
                   </FaButton>
-                  <FaButton v-if="!e.isDir" variant="ghost" size="icon-sm" title="下载" @click="openDownload(e)">
+                  <FaButton v-if="!e.isDir && previewKind(e.name)" variant="ghost" size="icon-sm" :title="$t('files.preview')" @click="openPreview(e)">
+                    <FaIcon name="i-lucide:eye" class="text-sm" />
+                  </FaButton>
+                  <FaButton
+                    variant="ghost" size="icon-sm" :class="favOf(e.path) ? 'text-amber-500!' : ''"
+                    :title="favOf(e.path) ? $t('files.list.unfav') : $t('files.fav')" @click="toggleFav(e)"
+                  >
+                    <FaIcon name="i-lucide:star" class="text-sm" />
+                  </FaButton>
+                  <FaButton v-if="!e.isDir" variant="ghost" size="icon-sm" :title="$t('files.shared')" @click="quickShare(e)">
+                    <FaIcon name="i-lucide:share-2" class="text-sm" />
+                  </FaButton>
+                  <FaButton v-if="!e.isDir" variant="ghost" size="icon-sm" :title="$t('common.download')" @click="openDownload(e)">
                     <FaIcon name="i-lucide:download" class="text-sm" />
                   </FaButton>
-                  <FaButton variant="ghost" size="icon-sm" title="权限" @click="openChmod(e)">
+                  <FaButton variant="ghost" size="icon-sm" :title="$t('files.common.permissions')" @click="openChmod([e.path], [e])">
                     <FaIcon name="i-lucide:lock" class="text-sm" />
                   </FaButton>
-                  <FaButton variant="ghost" size="icon-sm" title="压缩" @click="openCompress(e)">
+                  <FaButton v-if="e.isDir && embed" variant="ghost" size="icon-sm" :title="$t('files.list.openInNewWindow')" @click="openDirInNewWindow(e)">
+                    <FaIcon name="i-lucide:app-window" class="text-sm" />
+                  </FaButton>
+                  <FaButton variant="ghost" size="icon-sm" :title="$t('files.list.compress')" @click="openCompress([e.path])">
                     <FaIcon name="i-lucide:package" class="text-sm" />
                   </FaButton>
-                  <FaButton v-if="isArchive(e)" variant="ghost" size="icon-sm" title="解压" @click="openDecompress(e)">
+                  <FaButton v-if="isArchive(e)" variant="ghost" size="icon-sm" :title="$t('files.list.decompress')" @click="openDecompress(e)">
                     <FaIcon name="i-lucide:package-open" class="text-sm" />
                   </FaButton>
-                  <FaButton variant="ghost" size="icon-sm" title="重命名" @click="openRename(e)">
+                  <FaButton variant="ghost" size="icon-sm" :title="$t('files.common.rename')" @click="openRename(e)">
                     <FaIcon name="i-lucide:text-cursor-input" class="text-sm" />
                   </FaButton>
                 </div>
@@ -499,7 +919,7 @@ onMounted(() => {
             </tr>
             <tr v-if="!loading && !entries.length && (!cwd || cwd === '/')">
               <td colspan="6" class="px-3 py-10 text-center text-muted-foreground">
-                目录为空
+                {{ $t('files.common.emptyDir') }}
               </td>
             </tr>
           </tbody>
@@ -508,27 +928,27 @@ onMounted(() => {
     </FaPageMain>
 
     <!-- 新建目录 -->
-    <FaModal v-model="mkdirVisible" title="新建目录" :destroy-on-close="true">
-      <FaInput v-model="mkdirName" placeholder="目录名" class="w-full" @keyup.enter="doMkdir" />
+    <FaModal v-model="mkdirVisible" :title="$t('files.common.newDir')" :destroy-on-close="true">
+      <FaInput v-model="mkdirName" :placeholder="$t('files.dialogs.dirNamePlaceholder')" class="w-full" @keyup.enter="doMkdir" />
       <template #footer>
         <FaButton variant="outline" @click="mkdirVisible = false">
-          取消
+          {{ $t('common.cancel') }}
         </FaButton>
         <FaButton @click="doMkdir">
-          创建
+          {{ $t('files.common.create') }}
         </FaButton>
       </template>
     </FaModal>
 
     <!-- 重命名 -->
-    <FaModal v-model="renameVisible" title="重命名" :destroy-on-close="true">
-      <FaInput v-model="renameName" placeholder="新名称" class="w-full" @keyup.enter="doRename" />
+    <FaModal v-model="renameVisible" :title="$t('files.common.rename')" :destroy-on-close="true">
+      <FaInput v-model="renameName" :placeholder="$t('files.dialogs.newNamePlaceholder')" class="w-full" @keyup.enter="doRename" />
       <template #footer>
         <FaButton variant="outline" @click="renameVisible = false">
-          取消
+          {{ $t('common.cancel') }}
         </FaButton>
         <FaButton @click="doRename">
-          确认
+          {{ $t('common.confirm') }}
         </FaButton>
       </template>
     </FaModal>
@@ -536,62 +956,191 @@ onMounted(() => {
     <!-- 文件编辑工作台（VS Code 式弹窗） -->
     <FileEditorWorkspace />
 
+    <!-- M38：回收站 -->
+    <FaModal v-model="trashVisible" :title="$t('files.trash')" class="max-w-3xl!" :destroy-on-close="true">
+      <div class="mb-2 flex items-center gap-2">
+        <span class="text-xs text-muted-foreground">{{ $t('files.dialogs.trashHint') }}</span>
+        <FaButton variant="outline" size="sm" class="ml-auto text-red-500!" :disabled="!trashItems.length" @click="trashClear">{{ $t('common.clear') }}</FaButton>
+      </div>
+      <div class="max-h-96 overflow-auto rounded-lg border">
+        <table class="w-full text-sm">
+          <thead class="bg-muted/50 text-left text-xs text-muted-foreground">
+            <tr>
+              <th class="px-3 py-2">{{ $t('files.dialogs.originalPath') }}</th>
+              <th class="hidden w-44 px-3 py-2 md:table-cell">{{ $t('files.dialogs.deletedAt') }}</th>
+              <th class="px-3 py-2 text-right">{{ $t('common.operation') }}</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-if="trashLoading && !trashItems.length">
+              <td colspan="3" class="px-3 py-8 text-center text-muted-foreground">{{ $t('common.loading') }}</td>
+            </tr>
+            <tr v-else-if="!trashItems.length">
+              <td colspan="3" class="px-3 py-8 text-center text-muted-foreground">{{ $t('files.dialogs.trashEmpty') }}</td>
+            </tr>
+            <tr v-for="t in trashItems" :key="t.name" class="border-t hover:bg-accent/30">
+              <td class="px-3 py-2 font-mono text-xs break-all">{{ t.original }}</td>
+              <td class="hidden px-3 py-2 text-xs tabular-nums text-muted-foreground md:table-cell">{{ new Date(t.trashedAt).toLocaleString('zh-CN', { hour12: false }) }}</td>
+              <td class="px-3 py-2 text-right">
+                <FaButton variant="ghost" size="sm" @click="trashRestore(t.name)">{{ $t('files.dialogs.restore') }}</FaButton>
+                <FaButton variant="ghost" size="sm" class="text-red-500!" @click="trashPurge(t.name)">{{ $t('files.dialogs.purge') }}</FaButton>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </FaModal>
+
+    <!-- M38：分享管理 -->
+    <FaModal v-model="shareVisible" :title="$t('files.dialogs.shareTitle')" class="max-w-2xl!" :destroy-on-close="true">
+      <div class="flex flex-col gap-3">
+        <div class="flex items-end gap-2">
+          <label class="flex-1 space-y-1">
+            <span class="text-xs text-muted-foreground">{{ $t('files.dialogs.filePath') }}</span>
+            <FaInput v-model="shareForm.path" placeholder="/path/to/file" class="w-full" />
+          </label>
+          <label class="w-24 space-y-1">
+            <span class="text-xs text-muted-foreground">{{ $t('files.dialogs.validDays') }}</span>
+            <FaInput v-model="shareForm.days" type="number" class="w-full" />
+          </label>
+          <FaButton size="sm" @click="createShare">{{ $t('files.dialogs.createShare') }}</FaButton>
+        </div>
+        <div v-if="lastShareLink" class="flex items-center gap-2 rounded-md border border-emerald-500/40 bg-emerald-500/5 p-2">
+          <span class="flex-1 truncate font-mono text-xs">{{ lastShareLink }}</span>
+          <FaButton variant="outline" size="sm" @click="copyShareLink(lastShareLink)">{{ $t('common.copy') }}</FaButton>
+        </div>
+        <div class="rounded-lg border">
+          <table class="w-full text-sm">
+            <thead class="bg-muted/50 text-left text-xs text-muted-foreground">
+              <tr>
+                <th class="px-3 py-2">{{ $t('files.dialogs.shareFile') }}</th>
+                <th class="hidden w-40 px-3 py-2 md:table-cell">{{ $t('files.dialogs.expireAt') }}</th>
+                <th class="w-16 px-3 py-2">{{ $t('common.status') }}</th>
+                <th class="px-3 py-2 text-right">{{ $t('common.operation') }}</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-if="!shares.length">
+                <td colspan="4" class="px-3 py-6 text-center text-muted-foreground">{{ $t('files.dialogs.noShares') }}</td>
+              </tr>
+              <tr v-for="sh in shares" :key="sh.id" class="border-t hover:bg-accent/30">
+                <td class="max-w-0 truncate px-3 py-2 font-mono text-xs" :title="sh.path">{{ sh.path }}</td>
+                <td class="hidden px-3 py-2 text-xs tabular-nums text-muted-foreground md:table-cell">{{ sh.expireAt ? new Date(sh.expireAt).toLocaleString('zh-CN', { hour12: false }) : $t('files.dialogs.forever') }}</td>
+                <td class="px-3 py-2">
+                  <span class="rounded-full px-2 py-0.5 text-xs" :class="sh.valid ? 'bg-emerald-500/10 text-emerald-600' : 'bg-muted text-muted-foreground'">{{ sh.valid ? $t('files.dialogs.valid') : $t('files.dialogs.invalid') }}</span>
+                </td>
+                <td class="px-3 py-2 text-right">
+                  <FaButton variant="ghost" size="sm" class="text-red-500!" @click="revokeShare(sh.id)">{{ $t('files.dialogs.revoke') }}</FaButton>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <p class="text-xs text-muted-foreground">{{ $t('files.dialogs.shareHint') }}</p>
+      </div>
+    </FaModal>
+
+    <!-- M38：远程下载 -->
+    <FaModal v-model="remoteVisible" :title="$t('files.dialogs.remoteTitle')" :destroy-on-close="true">
+      <div class="flex flex-col gap-3">
+        <label class="block space-y-1">
+          <span class="text-xs text-muted-foreground">{{ $t('files.dialogs.remoteUrlLabel') }}</span>
+          <FaInput v-model="remoteForm.url" placeholder="https://example.com/file.tar.gz" class="w-full" />
+        </label>
+        <label class="block space-y-1">
+          <span class="text-xs text-muted-foreground">{{ $t('files.dialogs.saveDir') }}</span>
+          <FaInput v-model="remoteForm.destDir" class="w-full" />
+        </label>
+      </div>
+      <template #footer>
+        <FaButton variant="outline" @click="remoteVisible = false">{{ $t('common.cancel') }}</FaButton>
+        <FaButton :loading="remoteBusy" @click="doRemoteDownload">{{ $t('files.dialogs.startDownload') }}</FaButton>
+      </template>
+    </FaModal>
+
+    <!-- M38：预览 -->
+    <FaModal v-model="previewVisible" :title="previewEntry?.name || $t('files.preview')" class="max-w-4xl!" :destroy-on-close="true">
+      <div class="flex max-h-[70vh] items-center justify-center overflow-auto rounded-lg bg-black/5 p-2 dark:bg-black/30">
+        <img v-if="previewKind(previewEntry?.name || '') === 'image'" :src="downloadURL(previewEntry!)" class="max-h-[65vh] max-w-full rounded object-contain" :alt="previewEntry?.name">
+        <video v-else-if="previewKind(previewEntry?.name || '') === 'video'" :src="downloadURL(previewEntry!)" controls class="max-h-[65vh] max-w-full rounded" />
+        <audio v-else-if="previewKind(previewEntry?.name || '') === 'audio'" :src="downloadURL(previewEntry!)" controls class="w-96" />
+        <iframe v-else-if="previewKind(previewEntry?.name || '') === 'pdf'" :src="downloadURL(previewEntry!)" class="h-[65vh] w-full rounded border-0" />
+        <span v-else class="p-8 text-sm text-muted-foreground">{{ $t('files.dialogs.unsupportedPreview') }}</span>
+      </div>
+      <template #footer>
+        <FaButton variant="outline" @click="openDownload(previewEntry!)">{{ $t('common.download') }}</FaButton>
+        <FaButton @click="previewVisible = false">{{ $t('common.close') }}</FaButton>
+      </template>
+    </FaModal>
+
     <!-- 隐藏上传控件 -->
     <input ref="uploadInput" type="file" multiple class="hidden" @change="onUploadChange">
 
-    <!-- 权限 -->
-    <FaModal v-model="chmodVisible" title="修改权限" :destroy-on-close="true">
-      <div class="space-y-2 text-sm">
-        <div class="text-xs text-muted-foreground">
-          {{ chmodTarget?.path }}
+    <!-- 权限（单项/批量共用，宿主模式） -->
+    <YdChmodDialog v-model:visible="chmodDialogVisible" :paths="chmodPaths" :entries="chmodEntries" :node="nodeId" @done="load()" />
+
+    <!-- 批量移动/复制：选目标目录 -->
+    <YdDirPicker v-model:visible="dirPickerVisible" :node="nodeId" :initial-path="cwd" :title="batchTransfer.mode === 'move' ? $t('files.list.moveTo') : $t('files.list.copyTo')" @select="onBatchDirPicked" />
+
+    <!-- 批量移动/复制：执行确认 -->
+    <FaModal v-model="batchTransfer.visible" :title="batchTransfer.mode === 'move' ? $t('files.dialogs.batchConfirmMove') : $t('files.dialogs.batchConfirmCopy')" :destroy-on-close="true">
+      <div class="space-y-3 text-sm">
+        <div>
+          {{ $t(batchTransfer.mode === 'move' ? 'files.dialogs.batchMoveLabel' : 'files.dialogs.batchCopyLabel') }} <span class="font-medium">{{ selected.size }}</span> {{ $t('files.dialogs.itemsTo') }}
+          <div class="mt-1 rounded-md bg-muted/50 px-2.5 py-1.5 font-mono text-xs text-muted-foreground">
+            {{ batchTransfer.target }}
+          </div>
         </div>
-        <FaInput v-model="chmodMode" placeholder="如 755 / 644" class="w-40" @keyup.enter="doChmod" />
-        <div class="text-xs text-muted-foreground">
-          递归修改请用终端 <code>chmod -R</code>；此处仅修改该项自身。
-        </div>
+        <label class="flex cursor-pointer items-center gap-2">
+          <input v-model="batchTransfer.overwrite" type="checkbox">
+          <span>{{ $t('files.dialogs.overwriteHint') }}</span>
+        </label>
       </div>
       <template #footer>
-        <FaButton variant="outline" @click="chmodVisible = false">
-          取消
+        <FaButton variant="outline" @click="batchTransfer.visible = false">
+          {{ $t('common.cancel') }}
         </FaButton>
-        <FaButton @click="doChmod">
-          确认
+        <FaButton :loading="batchTransfer.running" @click="runBatchTransfer">
+          {{ $t(batchTransfer.mode === 'move' ? 'files.list.moveVerb' : 'files.list.copyVerb') }}
         </FaButton>
       </template>
     </FaModal>
 
-    <!-- 压缩 -->
-    <FaModal v-model="compressVisible" title="压缩为 tar.gz" :destroy-on-close="true">
+    <!-- 压缩（单项/批量共用） -->
+    <FaModal v-model="compressVisible" :title="compressSrcs.length > 1 ? $t('files.dialogs.compressTitleMulti', { n: compressSrcs.length }) : $t('files.dialogs.compressTitle')" :destroy-on-close="true">
       <div class="space-y-2 text-sm">
-        <div class="text-xs text-muted-foreground">
-          {{ compressTarget?.path }}
+        <div class="truncate text-xs text-muted-foreground" :title="compressSrcs.join('\n')">
+          {{ compressSrcs.length > 1 ? $t('files.dialogs.selectedN', { n: compressSrcs.length }) : compressSrcs[0] }}
         </div>
-        <FaInput v-model="compressDest" placeholder="目标 .tar.gz 路径" class="w-full" @keyup.enter="doCompress" />
+        <FaInput v-model="compressDest" :placeholder="$t('files.dialogs.compressDestPlaceholder')" class="w-full" @keyup.enter="doCompress" />
+        <div class="text-xs text-muted-foreground">
+          {{ $t('files.dialogs.overwriteNote') }}
+        </div>
       </div>
       <template #footer>
         <FaButton variant="outline" @click="compressVisible = false">
-          取消
+          {{ $t('common.cancel') }}
         </FaButton>
         <FaButton :loading="compressing" @click="doCompress">
-          开始压缩
+          {{ $t('files.dialogs.startCompress') }}
         </FaButton>
       </template>
     </FaModal>
 
     <!-- 解压 -->
-    <FaModal v-model="decompressVisible" title="解压" :destroy-on-close="true">
+    <FaModal v-model="decompressVisible" :title="$t('files.dialogs.decompressTitle')" :destroy-on-close="true">
       <div class="space-y-2 text-sm">
         <div class="text-xs text-muted-foreground">
           {{ decompressTarget?.path }}
         </div>
-        <FaInput v-model="decompressDest" placeholder="解压目标目录" class="w-full" @keyup.enter="doDecompress" />
+        <FaInput v-model="decompressDest" :placeholder="$t('files.dialogs.decompressDestPlaceholder')" class="w-full" @keyup.enter="doDecompress" />
       </div>
       <template #footer>
         <FaButton variant="outline" @click="decompressVisible = false">
-          取消
+          {{ $t('common.cancel') }}
         </FaButton>
         <FaButton :loading="decompressing" @click="doDecompress">
-          开始解压
+          {{ $t('files.dialogs.startDecompress') }}
         </FaButton>
       </template>
     </FaModal>
@@ -599,7 +1148,7 @@ onMounted(() => {
     <!-- 搜索结果 -->
     <FaModal
       v-model="searchVisible"
-      :title="`搜索结果：${searchKeyword}（${searchResults.length} 项）`"
+      :title="$t('files.dialogs.searchResultTitle', { kw: searchKeyword, n: searchResults.length })"
       class="max-w-2xl!"
       :destroy-on-close="true"
     >
@@ -615,12 +1164,12 @@ onMounted(() => {
           <span class="truncate font-mono text-xs">{{ e.path }}</span>
         </button>
         <div v-if="!searchResults.length" class="px-3 py-8 text-center text-sm text-muted-foreground">
-          无匹配结果
+          {{ $t('files.dialogs.noResults') }}
         </div>
       </div>
       <template #footer>
         <FaButton variant="outline" @click="searchVisible = false">
-          关闭
+          {{ $t('common.close') }}
         </FaButton>
       </template>
     </FaModal>

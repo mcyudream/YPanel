@@ -23,6 +23,8 @@ export interface SiteItem {
   groupName: string
   remark: string
   runDir: string
+  isDefault?: boolean
+  expireAt?: string | null
   enabled: boolean
   onDisk: boolean
   nginxRunning: boolean
@@ -116,7 +118,7 @@ export default {
   create: (data: { name: string, type: string, domain: string, extraDomains?: string[], port?: number, proxyRules?: ProxyRule[], proxyPass?: string, indexFiles?: string, runtimeId?: number, groupId?: number, remark?: string, runDir?: string }) =>
     api.post('api/v1/sites', data),
   updateMeta: (id: number, data: { groupId?: number, remark?: string }) => api.put(`api/v1/sites/${id}/meta`, data),
-  remove: (id: number, purge: boolean) => api.delete(`api/v1/sites/${id}?purge=${purge}`),
+  remove: (id: number, purge: boolean, backups = false) => api.delete(`api/v1/sites/${id}?purge=${purge}&backups=${backups}`),
   enable: (id: number) => api.post(`api/v1/sites/${id}/enable`),
   disable: (id: number) => api.post(`api/v1/sites/${id}/disable`),
   config: async (id: number) => {
@@ -125,4 +127,12 @@ export default {
   },
   updateConfig: (id: number, content: string) => api.put(`api/v1/sites/${id}/config`, { content }),
   issueSelfSigned: (id: number) => api.post(`api/v1/sites/${id}/cert/selfsigned`),
+}
+
+// M39：批量操作 / 默认站点 / 到期时间
+export const siteBatchApi = {
+  batch: (ids: number[], action: 'enable' | 'disable' | 'delete', opts?: { purgeFiles?: boolean, purgeBackups?: boolean }) =>
+    api.post('api/v1/sites/batch', { ids, action, ...opts }),
+  setDefault: (id: number) => api.post(`api/v1/sites/${id}/default`),
+  setExpire: (id: number, expireAt: string | null) => api.put(`api/v1/sites/${id}/expire`, { expireAt }),
 }

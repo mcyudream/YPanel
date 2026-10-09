@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { toTypedSchema } from '@vee-validate/zod'
 import * as z from 'zod'
+import { i18n } from '@/locales'
 
 defineOptions({
   name: 'EditPasswordForm',
@@ -24,11 +25,11 @@ const model = ref<EditPasswordModel>({
 
 const validationSchema = toTypedSchema(
   z.object({
-    password: z.string().min(1, '请输入原密码'),
-    newPassword: z.string().min(1, '请输入新密码').min(6, '密码长度为6到18位').max(18, '密码长度为6到18位'),
-    checkPassword: z.string().min(1, '请确认新密码'),
+    password: z.string().min(1, i18n.global.t('login.pw.oldRequired')),
+    newPassword: z.string().min(1, i18n.global.t('login.pw.newRequired')).min(6, i18n.global.t('login.pw.length')).max(18, i18n.global.t('login.pw.length')),
+    checkPassword: z.string().min(1, i18n.global.t('login.pw.confirmRequired')),
   }).refine(data => data.newPassword === data.checkPassword, {
-    message: '两次输入的密码不一致',
+    message: i18n.global.t('login.pw.mismatch'),
     path: ['checkPassword'],
   }),
 )
@@ -36,7 +37,7 @@ const validationSchema = toTypedSchema(
 function onSubmit(values: EditPasswordModel) {
   loading.value = true
   appAccountStore.editPassword(values).then(async () => {
-    useFaToast().success('模拟修改成功，请重新登录')
+    useFaToast().success(i18n.global.t('login.pw.mockSuccess'))
     appAccountStore.logout()
   }).finally(() => {
     loading.value = false
@@ -48,36 +49,36 @@ function onSubmit(values: EditPasswordModel) {
   <div class="flex-col-stretch-center w-full">
     <div class="mb-6 space-y-2">
       <h3 class="text-4xl font-bold">
-        修改密码
+        {{ $t('login.pw.title') }}
       </h3>
       <p class="text-sm text-muted-foreground lg:text-base">
-        请输入原密码、新密码和确认密码
+        {{ $t('login.pw.desc') }}
       </p>
     </div>
     <FaForm :model="model" :validation-schema="validationSchema" @submit="onSubmit">
       <FaFormItem name="password">
-        <FaInput type="password" placeholder="原密码" class="w-full">
+        <FaInput type="password" :placeholder="$t('login.pw.oldPlaceholder')" class="w-full">
           <template #start>
             <FaIcon name="i-lucide:lock" />
           </template>
         </FaInput>
       </FaFormItem>
       <FaFormItem name="newPassword">
-        <FaInput type="password" placeholder="新密码" class="w-full">
+        <FaInput type="password" :placeholder="$t('login.pw.newPlaceholder')" class="w-full">
           <template #start>
             <FaIcon name="i-lucide:lock" />
           </template>
         </FaInput>
       </FaFormItem>
       <FaFormItem name="checkPassword">
-        <FaInput type="password" placeholder="确认密码" class="w-full">
+        <FaInput type="password" :placeholder="$t('login.pw.confirmPlaceholder')" class="w-full">
           <template #start>
             <FaIcon name="i-lucide:lock" />
           </template>
         </FaInput>
       </FaFormItem>
       <FaButton :loading="loading" size="lg" class="mt-8 w-full" type="submit">
-        保存
+        {{ $t('common.save') }}
       </FaButton>
     </FaForm>
   </div>

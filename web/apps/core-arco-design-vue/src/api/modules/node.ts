@@ -24,3 +24,15 @@ export default {
   },
   remove: (id: string) => api.delete(`api/v1/nodes/${id}`),
 }
+
+// ---- M43：服务器资产 ----
+export interface NodeAsset {
+  expireDate: string | null
+  monthlyPrice: string
+  trafficQuotaGB: number
+  assetRemark: string
+}
+
+export const nodeAssetApi = {
+  update: (id: number | string, data: NodeAsset) => api.put(`api/v1/nodes/${id}/asset`, data),
+}

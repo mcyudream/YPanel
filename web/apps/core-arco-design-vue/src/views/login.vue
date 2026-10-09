@@ -40,9 +40,9 @@ function handleLogin() {
     <FaDropdown
       v-if="appSettingsStore.mode === 'pc'"
       :items="[[
-        { label: '左侧布局', disabled: layoutAlign === 'left', handle: () => { layoutAlign = 'left' } },
-        { label: '居中布局', disabled: layoutAlign === 'center', handle: () => { layoutAlign = 'center' } },
-        { label: '右侧布局', disabled: layoutAlign === 'right', handle: () => { layoutAlign = 'right' } },
+        { label: $t('login.layoutLeft'), disabled: layoutAlign === 'left', handle: () => { layoutAlign = 'left' } },
+        { label: $t('login.layoutCenter'), disabled: layoutAlign === 'center', handle: () => { layoutAlign = 'center' } },
+        { label: $t('login.layoutRight'), disabled: layoutAlign === 'right', handle: () => { layoutAlign = 'right' } },
       ]]"
     >
       <FaButton variant="ghost" size="icon-sm">

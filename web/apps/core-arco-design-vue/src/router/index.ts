@@ -15,6 +15,14 @@ const router = createRouter({
 setupGuards(router)
 setupExtensions(router)
 
+// M49 入口路径清洗：安全入口模式下，登录成功后面板各页 URL 不携带入口段。
+// 未登录时入口路径保留（/入口 → 登录页）；登录后每次导航把 /入口#/x 重写为 /#/x。
+router.afterEach(() => {
+  if (localStorage.getItem('token') && location.pathname !== '/') {
+    window.history.replaceState(null, '', '/' + location.hash)
+  }
+})
+
 router.isReady().then(() => {
   loadingFadeOut()
 })

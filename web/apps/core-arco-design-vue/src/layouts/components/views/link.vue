@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { useClipboard } from '@vueuse/core'
+import { i18n } from '@/locales'
 
 defineOptions({
   name: 'LinkView',
@@ -8,7 +9,7 @@ defineOptions({
 const route = useRoute()
 const { copy, copied } = useClipboard({ legacy: true })
 watch(copied, (val) => {
-  val && useFaToast().success('复制成功')
+  val && useFaToast().success(i18n.global.t('common.copied'))
 })
 
 function open() {
@@ -23,10 +24,10 @@ function open() {
         <div class="flex flex-col items-center">
           <FaIcon name="i-icon-park-twotone:planet" class="text-primary/80 size-30" />
           <div class="text-xl text-dark my-2 dark-text-white">
-            是否访问此链接
+            {{ $t('layout.link.visitTitle') }}
           </div>
           <div class="text-[14px] text-secondary-foreground/50 my-2 text-center max-w-[300px] cursor-pointer" @click="route.meta.link && copy(route.meta.link)">
-            <FaTooltip text="复制链接">
+            <FaTooltip :text="$t('layout.link.copyTooltip')">
               <div class="line-clamp-3">
                 {{ route.meta.link }}
               </div>
@@ -34,7 +35,7 @@ function open() {
           </div>
           <FaButton class="my-4" @click="open">
             <FaIcon name="i-ri:external-link-fill" />
-            立即访问
+            {{ $t('layout.link.visitNow') }}
           </FaButton>
         </div>
       </FaPageMain>

@@ -2,6 +2,7 @@
 import type { SiteItem } from '@/api/modules/site'
 import type { SiteCORS } from '@/api/modules/siteconf'
 import { siteExtraApi } from '@/api/modules/siteconf'
+import { i18n } from '@/locales'
 
 const props = defineProps<{ site: SiteItem }>()
 const emit = defineEmits<{ changed: [] }>()
@@ -27,7 +28,7 @@ async function load() {
     originsRaw.value = (conf.value.allowOrigins || []).join('\n')
   }
   catch (e: any) {
-    toast.error('读取 CORS 配置失败', { description: e?.message })
+    toast.error(i18n.global.t('sites.conf.cors.loadFailed'), { description: e?.message })
   }
 }
 
@@ -38,11 +39,11 @@ async function save() {
     conf.value = await siteExtraApi.updateCORS(props.site.id, edit.value)
     edit.value = { ...conf.value }
     originsRaw.value = (conf.value.allowOrigins || []).join('\n')
-    toast.success('CORS 已保存并重载 nginx')
+    toast.success(i18n.global.t('sites.conf.cors.saved'))
     emit('changed')
   }
   catch (e: any) {
-    toast.error('保存失败', { description: e?.message })
+    toast.error(i18n.global.t('sites.shared.saveFailed'), { description: e?.message })
   }
   finally {
     saving.value = false
@@ -59,23 +60,23 @@ onMounted(load)
     <div class="rounded-lg border p-4">
       <div class="flex items-center justify-between">
         <div>
-          <div class="text-sm font-medium">启用跨域（CORS）</div>
-          <p class="mt-0.5 text-xs text-muted-foreground">为 API/静态资源响应添加 Access-Control-* 头，预检请求返回 204</p>
+          <div class="text-sm font-medium">{{ $t('sites.conf.cors.enable') }}</div>
+          <p class="mt-0.5 text-xs text-muted-foreground">{{ $t('sites.conf.cors.enableDesc') }}</p>
         </div>
         <label class="flex cursor-pointer items-center gap-2 text-sm">
-          <input v-model="edit.enable" type="checkbox"> 启用
+          <input v-model="edit.enable" type="checkbox"> {{ $t('common.enabled') }}
         </label>
       </div>
     </div>
 
     <div class="space-y-4 rounded-lg border p-4">
       <div>
-        <div class="mb-1 text-sm font-medium">允许来源（每行一个）</div>
-        <p class="mb-2 text-xs text-muted-foreground">* 或 https://app.example.com；多来源时按请求头动态回显</p>
+        <div class="mb-1 text-sm font-medium">{{ $t('sites.conf.cors.origins') }}</div>
+        <p class="mb-2 text-xs text-muted-foreground">{{ $t('sites.conf.cors.originsDesc') }}</p>
         <textarea v-model="originsRaw" rows="3" class="w-full rounded-md border bg-background p-2 font-mono text-xs outline-none focus:border-primary" placeholder="*&#10;https://app.example.com" />
       </div>
       <div>
-        <div class="mb-1 text-sm font-medium">允许方法</div>
+        <div class="mb-1 text-sm font-medium">{{ $t('sites.conf.cors.methods') }}</div>
         <div class="flex flex-wrap gap-3 text-sm">
           <label v-for="m in methods" :key="m" class="flex cursor-pointer items-center gap-1.5">
             <input v-model="edit.allowMethods" type="checkbox" :value="m"> {{ m }}
@@ -84,22 +85,22 @@ onMounted(load)
       </div>
       <div class="grid gap-4 md:grid-cols-2">
         <div>
-          <div class="mb-1 text-sm font-medium">允许请求头</div>
+          <div class="mb-1 text-sm font-medium">{{ $t('sites.conf.cors.headers') }}</div>
           <FaInput v-model="allowHeadersStr" placeholder="Content-Type, Authorization" class="w-full" />
         </div>
         <div>
-          <div class="mb-1 text-sm font-medium">预检缓存（秒）</div>
+          <div class="mb-1 text-sm font-medium">{{ $t('sites.conf.cors.maxAge') }}</div>
           <FaInput v-model="edit.maxAge" type="number" class="w-full" />
         </div>
       </div>
       <label class="flex cursor-pointer items-center gap-2 text-sm">
-        <input v-model="edit.allowCredentials" type="checkbox"> 允许携带凭据（Allow-Credentials）
+        <input v-model="edit.allowCredentials" type="checkbox"> {{ $t('sites.conf.cors.credentials') }}
       </label>
     </div>
 
     <div class="flex justify-end">
       <FaButton :loading="saving" :disabled="!dirty" @click="save">
-        保存并生效
+        {{ $t('sites.shared.saveApply') }}
       </FaButton>
     </div>
   </div>

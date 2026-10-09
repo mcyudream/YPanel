@@ -18,11 +18,11 @@ const visible = defineModel<boolean>({ default: false })
 </script>
 
 <template>
-  <FaModal v-if="!bare" v-model="visible" title="版本历史" class="max-w-3xl!" :destroy-on-close="true">
+  <FaModal v-if="!bare" v-model="visible" :title="$t('components.ydRevisionHistory.title')" class="max-w-3xl!" :destroy-on-close="true">
     <Panel :node="props.node" :path="props.path" @restored="emit('restored')" />
     <template #footer>
       <FaButton variant="outline" @click="visible = false">
-        关闭
+        {{ $t('common.close') }}
       </FaButton>
     </template>
   </FaModal>

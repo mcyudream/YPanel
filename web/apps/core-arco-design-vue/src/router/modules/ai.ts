@@ -4,94 +4,50 @@ function Layout() {
   return import('@/layouts/index.vue')
 }
 
-const routes: RouteRecordRaw = {
-  path: '/ai',
-  component: Layout,
-  name: 'ai',
-  meta: {
-    title: '智能',
-    icon: 'yd:sparkles',
-  },
-  children: [
-    {
-      path: '',
-      name: 'aiIndex',
-      redirect: '/ai/chat',
-      meta: { menu: false },
+// 智能域（M23）：八个功能区做成「单子页模块」（子页 menu:false → fa Menu 渲染为叶子项，
+// 次侧栏直接平铺叶子、无分组头行，与容器域形态一致）。
+
+function singleModule(path: string, name: string, title: string, icon: string, component: () => Promise<any>) {
+  return {
+    path,
+    component: Layout,
+    name,
+    meta: {
+      title,
+      icon,
     },
-    {
-      path: 'chat',
-      name: 'aiChat',
-      component: () => import('@/views/ai/chat.vue'),
-      meta: {
-        title: '对话',
-        icon: 'i-lucide:message-circle',
+    children: [
+      {
+        path: '',
+        name: `${name}Index`,
+        component,
+        meta: {
+          title,
+          icon,
+          menu: false,
+        },
       },
-    },
-    {
-      path: 'providers',
-      name: 'aiProviders',
-      component: () => import('@/views/ai/providers.vue'),
-      meta: {
-        title: '供应商',
-        icon: 'i-lucide:plug',
-      },
-    },
-    {
-      path: 'knowledge',
-      name: 'aiKnowledge',
-      component: () => import('@/views/ai/knowledge.vue'),
-      meta: {
-        title: '知识库',
-        icon: 'i-lucide:book-open',
-      },
-    },
-    {
-      path: 'workspace',
-      name: 'aiWorkspace',
-      component: () => import('@/views/ai/workspace.vue'),
-      meta: {
-        title: '工作空间',
-        icon: 'i-lucide:folder-code',
-      },
-    },
-    {
-      path: 'memory',
-      name: 'aiMemory',
-      component: () => import('@/views/ai/memory.vue'),
-      meta: {
-        title: '记忆',
-        icon: 'i-lucide:brain',
-      },
-    },
-    {
-      path: 'tools',
-      name: 'aiTools',
-      component: () => import('@/views/ai/tools.vue'),
-      meta: {
-        title: '系统工具',
-        icon: 'i-lucide:wrench',
-      },
-    },
-    {
-      path: 'skills',
-      name: 'aiSkills',
-      component: () => import('@/views/ai/skills.vue'),
-      meta: {
-        title: '技能',
-        icon: 'i-lucide:puzzle',
-      },
-    },
-    {
-      path: 'mcp',
-      name: 'aiMcp',
-      component: () => import('@/views/ai/mcp.vue'),
-      meta: {
-        title: 'MCP',
-        icon: 'i-lucide:plug-zap',
-      },
-    },
-  ],
+    ],
+  }
 }
 
-export default routes
+export const AiChat = singleModule('/ai/chat', 'aiChat', 'menu.aiChat', 'i-lucide:message-circle', () => import('@/views/ai/chat.vue'))
+export const AiProviders = singleModule('/ai/providers', 'aiProviders', 'menu.aiProviders', 'i-lucide:plug', () => import('@/views/ai/providers.vue'))
+export const AiKnowledge = singleModule('/ai/knowledge', 'aiKnowledge', 'menu.aiKnowledge', 'i-lucide:book-open', () => import('@/views/ai/knowledge.vue'))
+export const AiWorkspace = singleModule('/ai/workspace', 'aiWorkspace', 'menu.aiWorkspace', 'i-lucide:folder-code', () => import('@/views/ai/workspace.vue'))
+export const AiMemory = singleModule('/ai/memory', 'aiMemory', 'menu.aiMemory', 'i-lucide:brain', () => import('@/views/ai/memory.vue'))
+export const AiTools = singleModule('/ai/tools', 'aiTools', 'menu.aiTools', 'i-lucide:wrench', () => import('@/views/ai/tools.vue'))
+export const AiSkills = singleModule('/ai/skills', 'aiSkills', 'menu.aiSkills', 'i-lucide:puzzle', () => import('@/views/ai/skills.vue'))
+export const AiMcp = singleModule('/ai/mcp', 'aiMcp', 'menu.aiMcp', 'i-lucide:plug-zap', () => import('@/views/ai/mcp.vue'))
+
+// /ai → /ai/chat 兼容重定向
+export const AiRoot: RouteRecordRaw = {
+  path: '/ai',
+  name: 'aiRoot',
+  redirect: { path: '/ai/chat' },
+  meta: {
+    title: 'menu.ai',
+    menu: false,
+  },
+  children: [],
+}

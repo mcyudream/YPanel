@@ -2,6 +2,8 @@
 import type { FileEntry } from '@/api/modules/file'
 import apiFile from '@/api/modules/file'
 import apiCFile from '@/api/modules/cfile'
+import YdChmodDialog from '@/components/YdChmodDialog/index.vue'
+import { i18n } from '@/locales'
 import type { FileTreeApi, FileTreeMenuItem, FileTreeNode } from './types'
 import YdFileTreeNode from './TreeNode.vue'
 
@@ -16,11 +18,17 @@ const props = withDefaults(defineProps<{
   title?: string
   /** 隐藏过滤输入框（窄面板用） */
   hideFilter?: boolean
+  /** 跟随的当前目录（非空时逐级展开定位并高亮；随终端 cd 更新） */
+  cwd?: string
+  /** 根目录路径（默认 /；宿主模式可传容器可写层等宿主路径作为树根） */
+  initialPath?: string
 }>(), {
   node: 'local',
   containerId: '',
   title: '',
   hideFilter: false,
+  cwd: '',
+  initialPath: '',
 })
 
 const emits = defineEmits<{
@@ -30,7 +38,7 @@ const emits = defineEmits<{
 const appAccountStore = useAppAccountStore()
 
 const isContainer = computed(() => !!props.containerId)
-const displayTitle = computed(() => props.title || (isContainer.value ? '容器文件' : '文件'))
+const displayTitle = computed(() => props.title || i18n.global.t(isContainer.value ? 'components.ydFileTree.containerFiles' : 'components.ydFileTree.files'))
 
 const roots = ref<FileTreeNode[]>([])
 const rootLoading = ref(false)
@@ -50,9 +58,6 @@ function doRename(entry: FileEntry, name: string) {
 }
 function doDelete(entry: FileEntry) {
   return isContainer.value ? apiCFile.delete(props.containerId, [entry.path]) : apiFile.delete([entry.path], props.node)
-}
-function doChmod(entry: FileEntry, mode: string) {
-  return isContainer.value ? apiCFile.chmod(props.containerId, entry.path, mode) : apiFile.chmod(entry.path, mode, props.node)
 }
 function downloadURL(entry: FileEntry) {
   return isContainer.value
@@ -76,29 +81,31 @@ async function loadChildren(node: FileTreeNode) {
   }
   catch (e: unknown) {
     node.children = []
-    useFaToast().error('目录读取失败', { description: msg(e) })
+    useFaToast().error(i18n.global.t('components.ydFileTree.loadFailed'), { description: msg(e) })
   }
   finally {
     node.loading = false
   }
 }
 
+const rootPath = computed(() => props.initialPath || '/')
+
 async function loadRoots() {
   rootLoading.value = true
   try {
-    const res = await listDir('/')
+    const res = await listDir(rootPath.value)
     roots.value = sortEntries(res.entries).map(toNode)
   }
   catch (e: unknown) {
     roots.value = []
-    useFaToast().error('目录读取失败', { description: msg(e) })
+    useFaToast().error(i18n.global.t('components.ydFileTree.loadFailed'), { description: msg(e) })
   }
   finally {
     rootLoading.value = false
   }
 }
 
-watch(() => [props.node, props.containerId], loadRoots, { immediate: true })
+watch(() => [props.node, props.containerId, props.initialPath], loadRoots, { immediate: true })
 
 // 在树中定位目录节点（'/' 表示根）
 function findDirNode(dir: string): FileTreeNode | null {
@@ -128,6 +135,47 @@ async function refreshDir(dir: string) {
   }
 }
 
+// ---- 目录跟随（终端 cd → 树定位展开高亮） ----
+const highlightPath = ref('')
+let locateSeq = 0
+
+async function locate(path: string) {
+  const seq = ++locateSeq
+  if (!path || !path.startsWith('/')) {
+    highlightPath.value = ''
+    return
+  }
+  // 根列表尚在加载则等它完成，否则逐级找不到节点
+  while (rootLoading.value) {
+    await new Promise(r => setTimeout(r, 100))
+    if (seq !== locateSeq) {
+      return // 已被更新的定位请求取代
+    }
+  }
+  if (seq !== locateSeq) {
+    return
+  }
+  const parts = path.split('/').filter(Boolean)
+  let acc = ''
+  for (const part of parts) {
+    acc += `/${part}`
+    const n = findDirNode(acc)
+    if (!n || !n.entry.isDir) {
+      return // 树中不存在（非目录/未挂载等），停在上一级
+    }
+    if (!n.children) {
+      await loadChildren(n)
+      if (seq !== locateSeq) {
+        return
+      }
+    }
+    n.expanded = true
+  }
+  highlightPath.value = acc
+}
+
+watch(() => props.cwd, p => locate(p))
+
 const treeApi: FileTreeApi = {
   toggle(node) {
     if (!node.expanded && !node.children) {
@@ -147,17 +195,17 @@ function menuItems(node: FileTreeNode): FileTreeMenuItem[][] {
   return [[
     ...(entry.isDir
       ? [
-          { label: '刷新', icon: 'i-lucide:refresh-cw', handle: () => { node.expanded = true; loadChildren(node) } },
-          { label: '新建目录', icon: 'i-lucide:folder-plus', handle: () => promptMkdir(entry.path) },
-          { label: '上传文件', icon: 'i-lucide:upload', handle: () => pickUpload(entry.path) },
+          { label: i18n.global.t('common.refresh'), icon: 'i-lucide:refresh-cw', handle: () => { node.expanded = true; loadChildren(node) } },
+          { label: i18n.global.t('components.ydFileTree.newDir'), icon: 'i-lucide:folder-plus', handle: () => promptMkdir(entry.path) },
+          { label: i18n.global.t('components.ydFileTree.uploadFile'), icon: 'i-lucide:upload', handle: () => pickUpload(entry.path) },
         ]
       : [
-          { label: '打开', icon: 'i-lucide:external-link', handle: () => treeApi.openFile(node) },
-          { label: '下载', icon: 'i-lucide:download', handle: () => download(entry) },
+          { label: i18n.global.t('components.ydFileTree.open'), icon: 'i-lucide:external-link', handle: () => treeApi.openFile(node) },
+          { label: i18n.global.t('common.download'), icon: 'i-lucide:download', handle: () => download(entry) },
         ]),
-    { label: '权限', icon: 'i-lucide:lock', handle: () => promptChmod(entry) },
-    { label: '重命名', icon: 'i-lucide:text-cursor-input', handle: () => promptRename(entry) },
-    { label: '删除', icon: 'i-lucide:trash', variant: 'destructive' as const, handle: () => confirmDelete(entry) },
+    { label: i18n.global.t('components.ydFileTree.permissions'), icon: 'i-lucide:lock', handle: () => openChmodDialog(entry) },
+    { label: i18n.global.t('components.ydFileTree.rename'), icon: 'i-lucide:text-cursor-input', handle: () => promptRename(entry) },
+    { label: i18n.global.t('common.delete'), icon: 'i-lucide:trash', variant: 'destructive' as const, handle: () => confirmDelete(entry) },
   ]]
 }
 
@@ -183,11 +231,11 @@ async function onUploadChange(ev: Event) {
     else {
       await apiFile.upload(uploadTargetDir, file, undefined, props.node)
     }
-    useFaToast().success('上传完成')
+    useFaToast().success(i18n.global.t('components.ydFileTree.uploadDone'))
     await refreshDir(uploadTargetDir)
   }
   catch (e: unknown) {
-    useFaToast().error('上传失败', { description: msg(e) })
+    useFaToast().error(i18n.global.t('components.ydFileTree.uploadFailed'), { description: msg(e) })
   }
   finally {
     input.value = ''
@@ -200,16 +248,16 @@ const prompt = reactive({
   title: '',
   label: '',
   value: '',
-  okText: '确定',
+  okText: '',
   onOk: null as null | (() => Promise<void> | void),
 })
 
-function openPrompt(title: string, label: string, value: string, onOk: () => Promise<void> | void, okText = '确定') {
+function openPrompt(title: string, label: string, value: string, onOk: () => Promise<void> | void, okText?: string) {
   prompt.title = title
   prompt.label = label
   prompt.value = value
   prompt.onOk = onOk
-  prompt.okText = okText
+  prompt.okText = okText ?? i18n.global.t('common.confirm')
   prompt.visible = true
 }
 
@@ -230,56 +278,57 @@ function parentOf(path: string) {
 }
 
 function promptMkdir(dir: string) {
-  openPrompt('新建目录', `位置：${dir}`, '', async () => {
+  openPrompt(i18n.global.t('components.ydFileTree.newDir'), i18n.global.t('components.ydFileTree.location', { dir }), '', async () => {
     try {
       await doMkdirAt(dir, prompt.value.trim())
       await refreshDir(dir)
     }
     catch (e: unknown) {
-      useFaToast().error('创建失败', { description: msg(e) })
+      useFaToast().error(i18n.global.t('components.ydFileTree.createFailed'), { description: msg(e) })
     }
-  }, '创建')
+  }, i18n.global.t('common.create'))
 }
 
 function promptRename(entry: FileEntry) {
-  openPrompt('重命名', entry.path, entry.name, async () => {
+  openPrompt(i18n.global.t('components.ydFileTree.rename'), entry.path, entry.name, async () => {
     try {
       await doRename(entry, prompt.value.trim())
       await refreshDir(parentOf(entry.path))
     }
     catch (e: unknown) {
-      useFaToast().error('重命名失败', { description: msg(e) })
+      useFaToast().error(i18n.global.t('components.ydFileTree.renameFailed'), { description: msg(e) })
     }
-  }, '重命名')
+  }, i18n.global.t('components.ydFileTree.rename'))
 }
 
-function promptChmod(entry: FileEntry) {
-  openPrompt('修改权限', `${entry.path}（3 位八进制，如 755）`, entry.modeOct.slice(-3) || '644', async () => {
-    if (!/^[0-7]{3}$/.test(prompt.value.trim())) {
-      useFaToast().error('权限格式错误（3 位八进制，如 755）')
-      return
-    }
-    try {
-      await doChmod(entry, prompt.value.trim())
-      await refreshDir(parentOf(entry.path))
-    }
-    catch (e: unknown) {
-      useFaToast().error('权限修改失败', { description: msg(e) })
-    }
-  }, '修改')
+// ---- 权限编辑（YdChmodDialog：矩阵 + 属主 + 递归，宿主/容器分派在组件内） ----
+const chmodVisible = ref(false)
+const chmodPaths = ref<string[]>([])
+const chmodEntries = ref<FileEntry[]>([])
+const chmodParent = ref('/')
+
+function openChmodDialog(entry: FileEntry) {
+  chmodPaths.value = [entry.path]
+  chmodEntries.value = [entry]
+  chmodParent.value = parentOf(entry.path)
+  chmodVisible.value = true
+}
+
+async function onChmodDone() {
+  await refreshDir(chmodParent.value)
 }
 
 function confirmDelete(entry: FileEntry) {
   useFaModal().confirm({
-    title: '删除确认',
-    content: `确认删除 ${entry.path}？${entry.isDir ? '目录将递归删除，' : ''}不可恢复。`,
+    title: i18n.global.t('components.ydFileTree.deleteConfirmTitle'),
+    content: i18n.global.t('components.ydFileTree.deleteConfirmPrefix', { path: entry.path }) + (entry.isDir ? i18n.global.t('components.ydFileTree.deleteConfirmRecursive') : '') + i18n.global.t('components.ydFileTree.deleteConfirmSuffix'),
     onConfirm: async () => {
       try {
         await doDelete(entry)
         await refreshDir(parentOf(entry.path))
       }
       catch (e: unknown) {
-        useFaToast().error('删除失败', { description: msg(e) })
+        useFaToast().error(i18n.global.t('components.ydFileTree.deleteFailed'), { description: msg(e) })
       }
     },
   })
@@ -306,7 +355,7 @@ defineExpose({ reload: loadRoots })
       <YdMorphIcon name="folder-tree" :size="14" class="text-muted-foreground" />
       <span class="truncate text-xs font-medium text-muted-foreground">{{ displayTitle }}</span>
       <div class="ml-auto flex items-center gap-0.5">
-        <FaButton variant="ghost" size="icon-sm" class="size-5!" title="刷新" @click="loadRoots">
+        <FaButton variant="ghost" size="icon-sm" class="size-5!" :title="$t('common.refresh')" @click="loadRoots">
           <FaIcon name="i-lucide:refresh-cw" class="text-xs" />
         </FaButton>
       </div>
@@ -314,13 +363,13 @@ defineExpose({ reload: loadRoots })
 
     <!-- 过滤 -->
     <div v-if="!props.hideFilter" class="shrink-0 p-2 pb-1">
-      <FaInput v-model="filter" placeholder="过滤已加载文件…" class="h-7! text-xs" />
+      <FaInput v-model="filter" :placeholder="$t('components.ydFileTree.filterPlaceholder')" class="h-7! text-xs" />
     </div>
 
     <!-- 树 -->
     <div class="min-h-0 flex-1 overflow-auto px-1 pb-2">
       <div v-if="rootLoading" class="px-2 py-4 text-center text-xs text-muted-foreground">
-        加载中…
+        {{ $t('common.loading') }}
       </div>
       <template v-else>
         <YdFileTreeNode
@@ -329,15 +378,26 @@ defineExpose({ reload: loadRoots })
           :node="n"
           :depth="0"
           :filter="filter"
+          :highlight="highlightPath"
         />
         <div v-if="!roots.length" class="px-2 py-4 text-center text-xs text-muted-foreground">
-          目录为空
+          {{ $t('components.ydFileTree.emptyDir') }}
         </div>
       </template>
     </div>
 
     <!-- 隐藏上传控件 -->
     <input ref="uploadInput" type="file" class="hidden" @change="onUploadChange">
+
+    <!-- 权限编辑弹窗（宿主/容器双模式） -->
+    <YdChmodDialog
+      v-model:visible="chmodVisible"
+      :paths="chmodPaths"
+      :entries="chmodEntries"
+      :node="props.node"
+      :container-id="props.containerId"
+      @done="onChmodDone"
+    />
 
     <!-- 通用输入弹窗 -->
     <FaModal v-model="prompt.visible" :title="prompt.title" class="max-w-lg!" :destroy-on-close="true">
@@ -349,7 +409,7 @@ defineExpose({ reload: loadRoots })
       </div>
       <template #footer>
         <FaButton variant="outline" @click="prompt.visible = false">
-          取消
+          {{ $t('common.cancel') }}
         </FaButton>
         <FaButton @click="submitPrompt">
           {{ prompt.okText }}

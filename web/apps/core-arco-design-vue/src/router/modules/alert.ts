@@ -9,7 +9,7 @@ const routes: RouteRecordRaw = {
   component: Layout,
   name: 'alert',
   meta: {
-    title: '告警通知',
+    title: 'menu.alert',
     icon: 'yd:bell',
     auth: ['admin'],
   },
@@ -19,7 +19,7 @@ const routes: RouteRecordRaw = {
       name: 'alertIndex',
       component: () => import('@/views/alert/index.vue'),
       meta: {
-        title: '告警通知',
+        title: 'menu.alert',
         menu: false,
       },
     },

@@ -3,6 +3,7 @@ import echarts from '@/utils/echarts'
 import { fmtBytes } from '@/utils/format'
 import type { MetricRecord } from '@/api/modules/system'
 import apiSystem from '@/api/modules/system'
+import { i18n } from '@/locales'
 
 defineOptions({
   name: 'ManageMonitor',
@@ -10,14 +11,16 @@ defineOptions({
 
 const toast = useFaToast()
 
-// 时间范围：1h/6h/24h/7d/30d
-const ranges = [
-  { label: '近 1 小时', seconds: 3600 },
-  { label: '近 6 小时', seconds: 6 * 3600 },
-  { label: '近 24 小时', seconds: 24 * 3600 },
-  { label: '近 7 天', seconds: 7 * 24 * 3600 },
-  { label: '近 30 天', seconds: 30 * 24 * 3600 },
-]
+// 时间范围：1h/6h/24h/7d/30d + M37 长期（>30 天自动走小时聚合，365 天）
+const ranges = computed(() => [
+  { label: i18n.global.t('monitor.range1h'), seconds: 3600 },
+  { label: i18n.global.t('monitor.range6h'), seconds: 6 * 3600 },
+  { label: i18n.global.t('monitor.range24h'), seconds: 24 * 3600 },
+  { label: i18n.global.t('monitor.range7d'), seconds: 7 * 24 * 3600 },
+  { label: i18n.global.t('monitor.range30d'), seconds: 30 * 24 * 3600 },
+  { label: i18n.global.t('monitor.range90d'), seconds: 90 * 24 * 3600 },
+  { label: i18n.global.t('monitor.range1y'), seconds: 365 * 24 * 3600 },
+])
 const activeSeconds = ref(3600)
 const loading = ref(false)
 const samples = ref<MetricRecord[]>([])
@@ -61,7 +64,7 @@ async function load() {
     render()
   }
   catch (e: any) {
-    toast.error('加载历史监控失败', { description: e?.message })
+    toast.error(i18n.global.t('monitor.loadFail'), { description: e?.message })
   }
   finally {
     loading.value = false
@@ -71,6 +74,11 @@ async function load() {
 function render() {
   const list = samples.value
   const times = list.map(s => timeLabel(s.at))
+  const nameCpu = i18n.global.t('monitor.seriesCpu')
+  const nameMem = i18n.global.t('monitor.seriesMem')
+  const nameLoad = i18n.global.t('monitor.seriesLoad')
+  const nameDown = i18n.global.t('monitor.seriesDown')
+  const nameUp = i18n.global.t('monitor.seriesUp')
   if (cpuChartRef.value && !cpuChartInstance) {
     cpuChartInstance = echarts.init(cpuChartRef.value)
   }
@@ -80,7 +88,7 @@ function render() {
   cpuChartInstance?.setOption({
     animation: false,
     grid: { left: 45, right: 20, top: 35, bottom: 25 },
-    legend: { data: ['CPU %', '内存 %', '负载'], top: 0, textStyle: { fontSize: 11 } },
+    legend: { data: [nameCpu, nameMem, nameLoad], top: 0, textStyle: { fontSize: 11 } },
     tooltip: { trigger: 'axis' },
     xAxis: { type: 'category', data: times, axisLabel: { fontSize: 10 } },
     yAxis: [
@@ -88,21 +96,21 @@ function render() {
       { type: 'value', axisLabel: { fontSize: 10 }, splitLine: { show: false } },
     ],
     series: [
-      { name: 'CPU %', type: 'line', showSymbol: false, data: list.map(s => s.cpu), lineStyle: { width: 1.5 }, areaStyle: { opacity: 0.08 } },
-      { name: '内存 %', type: 'line', showSymbol: false, data: list.map(s => s.mem), lineStyle: { width: 1.5 }, areaStyle: { opacity: 0.08 } },
-      { name: '负载', type: 'line', yAxisIndex: 1, showSymbol: false, data: list.map(s => Number(s.load1.toFixed(2))), lineStyle: { width: 1 } },
+      { name: nameCpu, type: 'line', showSymbol: false, data: list.map(s => s.cpu), lineStyle: { width: 1.5 }, areaStyle: { opacity: 0.08 } },
+      { name: nameMem, type: 'line', showSymbol: false, data: list.map(s => s.mem), lineStyle: { width: 1.5 }, areaStyle: { opacity: 0.08 } },
+      { name: nameLoad, type: 'line', yAxisIndex: 1, showSymbol: false, data: list.map(s => Number(s.load1.toFixed(2))), lineStyle: { width: 1 } },
     ],
   }, { notMerge: true })
   netChartInstance?.setOption({
     animation: false,
     grid: { left: 65, right: 20, top: 35, bottom: 25 },
-    legend: { data: ['下行', '上行'], top: 0, textStyle: { fontSize: 11 } },
+    legend: { data: [nameDown, nameUp], top: 0, textStyle: { fontSize: 11 } },
     tooltip: { trigger: 'axis', valueFormatter: (v: number) => `${fmtBytes(v)}/s` },
     xAxis: { type: 'category', data: times, axisLabel: { fontSize: 10 } },
     yAxis: { type: 'value', axisLabel: { formatter: (v: number) => fmtBytes(v), fontSize: 10 } },
     series: [
-      { name: '下行', type: 'line', showSymbol: false, data: list.map(s => s.rxSpeed), lineStyle: { width: 1 }, areaStyle: { opacity: 0.08 } },
-      { name: '上行', type: 'line', showSymbol: false, data: list.map(s => s.txSpeed), lineStyle: { width: 1 }, areaStyle: { opacity: 0.08 } },
+      { name: nameDown, type: 'line', showSymbol: false, data: list.map(s => s.rxSpeed), lineStyle: { width: 1 }, areaStyle: { opacity: 0.08 } },
+      { name: nameUp, type: 'line', showSymbol: false, data: list.map(s => s.txSpeed), lineStyle: { width: 1 }, areaStyle: { opacity: 0.08 } },
     ],
   }, { notMerge: true })
 }
@@ -153,11 +161,11 @@ onBeforeUnmount(() => {
       <template #title>
         <div class="flex items-center gap-2">
           <YdMorphIcon name="activity" :size="24" />
-          <span>历史监控</span>
+          <span>{{ $t('monitor.title') }}</span>
         </div>
       </template>
       <template #description>
-        <span>CPU / 内存 / 负载 / 网络趋势（每分钟采样，保留 30 天）</span>
+        <span>{{ $t('monitor.desc') }}</span>
       </template>
       <div class="flex flex-wrap items-center gap-1">
         <button
@@ -176,28 +184,28 @@ onBeforeUnmount(() => {
     <FaPageMain>
       <div v-if="summary" class="mb-4 grid grid-cols-2 gap-3 md:grid-cols-4">
         <div class="rounded-lg border p-3">
-          <div class="text-xs text-muted-foreground">CPU 均值 / 峰值</div>
+          <div class="text-xs text-muted-foreground">{{ $t('monitor.cpuStats') }}</div>
           <div class="mt-1 font-mono text-lg tabular-nums">{{ summary.cpuAvg }}% <span class="text-sm text-muted-foreground">/ {{ summary.cpuMax }}%</span></div>
         </div>
         <div class="rounded-lg border p-3">
-          <div class="text-xs text-muted-foreground">内存 均值 / 峰值</div>
+          <div class="text-xs text-muted-foreground">{{ $t('monitor.memStats') }}</div>
           <div class="mt-1 font-mono text-lg tabular-nums">{{ summary.memAvg }}% <span class="text-sm text-muted-foreground">/ {{ summary.memMax }}%</span></div>
         </div>
         <div class="rounded-lg border p-3">
-          <div class="text-xs text-muted-foreground">下行峰值</div>
+          <div class="text-xs text-muted-foreground">{{ $t('monitor.rxPeak') }}</div>
           <div class="mt-1 font-mono text-lg tabular-nums">{{ fmtBytes(summary.rxMax) }}/s</div>
         </div>
         <div class="rounded-lg border p-3">
-          <div class="text-xs text-muted-foreground">上行峰值</div>
+          <div class="text-xs text-muted-foreground">{{ $t('monitor.txPeak') }}</div>
           <div class="mt-1 font-mono text-lg tabular-nums">{{ fmtBytes(summary.txMax) }}/s</div>
         </div>
       </div>
 
       <div v-if="loading && !samples.length" class="py-16 text-center text-sm text-muted-foreground">
-        加载中…
+        {{ $t('common.loading') }}
       </div>
       <div v-else-if="!samples.length" class="py-16 text-center text-sm text-muted-foreground">
-        该区间暂无采样数据（采集器每分钟落库一次，新面板需等待片刻）
+        {{ $t('monitor.empty') }}
       </div>
       <template v-else>
         <div ref="cpuChart" class="h-72 w-full" />

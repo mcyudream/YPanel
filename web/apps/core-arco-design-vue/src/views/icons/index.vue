@@ -24,11 +24,11 @@ const quickPicks = [
       <template #title>
         <div class="flex items-center gap-2">
           <YdMorphIcon name="shapes" :size="24" />
-          <span>图标库</span>
+          <span>{{ $t('icons.page.title') }}</span>
         </div>
       </template>
       <template #description>
-        <span>YPanel 图标体系：MorphIcons 本地渲染（lucide 24×24 描边集，随构建打包，无 CDN）；旧格式图标名仍走 FaIcon 兜底</span>
+        <span>{{ $t('icons.page.desc') }}</span>
       </template>
     </FaPageHeader>
 
@@ -37,12 +37,12 @@ const quickPicks = [
       <div class="rounded-lg border bg-background p-5">
         <div class="mb-3 flex items-center gap-2 text-sm font-medium">
           <YdMorphIcon name="text-cursor-input" :size="16" />
-          图标选择器（YdIconPicker）
+          {{ $t('icons.picker.title') }}
         </div>
         <div class="flex flex-wrap items-center gap-4">
           <YdIconPicker v-model="picked" />
           <span class="text-sm text-muted-foreground">
-            当前选择：<code class="rounded bg-muted px-1.5 py-0.5 font-mono text-xs">{{ picked || '（未选择）' }}</code>
+            {{ $t('icons.picker.current') }}<code class="rounded bg-muted px-1.5 py-0.5 font-mono text-xs">{{ picked || $t('icons.picker.none') }}</code>
           </span>
         </div>
       </div>
@@ -51,13 +51,13 @@ const quickPicks = [
       <div class="mt-4 rounded-lg border bg-background p-5">
         <div class="mb-3 flex items-center gap-2 text-sm font-medium">
           <YdMorphIcon name="wand" :size="16" />
-          Morph 变形动效演示
+          {{ $t('icons.morph.title') }}
         </div>
         <div class="flex flex-wrap items-center gap-6">
           <button
             type="button"
             class="flex cursor-pointer flex-col items-center gap-2 rounded-lg border p-6 transition-colors hover:bg-accent/40"
-            title="点击切换图标（观察 morph 动画）"
+            :title="$t('icons.morph.tip')"
             @click="[morphA, morphB] = [morphB, morphA]"
           >
             <YdMorphIcon :name="morphA === morphB ? morphA : morphA" :size="48" :stroke-width="1.6" />
@@ -88,7 +88,7 @@ const quickPicks = [
       <div class="mt-4 rounded-lg border bg-background p-5">
         <div class="mb-3 flex items-center gap-2 text-sm font-medium">
           <YdMorphIcon name="layout-grid" :size="16" />
-          常用图标（悬停查看名称）
+          {{ $t('icons.quick.title') }}
         </div>
         <div class="grid grid-cols-6 gap-2 sm:grid-cols-8 md:grid-cols-12">
           <div

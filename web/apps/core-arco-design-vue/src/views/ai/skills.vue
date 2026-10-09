@@ -1,5 +1,6 @@
 <script setup lang="ts">
 // 技能包（智能/技能）：SKILL.md 格式技能管理，启用的技能注入对话上下文。
+import { i18n } from '@/locales'
 import type { AISkill } from '@/api/modules/ai'
 import { skillApi } from '@/api/modules/ai'
 
@@ -16,11 +17,11 @@ async function onZipChange(e: Event) {
   zipUploading.value = true
   try {
     const res = await skillApi.uploadZip(file)
-    toast.success(`技能包已导入：${(res.data as any)?.name || file.name}`)
+    toast.success(i18n.global.t('ai.skills.zipImported', { name: (res.data as any)?.name || file.name }))
     await loadSkills()
   }
   catch (e: any) {
-    toast.error('导入失败', { description: e?.message })
+    toast.error(i18n.global.t('ai.skills.importFailed'), { description: e?.message })
   }
   finally {
     zipUploading.value = false
@@ -67,11 +68,11 @@ async function saveSkill() {
       await skillApi.setEnabled(skillForm.value.name, true)
     }
     skillVisible.value = false
-    toast.success('技能已保存')
+    toast.success(i18n.global.t('ai.skills.saved'))
     await loadSkills()
   }
   catch (e: any) {
-    toast.error('保存失败', { description: e?.message })
+    toast.error(i18n.global.t('ai.skills.saveFailed'), { description: e?.message })
   }
   finally {
     skillSaving.value = false
@@ -84,7 +85,7 @@ async function toggleSkill(k: AISkill) {
     await loadSkills()
   }
   catch (e: any) {
-    toast.error('操作失败', { description: e?.message })
+    toast.error(i18n.global.t('ai.skills.operationFailed'), { description: e?.message })
   }
 }
 
@@ -92,10 +93,10 @@ async function removeSkill(k: AISkill) {
   try {
     await skillApi.remove(k.name)
     await loadSkills()
-    toast.success('已删除')
+    toast.success(i18n.global.t('ai.skills.deleted'))
   }
   catch (e: any) {
-    toast.error('删除失败', { description: e?.message })
+    toast.error(i18n.global.t('ai.skills.deleteFailed'), { description: e?.message })
   }
 }
 
@@ -109,19 +110,19 @@ onActivated(loadSkills)
       <div class="space-y-4">
         <div class="flex items-center justify-between">
           <p class="text-xs text-muted-foreground">
-            也可直接 scp 编辑 SKILL.md 文件
+            {{ $t('ai.skills.scpHint') }}
           </p>
           <div class="flex items-center gap-2">
             <FaButton size="sm" :loading="zipUploading" @click="zipInput?.click()">
-              <FaIcon name="i-lucide:upload" class="mr-1" /> 上传技能包
+              <FaIcon name="i-lucide:upload" class="mr-1" /> {{ $t('ai.skills.uploadZip') }}
             </FaButton>
             <FaButton size="sm" @click="openSkill()">
-              <FaIcon name="i-lucide:plus" class="mr-1" /> 新增技能
+              <FaIcon name="i-lucide:plus" class="mr-1" /> {{ $t('ai.skills.add') }}
             </FaButton>
           </div>
         </div>
         <div v-if="!skills.length" class="rounded-lg border p-8 text-center text-sm text-muted-foreground">
-          暂无技能包
+          {{ $t('ai.skills.empty') }}
         </div>
         <div v-for="k in skills" :key="k.name" class="rounded-lg border p-4">
           <div class="flex items-center justify-between">
@@ -132,7 +133,7 @@ onActivated(loadSkills)
                   class="rounded-full px-2 py-0.5 text-xs"
                   :class="k.enabled ? 'bg-emerald-500/10 text-emerald-600' : 'bg-muted text-muted-foreground'"
                 >
-                  {{ k.enabled ? '已启用' : '未启用' }}
+                  {{ k.enabled ? $t('ai.skills.enabled') : $t('ai.skills.notEnabled') }}
                 </span>
               </div>
               <div class="mt-1 line-clamp-2 text-xs text-muted-foreground">
@@ -141,13 +142,13 @@ onActivated(loadSkills)
             </div>
             <div class="flex shrink-0 items-center gap-2">
               <label class="flex cursor-pointer items-center gap-1.5 text-xs">
-                <input type="checkbox" :checked="k.enabled" @change="toggleSkill(k)"> 启用
+                <input type="checkbox" :checked="k.enabled" @change="toggleSkill(k)"> {{ $t('common.enabled') }}
               </label>
               <FaButton variant="ghost" size="sm" @click="openSkill(k)">
-                编辑
+                {{ $t('common.edit') }}
               </FaButton>
               <FaButton variant="ghost" size="sm" class="text-red-500!" @click="removeSkill(k)">
-                删除
+                {{ $t('common.delete') }}
               </FaButton>
             </div>
           </div>
@@ -156,32 +157,32 @@ onActivated(loadSkills)
     </FaPageMain>
 
     <!-- 技能编辑 -->
-    <FaModal v-model="skillVisible" :title="skillForm.name ? `编辑技能：${skillForm.name}` : '新增技能'" class="max-w-3xl!" :destroy-on-close="true">
+    <FaModal v-model="skillVisible" :title="skillForm.name ? $t('ai.skills.editTitle', { name: skillForm.name }) : $t('ai.skills.add')" class="max-w-3xl!" :destroy-on-close="true">
       <div class="space-y-3 text-sm">
         <div class="flex items-center gap-3">
-          <span class="w-20 shrink-0 text-muted-foreground">技能名</span>
-          <FaInput v-model="skillForm.name" placeholder="如 deploy-site" class="flex-1" />
+          <span class="w-20 shrink-0 text-muted-foreground">{{ $t('ai.skills.nameLabel') }}</span>
+          <FaInput v-model="skillForm.name" :placeholder="$t('ai.skills.namePlaceholder')" class="flex-1" />
         </div>
         <div class="flex items-center gap-3">
-          <span class="w-20 shrink-0 text-muted-foreground">描述</span>
-          <FaInput v-model="skillForm.description" placeholder="一句话说明技能用途（AI 按此决定是否使用）" class="flex-1" />
+          <span class="w-20 shrink-0 text-muted-foreground">{{ $t('ai.skills.descLabel') }}</span>
+          <FaInput v-model="skillForm.description" :placeholder="$t('ai.skills.descPlaceholder')" class="flex-1" />
         </div>
         <textarea
           v-model="skillForm.body"
           rows="10"
           class="w-full resize-y rounded-md border bg-background p-2 font-mono text-xs outline-none focus:border-primary"
-          placeholder="技能正文（YAML frontmatter + 提示词/步骤）"
+          :placeholder="$t('ai.skills.bodyPlaceholder')"
         />
         <label class="flex cursor-pointer items-center gap-2 text-xs">
-          <input v-model="skillForm.enabled" type="checkbox"> 保存后立即启用
+          <input v-model="skillForm.enabled" type="checkbox"> {{ $t('ai.skills.enableAfterSave') }}
         </label>
       </div>
       <template #footer>
         <FaButton variant="outline" @click="skillVisible = false">
-          取消
+          {{ $t('common.cancel') }}
         </FaButton>
         <FaButton :loading="skillSaving" @click="saveSkill">
-          保存
+          {{ $t('common.save') }}
         </FaButton>
       </template>
     </FaModal>

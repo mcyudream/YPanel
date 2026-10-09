@@ -2,7 +2,7 @@
 import type { HTMLAttributes } from 'vue'
 import { Icon } from '@iconify/vue'
 import { UseImage } from '@vueuse/components'
-import { computed, defineComponent, h, Transition } from 'vue'
+import { computed, defineComponent, getCurrentInstance, h, Transition } from 'vue'
 import { cn } from '#utils'
 
 defineOptions({

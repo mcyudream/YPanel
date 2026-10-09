@@ -22,8 +22,8 @@ const slots = defineSlots<{
 </script>
 
 <template>
-  <div :class="cn('mb-4 flex flex-wrap items-center justify-between gap-5 border-b bg-background px-5 py-4', props.class)">
-    <div :class="cn('flex-[1_1_70%]', props.mainClass)">
+  <div :class="cn('yp-page-header mb-4 flex flex-wrap items-center justify-between gap-5 border-b bg-background px-5 py-4', props.class)">
+    <div :class="cn('yp-page-header-main flex-[1_1_70%]', props.mainClass)">
       <div class="text-2xl">
         <slot name="title">
           {{ title }}
@@ -35,7 +35,7 @@ const slots = defineSlots<{
         </slot>
       </div>
     </div>
-    <div v-if="!!slots.default" :class="cn('ml-a flex-none', props.defaultClass)">
+    <div v-if="!!slots.default" :class="cn('yp-page-header-actions ml-a flex-none', props.defaultClass)">
       <slot />
     </div>
   </div>

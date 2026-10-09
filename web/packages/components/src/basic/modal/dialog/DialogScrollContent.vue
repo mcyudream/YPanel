@@ -16,7 +16,11 @@ defineOptions({
   inheritAttrs: false,
 })
 
-const props = defineProps<DialogContentProps & { class?: HTMLAttributes['class'] }>()
+const props = defineProps<DialogContentProps & {
+  class?: HTMLAttributes['class']
+  /** 弹窗挂载目标（默认 body） */
+  portalTo?: string | HTMLElement
+}>()
 const emits = defineEmits<DialogContentEmits>()
 
 const delegatedProps = reactiveOmit(props, 'class')
@@ -25,7 +29,7 @@ const forwarded = useForwardPropsEmits(delegatedProps, emits)
 </script>
 
 <template>
-  <DialogPortal>
+  <DialogPortal :to="portalTo">
     <DialogOverlay
       class="bg-black/80 grid inset-0 place-items-center fixed z-50 overflow-y-auto data-[state=closed]:animate-out data-[state=open]:animate-in data-[state=open]:fade-in-0 data-[state=closed]:fade-out-0"
     >

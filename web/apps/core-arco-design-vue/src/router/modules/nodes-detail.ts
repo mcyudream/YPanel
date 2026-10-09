@@ -12,7 +12,7 @@ const routes: RouteRecordRaw = {
   component: Layout,
   name: 'nodesDetailModule',
   meta: {
-    title: '节点详情',
+    title: 'menu.nodesDetail',
     menu: false,
     auth: ['admin'],
   },
@@ -22,7 +22,7 @@ const routes: RouteRecordRaw = {
       name: 'nodesDetail',
       component: () => import('@/views/nodes/detail.vue'),
       meta: {
-        title: '节点详情',
+        title: 'menu.nodesDetail',
         menu: false,
       },
     },

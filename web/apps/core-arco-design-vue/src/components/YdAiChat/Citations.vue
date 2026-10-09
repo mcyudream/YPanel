@@ -22,8 +22,8 @@ function toggleBody(i: number) {
       @click="expanded = !expanded"
     >
       <FaIcon name="i-lucide:book-open" class="text-[11px]" />
-      <span class="font-medium">引用来源</span>
-      <span class="text-[10px] opacity-70">{{ knowledge.length }} 条</span>
+      <span class="font-medium">{{ $t('components.ydAiChat.citations') }}</span>
+      <span class="text-[10px] opacity-70">{{ $t('components.ydAiChat.citationCount', { n: knowledge.length }) }}</span>
       <FaIcon
         :name="expanded ? 'i-lucide:chevron-up' : 'i-lucide:chevron-down'"
         class="ml-auto text-[11px]"

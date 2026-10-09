@@ -5,6 +5,8 @@ export interface SecuritySettings {
   safeEntry: string
   allowedIps: string
   sessionHours: number
+  minPasswordLen?: number
+  dangerLock?: boolean
 }
 
 export interface TwoFASetupResp {
@@ -17,7 +19,7 @@ export const securityApi = {
     const res = await api.get('api/v1/security/settings', { silent: true })
     return res.data as SecuritySettings
   },
-  update: async (data: { safeEntry: string, allowedIps: string, sessionHours: number }) => {
+  update: async (data: { safeEntry: string, allowedIps: string, sessionHours: number, minPasswordLen?: number, dangerLock?: boolean }) => {
     const res = await api.put('api/v1/security/settings', data)
     return res.data as SecuritySettings
   },

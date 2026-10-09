@@ -1,6 +1,8 @@
 <script setup lang="ts">
 import type { NodeItem } from '@/api/modules/node'
 import type { TerminalConnState } from './types'
+import { useLocalStorage } from '@vueuse/core'
+import { i18n } from '@/locales'
 import YdTerminal from './index.vue'
 import StatusBar from './StatusBar.vue'
 
@@ -16,12 +18,16 @@ const props = defineProps<{
   nodes: NodeItem[]
   treeVisible: boolean
   monitorVisible: boolean
+  /** 挂载后首个会话就绪时粘贴一次的内容（如跨窗拖入的文件路径），粘贴后清空 */
+  initialPaste?: string
 }>()
 
 const emits = defineEmits<{
   'update:node': [node: string]
   'toggle-tree': []
   'toggle-monitor': []
+  /** 活动标签的当前目录（跟随开关开启时；空串=不跟随），供文件树定位 */
+  cwd: [path: string]
 }>()
 
 interface TermTab {
@@ -31,15 +37,47 @@ interface TermTab {
   state: TerminalConnState
   stateText?: string
   size: { cols: number, rows: number }
+  /** 该会话 shell 最近上报的目录（OSC 7） */
+  cwd: string
 }
 
 let uid = 0
 const tabs = ref<TermTab[]>([])
 const activeId = ref(0)
 const syncInput = ref(false)
+const followTerm = useLocalStorage('ypanel.terminal.follow', true)
 const termRefs = new Map<number, InstanceType<typeof YdTerminal>>()
 
 const activeTab = computed(() => tabs.value.find(t => t.id === activeId.value))
+
+/** 向活跃终端写入文本（等效键入，不带回车）——跨窗口拖文件填路径用 */
+function pasteText(text: string) {
+  const t = tabs.value.find(t => t.id === activeId.value)
+  if (t) {
+    termRefs.get(t.id)?.sendRaw(text)
+  }
+}
+
+defineExpose({ pasteText })
+
+// 跟随目录变化（cwd 上报 / 开关切换 / 切换标签）统一向上游汇报
+function emitFollowCwd() {
+  emits('cwd', followTerm.value ? (activeTab.value?.cwd ?? '') : '')
+}
+
+function onTabCwd(id: number, path: string) {
+  const t = tabs.value.find(t => t.id === id)
+  if (!t) {
+    return
+  }
+  t.cwd = path
+  if (id === activeId.value) {
+    emitFollowCwd()
+  }
+}
+
+watch(followTerm, emitFollowCwd)
+watch(activeId, emitFollowCwd)
 
 function setRef(id: number) {
   return (el: any) => {
@@ -61,13 +99,25 @@ function createTab() {
   uid++
   tabs.value.push({
     id: uid,
-    title: `终端 ${uid}`,
+    title: i18n.global.t('components.ydTerminal.tabTitle', { uid }),
     node: props.node,
     state: 'connecting',
     size: { cols: 80, rows: 24 },
+    cwd: '',
   })
   activeId.value = uid
 }
+
+/** 待粘贴内容：等首个会话连接就绪（state=ready）后写入一次 */
+const pendingPaste = ref(props.initialPaste ?? '')
+
+watch(() => activeTab.value?.state, (state) => {
+  if (state === 'connected' && pendingPaste.value) {
+    const text = pendingPaste.value
+    pendingPaste.value = ''
+    pasteText(text)
+  }
+})
 
 function closeTab(id: number) {
   const idx = tabs.value.findIndex(t => t.id === id)
@@ -129,12 +179,12 @@ onMounted(() => createTab())
     <div class="flex h-8 shrink-0 items-center gap-1 border-b bg-muted/40 px-1.5 text-[13px]">
       <FaSelect
         :model-value="props.node"
-        :options="[{ label: '本地节点', value: 'local' }, ...props.nodes.filter(n => n.id !== 'local').map(n => ({ label: n.hostname || n.name || n.id, value: n.id }))]"
+        :options="[{ label: $t('components.ydTerminal.localNode'), value: 'local' }, ...props.nodes.filter(n => n.id !== 'local').map(n => ({ label: n.hostname || n.name || n.id, value: n.id }))]"
         class="w-28 shrink-0"
         :disabled="props.nodes.filter(n => n.id !== 'local').length === 0"
         @update:model-value="emits('update:node', String($event))"
       />
-      <FaButton variant="ghost" size="icon-sm" class="size-5! shrink-0" title="新建终端" @click="createTab">
+      <FaButton variant="ghost" size="icon-sm" class="size-5! shrink-0" :title="$t('components.ydTerminal.newTab')" @click="createTab">
         <FaIcon name="i-lucide:plus" class="text-xs" />
       </FaButton>
 
@@ -154,7 +204,7 @@ onMounted(() => createTab())
           <span v-if="t.node !== 'local'" class="text-[10px] opacity-60">@{{ nodeLabel(t.node) }}</span>
           <span
             class="inline-flex size-3.5 shrink-0 cursor-pointer items-center justify-center rounded-full opacity-0 transition-opacity group-hover:opacity-60 hover:!opacity-100 hover:bg-accent"
-            title="关闭"
+            :title="$t('common.close')"
             @click.stop="closeTab(t.id)"
           >
             <FaIcon name="i-lucide:x" class="text-[9px]" />
@@ -163,14 +213,18 @@ onMounted(() => createTab())
       </div>
 
       <div class="ml-auto flex shrink-0 items-center gap-0.5">
-        <label class="flex cursor-pointer items-center gap-1 rounded px-1.5 py-0.5 text-xs text-muted-foreground transition-colors hover:bg-accent/50" title="键入广播到全部终端">
-          <input v-model="syncInput" type="checkbox" class="size-3">
-          同步
+        <label class="flex cursor-pointer items-center gap-1 rounded px-1.5 py-0.5 text-xs text-muted-foreground transition-colors hover:bg-accent/50" :title="$t('components.ydTerminal.followTip')">
+          <input v-model="followTerm" type="checkbox" class="size-3">
+          {{ $t('components.ydTerminal.follow') }}
         </label>
-        <FaButton variant="ghost" size="icon-sm" class="size-5!" :title="props.treeVisible ? '收起文件树' : '展开文件树'" @click="emits('toggle-tree')">
+        <label class="flex cursor-pointer items-center gap-1 rounded px-1.5 py-0.5 text-xs text-muted-foreground transition-colors hover:bg-accent/50" :title="$t('components.ydTerminal.syncTip')">
+          <input v-model="syncInput" type="checkbox" class="size-3">
+          {{ $t('components.ydTerminal.sync') }}
+        </label>
+        <FaButton variant="ghost" size="icon-sm" class="size-5!" :title="props.treeVisible ? $t('components.ydTerminal.collapseTree') : $t('components.ydTerminal.expandTree')" @click="emits('toggle-tree')">
           <FaIcon :name="props.treeVisible ? 'i-lucide:panel-left-close' : 'i-lucide:panel-left'" class="text-xs" />
         </FaButton>
-        <FaButton variant="ghost" size="icon-sm" class="size-5!" :title="props.monitorVisible ? '收起监控' : '展开监控'" @click="emits('toggle-monitor')">
+        <FaButton variant="ghost" size="icon-sm" class="size-5!" :title="props.monitorVisible ? $t('components.ydTerminal.collapseMonitor') : $t('components.ydTerminal.expandMonitor')" @click="emits('toggle-monitor')">
           <FaIcon :name="props.monitorVisible ? 'i-lucide:panel-right-close' : 'i-lucide:panel-right'" class="text-xs" />
         </FaButton>
       </div>
@@ -191,6 +245,7 @@ onMounted(() => createTab())
           @input="onTabInput(t.id, $event)"
           @size="(c: number, r: number) => onTabSize(t.id, c, r)"
           @state="(s, text) => onTabState(t.id, s, text)"
+          @cwd="(p: string) => onTabCwd(t.id, p)"
         />
       </div>
     </div>

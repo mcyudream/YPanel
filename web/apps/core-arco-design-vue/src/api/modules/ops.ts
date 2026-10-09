@@ -35,9 +35,10 @@ export const panelBackupApi = {
     const res = await api.get('api/v1/panel/backups', { silent: true })
     return res.data as PanelBackup[]
   },
-  create: async () => {
-    const res = await api.post('api/v1/panel/backups')
-    return res.data as { file?: string }
+  create: async (opts?: { storageAccountId?: number, keep?: number }) => {
+    const body = opts && (opts.storageAccountId || opts.keep) ? opts : undefined
+    const res = await api.post('api/v1/panel/backups', body)
+    return res.data as { file?: string, remoteKey?: string }
   },
   remove: (file: string) => api.delete(`api/v1/panel/backups?file=${encodeURIComponent(file)}`),
   restoreHint: async () => {

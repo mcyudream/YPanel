@@ -4,6 +4,7 @@ import type { SiteItem } from '@/api/modules/site'
 import apiSite from '@/api/modules/site'
 import YdCodeEditor from '@/components/YdCodeEditor/index.vue'
 import { loadMonaco } from '@/utils/monacoLoader'
+import { i18n } from '@/locales'
 
 // B23：配置文件编辑器升级为 Monaco（复用系统文件编辑器封装），
 // 保存链路不变（nginx -t 校验失败自动回滚）。
@@ -32,7 +33,7 @@ async function load() {
       existing.setValue(content)
   }
   catch (e: any) {
-    toast.error('读取配置失败', { description: e?.message })
+    toast.error(i18n.global.t('sites.conf.file.loadFailed'), { description: e?.message })
   }
   finally {
     loading.value = false
@@ -45,10 +46,10 @@ async function save() {
   saving.value = true
   try {
     await apiSite.updateConfig(props.site.id, model.value.getValue())
-    toast.success('配置已保存并重载')
+    toast.success(i18n.global.t('sites.conf.file.saved'))
   }
   catch (e: any) {
-    toast.error('保存失败（配置校验不通过会自动回滚）', { description: e?.message })
+    toast.error(i18n.global.t('sites.conf.file.saveFailedRollback'), { description: e?.message })
   }
   finally {
     saving.value = false
@@ -67,17 +68,17 @@ onBeforeUnmount(() => {
 <template>
   <div class="space-y-4">
     <div class="rounded-lg border border-amber-300 bg-amber-50 p-3 text-xs text-amber-700 dark:border-amber-800 dark:bg-amber-950/30 dark:text-amber-400">
-      直接编辑 nginx 站点配置（conf.d/{{ site.name }}.conf）。保存时自动 nginx -t 校验，不通过会自动回滚；一般配置请优先使用左侧各子页。
+      {{ $t('sites.conf.file.banner', { name: site.name }) }}
     </div>
     <div class="h-[32rem] overflow-hidden rounded-md border">
       <div v-if="loading" class="flex h-full items-center justify-center text-sm text-muted-foreground">
-        加载编辑器…
+        {{ $t('sites.conf.file.loadingEditor') }}
       </div>
       <YdCodeEditor v-else :model="model" :font-size="13" />
     </div>
     <div class="flex justify-end">
       <FaButton :loading="saving" :disabled="loading" @click="save">
-        保存并重载
+        {{ $t('sites.shared.saveReload') }}
       </FaButton>
     </div>
   </div>

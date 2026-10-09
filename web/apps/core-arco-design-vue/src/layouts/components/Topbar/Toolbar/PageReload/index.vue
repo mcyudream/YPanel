@@ -24,10 +24,12 @@ function handleClick(event: MouseEvent) {
   <FaTooltip side="bottom" :disabled="appSettingsStore.os === 'mac'">
     <template #content>
       <div class="flex-col-center gap-2">
-        <p class="flex-center gap-1">
-          按住 <FaKbd>Ctrl</FaKbd> 键并点击
-        </p>
-        <p>可切换为浏览器原生刷新</p>
+        <i18n-t keypath="layout.pageReload.holdCtrl" tag="p" class="flex-center gap-1">
+          <template #kbd>
+            <FaKbd>Ctrl</FaKbd>
+          </template>
+        </i18n-t>
+        <p>{{ $t('layout.pageReload.nativeRefresh') }}</p>
       </div>
     </template>
     <FaButton variant="ghost" size="icon-sm" @click="handleClick" @animationend="isAnimating = false">

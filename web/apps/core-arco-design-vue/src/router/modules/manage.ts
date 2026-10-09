@@ -9,7 +9,7 @@ const routes: RouteRecordRaw = {
   component: Layout,
   name: 'manage',
   meta: {
-    title: '系统管理',
+    title: 'menu.manage',
     icon: 'yd:settings',
   },
   children: [
@@ -18,7 +18,7 @@ const routes: RouteRecordRaw = {
       name: 'manageUser',
       component: () => import('@/views/manage/user.vue'),
       meta: {
-        title: '用户管理',
+        title: 'menu.manageUsers',
         icon: 'yd:users-round',
         auth: ['admin'],
       },
@@ -28,7 +28,7 @@ const routes: RouteRecordRaw = {
       name: 'manageAudit',
       component: () => import('@/views/manage/audit.vue'),
       meta: {
-        title: '登录审计',
+        title: 'menu.manageAudit',
         icon: 'yd:scroll-text',
         auth: ['admin'],
       },
@@ -38,7 +38,7 @@ const routes: RouteRecordRaw = {
       name: 'manageSecurity',
       component: () => import('@/views/manage/security.vue'),
       meta: {
-        title: '安全设置',
+        title: 'menu.manageSecurity',
         icon: 'yd:shield',
         auth: ['admin'],
       },
@@ -48,8 +48,28 @@ const routes: RouteRecordRaw = {
       name: 'manageBackups',
       component: () => import('@/views/manage/backups.vue'),
       meta: {
-        title: '面板备份',
+        title: 'menu.manageBackup',
         icon: 'yd:save',
+        auth: ['admin'],
+      },
+    },
+    {
+      path: 'system',
+      name: 'manageSystem',
+      component: () => import('@/views/manage/system.vue'),
+      meta: {
+        title: 'menu.manage',
+        icon: 'i-lucide:wrench',
+        auth: ['admin'],
+      },
+    },
+    {
+      path: 'storage',
+      name: 'manageStorage',
+      component: () => import('@/views/manage/storage.vue'),
+      meta: {
+        title: 'menu.manageStorage',
+        icon: 'yd:cloud-backup',
         auth: ['admin'],
       },
     },

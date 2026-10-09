@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import type { DockerVolume } from '@/api/modules/dockerext'
 import { dockerExtApi } from '@/api/modules/dockerext'
+import { i18n } from '@/locales'
 
 // 卷管理（自 Docker 管理页迁入，M23）。
 const toast = useFaToast()
@@ -19,7 +20,7 @@ async function load() {
     volumes.value = await dockerExtApi.volumes()
   }
   catch (e: any) {
-    toast.error('卷列表加载失败', { description: e?.message })
+    toast.error(i18n.global.t('container.volumes.loadFailed'), { description: e?.message })
   }
   finally {
     loading.value = false
@@ -34,28 +35,28 @@ const volName = ref('')
 async function doCreate() {
   try {
     await dockerExtApi.createVolume(volName.value)
-    toast.success('卷已创建')
+    toast.success(i18n.global.t('container.volumes.created'))
     visible.value = false
     await load()
   }
   catch (e: any) {
-    toast.error('创建失败', { description: e?.message })
+    toast.error(i18n.global.t('container.common.createFailed'), { description: e?.message })
   }
 }
 
 function remove(v: DockerVolume) {
   const modal = useFaModal()
   modal.confirm({
-    title: '删除卷',
-    content: `确认删除卷 ${v.name}？数据不可恢复。`,
+    title: i18n.global.t('container.volumes.deleteTitle'),
+    content: i18n.global.t('container.volumes.deleteConfirm', { name: v.name }),
     onConfirm: async () => {
       try {
         await dockerExtApi.removeVolume(v.name)
-        toast.success('已删除')
+        toast.success(i18n.global.t('container.common.deletedDone'))
         await load()
       }
       catch (e: any) {
-        toast.error('删除失败', { description: e?.message })
+        toast.error(i18n.global.t('container.common.deleteFailed'), { description: e?.message })
       }
     },
   })
@@ -68,7 +69,7 @@ async function prune() {
     await load()
   }
   catch (e: any) {
-    toast.error('清理失败', { description: e?.message })
+    toast.error(i18n.global.t('container.common.pruneFailed'), { description: e?.message })
   }
 }
 </script>
@@ -79,12 +80,12 @@ async function prune() {
   <div>
     <div class="mb-3 flex items-center gap-2">
       <FaButton variant="outline" size="sm" @click="prune">
-        清理未使用卷
+        {{ $t('container.volumes.pruneUnused') }}
       </FaButton>
       <FaButton size="sm" @click="visible = true">
-        <FaIcon name="i-lucide:plus" class="mr-1" /> 创建卷
+        <FaIcon name="i-lucide:plus" class="mr-1" /> {{ $t('container.volumes.create') }}
       </FaButton>
-      <FaButton variant="outline" size="icon-sm" title="刷新" class="ml-auto" @click="load()">
+      <FaButton variant="outline" size="icon-sm" :title="$t('common.refresh')" class="ml-auto" @click="load()">
         <FaIcon name="i-lucide:refresh-cw" class="text-sm" :class="loading ? 'animate-spin' : ''" />
       </FaButton>
     </div>
@@ -93,16 +94,16 @@ async function prune() {
       <table class="w-full text-sm">
         <thead class="bg-muted/50 text-left text-xs text-muted-foreground">
           <tr>
-            <th class="px-3 py-2">卷名</th>
-            <th class="px-3 py-2">驱动</th>
-            <th class="hidden px-3 py-2 md:table-cell">挂载点</th>
-            <th class="px-3 py-2 text-right">操作</th>
+            <th class="px-3 py-2">{{ $t('container.volumes.nameCol') }}</th>
+            <th class="px-3 py-2">{{ $t('container.common.driver') }}</th>
+            <th class="hidden px-3 py-2 md:table-cell">{{ $t('container.volumes.mountpoint') }}</th>
+            <th class="px-3 py-2 text-right">{{ $t('common.operation') }}</th>
           </tr>
         </thead>
         <tbody>
           <tr v-if="loading && !volumes.length">
             <td colspan="4" class="px-3 py-10 text-center text-muted-foreground">
-              加载中…
+              {{ $t('common.loading') }}
             </td>
           </tr>
           <tr v-for="v in paged" :key="v.name" class="border-t transition-colors hover:bg-accent/30">
@@ -120,7 +121,7 @@ async function prune() {
             </td>
             <td class="px-3 py-1.5 text-right">
               <FaButton variant="outline" size="sm" @click="remove(v)">
-                删除
+                {{ $t('common.delete') }}
               </FaButton>
             </td>
           </tr>
@@ -129,17 +130,17 @@ async function prune() {
     </div>
     <FaPagination v-model:page="page" v-model:size="size" :total="volumes.length" class="mt-3" />
 
-    <FaModal v-model="visible" title="创建卷" :destroy-on-close="true">
+    <FaModal v-model="visible" :title="$t('container.volumes.create')" :destroy-on-close="true">
       <div class="flex items-center gap-3">
-        <span class="w-20 shrink-0 text-sm text-muted-foreground">卷名</span>
-        <FaInput v-model="volName" placeholder="如 my-data" class="flex-1" @keyup.enter="doCreate" />
+        <span class="w-20 shrink-0 text-sm text-muted-foreground">{{ $t('container.volumes.nameCol') }}</span>
+        <FaInput v-model="volName" :placeholder="$t('container.volumes.namePlaceholder')" class="flex-1" @keyup.enter="doCreate" />
       </div>
       <template #footer>
         <FaButton variant="outline" @click="visible = false">
-          取消
+          {{ $t('common.cancel') }}
         </FaButton>
         <FaButton @click="doCreate">
-          创建
+          {{ $t('common.create') }}
         </FaButton>
       </template>
     </FaModal>

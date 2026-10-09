@@ -2,6 +2,7 @@
 import type { UserInfo } from '@/api/modules/user'
 import apiUser from '@/api/modules/user'
 import { useFaModal } from '@fantastic-admin/components'
+import { i18n } from '@/locales'
 
 defineOptions({
   name: 'ManageUser',
@@ -31,18 +32,18 @@ const createForm = ref({ username: '', password: '', nickname: '', role: 'user' 
 
 async function doCreate() {
   if (!createForm.value.username || !createForm.value.password) {
-    useFaToast().warning('请填写用户名与密码')
+    useFaToast().warning(i18n.global.t('manage.user.fillRequired'))
     return
   }
   try {
     await apiUser.create(createForm.value)
-    useFaToast().success('用户已创建')
+    useFaToast().success(i18n.global.t('manage.user.created'))
     createVisible.value = false
     createForm.value = { username: '', password: '', nickname: '', role: 'user' }
     load()
   }
   catch (e: any) {
-    useFaToast().error('创建失败', { description: e?.message })
+    useFaToast().error(i18n.global.t('manage.createFailed'), { description: e?.message })
   }
 }
 
@@ -71,12 +72,12 @@ async function doEdit() {
   }
   try {
     await apiUser.update(editTarget.value.id, data as any)
-    useFaToast().success('已保存')
+    useFaToast().success(i18n.global.t('manage.saved'))
     editVisible.value = false
     load()
   }
   catch (e: any) {
-    useFaToast().error('保存失败', { description: e?.message })
+    useFaToast().error(i18n.global.t('manage.saveFailed'), { description: e?.message })
   }
 }
 
@@ -84,16 +85,16 @@ async function doEdit() {
 function doDelete(u: UserInfo) {
   const modal = useFaModal()
   modal.confirm({
-    title: '删除用户',
-    content: `确认删除用户 ${u.username}？`,
+    title: i18n.global.t('manage.user.deleteTitle'),
+    content: i18n.global.t('manage.user.deleteConfirm', { name: u.username }),
     onConfirm: async () => {
       try {
         await apiUser.remove(u.id)
-        useFaToast().success('已删除')
+        useFaToast().success(i18n.global.t('manage.deleted'))
         load()
       }
       catch (e: any) {
-        useFaToast().error('删除失败', { description: e?.message })
+        useFaToast().error(i18n.global.t('manage.deleteFailed'), { description: e?.message })
       }
     },
   })
@@ -108,14 +109,14 @@ onMounted(load)
       <template #title>
         <div class="flex items-center gap-2">
           <YdMorphIcon name="users-round" :size="24" />
-          <span>用户管理</span>
+          <span>{{ $t('manage.user.title') }}</span>
         </div>
       </template>
       <template #description>
-        <span>面板账号与角色（admin / user）</span>
+        <span>{{ $t('manage.user.desc') }}</span>
       </template>
       <FaButton size="sm" @click="createVisible = true">
-        <FaIcon name="i-lucide:user-plus" class="mr-1" /> 新建用户
+        <FaIcon name="i-lucide:user-plus" class="mr-1" /> {{ $t('manage.user.createUser') }}
       </FaButton>
     </FaPageHeader>
 
@@ -124,17 +125,17 @@ onMounted(load)
         <table class="w-full text-sm">
           <thead class="bg-muted/50 text-left text-xs text-muted-foreground">
             <tr>
-              <th class="px-3 py-2">用户名</th>
-              <th class="px-3 py-2">昵称</th>
-              <th class="px-3 py-2">角色</th>
-              <th class="hidden px-3 py-2 md:table-cell">最近登录</th>
-              <th class="px-3 py-2 text-right">操作</th>
+              <th class="px-3 py-2">{{ $t('manage.user.username') }}</th>
+              <th class="px-3 py-2">{{ $t('manage.user.nickname') }}</th>
+              <th class="px-3 py-2">{{ $t('manage.user.role') }}</th>
+              <th class="hidden px-3 py-2 md:table-cell">{{ $t('manage.user.lastLogin') }}</th>
+              <th class="px-3 py-2 text-right">{{ $t('common.operation') }}</th>
             </tr>
           </thead>
           <tbody>
             <tr v-if="loading && !users.length">
               <td colspan="5" class="px-3 py-10 text-center text-muted-foreground">
-                加载中…
+                {{ $t('common.loading') }}
               </td>
             </tr>
             <tr v-for="u in users" :key="u.id" class="border-t transition-colors hover:bg-accent/30">
@@ -153,15 +154,15 @@ onMounted(load)
                 </span>
               </td>
               <td class="hidden px-3 py-2 text-xs tabular-nums text-muted-foreground md:table-cell">
-                {{ u.lastLoginAt ? new Date(u.lastLoginAt).toLocaleString('zh-CN', { hour12: false }) : '从未登录' }}
+                {{ u.lastLoginAt ? new Date(u.lastLoginAt).toLocaleString('zh-CN', { hour12: false }) : $t('manage.user.neverLoggedIn') }}
               </td>
               <td class="px-3 py-2">
                 <div class="flex items-center justify-end gap-1">
                   <FaButton variant="outline" size="sm" @click="openEdit(u)">
-                    编辑
+                    {{ $t('common.edit') }}
                   </FaButton>
                   <FaButton variant="outline" size="sm" @click="doDelete(u)">
-                    删除
+                    {{ $t('common.delete') }}
                   </FaButton>
                 </div>
               </td>
@@ -172,62 +173,62 @@ onMounted(load)
       <div class="mt-3 flex justify-end">
         <div class="flex items-center gap-2 text-sm text-muted-foreground">
           <FaButton variant="outline" size="sm" :disabled="page <= 1" @click="page--; load()">
-            上一页
+            {{ $t('manage.audit.prev') }}
           </FaButton>
-          <span>{{ page }} / {{ Math.max(1, Math.ceil(total / pageSize)) }}（共 {{ total }} 人）</span>
+          <span>{{ $t('manage.user.pageInfo', { page, pages: Math.max(1, Math.ceil(total / pageSize)), total }) }}</span>
           <FaButton variant="outline" size="sm" :disabled="page >= Math.ceil(total / pageSize)" @click="page++; load()">
-            下一页
+            {{ $t('manage.audit.next') }}
           </FaButton>
         </div>
       </div>
     </FaPageMain>
 
     <!-- 创建 -->
-    <FaModal v-model="createVisible" title="新建用户" :destroy-on-close="true">
+    <FaModal v-model="createVisible" :title="$t('manage.user.createUser')" :destroy-on-close="true">
       <div class="flex flex-col gap-3">
         <div class="flex items-center gap-3">
-          <span class="w-16 text-sm text-muted-foreground">用户名</span>
-          <FaInput v-model="createForm.username" placeholder="3-32 位" class="flex-1" />
+          <span class="w-16 text-sm text-muted-foreground">{{ $t('manage.user.username') }}</span>
+          <FaInput v-model="createForm.username" :placeholder="$t('manage.user.usernamePlaceholder')" class="flex-1" />
         </div>
         <div class="flex items-center gap-3">
-          <span class="w-16 text-sm text-muted-foreground">密码</span>
-          <FaInput v-model="createForm.password" type="password" placeholder="6-64 位" class="flex-1" />
+          <span class="w-16 text-sm text-muted-foreground">{{ $t('manage.user.password') }}</span>
+          <FaInput v-model="createForm.password" type="password" :placeholder="$t('manage.user.passwordPlaceholder')" class="flex-1" />
         </div>
         <div class="flex items-center gap-3">
-          <span class="w-16 text-sm text-muted-foreground">昵称</span>
-          <FaInput v-model="createForm.nickname" placeholder="选填" class="flex-1" />
+          <span class="w-16 text-sm text-muted-foreground">{{ $t('manage.user.nickname') }}</span>
+          <FaInput v-model="createForm.nickname" :placeholder="$t('manage.user.nicknamePlaceholder')" class="flex-1" />
         </div>
         <div class="flex items-center gap-3">
-          <span class="w-16 text-sm text-muted-foreground">角色</span>
+          <span class="w-16 text-sm text-muted-foreground">{{ $t('manage.user.role') }}</span>
           <select v-model="createForm.role" class="h-9 flex-1 rounded-md border border-input bg-background px-2 text-sm outline-none">
             <option value="user">
-              user（普通用户）
+              {{ $t('manage.user.roleUser') }}
             </option>
             <option value="admin">
-              admin（管理员）
+              {{ $t('manage.user.roleAdmin') }}
             </option>
           </select>
         </div>
       </div>
       <template #footer>
         <FaButton variant="outline" @click="createVisible = false">
-          取消
+          {{ $t('common.cancel') }}
         </FaButton>
         <FaButton @click="doCreate">
-          创建
+          {{ $t('common.create') }}
         </FaButton>
       </template>
     </FaModal>
 
     <!-- 编辑 -->
-    <FaModal v-model="editVisible" :title="`编辑：${editTarget?.username || ''}`" :destroy-on-close="true">
+    <FaModal v-model="editVisible" :title="$t('manage.user.editTitle', { name: editTarget?.username || '' })" :destroy-on-close="true">
       <div class="flex flex-col gap-3">
         <div class="flex items-center gap-3">
-          <span class="w-16 text-sm text-muted-foreground">昵称</span>
+          <span class="w-16 text-sm text-muted-foreground">{{ $t('manage.user.nickname') }}</span>
           <FaInput v-model="editForm.nickname" class="flex-1" />
         </div>
         <div class="flex items-center gap-3">
-          <span class="w-16 text-sm text-muted-foreground">角色</span>
+          <span class="w-16 text-sm text-muted-foreground">{{ $t('manage.user.role') }}</span>
           <select v-model="editForm.role" class="h-9 flex-1 rounded-md border border-input bg-background px-2 text-sm outline-none">
             <option value="user">
               user
@@ -238,16 +239,16 @@ onMounted(load)
           </select>
         </div>
         <div class="flex items-center gap-3">
-          <span class="w-16 text-sm text-muted-foreground">新密码</span>
-          <FaInput v-model="editForm.password" type="password" placeholder="留空不修改" class="flex-1" />
+          <span class="w-16 text-sm text-muted-foreground">{{ $t('manage.user.newPassword') }}</span>
+          <FaInput v-model="editForm.password" type="password" :placeholder="$t('manage.user.newPasswordPlaceholder')" class="flex-1" />
         </div>
       </div>
       <template #footer>
         <FaButton variant="outline" @click="editVisible = false">
-          取消
+          {{ $t('common.cancel') }}
         </FaButton>
         <FaButton @click="doEdit">
-          保存
+          {{ $t('common.save') }}
         </FaButton>
       </template>
     </FaModal>

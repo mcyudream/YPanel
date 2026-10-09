@@ -9,7 +9,7 @@ const routes: RouteRecordRaw = {
   component: Layout,
   name: 'store',
   meta: {
-    title: '应用商店',
+    title: 'menu.store',
     icon: 'yd:package',
   },
   children: [
@@ -18,7 +18,7 @@ const routes: RouteRecordRaw = {
       name: 'storeIndex',
       component: () => import('@/views/store/index.vue'),
       meta: {
-        title: '应用商店',
+        title: 'menu.store',
         menu: false,
       },
     },

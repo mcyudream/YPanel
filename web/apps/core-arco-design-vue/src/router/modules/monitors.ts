@@ -9,7 +9,7 @@ const routes: RouteRecordRaw = {
   component: Layout,
   name: 'monitor',
   meta: {
-    title: '历史监控',
+    title: 'menu.monitors',
     icon: 'yd:activity',
   },
   children: [
@@ -18,7 +18,7 @@ const routes: RouteRecordRaw = {
       name: 'monitorIndex',
       component: () => import('@/views/manage/monitor.vue'),
       meta: {
-        title: '历史监控',
+        title: 'menu.monitors',
         menu: false,
       },
     },

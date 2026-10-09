@@ -2,14 +2,19 @@
 import api from '@/api'
 import type { NodeItem } from '@/api/modules/node'
 import apiNode from '@/api/modules/node'
+import { nodeAssetApi } from '@/api/modules/node'
 import type { NodeExecResult } from '@/api/modules/nodeexec'
 import { nodeExecApi } from '@/api/modules/nodeexec'
+import { i18n } from '@/locales'
+import { useYwEmbed } from '@/views/desktop/embed'
 
 defineOptions({
   name: 'NodesIndex',
 })
 
 const router = useRouter()
+// 桌面承载时：详情/文件/进程下钻开新窗（router.push 会顶掉 /desktop 路由）；经典模式保持路由跳转
+const ywEmbed = useYwEmbed()
 
 interface MetricEntry {
   id: string
@@ -56,7 +61,7 @@ function fmtUptime(sec?: number) {
   if (!sec) return '—'
   const d = Math.floor(sec / 86400)
   const h = Math.floor((sec % 86400) / 3600)
-  return d > 0 ? `${d} 天 ${h} 小时` : `${h} 小时 ${Math.floor((sec % 3600) / 60)} 分钟`
+  return d > 0 ? i18n.global.t('nodes.uptimeDh', { d, h }) : i18n.global.t('nodes.uptimeHm', { h, m: Math.floor((sec % 3600) / 60) })
 }
 
 const pairVisible = ref(false)
@@ -82,7 +87,7 @@ async function genCode() {
     pairVisible.value = true
   }
   catch (e: any) {
-    useFaToast().error('生成失败', { description: e?.message })
+    useFaToast().error(i18n.global.t('nodes.genFailed'), { description: e?.message })
   }
 }
 
@@ -102,7 +107,7 @@ function openExec() {
 
 async function doExec() {
   if (!execSelected.value.length || !execCommand.value.trim()) {
-    useFaToast().warning('请选择节点并输入命令')
+    useFaToast().warning(i18n.global.t('nodes.selectAndCommand'))
     return
   }
   execRunning.value = true
@@ -110,7 +115,7 @@ async function doExec() {
     execResults.value = await nodeExecApi.exec(execSelected.value, execCommand.value)
   }
   catch (e: any) {
-    useFaToast().error('执行失败', { description: e?.message })
+    useFaToast().error(i18n.global.t('nodes.execFailed'), { description: e?.message })
   }
   finally {
     execRunning.value = false
@@ -120,32 +125,90 @@ async function doExec() {
 function remove(n: NodeItem) {
   const modal = useFaModal()
   modal.confirm({
-    title: '删除节点',
-    content: `确认删除节点 ${n.name}？agent 需重新配对才能接入。`,
+    title: i18n.global.t('nodes.deleteTitle'),
+    content: i18n.global.t('nodes.deleteConfirm', { name: n.name }),
     onConfirm: async () => {
       try {
         await apiNode.remove(n.id)
-        useFaToast().success('已删除')
+        useFaToast().success(i18n.global.t('nodes.deleted'))
         await load()
       }
       catch (e: any) {
-        useFaToast().error('删除失败', { description: e?.message })
+        useFaToast().error(i18n.global.t('nodes.deleteFailed'), { description: e?.message })
       }
     },
   })
 }
 
 function goDetail(id: string) {
+  if (ywEmbed) {
+    const name = nodes.value.find(n => n.id === id)?.name || id
+    ywEmbed.openApp('nodes-detail', { title: name, launchOptions: { id, name } })
+    return
+  }
   router.push(`/nodes/detail/${id}`)
 }
 function goFiles(id: string) {
+  if (ywEmbed) {
+    ywEmbed.openApp('file', { title: i18n.global.t('desktop.apps.file'), launchOptions: id === 'local' ? {} : { node: id } })
+    return
+  }
   router.push(id === 'local' ? '/file_management' : `/file_management?node=${id}`)
 }
 function goProcs(id: string) {
+  if (ywEmbed) {
+    ywEmbed.openApp('processes', { title: i18n.global.t('desktop.apps.processes'), launchOptions: id === 'local' ? {} : { node: id } })
+    return
+  }
   router.push(id === 'local' ? '/processes' : `/processes?node=${id}`)
 }
 
 loadMetrics()
+// ---- M43：服务器资产 ----
+const assetVisible = ref(false)
+const assetSaving = ref(false)
+const assetTarget = ref<{ id: number | string, name: string } | null>(null)
+const assetForm = ref({ expireDate: '', monthlyPrice: '', trafficQuotaGB: 0, assetRemark: '' })
+
+function openAsset(n: { id: string, name: string }) {
+  assetTarget.value = { id: n.id, name: n.name }
+  const row = n.id !== 'local' ? (n as any) : null
+  assetForm.value = {
+    expireDate: row?.expireDate ? String(row.expireDate).slice(0, 10) : '',
+    monthlyPrice: row?.monthlyPrice || '',
+    trafficQuotaGB: row?.trafficQuotaGB || 0,
+    assetRemark: row?.assetRemark || '',
+  }
+  assetVisible.value = true
+}
+
+async function saveAsset() {
+  if (!assetTarget.value) return
+  assetSaving.value = true
+  try {
+    await nodeAssetApi.update(assetTarget.value.id, {
+      expireDate: assetForm.value.expireDate || null,
+      monthlyPrice: assetForm.value.monthlyPrice,
+      trafficQuotaGB: Number(assetForm.value.trafficQuotaGB) || 0,
+      assetRemark: assetForm.value.assetRemark,
+    })
+    useFaToast().success(i18n.global.t('nodes.assetSaved'))
+    assetVisible.value = false
+    await load()
+  }
+  catch (e: any) {
+    useFaToast().error(i18n.global.t('nodes.saveFailed'), { description: e?.message })
+  }
+  finally {
+    assetSaving.value = false
+  }
+}
+
+function remainingValueText(n: any) {
+  if (n.remainingValue === '' || n.remainingValue === undefined) return '—'
+  return `${i18n.global.t('nodes.remainingValue')} ${n.remainingValue}`
+}
+
 onMounted(() => {
   load()
   timer = setInterval(() => {
@@ -167,18 +230,18 @@ onBeforeUnmount(() => {
       <template #title>
         <div class="flex items-center gap-2">
           <YdMorphIcon name="network" :size="24" />
-          <span>节点管理</span>
+          <span>{{ $t('nodes.title') }}</span>
         </div>
       </template>
       <template #description>
-        <span>多节点：目标机执行 ypagent 配对命令即可接入（心跳 30s，90s 无心跳视为离线）</span>
+        <span>{{ $t('nodes.description') }}</span>
       </template>
       <div class="flex items-center gap-2">
         <FaButton variant="outline" size="sm" @click="openExec">
-          <YdMorphIcon name="terminal-square" :size="14" class="mr-1" /> 批量命令
+          <YdMorphIcon name="terminal-square" :size="14" class="mr-1" /> {{ $t('nodes.batchCmd') }}
         </FaButton>
         <FaButton size="sm" @click="genCode">
-          <YdMorphIcon name="key-round" :size="14" class="mr-1" /> 生成配对码
+          <YdMorphIcon name="key-round" :size="14" class="mr-1" /> {{ $t('nodes.genPairCode') }}
         </FaButton>
       </div>
     </FaPageHeader>
@@ -197,28 +260,33 @@ onBeforeUnmount(() => {
               <div>
                 <div class="flex items-center gap-2 font-medium">
                   {{ n.name }}
-                  <span v-if="!n.remote" class="rounded-full bg-primary/10 px-2 py-0.5 text-xs text-primary">本机</span>
+                  <span v-if="!n.remote" class="rounded-full bg-primary/10 px-2 py-0.5 text-xs text-primary">{{ $t('nodes.local') }}</span>
                 </div>
                 <div v-if="n.remote" class="font-mono text-xs text-muted-foreground">{{ n.addr }}</div>
               </div>
             </div>
             <span class="inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-xs" :class="n.online ? 'bg-emerald-500/10 text-emerald-600' : 'bg-red-500/10 text-red-600'">
               <span class="inline-block size-1.5 rounded-full" :class="n.online ? 'animate-pulse bg-current' : 'bg-current'" />
-              {{ n.online ? '在线' : '离线' }}
+              {{ n.online ? $t('nodes.online') : $t('nodes.offline') }}
             </span>
           </div>
 
           <!-- 实时指标 -->
           <div v-if="n.online && n.metric" class="mt-3 grid grid-cols-3 gap-x-4 gap-y-1.5 text-xs text-muted-foreground">
             <span>CPU <b class="font-mono tabular-nums text-foreground">{{ n.metric.cpu?.toFixed(1) ?? '—' }}%</b></span>
-            <span>内存 <b class="font-mono tabular-nums text-foreground">{{ n.metric.mem?.toFixed(1) ?? '—' }}%</b></span>
-            <span>负载 <b class="font-mono tabular-nums text-foreground">{{ n.metric.load1?.toFixed(2) ?? '—' }}</b></span>
+            <span>{{ $t('nodes.memory') }} <b class="font-mono tabular-nums text-foreground">{{ n.metric.mem?.toFixed(1) ?? '—' }}%</b></span>
+            <span>{{ $t('nodes.load') }} <b class="font-mono tabular-nums text-foreground">{{ n.metric.load1?.toFixed(2) ?? '—' }}</b></span>
             <span>↓ {{ fmtSpeed(n.metric.rxSpeed) }}</span>
             <span>↑ {{ fmtSpeed(n.metric.txSpeed) }}</span>
-            <span>运行 {{ fmtUptime(n.metric.uptime) }}</span>
+            <span>{{ $t('nodes.uptimeLabel', { t: fmtUptime(n.metric.uptime) }) }}</span>
+          </div>
+          <div v-if="(n as any).monthlyPrice || (n as any).expireDate" class="mt-2 flex items-center gap-2 text-xs text-muted-foreground">
+            <span>{{ (n as any).monthlyPrice }}</span>
+            <span v-if="(n as any).expireDate">· {{ $t('nodes.expiryLeft', { date: String((n as any).expireDate).slice(0, 10), n: (n as any).daysLeft }) }}</span>
+            <span class="text-amber-600">{{ remainingValueText(n) }}</span>
           </div>
           <div v-else-if="!n.online" class="mt-3 text-xs text-red-500">
-            {{ n.metric?.error || '不可达' }}
+            {{ n.metric?.error || $t('nodes.unreachable') }}
           </div>
 
           <!-- 系统信息 + 快捷入口 -->
@@ -227,13 +295,16 @@ onBeforeUnmount(() => {
               {{ [n.os, n.arch, n.version].filter(Boolean).join(' · ') || '—' }}
             </span>
             <div class="flex items-center gap-1">
-              <FaButton variant="ghost" size="icon-sm" title="文件管理" @click.stop="goFiles(n.id)">
+              <FaButton variant="ghost" size="icon-sm" :title="$t('nodes.filesTitle')" @click.stop="goFiles(n.id)">
                 <FaIcon name="i-lucide:folder-open" class="text-sm" />
               </FaButton>
-              <FaButton variant="ghost" size="icon-sm" title="进程与服务" @click.stop="goProcs(n.id)">
+              <FaButton variant="ghost" size="icon-sm" :title="$t('nodes.procsTitle')" @click.stop="goProcs(n.id)">
                 <FaIcon name="i-lucide:cpu" class="text-sm" />
               </FaButton>
-              <FaButton v-if="n.remote" variant="ghost" size="icon-sm" title="删除节点" @click.stop="remove(n)">
+              <FaButton v-if="n.remote" variant="ghost" size="icon-sm" :title="$t('nodes.assetInfo')" @click.stop="openAsset(n)">
+                <FaIcon name="i-lucide:wallet" class="text-sm" />
+              </FaButton>
+              <FaButton v-if="n.remote" variant="ghost" size="icon-sm" :title="$t('nodes.deleteNode')" @click.stop="remove(n)">
                 <FaIcon name="i-lucide:trash-2" class="text-sm" />
               </FaButton>
             </div>
@@ -243,7 +314,7 @@ onBeforeUnmount(() => {
     </FaPageMain>
 
     <!-- 批量命令 -->
-    <FaModal v-model="execVisible" title="批量命令" class="max-w-3xl!" :destroy-on-close="true">
+    <FaModal v-model="execVisible" :title="$t('nodes.batchCmd')" class="max-w-3xl!" :destroy-on-close="true">
       <div class="flex flex-col gap-3">
         <div class="flex flex-wrap gap-1.5">
           <label
@@ -259,14 +330,14 @@ onBeforeUnmount(() => {
         <textarea
           v-model="execCommand"
           class="h-20 w-full resize-y rounded-md border border-input bg-background p-2 font-mono text-[13px] outline-none focus:ring-1 focus:ring-primary"
-          placeholder="将在所选节点并发执行的命令"
+          :placeholder="$t('nodes.execPh')"
           spellcheck="false"
         />
-        <FaButton :loading="execRunning" @click="doExec">执行</FaButton>
+        <FaButton :loading="execRunning" @click="doExec">{{ $t('nodes.execute') }}</FaButton>
         <div v-for="r in execResults" :key="r.nodeId" class="rounded-md border p-2">
           <div class="mb-1 flex items-center gap-2 text-xs">
             <span class="rounded-full px-2 py-0.5" :class="r.ok ? 'bg-emerald-500/10 text-emerald-600' : 'bg-red-500/10 text-red-600'">
-              {{ r.name || r.nodeId }} · {{ r.ok ? '成功' : '失败' }}
+              {{ r.name || r.nodeId }} · {{ r.ok ? $t('common.success') : $t('common.failed') }}
             </span>
             <span v-if="r.error" class="text-red-500">{{ r.error }}</span>
           </div>
@@ -274,25 +345,56 @@ onBeforeUnmount(() => {
         </div>
       </div>
       <template #footer>
-        <FaButton variant="outline" @click="execVisible = false">关闭</FaButton>
+        <FaButton variant="outline" @click="execVisible = false">{{ $t('common.close') }}</FaButton>
       </template>
     </FaModal>
 
     <!-- 配对码 -->
-    <FaModal v-model="pairVisible" title="节点配对" :destroy-on-close="true">
+    <FaModal v-model="pairVisible" :title="$t('nodes.pairTitle')" :destroy-on-close="true">
       <div class="flex flex-col gap-3">
         <div class="text-sm text-muted-foreground">
-          在目标节点机器上执行以下命令（需已下载 ypagent，core 地址以实际部署为准）：
+          {{ $t('nodes.pairDesc') }}
         </div>
         <div class="rounded-md bg-muted/60 p-3 font-mono text-[13px] break-all select-all">
           {{ pairCommand }}
         </div>
         <div class="text-xs text-muted-foreground">
-          配对码 <code class="rounded bg-muted px-1">{{ pairCode }}</code> 10 分钟内有效且只能使用一次；agent 将监听 0.0.0.0:9527 并保持心跳。
+          {{ $t('nodes.pairCode') }} <code class="rounded bg-muted px-1">{{ pairCode }}</code> {{ $t('nodes.pairCodeNote') }}
         </div>
       </div>
       <template #footer>
-        <FaButton variant="outline" @click="pairVisible = false">关闭</FaButton>
+        <FaButton variant="outline" @click="pairVisible = false">{{ $t('common.close') }}</FaButton>
+      </template>
+    </FaModal>
+
+    <!-- M43：节点资产 -->
+    <FaModal v-model="assetVisible" :title="$t('nodes.assetTitle', { name: assetTarget?.name || '' })" :destroy-on-close="true">
+      <div class="flex flex-col gap-3">
+        <div class="grid grid-cols-2 gap-3">
+          <label class="block space-y-1">
+            <span class="text-xs text-muted-foreground">{{ $t('nodes.expiry') }}</span>
+            <input v-model="assetForm.expireDate" type="date" class="h-9 w-full rounded-md border border-input bg-background px-2 text-sm outline-none focus:border-primary">
+          </label>
+          <label class="block space-y-1">
+            <span class="text-xs text-muted-foreground">{{ $t('nodes.priceHint') }}</span>
+            <FaInput v-model="assetForm.monthlyPrice" class="w-full" />
+          </label>
+        </div>
+        <div class="grid grid-cols-2 gap-3">
+          <label class="block space-y-1">
+            <span class="text-xs text-muted-foreground">{{ $t('nodes.quotaHint') }}</span>
+            <FaInput v-model="assetForm.trafficQuotaGB" type="number" class="w-full" />
+          </label>
+          <label class="block space-y-1">
+            <span class="text-xs text-muted-foreground">{{ $t('common.remark') }}</span>
+            <FaInput v-model="assetForm.assetRemark" class="w-full" />
+          </label>
+        </div>
+        <p class="text-xs text-muted-foreground">{{ $t('nodes.remainingFormula') }}</p>
+      </div>
+      <template #footer>
+        <FaButton variant="outline" @click="assetVisible = false">{{ $t('common.cancel') }}</FaButton>
+        <FaButton :loading="assetSaving" @click="saveAsset">{{ $t('common.save') }}</FaButton>
       </template>
     </FaModal>
   </div>

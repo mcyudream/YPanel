@@ -64,7 +64,7 @@ const matched = computed(() => {
         class="py-0.5 text-xs text-muted-foreground"
         :style="{ paddingLeft: `${(depth + 1) * 14 + 24}px` }"
       >
-        （空目录）
+        {{ $t('files.tree.emptySubDir') }}
       </div>
     </div>
   </template>

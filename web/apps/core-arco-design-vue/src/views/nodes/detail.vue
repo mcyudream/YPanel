@@ -4,16 +4,24 @@ import { fmtBytes } from '@/utils/format'
 import type { NodeItem } from '@/api/modules/node'
 import apiNode from '@/api/modules/node'
 import apiSystem, { type MetricRecord, type SystemOverview } from '@/api/modules/system'
+import { i18n } from '@/locales'
+import { closestWindowId, useYwEmbed } from '@/views/desktop/embed'
 
 defineOptions({
   name: 'NodesDetail',
 })
 
+// 桌面工作台承载时经 props 传入（launchOptions），经典模式走路由参数
+const props = defineProps<{
+  /** 节点 ID（webos 窗口承载时由 launchOptions 注入，优先于路由参数） */
+  id?: string
+}>()
+
 const route = useRoute()
 const router = useRouter()
 const toast = useFaToast()
 
-const nodeId = computed(() => String(route.params.id || 'local'))
+const nodeId = computed(() => String(props.id || route.params.id || 'local'))
 const node = ref<NodeItem | null>(null)
 const overview = ref<SystemOverview | null>(null)
 const overviewLoading = ref(false)
@@ -43,11 +51,11 @@ async function loadOverview() {
 
 // ---- 历史趋势 ----
 const ranges = [
-  { label: '近 1 小时', seconds: 3600 },
-  { label: '近 6 小时', seconds: 6 * 3600 },
-  { label: '近 24 小时', seconds: 24 * 3600 },
-  { label: '近 7 天', seconds: 7 * 24 * 3600 },
-  { label: '近 30 天', seconds: 30 * 24 * 3600 },
+  { label: i18n.global.t('nodes.range1h'), seconds: 3600 },
+  { label: i18n.global.t('nodes.range6h'), seconds: 6 * 3600 },
+  { label: i18n.global.t('nodes.range24h'), seconds: 24 * 3600 },
+  { label: i18n.global.t('nodes.range7d'), seconds: 7 * 24 * 3600 },
+  { label: i18n.global.t('nodes.range30d'), seconds: 30 * 24 * 3600 },
 ]
 const activeSeconds = ref(3600)
 const loading = ref(false)
@@ -87,7 +95,7 @@ async function loadHistory() {
     render()
   }
   catch (e: any) {
-    toast.error('加载历史监控失败', { description: e?.message })
+    toast.error(i18n.global.t('nodes.historyLoadFailed'), { description: e?.message })
   }
   finally {
     loading.value = false
@@ -104,10 +112,14 @@ function render() {
     netChart = echarts.init(netChartRef.value)
   }
   const hasSwap = list.some(s => (s.swap ?? 0) > 0)
+  const nameCpu = i18n.global.t('nodes.legendCpu')
+  const nameMem = i18n.global.t('nodes.legendMem')
+  const nameSwap = i18n.global.t('nodes.legendSwap')
+  const nameLoad = i18n.global.t('nodes.legendLoad')
   cpuChart?.setOption({
     animation: false,
     grid: { left: 45, right: 45, top: 35, bottom: 25 },
-    legend: { data: hasSwap ? ['CPU %', '内存 %', 'Swap %', '负载'] : ['CPU %', '内存 %', '负载'], top: 0, textStyle: { fontSize: 11 } },
+    legend: { data: hasSwap ? [nameCpu, nameMem, nameSwap, nameLoad] : [nameCpu, nameMem, nameLoad], top: 0, textStyle: { fontSize: 11 } },
     tooltip: { trigger: 'axis' },
     xAxis: { type: 'category', data: times, axisLabel: { fontSize: 10 } },
     yAxis: [
@@ -115,24 +127,26 @@ function render() {
       { type: 'value', axisLabel: { fontSize: 10 }, splitLine: { show: false } },
     ],
     series: [
-      { name: 'CPU %', type: 'line', showSymbol: false, data: list.map(s => s.cpu), lineStyle: { width: 1.5 }, areaStyle: { opacity: 0.08 } },
-      { name: '内存 %', type: 'line', showSymbol: false, data: list.map(s => s.mem), lineStyle: { width: 1.5 }, areaStyle: { opacity: 0.08 } },
+      { name: nameCpu, type: 'line', showSymbol: false, data: list.map(s => s.cpu), lineStyle: { width: 1.5 }, areaStyle: { opacity: 0.08 } },
+      { name: nameMem, type: 'line', showSymbol: false, data: list.map(s => s.mem), lineStyle: { width: 1.5 }, areaStyle: { opacity: 0.08 } },
       ...(hasSwap
-        ? [{ name: 'Swap %', type: 'line', showSymbol: false, data: list.map(s => s.swap ?? 0), lineStyle: { width: 1, type: 'dashed' as const } }]
+        ? [{ name: nameSwap, type: 'line', showSymbol: false, data: list.map(s => s.swap ?? 0), lineStyle: { width: 1, type: 'dashed' as const } }]
         : []),
-      { name: '负载', type: 'line', yAxisIndex: 1, showSymbol: false, data: list.map(s => Number(s.load1.toFixed(2))), lineStyle: { width: 1 } },
+      { name: nameLoad, type: 'line', yAxisIndex: 1, showSymbol: false, data: list.map(s => Number(s.load1.toFixed(2))), lineStyle: { width: 1 } },
     ],
   }, { notMerge: true })
+  const nameDown = i18n.global.t('nodes.legendDown')
+  const nameUp = i18n.global.t('nodes.legendUp')
   netChart?.setOption({
     animation: false,
     grid: { left: 65, right: 20, top: 35, bottom: 25 },
-    legend: { data: ['下行', '上行'], top: 0, textStyle: { fontSize: 11 } },
+    legend: { data: [nameDown, nameUp], top: 0, textStyle: { fontSize: 11 } },
     tooltip: { trigger: 'axis', valueFormatter: (v: number) => `${fmtBytes(v)}/s` },
     xAxis: { type: 'category', data: times, axisLabel: { fontSize: 10 } },
     yAxis: { type: 'value', axisLabel: { formatter: (v: number) => fmtBytes(v), fontSize: 10 } },
     series: [
-      { name: '下行', type: 'line', showSymbol: false, data: list.map(s => s.rxSpeed), lineStyle: { width: 1 }, areaStyle: { opacity: 0.08 } },
-      { name: '上行', type: 'line', showSymbol: false, data: list.map(s => s.txSpeed), lineStyle: { width: 1 }, areaStyle: { opacity: 0.08 } },
+      { name: nameDown, type: 'line', showSymbol: false, data: list.map(s => s.rxSpeed), lineStyle: { width: 1 }, areaStyle: { opacity: 0.08 } },
+      { name: nameUp, type: 'line', showSymbol: false, data: list.map(s => s.txSpeed), lineStyle: { width: 1 }, areaStyle: { opacity: 0.08 } },
     ],
   }, { notMerge: true })
 }
@@ -165,7 +179,7 @@ function fmtUptime(sec?: number) {
   if (!sec) return '—'
   const d = Math.floor(sec / 86400)
   const h = Math.floor((sec % 86400) / 3600)
-  return d > 0 ? `${d} 天 ${h} 小时` : `${h} 小时 ${Math.floor((sec % 3600) / 60)} 分钟`
+  return d > 0 ? i18n.global.t('nodes.uptimeDh', { d, h }) : i18n.global.t('nodes.uptimeHm', { h, m: Math.floor((sec % 3600) / 60) })
 }
 
 function barClass(pct: number) {
@@ -174,10 +188,33 @@ function barClass(pct: number) {
   return 'bg-emerald-500'
 }
 
+// 桌面承载：下钻开新窗（router.push 会顶掉 /desktop 路由）、返回=关自己窗；经典模式保持路由
+const ywEmbed = useYwEmbed()
+// 根元素 ref：用于窗口内定位自身窗 id。不能用 getCurrentInstance——computed 首次求值发生在
+// 点击期而非渲染期，届时拿不到实例，selfWinId 恒为 null，返回会误走 router.push 逃逸桌面
+const rootRef = ref<HTMLElement | null>(null)
+const selfWinId = computed(() => closestWindowId(rootRef.value))
+
+function onBack() {
+  if (ywEmbed && selfWinId.value) {
+    ywEmbed.closeWindow(selfWinId.value)
+    return
+  }
+  router.push('/nodes')
+}
+
 function goFiles() {
+  if (ywEmbed) {
+    ywEmbed.openApp('file', { title: i18n.global.t('desktop.apps.file'), launchOptions: nodeId.value === 'local' ? {} : { node: nodeId.value } })
+    return
+  }
   router.push(nodeId.value === 'local' ? '/file_management' : `/file_management?node=${nodeId.value}`)
 }
 function goProcs() {
+  if (ywEmbed) {
+    ywEmbed.openApp('processes', { title: i18n.global.t('desktop.apps.processes'), launchOptions: nodeId.value === 'local' ? {} : { node: nodeId.value } })
+    return
+  }
   router.push(nodeId.value === 'local' ? '/processes' : `/processes?node=${nodeId.value}`)
 }
 
@@ -208,33 +245,33 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div>
+  <div ref="rootRef">
     <FaPageHeader>
       <template #title>
         <div class="flex items-center gap-2">
-          <FaButton variant="ghost" size="icon-sm" title="返回节点列表" @click="router.push('/nodes')">
+          <FaButton variant="ghost" size="icon-sm" :title="$t('nodes.backToList')" @click="onBack">
             <FaIcon name="i-lucide:arrow-left" class="text-sm" />
           </FaButton>
           <YdMorphIcon name="server" :size="24" />
-          <span>{{ node?.name || (nodeId === 'local' ? '本机' : nodeId) }}</span>
+          <span>{{ node?.name || (nodeId === 'local' ? $t('nodes.local') : nodeId) }}</span>
           <span
             v-if="node"
             class="rounded-full px-2 py-0.5 text-xs"
             :class="node.online ? 'bg-emerald-500/10 text-emerald-600' : 'bg-red-500/10 text-red-600'"
           >
-            {{ node.online ? '在线' : '离线' }}
+            {{ node.online ? $t('nodes.online') : $t('nodes.offline') }}
           </span>
         </div>
       </template>
       <template #description>
-        <span>{{ [node?.os, node?.arch, node?.version, node?.addr].filter(Boolean).join(' · ') || '系统监控探针' }}</span>
+        <span>{{ [node?.os, node?.arch, node?.version, node?.addr].filter(Boolean).join(' · ') || $t('nodes.probe') }}</span>
       </template>
       <div class="flex items-center gap-2">
         <FaButton variant="outline" size="sm" @click="goFiles">
-          <FaIcon name="i-lucide:folder-open" class="mr-1" /> 文件管理
+          <FaIcon name="i-lucide:folder-open" class="mr-1" /> {{ $t('nodes.filesTitle') }}
         </FaButton>
         <FaButton variant="outline" size="sm" @click="goProcs">
-          <FaIcon name="i-lucide:cpu" class="mr-1" /> 进程与服务
+          <FaIcon name="i-lucide:cpu" class="mr-1" /> {{ $t('nodes.procsTitle') }}
         </FaButton>
       </div>
     </FaPageHeader>
@@ -244,7 +281,7 @@ onBeforeUnmount(() => {
       <div v-if="overview" class="mb-4 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
         <div class="rounded-lg border p-3">
           <div class="flex items-center justify-between text-xs text-muted-foreground">
-            <span>CPU（{{ overview.cpu.logicalCount }} 核）</span>
+            <span>{{ $t('nodes.cpuCores', { n: overview.cpu.logicalCount }) }}</span>
             <span class="truncate pl-2 font-mono text-[10px]" :title="overview.cpu.modelName">{{ overview.cpu.modelName }}</span>
           </div>
           <div class="mt-1 font-mono text-2xl tabular-nums">{{ overview.cpu.usagePercent.toFixed(1) }}%</div>
@@ -253,7 +290,7 @@ onBeforeUnmount(() => {
           </div>
         </div>
         <div class="rounded-lg border p-3">
-          <div class="text-xs text-muted-foreground">内存</div>
+          <div class="text-xs text-muted-foreground">{{ $t('nodes.memory') }}</div>
           <div class="mt-1 font-mono text-2xl tabular-nums">{{ overview.memory.usagePercent.toFixed(1) }}%</div>
           <div class="mt-2 h-1.5 overflow-hidden rounded-full bg-muted">
             <div class="h-full rounded-full transition-all" :class="barClass(overview.memory.usagePercent)" :style="{ width: `${Math.min(100, overview.memory.usagePercent)}%` }" />
@@ -269,28 +306,28 @@ onBeforeUnmount(() => {
             <div v-if="overview.swap?.total" class="h-full rounded-full transition-all" :class="barClass(overview.swap.usagePercent)" :style="{ width: `${Math.min(100, overview.swap.usagePercent)}%` }" />
           </div>
           <div class="mt-1 text-xs text-muted-foreground">
-            {{ overview.swap?.total ? `${fmtBytes(overview.swap.used)} / ${fmtBytes(overview.swap.total)}` : '未启用' }}
+            {{ overview.swap?.total ? `${fmtBytes(overview.swap.used)} / ${fmtBytes(overview.swap.total)}` : $t('nodes.swapOff') }}
           </div>
         </div>
         <div class="rounded-lg border p-3">
-          <div class="text-xs text-muted-foreground">负载 / 运行时间</div>
+          <div class="text-xs text-muted-foreground">{{ $t('nodes.loadUptime') }}</div>
           <div class="mt-1 font-mono text-2xl tabular-nums">{{ overview.load.load1.toFixed(2) }}</div>
           <div class="mt-2 text-xs text-muted-foreground">
             5min {{ overview.load.load5.toFixed(2) }} · 15min {{ overview.load.load15.toFixed(2) }}
           </div>
-          <div class="mt-1 text-xs text-muted-foreground">已运行 {{ fmtUptime(overview.uptime) }}</div>
+          <div class="mt-1 text-xs text-muted-foreground">{{ $t('nodes.ranFor', { t: fmtUptime(overview.uptime) }) }}</div>
         </div>
         <div class="rounded-lg border p-3 md:col-span-2">
-          <div class="text-xs text-muted-foreground">网络</div>
+          <div class="text-xs text-muted-foreground">{{ $t('nodes.network') }}</div>
           <div class="mt-1 grid grid-cols-2 gap-2 font-mono text-sm tabular-nums">
             <span>↓ {{ fmtBytes(overview.network.rxSpeedBps) }}/s</span>
             <span>↑ {{ fmtBytes(overview.network.txSpeedBps) }}/s</span>
-            <span class="text-xs text-muted-foreground">累计收 {{ fmtBytes(overview.network.rxTotal) }}</span>
-            <span class="text-xs text-muted-foreground">累计发 {{ fmtBytes(overview.network.txTotal) }}</span>
+            <span class="text-xs text-muted-foreground">{{ $t('nodes.rxTotal', { v: fmtBytes(overview.network.rxTotal) }) }}</span>
+            <span class="text-xs text-muted-foreground">{{ $t('nodes.txTotal', { v: fmtBytes(overview.network.txTotal) }) }}</span>
           </div>
         </div>
         <div class="rounded-lg border p-3 md:col-span-2">
-          <div class="text-xs text-muted-foreground">磁盘（{{ overview.disks.length }} 个挂载点）</div>
+          <div class="text-xs text-muted-foreground">{{ $t('nodes.disks', { n: overview.disks.length }) }}</div>
           <div class="mt-2 max-h-28 space-y-2 overflow-auto pr-1">
             <div v-for="d in overview.disks" :key="d.mountpoint" class="text-xs">
               <div class="flex items-center justify-between">
@@ -305,14 +342,14 @@ onBeforeUnmount(() => {
         </div>
       </div>
       <div v-else class="mb-4 rounded-lg border border-red-300 bg-red-50 p-3 text-sm text-red-600 dark:bg-red-950/30">
-        {{ !node || node.online ? '实时数据加载中…' : '节点离线，无法获取实时数据' }}
+        {{ !node || node.online ? $t('nodes.realtimeLoading') : $t('nodes.nodeOfflineNoData') }}
       </div>
 
       <!-- 历史趋势 -->
       <div class="mb-3 flex flex-wrap items-center justify-between gap-2">
         <div class="text-sm font-medium">
-          历史趋势
-          <span class="ml-2 text-xs font-normal text-muted-foreground">每分钟采样，保留 30 天</span>
+          {{ $t('nodes.history') }}
+          <span class="ml-2 text-xs font-normal text-muted-foreground">{{ $t('nodes.historyNote') }}</span>
         </div>
         <div class="flex flex-wrap items-center gap-1">
           <button
@@ -330,28 +367,28 @@ onBeforeUnmount(() => {
 
       <div v-if="summary" class="mb-4 grid grid-cols-2 gap-3 md:grid-cols-4">
         <div class="rounded-lg border p-3">
-          <div class="text-xs text-muted-foreground">CPU 均值 / 峰值</div>
+          <div class="text-xs text-muted-foreground">{{ $t('nodes.cpuAvgMax') }}</div>
           <div class="mt-1 font-mono text-lg tabular-nums">{{ summary.cpuAvg }}% <span class="text-sm text-muted-foreground">/ {{ summary.cpuMax }}%</span></div>
         </div>
         <div class="rounded-lg border p-3">
-          <div class="text-xs text-muted-foreground">内存 均值 / 峰值</div>
+          <div class="text-xs text-muted-foreground">{{ $t('nodes.memAvgMax') }}</div>
           <div class="mt-1 font-mono text-lg tabular-nums">{{ summary.memAvg }}% <span class="text-sm text-muted-foreground">/ {{ summary.memMax }}%</span></div>
         </div>
         <div class="rounded-lg border p-3">
-          <div class="text-xs text-muted-foreground">下行峰值</div>
+          <div class="text-xs text-muted-foreground">{{ $t('nodes.rxPeak') }}</div>
           <div class="mt-1 font-mono text-lg tabular-nums">{{ fmtBytes(summary.rxMax) }}/s</div>
         </div>
         <div class="rounded-lg border p-3">
-          <div class="text-xs text-muted-foreground">上行峰值</div>
+          <div class="text-xs text-muted-foreground">{{ $t('nodes.txPeak') }}</div>
           <div class="mt-1 font-mono text-lg tabular-nums">{{ fmtBytes(summary.txMax) }}/s</div>
         </div>
       </div>
 
       <div v-if="loading && !samples.length" class="py-16 text-center text-sm text-muted-foreground">
-        加载中…
+        {{ $t('common.loading') }}
       </div>
       <div v-else-if="!samples.length" class="py-16 text-center text-sm text-muted-foreground">
-        该区间暂无采样数据（采集器每分钟落库一次，接入后约 1 分钟生成首个采样点）
+        {{ $t('nodes.noSamples') }}
       </div>
       <template v-else>
         <div ref="cpuChart" class="h-72 w-full" />

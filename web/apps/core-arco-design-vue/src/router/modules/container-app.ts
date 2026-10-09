@@ -10,7 +10,7 @@ const routes: RouteRecordRaw = {
   component: Layout,
   name: 'containerAppDetailModule',
   meta: {
-    title: '应用详情',
+    title: 'menu.containerAppDetail',
     menu: false,
   },
   children: [
@@ -19,7 +19,7 @@ const routes: RouteRecordRaw = {
       name: 'containerAppDetail',
       component: () => import('@/views/container/app-detail.vue'),
       meta: {
-        title: '应用详情',
+        title: 'menu.containerAppDetail',
         menu: false,
       },
     },

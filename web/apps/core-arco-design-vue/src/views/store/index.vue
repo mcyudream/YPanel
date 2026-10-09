@@ -2,10 +2,16 @@
 import type { StoreAppItem, StoreFormField, StoreListQuery, StoreSource, StoreTag, StoreVersion } from '@/api/modules/store'
 import type { AppTask } from '@/api/modules/task'
 import { marked } from 'marked'
-import { isPortField, storeApi } from '@/api/modules/store'
+import apiCompose from '@/api/modules/compose'
+import dbApi, { type DbInstance } from '@/api/modules/database'
+import apiSystem from '@/api/modules/system'
+import { dockerExtApi } from '@/api/modules/dockerext'
+import { isPortField, storeApi, type StoreInstallInfo } from '@/api/modules/store'
 import { taskApi } from '@/api/modules/task'
 import { useTaskCenterStore } from '@/store/modules/taskCenter'
+import { i18n, tr } from '@/locales'
 import YdLogViewer from '@/components/YdLogViewer/index.vue'
+import YdDangerDelete from '@/components/YdDangerDelete/index.vue'
 
 defineOptions({
   name: 'StoreIndex',
@@ -16,15 +22,19 @@ const taskCenter = useTaskCenterStore()
 type TabKey = 'all' | 'installed' | 'notInstalled' | 'upgradable' | 'sources'
 
 const TABS: { key: TabKey, label: string }[] = [
-  { key: 'all', label: '全部' },
-  { key: 'installed', label: '已安装' },
-  { key: 'notInstalled', label: '未安装' },
-  { key: 'upgradable', label: '可升级' },
-  { key: 'sources', label: '源管理' },
+  { key: 'all', label: i18n.global.t('common.all') },
+  { key: 'installed', label: i18n.global.t('store.tabInstalled') },
+  { key: 'notInstalled', label: i18n.global.t('store.tabNotInstalled') },
+  { key: 'upgradable', label: i18n.global.t('store.tabUpgradable') },
+  { key: 'sources', label: i18n.global.t('store.tabSources') },
 ]
 
-const KIND_LABEL: Record<string, string> = { app: '应用', service: '环境', middleware: '中间件' }
-const TYPE_LABEL: Record<string, string> = { onepanel: '1Panel', 'yp-url': 'YP 远程', 'yp-git': 'YP Git' }
+function kindLabel(kind: string) {
+  return tr(`store.kind.${kind}`, kind)
+}
+function typeLabel(type: string) {
+  return tr(`store.type.${type}`, type)
+}
 
 const activeTab = ref<TabKey>('all')
 const search = ref('')
@@ -63,10 +73,13 @@ async function load() {
     total.value = out.total
   }
   catch (e: any) {
-    useFaToast().error('应用列表加载失败', { description: e?.message })
+    useFaToast().error(i18n.global.t('store.listLoadFailed'), { description: e?.message })
   }
   finally {
     loading.value = false
+  }
+  if (activeTab.value === 'installed') {
+    await loadInstalled()
   }
   refreshUpgradableCount()
 }
@@ -94,7 +107,7 @@ async function loadSources() {
     sources.value = await storeApi.sources()
   }
   catch (e: any) {
-    useFaToast().error('源列表加载失败', { description: e?.message })
+    useFaToast().error(i18n.global.t('store.sourceListLoadFailed'), { description: e?.message })
   }
 }
 
@@ -103,11 +116,11 @@ async function syncAll(force = false) {
   try {
     const out = await storeApi.sync(force)
     const parts = Object.entries(out || {}).map(([k, v]) => `${k}: ${v}`)
-    useFaToast().success(`同步完成（${parts.length} 个源）`, { description: parts.join('，') })
+    useFaToast().success(i18n.global.t('store.syncDone', { n: parts.length }), { description: parts.join('，') })
     await Promise.all([load(), loadTags()])
   }
   catch (e: any) {
-    useFaToast().error('同步失败', { description: e?.message })
+    useFaToast().error(i18n.global.t('store.syncFailed'), { description: e?.message })
   }
   finally {
     syncing.value = false
@@ -139,7 +152,7 @@ const detailReadme = ref('')
 const detailInstall = ref<{ version: string, composeProject: string } | null>(null)
 
 function sourceName(id: number) {
-  return sources.value.find(s => s.id === id)?.name || `源 #${id}`
+  return sources.value.find(s => s.id === id)?.name || i18n.global.t('store.sourceN', { n: id })
 }
 
 async function openDetail(item: StoreAppItem) {
@@ -158,7 +171,7 @@ async function openDetail(item: StoreAppItem) {
       : ''
   }
   catch (e: any) {
-    useFaToast().error('读取应用详情失败', { description: e?.message })
+    useFaToast().error(i18n.global.t('store.detailLoadFailed'), { description: e?.message })
   }
   finally {
     detailLoading.value = false
@@ -173,6 +186,77 @@ const installForm = ref({ version: '', name: '', domain: '', params: {} as Recor
 const installFields = ref<StoreFormField[]>([])
 const installProxyEnv = ref('')
 const installVersions = ref<StoreVersion[]>([])
+// 高级选项：网络 / 时区 / hosts
+const installAdvanced = ref(false)
+const dockerNets = ref<{ name: string }[]>([])
+const netSel = ref('ypanel_default')
+const netNew = ref('')
+const installTZ = ref(true)
+const installTZValue = ref('Asia/Shanghai')
+const installMountHosts = ref(false)
+// M32：外接数据库实例（识别到 *_HOST 数据库参数时提供「使用已有实例」选择）
+const dbSource = ref<'default' | 'external'>('default')
+const dbInstances = ref<DbInstance[]>([])
+const dbTarget = ref<{ instanceId: number, database: string, user: string, createIfMissing: boolean }>({ instanceId: 0, database: '', user: '', createIfMissing: true })
+
+const dbHostKey = computed(() => {
+  for (const f of installFields.value) {
+    const k = (f.envKey || '').toUpperCase()
+    const stem = k.replace(/^PANEL_/, '').replace(/_HOST$/, '')
+    if (k.endsWith('_HOST') && /(DB|MYSQL|SQL|MONGO|DATABASE|MARIA)/.test(stem)) {
+      return f.envKey
+    }
+  }
+  return ''
+})
+
+async function loadDBInstances() {
+  if (dbInstances.value.length) {
+    return
+  }
+  try {
+    dbInstances.value = ((await dbApi.list()) || []).filter(i => i.type === 'mysql' || i.type === 'postgres')
+  }
+  catch {}
+}
+const installHosts = ref<{ host: string, ip: string }[]>([])
+// 导入宿主机 /etc/hosts
+const hostImportVisible = ref(false)
+const hostImportLoading = ref(false)
+const hostEntries = ref<{ ip: string, hosts: string[] }[]>([])
+const hostPicked = ref<Record<string, boolean>>({})
+
+async function openHostImport() {
+  hostImportVisible.value = true
+  hostImportLoading.value = true
+  hostPicked.value = {}
+  try {
+    hostEntries.value = await apiSystem.hostEntries()
+    for (const e of hostEntries.value) {
+      for (const h of e.hosts) {
+        hostPicked.value[`${e.ip}|${h}`] = installHosts.value.some(x => x.host === h && x.ip === e.ip)
+      }
+    }
+  }
+  catch (e: any) {
+    useFaToast().error(i18n.global.t('store.hostsReadFailed'), { description: e?.message })
+  }
+  finally {
+    hostImportLoading.value = false
+  }
+}
+
+function confirmHostImport() {
+  for (const e of hostEntries.value) {
+    for (const h of e.hosts) {
+      const k = `${e.ip}|${h}`
+      if (hostPicked.value[k] && !installHosts.value.some(x => x.host === h && x.ip === e.ip)) {
+        installHosts.value.push({ host: h, ip: e.ip })
+      }
+    }
+  }
+  hostImportVisible.value = false
+}
 // 任务化安装：提交后切换为日志视图
 const installTaskId = ref(0)
 const installTask = ref<AppTask | null>(null)
@@ -190,6 +274,8 @@ function applyInstallVersion(versions: StoreVersion[], versionId: string) {
   }
   installForm.value.version = target.id
   installFields.value = (target.formFields || []).filter(f => f.envKey)
+  dbSource.value = 'default'
+  dbTarget.value = { instanceId: 0, database: '', user: '', createIfMissing: true }
   const params: Record<string, string> = {}
   for (const f of installFields.value) {
     params[f.envKey] = fieldDefault(f)
@@ -214,16 +300,16 @@ async function refreshInstallTask() {
     if (installTask.value.status !== 'running') {
       stopInstallPolling()
       if (installTask.value.status === 'success') {
-        useFaToast().success(`应用 ${installTask.value.ref} 安装完成`)
+        useFaToast().success(i18n.global.t('store.installDone', { name: installTask.value.ref }))
       }
       else {
-        useFaToast().error('安装失败', { description: installTask.value.error })
+        useFaToast().error(i18n.global.t('store.installFailed'), { description: installTask.value.error })
       }
       await Promise.all([load(), loadTags()])
     }
   }
   catch (e: any) {
-    useFaToast().error('任务状态读取失败', { description: e?.message })
+    useFaToast().error(i18n.global.t('store.taskStatusFailed'), { description: e?.message })
     stopInstallPolling()
   }
   finally {
@@ -231,9 +317,23 @@ async function refreshInstallTask() {
   }
 }
 
+async function loadNetworks() {
+  try {
+    dockerNets.value = (await dockerExtApi.networks()).map(n => ({ name: n.name }))
+  }
+  catch {}
+}
+
 function openInstall(item: StoreAppItem, versionId = '') {
   installTarget.value = item
   installProxyEnv.value = item.reverseProxy
+  netSel.value = 'ypanel_default'
+  netNew.value = ''
+  installTZ.value = true
+  installTZValue.value = 'Asia/Shanghai'
+  installMountHosts.value = false
+  installHosts.value = []
+  void loadNetworks()
   installForm.value = { version: versionId || item.latestVersion || '', name: item.key, domain: '', params: {} }
   installTaskId.value = 0
   installTask.value = null
@@ -265,13 +365,27 @@ async function doInstall() {
       key: target.key,
       version: installForm.value.version,
       name: installForm.value.name,
-      params: installForm.value.params,
+      // 统一字符串化（number 输入框可能产出 number）
+      params: Object.fromEntries(Object.entries(installForm.value.params).map(([k, v]) => [k, String(v ?? '')])),
       domain: installForm.value.domain || undefined,
+      network: netSel.value === '__create__' ? netNew.value : netSel.value,
+      createNetwork: netSel.value === '__create__',
+      timezone: installTZ.value ? installTZValue.value : '',
+      extraHosts: installHosts.value.filter(h => h.host && h.ip).map(h => `${h.host}:${h.ip}`),
+      mountHostsFile: installMountHosts.value,
+      externalDB: dbSource.value === 'external' && dbTarget.value.instanceId
+        ? {
+            instanceId: dbTarget.value.instanceId,
+            database: dbTarget.value.database || undefined,
+            user: dbTarget.value.user || undefined,
+            createIfMissing: dbTarget.value.createIfMissing,
+          }
+        : undefined,
     })
     // 任务化：切换到日志视图并轮询
     installTaskId.value = out.taskId
     installTask.value = null
-    useFaToast().success('安装任务已创建')
+    useFaToast().success(i18n.global.t('store.installTaskCreated'))
     void refreshInstallTask()
     stopInstallPolling()
     installPollTimer = setInterval(() => {
@@ -284,7 +398,7 @@ async function doInstall() {
     }, 2000)
   }
   catch (e: any) {
-    useFaToast().error('创建安装任务失败', { description: e?.message })
+    useFaToast().error(i18n.global.t('store.installTaskCreateFailed'), { description: e?.message })
   }
   finally {
     installing.value = false
@@ -297,26 +411,157 @@ watch(installVisible, (v) => {
   }
 })
 
+const uninstallVisible = ref(false)
+const uninstallTarget = ref('')
+const uninstalling = ref(false)
+const UNINSTALL_OPTS = computed(() => [
+  { key: 'purgeData', label: i18n.global.t('store.optPurgeData'), desc: i18n.global.t('store.optPurgeDataDesc') },
+  { key: 'rmi', label: i18n.global.t('store.optRmi'), desc: i18n.global.t('store.optRmiDesc') },
+  { key: 'cascadeDB', label: i18n.global.t('store.optCascadeDB'), desc: i18n.global.t('store.optCascadeDBDesc') },
+])
+
 function uninstall(p: string) {
-  const modal = useFaModal()
-  modal.confirm({
-    title: '卸载应用',
-    content: `确认卸载 ${p}？容器与 compose 目录将被移除（数据卷保留在项目目录）。可在"任务中心"查看进度。`,
-    onConfirm: async () => {
-      try {
-        await storeApi.uninstall(p)
-        useFaToast().success('卸载任务已创建，可在「任务中心」查看进度')
-        await Promise.all([load(), loadTags()])
-      }
-      catch (e: any) {
-        useFaToast().error('卸载失败', { description: e?.message })
-      }
-    },
-  })
+  uninstallTarget.value = p
+  uninstallVisible.value = true
+}
+
+async function doUninstall(checked: Record<string, boolean>) {
+  uninstalling.value = true
+  try {
+    await storeApi.uninstall(uninstallTarget.value, {
+      purgeData: !!checked.purgeData,
+      rmi: !!checked.rmi,
+      cascadeDB: !!checked.cascadeDB,
+    })
+    useFaToast().success(i18n.global.t('store.uninstallTaskCreated'))
+    uninstallVisible.value = false
+    await Promise.all([load(), loadTags()])
+  }
+  catch (e: any) {
+    useFaToast().error(i18n.global.t('store.uninstallFailed'), { description: e?.message })
+  }
+  finally {
+    uninstalling.value = false
+  }
 }
 
 async function upgrade(item: StoreAppItem) {
   openInstall(item, item.latestVer)
+}
+
+// ---------- 已安装 Tab（1Panel 风格卡片：状态/启停/重启/重建/参数/日志/外链） ----------
+const installedInfos = ref<StoreInstallInfo[]>([])
+const installedLoading = ref(false)
+const actingOn = ref('')
+
+async function loadInstalled() {
+  installedLoading.value = true
+  try {
+    installedInfos.value = await storeApi.installed()
+  }
+  catch (e: any) {
+    useFaToast().error(i18n.global.t('store.installedListLoadFailed'), { description: e?.message })
+  }
+  finally {
+    installedLoading.value = false
+  }
+}
+
+async function installedAction(info: StoreInstallInfo, action: 'start' | 'stop' | 'restart' | 'rebuild') {
+  actingOn.value = `${action}-${info.composeProject}`
+  try {
+    await storeApi.installedAction(info.composeProject, action)
+    const actionLabel = action === 'rebuild' ? i18n.global.t('store.rebuild') : i18n.global.t(`common.${action}`)
+    useFaToast().success(i18n.global.t('store.actionDone', { name: info.composeProject, action: actionLabel }))
+    await loadInstalled()
+  }
+  catch (e: any) {
+    useFaToast().error(i18n.global.t('store.opFailed'), { description: e?.message })
+  }
+  finally {
+    actingOn.value = ''
+  }
+}
+
+// 参数（.env 编辑，保存重建生效）
+const paramsVisible = ref(false)
+const paramsProject = ref('')
+const paramsSaving = ref(false)
+const paramsText = ref('')
+
+async function openParams(info: StoreInstallInfo) {
+  paramsProject.value = info.composeProject
+  paramsVisible.value = true
+  paramsText.value = i18n.global.t('common.loading')
+  try {
+    const env = await storeApi.installEnv(info.composeProject)
+    paramsText.value = Object.entries(env).map(([k, v]) => `${k}=${v}`).join('\n')
+  }
+  catch (e: any) {
+    paramsText.value = ''
+    useFaToast().error(i18n.global.t('store.paramsLoadFailed'), { description: e?.message })
+  }
+}
+
+async function saveParams() {
+  paramsSaving.value = true
+  try {
+    await storeApi.saveInstallEnv(paramsProject.value, paramsText.value)
+    useFaToast().success(i18n.global.t('store.paramsSaved'))
+    paramsVisible.value = false
+    await loadInstalled()
+  }
+  catch (e: any) {
+    useFaToast().error(i18n.global.t('store.saveFailed'), { description: e?.message })
+  }
+  finally {
+    paramsSaving.value = false
+  }
+}
+
+// 日志（compose logs tail）
+const logsVisible = ref(false)
+const logsProject = ref('')
+const logsText = ref('')
+const logsLoading = ref(false)
+
+async function openLogs(info: StoreInstallInfo) {
+  logsProject.value = info.composeProject
+  logsVisible.value = true
+  await refreshLogs()
+}
+
+async function refreshLogs() {
+  const token = useAppAccountStore().token
+  if (!token) {
+    return
+  }
+  logsLoading.value = true
+  try {
+    const url = apiCompose.logsURL(logsProject.value, undefined, token, 500)
+    const res = await fetch(url)
+    logsText.value = await res.text()
+  }
+  catch (e: any) {
+    logsText.value = i18n.global.t('store.logFetchFailed', { msg: e?.message || e })
+  }
+  finally {
+    logsLoading.value = false
+  }
+}
+
+function openExternal(info: StoreInstallInfo) {
+  if (!info.ports.length) {
+    return
+  }
+  window.open(`http://${location.hostname}:${info.ports[0]}`, '_blank', 'noopener')
+}
+
+function fmtDuration(t: string) {
+  const ms = Date.now() - new Date(t).getTime()
+  const d = Math.floor(ms / 86400000)
+  const h = Math.floor((ms % 86400000) / 3600000)
+  return d > 0 ? i18n.global.t('store.durationDh', { d, h }) : i18n.global.t('store.durationH', { h })
 }
 
 // ---------- 安装表单控件辅助 ----------
@@ -381,17 +626,17 @@ async function saveSource() {
   try {
     if (sourceEditing.value) {
       await storeApi.updateSource(sourceEditing.value.id, sourceForm.value)
-      useFaToast().success('源已更新')
+      useFaToast().success(i18n.global.t('store.sourceUpdated'))
     }
     else {
       await storeApi.createSource(sourceForm.value)
-      useFaToast().success('源已添加')
+      useFaToast().success(i18n.global.t('store.sourceAdded'))
     }
     sourceModalVisible.value = false
     await loadSources()
   }
   catch (e: any) {
-    useFaToast().error('保存失败', { description: e?.message })
+    useFaToast().error(i18n.global.t('store.saveFailed'), { description: e?.message })
   }
   finally {
     sourceSaving.value = false
@@ -404,23 +649,23 @@ async function toggleSource(src: StoreSource) {
     await loadSources()
   }
   catch (e: any) {
-    useFaToast().error('操作失败', { description: e?.message })
+    useFaToast().error(i18n.global.t('store.opFailed'), { description: e?.message })
   }
 }
 
 function removeSource(src: StoreSource) {
   const modal = useFaModal()
   modal.confirm({
-    title: '删除源',
-    content: `确认删除源「${src.name}」？其同步的应用条目将一并移除（不影响已安装应用）。`,
+    title: i18n.global.t('store.deleteSourceTitle'),
+    content: i18n.global.t('store.deleteSourceConfirm', { name: src.name }),
     onConfirm: async () => {
       try {
         await storeApi.deleteSource(src.id)
-        useFaToast().success('源已删除')
+        useFaToast().success(i18n.global.t('store.sourceDeleted'))
         await Promise.all([loadSources(), loadTags()])
       }
       catch (e: any) {
-        useFaToast().error('删除失败', { description: e?.message })
+        useFaToast().error(i18n.global.t('store.deleteFailed'), { description: e?.message })
       }
     },
   })
@@ -429,23 +674,23 @@ function removeSource(src: StoreSource) {
 async function syncOne(src: StoreSource) {
   try {
     const out = await storeApi.syncSource(src.id, true)
-    useFaToast().success(`「${out.source}」同步完成：${out.total} 个应用`)
+    useFaToast().success(i18n.global.t('store.sourceSyncDone', { name: out.source, n: out.total }))
     await Promise.all([loadSources(), loadTags()])
   }
   catch (e: any) {
-    useFaToast().error('同步失败', { description: e?.message })
+    useFaToast().error(i18n.global.t('store.syncFailed'), { description: e?.message })
     await loadSources()
   }
 }
 
 function statusText(s: StoreSource) {
   if (!s.url && s.type === 'yp-git') {
-    return '未配置'
+    return i18n.global.t('store.stUnset')
   }
   switch (s.status) {
-    case 'ok': return '正常'
-    case 'error': return `异常：${s.message}`
-    default: return '待同步'
+    case 'ok': return i18n.global.t('store.stOk')
+    case 'error': return i18n.global.t('store.stError', { msg: s.message })
+    default: return i18n.global.t('store.stPending')
   }
 }
 </script>
@@ -456,15 +701,15 @@ function statusText(s: StoreSource) {
       <template #title>
         <div class="flex items-center gap-2">
           <YdMorphIcon name="package" :size="24" />
-          <span>应用商店</span>
+          <span>{{ $t('store.title') }}</span>
         </div>
       </template>
       <template #description>
-        <span>多源驱动（YPanel 源 / 1Panel 源 / 自定义源）：一键安装为容器编排项目，支持环境服务与可复用中间件，可一键反代</span>
+        <span>{{ $t('store.description') }}</span>
       </template>
       <div class="flex items-center gap-2">
         <FaButton variant="outline" size="sm" :loading="syncing" @click="syncAll(true)">
-          <FaIcon name="i-lucide:refresh-cw" class="mr-1" /> 同步全部源
+          <FaIcon name="i-lucide:refresh-cw" class="mr-1" /> {{ $t('store.syncAll') }}
         </FaButton>
       </div>
     </FaPageHeader>
@@ -490,8 +735,87 @@ function statusText(s: StoreSource) {
         </button>
       </div>
 
-      <!-- 应用列表 -->
-      <template v-if="activeTab !== 'sources'">
+      <!-- 已安装：1Panel 风格大卡片（状态/启停/重启/重建/参数/日志/外链/卸载） -->
+      <template v-if="activeTab === 'installed'">
+        <div v-if="installedLoading && !installedInfos.length" class="grid gap-4 md:grid-cols-2">
+          <div v-for="i in 4" :key="i" class="h-36 animate-pulse rounded-lg border bg-muted/30" />
+        </div>
+        <div v-else-if="!installedInfos.length" class="rounded-lg border p-10 text-center text-sm text-muted-foreground">
+          {{ $t('store.noInstalled') }}
+        </div>
+        <div v-else class="grid gap-4 md:grid-cols-2">
+          <div
+            v-for="info in installedInfos"
+            :key="info.id"
+            class="flex flex-col rounded-lg border bg-background p-4 transition-shadow hover:shadow-md"
+          >
+            <div class="flex items-start gap-3">
+              <img
+                :src="info.iconUrl"
+                class="size-11 shrink-0 rounded-lg object-contain"
+                loading="lazy"
+                @error="($event.target as HTMLImageElement).style.opacity = '0.2'"
+              >
+              <div class="min-w-0 flex-1">
+                <div class="flex flex-wrap items-center gap-1.5">
+                  <span class="truncate font-medium">{{ info.name }}</span>
+                  <span
+                    class="inline-block whitespace-nowrap rounded-full px-2 py-0.5 text-xs"
+                    :class="info.running ? 'bg-emerald-500/10 text-emerald-600' : 'bg-red-500/10 text-red-500'"
+                  >
+                    {{ info.running ? $t('store.running') : $t('store.stopped') }}
+                  </span>
+                  <span v-if="info.upgradable" class="rounded bg-orange-500/15 px-1.5 py-0.5 text-xs text-orange-600">{{ $t('store.upgradableWithVersion', { v: info.latestVersion }) }}</span>
+                </div>
+                <div class="mt-1 flex flex-wrap items-center gap-1.5 text-xs text-muted-foreground">
+                  <span class="rounded border px-1.5 py-0.5">{{ $t('store.versionN', { v: info.version }) }}</span>
+                  <span v-for="p in info.ports" :key="p" class="rounded border px-1.5 py-0.5">{{ $t('store.portN', { v: p }) }}</span>
+                </div>
+                <div class="mt-1 text-xs text-muted-foreground">{{ $t('store.installedDur', { t: fmtDuration(info.createdAt) }) }} · {{ info.composeProject }}</div>
+              </div>
+              <div class="flex shrink-0 flex-col gap-1.5">
+                <FaButton size="sm" variant="outline" :disabled="!info.ports.length" :title="$t('store.openServiceTitle')" @click="openExternal(info)">
+                  <FaIcon name="i-lucide:external-link" class="text-xs" /> {{ $t('store.open') }}
+                </FaButton>
+              </div>
+            </div>
+            <div class="mt-3 flex flex-wrap items-center gap-1.5 border-t pt-2.5" @click.stop>
+              <FaButton
+                size="sm" variant="outline" :loading="actingOn === `restart-${info.composeProject}`"
+                @click="installedAction(info, 'restart')"
+              >
+                {{ $t('common.restart') }}
+              </FaButton>
+              <FaButton
+                v-if="info.running" size="sm" variant="outline" :loading="actingOn === `stop-${info.composeProject}`"
+                @click="installedAction(info, 'stop')"
+              >
+                {{ $t('common.stop') }}
+              </FaButton>
+              <FaButton
+                v-else size="sm" variant="outline" :loading="actingOn === `start-${info.composeProject}`"
+                @click="installedAction(info, 'start')"
+              >
+                {{ $t('common.start') }}
+              </FaButton>
+              <FaButton
+                size="sm" variant="outline" :loading="actingOn === `rebuild-${info.composeProject}`" :title="$t('store.rebuildTitle')"
+                @click="installedAction(info, 'rebuild')"
+              >
+                {{ $t('store.rebuild') }}
+              </FaButton>
+              <FaButton size="sm" variant="outline" @click="openParams(info)">{{ $t('store.params') }}</FaButton>
+              <FaButton size="sm" variant="outline" @click="openLogs(info)">{{ $t('store.logs') }}</FaButton>
+              <FaButton size="sm" variant="outline" class="ml-auto text-red-500!" @click="uninstall(info.composeProject)">
+                {{ $t('store.uninstall') }}
+              </FaButton>
+            </div>
+          </div>
+        </div>
+      </template>
+
+      <!-- 应用列表（全部 / 未安装 / 可升级） -->
+      <template v-else-if="activeTab !== 'sources'">
         <div class="mb-4 flex flex-wrap items-center gap-2">
           <div class="flex flex-wrap gap-1.5">
             <button
@@ -500,7 +824,7 @@ function statusText(s: StoreSource) {
               :class="activeTag === '' ? 'border-primary bg-primary/10 text-primary' : 'border-border hover:bg-accent/50'"
               @click="activeTag = ''"
             >
-              全部
+              {{ $t('common.all') }}
             </button>
             <button
               v-for="t in tags"
@@ -514,16 +838,15 @@ function statusText(s: StoreSource) {
             </button>
           </div>
           <div class="ml-auto flex items-center gap-2">
-            <select v-model="sourceFilter" class="h-9 rounded-md border border-input bg-background px-2 text-sm outline-none">
-              <option :value="0">全部来源</option>
-              <option v-for="s in sources.filter(x => x.enabled)" :key="s.id" :value="s.id">{{ s.name }}</option>
-            </select>
-            <select v-model="orderBy" class="h-9 rounded-md border border-input bg-background px-2 text-sm outline-none">
-              <option value="">默认排序</option>
-              <option value="name">名称</option>
-              <option value="lastModified">最近更新</option>
-            </select>
-            <FaInput v-model="search" placeholder="搜索应用…" class="w-52">
+            <YdSelect
+              v-model="sourceFilter"
+              :options="[{ value: 0, label: $t('store.allSources') }, ...sources.filter(x => x.enabled).map(s => ({ value: s.id, label: s.name }))]"
+            />
+            <YdSelect
+              v-model="orderBy"
+              :options="[{ value: '', label: $t('store.sortDefault') }, { value: 'name', label: $t('common.name') }, { value: 'lastModified', label: $t('store.sortRecent') }]"
+            />
+            <FaInput v-model="search" :placeholder="$t('store.searchPh')" class="w-52">
               <template #start>
                 <FaIcon name="i-lucide:search" class="text-muted-foreground" />
               </template>
@@ -535,7 +858,7 @@ function statusText(s: StoreSource) {
           <div v-for="i in 8" :key="i" class="h-28 animate-pulse rounded-lg border bg-muted/30" />
         </div>
         <div v-else-if="!items.length" class="rounded-lg border p-10 text-center text-sm text-muted-foreground">
-          {{ activeTab === 'upgradable' ? '所有应用均为最新版本' : activeTab === 'installed' ? '尚未安装任何应用' : '未找到匹配应用（点击右上角「同步全部源」拉取）' }}
+          {{ activeTab === 'upgradable' ? $t('store.allUpToDate') : $t('store.noMatch') }}
         </div>
         <div v-else class="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
           <div
@@ -554,8 +877,8 @@ function statusText(s: StoreSource) {
               <div class="min-w-0 flex-1">
                 <div class="flex items-center gap-1.5">
                   <span class="truncate font-medium">{{ a.name }}</span>
-                  <span v-if="a.installed" class="shrink-0 rounded bg-green-500/15 px-1.5 py-0.5 text-xs text-green-600">已安装</span>
-                  <span v-else-if="a.upgradable" class="shrink-0 rounded bg-orange-500/15 px-1.5 py-0.5 text-xs text-orange-600">可升级</span>
+                  <span v-if="a.installed" class="shrink-0 rounded bg-green-500/15 px-1.5 py-0.5 text-xs text-green-600">{{ $t('store.installed') }}</span>
+                  <span v-else-if="a.upgradable" class="shrink-0 rounded bg-orange-500/15 px-1.5 py-0.5 text-xs text-orange-600">{{ $t('store.upgradable') }}</span>
                 </div>
                 <div class="truncate text-xs text-muted-foreground" :title="a.title">{{ a.title }}</div>
               </div>
@@ -563,14 +886,14 @@ function statusText(s: StoreSource) {
             <div class="mt-2 line-clamp-2 min-h-10 flex-1 text-xs text-muted-foreground">{{ a.description }}</div>
             <div class="mt-3 flex items-center justify-between border-t pt-2" @click.stop>
               <div class="flex gap-1">
-                <span class="rounded bg-muted px-1.5 py-0.5 text-xs text-muted-foreground">{{ KIND_LABEL[a.kind] || a.kind }}</span>
+                <span class="rounded bg-muted px-1.5 py-0.5 text-xs text-muted-foreground">{{ kindLabel(a.kind) }}</span>
                 <span v-for="t in (a.tags || '').split(',').filter(Boolean).slice(0, 2)" :key="t" class="rounded bg-muted px-1.5 py-0.5 text-xs text-muted-foreground">{{ t }}</span>
                 <span class="rounded bg-muted px-1.5 py-0.5 text-xs text-muted-foreground" :title="sourceName(a.sourceId)">{{ sourceName(a.sourceId) }}</span>
               </div>
               <div class="flex gap-1.5">
-                <FaButton v-if="a.upgradable" size="sm" variant="outline" @click="upgrade(a)">升级 {{ a.latestVer }}</FaButton>
-                <FaButton v-if="a.installed" size="sm" variant="outline" @click="uninstall(a.installInfo?.composeProject || '')">卸载</FaButton>
-                <FaButton v-else size="sm" @click="openInstall(a)">安装</FaButton>
+                <FaButton v-if="a.upgradable" size="sm" variant="outline" @click="upgrade(a)">{{ $t('store.upgradeV', { v: a.latestVer }) }}</FaButton>
+                <FaButton v-if="a.installed" size="sm" variant="outline" @click="uninstall(a.installInfo?.composeProject || '')">{{ $t('store.uninstall') }}</FaButton>
+                <FaButton v-else size="sm" @click="openInstall(a)">{{ $t('store.install') }}</FaButton>
               </div>
             </div>
           </div>
@@ -585,33 +908,33 @@ function statusText(s: StoreSource) {
       <template v-else>
         <div class="mb-4 flex items-center justify-between">
           <div class="text-sm text-muted-foreground">
-            支持三类源：YP Git 仓库（github/gitee/gitlab/自建）、YP 远程 index.json、1Panel 1panel.json.zip
+            {{ $t('store.sourcesDesc') }}
           </div>
           <FaButton size="sm" @click="openSourceModal()">
-            <FaIcon name="i-lucide:plus" class="mr-1" /> 添加源
+            <FaIcon name="i-lucide:plus" class="mr-1" /> {{ $t('store.addSource') }}
           </FaButton>
         </div>
         <div class="overflow-hidden rounded-lg border">
           <table class="w-full text-sm">
             <thead class="bg-muted/40 text-left text-muted-foreground">
               <tr>
-                <th class="px-4 py-2.5 font-medium">名称</th>
-                <th class="px-4 py-2.5 font-medium">类型</th>
-                <th class="px-4 py-2.5 font-medium">地址</th>
-                <th class="px-4 py-2.5 font-medium">应用数</th>
-                <th class="px-4 py-2.5 font-medium">状态</th>
-                <th class="px-4 py-2.5 font-medium">最近同步</th>
-                <th class="px-4 py-2.5 text-right font-medium">操作</th>
+                <th class="px-4 py-2.5 font-medium">{{ $t('common.name') }}</th>
+                <th class="px-4 py-2.5 font-medium">{{ $t('common.type') }}</th>
+                <th class="px-4 py-2.5 font-medium">{{ $t('store.address') }}</th>
+                <th class="px-4 py-2.5 font-medium">{{ $t('store.appCount') }}</th>
+                <th class="px-4 py-2.5 font-medium">{{ $t('common.status') }}</th>
+                <th class="px-4 py-2.5 font-medium">{{ $t('store.lastSync') }}</th>
+                <th class="px-4 py-2.5 text-right font-medium">{{ $t('common.operation') }}</th>
               </tr>
             </thead>
             <tbody>
               <tr v-for="s in sources" :key="s.id" class="border-t border-border">
                 <td class="px-4 py-2.5">
                   {{ s.name }}
-                  <span v-if="s.builtin" class="ml-1 rounded bg-primary/10 px-1.5 py-0.5 text-xs text-primary">内置</span>
-                  <span v-if="!s.enabled" class="ml-1 rounded bg-muted px-1.5 py-0.5 text-xs text-muted-foreground">已停用</span>
+                  <span v-if="s.builtin" class="ml-1 rounded bg-primary/10 px-1.5 py-0.5 text-xs text-primary">{{ $t('store.builtin') }}</span>
+                  <span v-if="!s.enabled" class="ml-1 rounded bg-muted px-1.5 py-0.5 text-xs text-muted-foreground">{{ $t('store.sourceDisabled') }}</span>
                 </td>
-                <td class="px-4 py-2.5 text-muted-foreground">{{ TYPE_LABEL[s.type] || s.type }}{{ s.branch ? ` · ${s.branch}` : '' }}</td>
+                <td class="px-4 py-2.5 text-muted-foreground">{{ typeLabel(s.type) }}{{ s.branch ? ` · ${s.branch}` : '' }}</td>
                 <td class="max-w-60 truncate px-4 py-2.5 font-mono text-xs text-muted-foreground" :title="s.url">{{ s.url || '—' }}</td>
                 <td class="px-4 py-2.5">{{ s.appCount }}</td>
                 <td class="max-w-52 truncate px-4 py-2.5" :class="s.status === 'error' ? 'text-red-500' : 'text-muted-foreground'" :title="statusText(s)">
@@ -620,15 +943,15 @@ function statusText(s: StoreSource) {
                 <td class="px-4 py-2.5 text-xs text-muted-foreground">{{ s.lastSyncAt ? new Date(s.lastSyncAt).toLocaleString() : '—' }}</td>
                 <td class="px-4 py-2.5">
                   <div class="flex justify-end gap-1">
-                    <FaButton size="sm" variant="ghost" @click="syncOne(s)">同步</FaButton>
-                    <FaButton size="sm" variant="ghost" @click="openSourceModal(s)">编辑</FaButton>
-                    <FaButton size="sm" variant="ghost" @click="toggleSource(s)">{{ s.enabled ? '停用' : '启用' }}</FaButton>
-                    <FaButton v-if="!s.builtin" size="sm" variant="ghost" class="text-red-500!" @click="removeSource(s)">删除</FaButton>
+                    <FaButton size="sm" variant="ghost" @click="syncOne(s)">{{ $t('store.sync') }}</FaButton>
+                    <FaButton size="sm" variant="ghost" @click="openSourceModal(s)">{{ $t('common.edit') }}</FaButton>
+                    <FaButton size="sm" variant="ghost" @click="toggleSource(s)">{{ s.enabled ? $t('common.disabled') : $t('common.enabled') }}</FaButton>
+                    <FaButton v-if="!s.builtin" size="sm" variant="ghost" class="text-red-500!" @click="removeSource(s)">{{ $t('common.delete') }}</FaButton>
                   </div>
                 </td>
               </tr>
               <tr v-if="!sources.length">
-                <td colspan="7" class="px-4 py-8 text-center text-muted-foreground">暂无源</td>
+                <td colspan="7" class="px-4 py-8 text-center text-muted-foreground">{{ $t('store.noSources') }}</td>
               </tr>
             </tbody>
           </table>
@@ -637,7 +960,7 @@ function statusText(s: StoreSource) {
     </FaPageMain>
 
     <!-- 详情抽屉 -->
-    <FaDrawer v-model="detailVisible" :title="`应用详情：${detailApp?.name || ''}`" class="max-w-2xl!">
+    <FaDrawer v-model="detailVisible" :title="$t('store.detailTitle', { name: detailApp?.name || '' })" class="max-w-2xl!">
       <div v-if="detailApp" class="flex flex-col gap-4">
         <div class="flex items-start gap-4">
           <img
@@ -648,28 +971,68 @@ function statusText(s: StoreSource) {
           <div class="min-w-0 flex-1">
             <div class="flex flex-wrap items-center gap-2">
               <span class="text-lg font-medium">{{ detailApp.name }}</span>
-              <span v-if="detailInstall" class="rounded bg-green-500/15 px-2 py-0.5 text-xs text-green-600">已安装 {{ detailInstall.version }}</span>
-              <span v-if="detailApp.upgradable" class="rounded bg-orange-500/15 px-2 py-0.5 text-xs text-orange-600">可升级至 {{ detailApp.latestVer }}</span>
+              <span v-if="detailInstall" class="rounded bg-green-500/15 px-2 py-0.5 text-xs text-green-600">{{ $t('store.installedV', { v: detailInstall.version }) }}</span>
+              <span v-if="detailApp.upgradable" class="rounded bg-orange-500/15 px-2 py-0.5 text-xs text-orange-600">{{ $t('store.upgradableToV', { v: detailApp.latestVer }) }}</span>
             </div>
             <div class="mt-1 text-sm text-muted-foreground">{{ detailApp.title || detailApp.description }}</div>
             <div class="mt-2 flex flex-wrap gap-1.5 text-xs text-muted-foreground">
-              <span class="rounded bg-muted px-1.5 py-0.5">来源：{{ sourceName(detailApp.sourceId) }}</span>
-              <span class="rounded bg-muted px-1.5 py-0.5">{{ KIND_LABEL[detailApp.kind] || detailApp.kind }}</span>
-              <span v-if="detailApp.author" class="rounded bg-muted px-1.5 py-0.5">作者：{{ detailApp.author }}</span>
-              <span v-if="detailApp.arch" class="rounded bg-muted px-1.5 py-0.5">架构：{{ detailApp.arch }}</span>
+              <span class="rounded bg-muted px-1.5 py-0.5">{{ $t('store.sourceIs', { name: sourceName(detailApp.sourceId) }) }}</span>
+              <span class="rounded bg-muted px-1.5 py-0.5">{{ kindLabel(detailApp.kind) }}</span>
+              <span v-if="detailApp.author" class="rounded bg-muted px-1.5 py-0.5">{{ $t('store.authorIs', { name: detailApp.author }) }}</span>
+              <span v-if="detailApp.arch" class="rounded bg-muted px-1.5 py-0.5">{{ $t('store.archIs', { name: detailApp.arch }) }}</span>
             </div>
           </div>
         </div>
 
         <div v-if="detailInstall" class="flex items-center justify-between rounded-lg border border-green-500/30 bg-green-500/5 px-3 py-2 text-sm">
-          <span>运行中项目：<span class="font-mono">{{ detailInstall.composeProject }}</span></span>
+          <span>{{ $t('store.runningProject') }}<span class="font-mono">{{ detailInstall.composeProject }}</span></span>
           <div class="flex gap-2">
-            <FaButton size="sm" variant="outline" @click="uninstall(detailInstall?.composeProject || '')">卸载</FaButton>
+            <FaButton size="sm" variant="outline" @click="uninstall(detailInstall?.composeProject || '')">{{ $t('store.uninstall') }}</FaButton>
           </div>
         </div>
 
+        <!-- 链接信息（对齐 1Panel：官网 / 开源社区 / 文档） -->
+        <div v-if="detailApp.website || detailApp.sourceUrl || detailApp.document" class="grid grid-cols-3 overflow-hidden rounded-lg border text-sm">
+          <a
+            v-if="detailApp.website"
+            :href="detailApp.website"
+            target="_blank"
+            rel="noopener noreferrer"
+            class="border-r border-border px-3 py-2 transition-colors hover:bg-accent/40"
+          >
+            <div class="text-xs text-muted-foreground">{{ $t('store.website') }}</div>
+            <div class="mt-0.5 flex items-center gap-1 truncate text-primary">
+              {{ $t('store.link') }} <FaIcon name="i-lucide:external-link" class="size-3 shrink-0" />
+            </div>
+          </a>
+          <a
+            v-if="detailApp.sourceUrl"
+            :href="detailApp.sourceUrl"
+            target="_blank"
+            rel="noopener noreferrer"
+            class="border-r border-border px-3 py-2 transition-colors hover:bg-accent/40"
+          >
+            <div class="text-xs text-muted-foreground">{{ $t('store.community') }}</div>
+            <div class="mt-0.5 flex items-center gap-1 truncate text-primary">
+              {{ $t('store.link') }} <FaIcon name="i-lucide:external-link" class="size-3 shrink-0" />
+            </div>
+          </a>
+          <a
+            v-if="detailApp.document"
+            :href="detailApp.document"
+            target="_blank"
+            rel="noopener noreferrer"
+            class="px-3 py-2 transition-colors hover:bg-accent/40"
+          >
+            <div class="text-xs text-muted-foreground">{{ $t('store.docs') }}</div>
+            <div class="mt-0.5 flex items-center gap-1 truncate text-primary">
+              {{ $t('store.link') }} <FaIcon name="i-lucide:external-link" class="size-3 shrink-0" />
+            </div>
+          </a>
+        </div>
+
         <div>
-          <div class="mb-1.5 text-sm font-medium">版本</div>
+          <div class="mb-1.5 text-sm font-medium">{{ $t('store.version') }}</div>
           <div class="flex flex-wrap gap-1.5">
             <span
               v-for="v in detailVersions"
@@ -679,7 +1042,7 @@ function statusText(s: StoreSource) {
             >
               {{ v.id }}
             </span>
-            <span v-if="!detailVersions.length && detailLoading" class="text-xs text-muted-foreground">加载中…</span>
+            <span v-if="!detailVersions.length && detailLoading" class="text-xs text-muted-foreground">{{ $t('common.loading') }}</span>
           </div>
         </div>
 
@@ -688,41 +1051,70 @@ function statusText(s: StoreSource) {
         </div>
 
         <div v-if="detailReadme">
-          <div class="mb-1.5 text-sm font-medium">应用介绍</div>
+          <div class="mb-1.5 text-sm font-medium">{{ $t('store.readme') }}</div>
           <div class="max-h-[50vh] overflow-auto rounded-lg border p-4 text-sm leading-6" v-html="detailReadme" />
         </div>
 
         <div class="flex justify-end border-t pt-3">
           <FaButton v-if="!detailInstall" size="sm" :disabled="detailLoading" @click="openInstall(detailApp, detailApp.latestVersion)">
-            安装 {{ detailApp.latestVersion }}
+            {{ $t('store.installV', { v: detailApp.latestVersion }) }}
           </FaButton>
           <FaButton v-else size="sm" variant="outline" @click="openInstall(detailApp, detailApp.latestVer)">
-            升级至 {{ detailApp.latestVer }}
+            {{ $t('store.upgradeToV', { v: detailApp.latestVer }) }}
           </FaButton>
         </div>
       </div>
     </FaDrawer>
 
     <!-- 安装向导 -->
-    <FaModal v-model="installVisible" :title="installTaskId ? `安装进行中：${installTarget?.name || ''}` : `安装：${installTarget?.name || ''}`" class="max-w-2xl!" :destroy-on-close="true" :close-on-click-modal="false">
+    <FaModal v-model="installVisible" :title="installTaskId ? $t('store.installRunningTitle', { name: installTarget?.name || '' }) : $t('store.installTitle', { name: installTarget?.name || '' })" class="max-w-2xl!" :destroy-on-close="true" :close-on-click-modal="false">
       <!-- 阶段一：参数 -->
       <div v-if="!installTaskId" class="flex flex-col gap-3">
         <div class="flex items-center gap-3">
-          <span class="w-28 shrink-0 text-sm text-muted-foreground">应用名</span>
-          <FaInput v-model="installForm.name" placeholder="小写字母/数字/中划线" class="flex-1" />
+          <span class="w-28 shrink-0 text-sm text-muted-foreground">{{ $t('store.appName') }}</span>
+          <FaInput v-model="installForm.name" :placeholder="$t('store.appNamePh')" class="flex-1" />
         </div>
         <div class="flex items-center gap-3">
-          <span class="w-28 shrink-0 text-sm text-muted-foreground">版本</span>
+          <span class="w-28 shrink-0 text-sm text-muted-foreground">{{ $t('store.version') }}</span>
           <select v-model="installForm.version" class="h-9 flex-1 rounded-md border border-input bg-background px-2 text-sm outline-none">
             <option v-for="v in installVersions" :key="v.id" :value="v.id">{{ v.name || v.id }}</option>
           </select>
+        </div>
+        <div v-if="dbHostKey" class="flex items-start gap-3">
+          <span class="w-28 shrink-0 pt-2 text-sm text-muted-foreground">{{ $t('store.database') }}</span>
+          <div class="flex min-w-0 flex-1 flex-col gap-2">
+            <select
+              v-model="dbSource"
+              class="h-9 rounded-md border border-input bg-background px-2 text-sm outline-none"
+              @change="dbSource === 'external' && loadDBInstances()"
+            >
+              <option value="default">{{ $t('store.dbDefault') }}</option>
+              <option value="external">{{ $t('store.dbExternal') }}</option>
+            </select>
+            <div v-if="dbSource === 'external'" class="space-y-2 rounded-md border border-dashed p-2.5">
+              <select v-model.number="dbTarget.instanceId" class="h-9 w-full rounded-md border border-input bg-background px-2 text-sm outline-none">
+                <option :value="0" disabled>{{ $t('store.dbPickInstance') }}</option>
+                <option v-for="i in dbInstances" :key="i.id" :value="i.id">
+                  {{ i.name }}（{{ i.type }} :{{ i.port }}）
+                </option>
+              </select>
+              <div class="flex gap-2">
+                <FaInput v-model="dbTarget.database" :placeholder="$t('store.dbNamePh')" class="flex-1" />
+                <FaInput v-model="dbTarget.user" :placeholder="$t('store.dbUserPh')" class="flex-1" />
+              </div>
+              <label class="flex cursor-pointer items-center gap-1.5 text-xs text-muted-foreground">
+                <input v-model="dbTarget.createIfMissing" type="checkbox" class="accent-[var(--primary)]" />
+                {{ $t('store.dbAutoCreate') }}
+              </label>
+            </div>
+          </div>
         </div>
         <template v-for="f in installFields" :key="f.envKey">
           <!-- 关联服务 / 复合字段（一期只读说明） -->
           <div v-if="f.type === 'service' || f.type === 'apps'" class="flex items-center gap-3">
             <span class="w-28 shrink-0 text-sm text-muted-foreground">{{ fieldLabel(f) }}</span>
             <span class="flex-1 rounded-md border border-dashed px-2 py-1.5 text-xs text-muted-foreground">
-              {{ f.default ? String(f.default) : '自动关联已安装服务' }}{{ f.description ? `（${f.description}）` : '' }}
+              {{ f.default ? String(f.default) : $t('store.autoLinkService') }}{{ f.description ? `（${f.description}）` : '' }}
             </span>
           </div>
           <div v-else class="flex items-center gap-3">
@@ -744,12 +1136,12 @@ function statusText(s: StoreSource) {
                 v-model="installForm.params[f.envKey]"
                 :type="f.type === 'password' ? 'password' : f.type === 'number' ? 'number' : 'text'"
                 :disabled="!fieldIsEditable(f)"
-                :placeholder="f.required ? '必填' : '可选'"
+                :placeholder="f.required ? $t('store.required') : $t('store.optional')"
                 class="flex-1"
               />
               <FaButton
                 v-if="fieldIsEditable(f) && (f.type === 'password' || isPortField(f))"
-                variant="outline" size="icon-sm" title="随机生成"
+                variant="outline" size="icon-sm" :title="$t('store.randomGen')"
                 @click="randomizeField(f)"
               >
                 <FaIcon name="i-lucide:dices" class="text-sm" />
@@ -759,57 +1151,207 @@ function statusText(s: StoreSource) {
           <div v-if="f.description" class="-mt-2 pl-31 text-xs text-muted-foreground">{{ f.description }}</div>
         </template>
         <div v-if="installProxyEnv" class="flex items-center gap-3">
-          <span class="w-28 shrink-0 text-sm text-muted-foreground">一键反代</span>
-          <FaInput v-model="installForm.domain" placeholder="选填：安装后自动创建反代站点域名，如 app.example.com" class="flex-1" />
+          <span class="w-28 shrink-0 text-sm text-muted-foreground">{{ $t('store.oneClickProxy') }}</span>
+          <FaInput v-model="installForm.domain" :placeholder="$t('store.proxyPh')" class="flex-1" />
+        </div>
+
+        <!-- 高级选项 -->
+        <button
+          type="button"
+          class="flex cursor-pointer items-center gap-1 text-xs text-muted-foreground hover:text-foreground"
+          @click="installAdvanced = !installAdvanced"
+        >
+          <FaIcon :name="installAdvanced ? 'i-lucide:chevron-down' : 'i-lucide:chevron-right'" class="text-xs" />
+          {{ $t('store.advanced') }}
+        </button>
+        <div v-if="installAdvanced" class="flex flex-col gap-3 rounded-md border border-dashed p-3">
+          <div class="flex items-center gap-3">
+            <span class="w-28 shrink-0 text-sm text-muted-foreground">{{ $t('store.network') }}</span>
+            <div class="flex flex-1 items-center gap-2">
+              <select v-model="netSel" class="h-9 min-w-0 flex-1 rounded-md border border-input bg-background px-2 text-sm outline-none">
+                <option value="ypanel_default">{{ $t('store.netYpanel') }}</option>
+                <option value="host">{{ $t('store.netHost') }}</option>
+                <option v-for="n in dockerNets.filter(x => x.name !== 'ypanel_default' && x.name !== 'host' && x.name !== 'bridge' && x.name !== 'none' && !x.name.startsWith('br-'))" :key="n.name" :value="n.name">
+                  {{ n.name }}{{ $t('store.netExisting') }}
+                </option>
+                <option value="__create__">{{ $t('store.netCreate') }}</option>
+              </select>
+              <FaInput
+                v-if="netSel === '__create__'"
+                v-model="netNew"
+                :placeholder="$t('store.netNamePh')"
+                class="w-40!"
+              />
+            </div>
+          </div>
+          <div class="flex items-center gap-3">
+            <span class="w-28 shrink-0 text-sm text-muted-foreground">{{ $t('store.timezone') }}</span>
+            <label class="flex cursor-pointer items-center gap-1.5 text-sm">
+              <input v-model="installTZ" type="checkbox" class="accent-[rgb(var(--primary))]">
+              {{ $t('store.injectTZ') }}
+            </label>
+            <FaInput v-if="installTZ" v-model="installTZValue" placeholder="Asia/Shanghai" class="w-44!" />
+          </div>
+          <div class="flex items-start gap-3">
+            <span class="w-28 shrink-0 pt-2 text-sm text-muted-foreground">{{ $t('store.hostsMap') }}</span>
+            <div class="flex-1">
+              <div v-for="(h, hi) in installHosts" :key="hi" class="mb-1.5 flex items-center gap-1.5">
+                <FaInput v-model="h.host" :placeholder="$t('store.hostPh')" class="flex-1" />
+                <span class="text-xs text-muted-foreground">→</span>
+                <FaInput v-model="h.ip" placeholder="IP" class="w-36!" />
+                <FaButton variant="ghost" size="icon-sm" @click="installHosts.splice(hi, 1)">
+                  <FaIcon name="i-lucide:x" class="text-xs" />
+                </FaButton>
+              </div>
+              <div class="flex gap-1.5">
+                <FaButton variant="outline" size="sm" @click="openHostImport()">
+                  <FaIcon name="i-lucide:download" class="mr-1" /> {{ $t('store.importHosts') }}
+                </FaButton>
+                <FaButton variant="outline" size="sm" @click="installHosts.push({ host: '', ip: '' })">
+                  <FaIcon name="i-lucide:plus" class="mr-1" /> {{ $t('store.addMapping') }}
+                </FaButton>
+              </div>
+            </div>
+          </div>
+          <label class="flex cursor-pointer items-center gap-1.5 text-sm">
+            <input v-model="installMountHosts" type="checkbox" class="accent-[rgb(var(--primary))]">
+            {{ $t('store.mountHosts') }}
+          </label>
+          <div class="text-xs text-muted-foreground">
+            {{ $t('store.advNote') }}
+          </div>
+          <div v-if="netSel === 'host'" class="rounded-md border border-amber-500/30 bg-amber-500/5 p-2 text-xs text-amber-600">
+            {{ $t('store.hostModeNote') }}
+          </div>
         </div>
         <div class="text-xs text-muted-foreground">
-          安装为 compose 项目 app-&lt;应用名&gt;，容器接入 1panel-network；端口已随机避开占用（可手动修改，安装前会做占用预检）；卸载保留数据卷
+          {{ $t('store.installNote') }}
         </div>
       </div>
       <!-- 阶段二：任务日志 -->
       <div v-else class="flex flex-col gap-3">
         <div class="flex items-center gap-3 text-sm">
           <span class="rounded-full px-2 py-0.5 text-xs" :class="installTask?.status === 'success' ? 'bg-emerald-500/10 text-emerald-600' : installTask?.status === 'failed' ? 'bg-red-500/10 text-red-600' : 'bg-blue-500/10 text-blue-600'">
-            {{ installTask?.status === 'success' ? '安装成功' : installTask?.status === 'failed' ? '安装失败' : '进行中' }}
+            {{ installTask?.status === 'success' ? $t('store.installSuccess') : installTask?.status === 'failed' ? $t('store.installFailed') : $t('store.inProgress') }}
           </span>
-          <span class="text-xs text-muted-foreground">任务 #{{ installTaskId }}</span>
+          <span class="text-xs text-muted-foreground">{{ $t('store.taskN', { n: installTaskId }) }}</span>
           <FaButton variant="link" size="sm" @click="taskCenter.open(installTaskId)">
-            在任务中心打开
+            {{ $t('store.openInTaskCenter') }}
           </FaButton>
         </div>
         <YdLogViewer :logs="installTask?.logText || ''" height="320px" :loading="installLogLoading" />
       </div>
       <template #footer>
         <template v-if="!installTaskId">
-          <FaButton variant="outline" @click="installVisible = false">取消</FaButton>
-          <FaButton :loading="installing" @click="doInstall">创建安装任务</FaButton>
+          <FaButton variant="outline" @click="installVisible = false">{{ $t('common.cancel') }}</FaButton>
+          <FaButton :loading="installing" @click="doInstall">{{ $t('store.createInstallTask') }}</FaButton>
         </template>
         <template v-else>
           <FaButton variant="outline" @click="installVisible = false">
-            {{ installTask?.status === 'running' ? '后台运行' : '关闭' }}
+            {{ installTask?.status === 'running' ? $t('store.runInBackground') : $t('common.close') }}
           </FaButton>
-          <FaButton v-if="installTask?.status === 'failed'" @click="installTaskId = 0">返回修改参数</FaButton>
+          <FaButton v-if="installTask?.status === 'failed'" @click="installTaskId = 0">{{ $t('store.backToParams') }}</FaButton>
         </template>
       </template>
     </FaModal>
 
+    <!-- 导入宿主机 hosts -->
+    <FaModal v-model="hostImportVisible" :title="$t('store.importHosts')" class="max-w-lg!" :destroy-on-close="true">
+      <div class="flex flex-col gap-2">
+        <div class="text-xs text-muted-foreground">
+          {{ $t('store.importHostsDesc') }}
+        </div>
+        <div class="max-h-72 overflow-y-auto rounded-md border">
+          <div v-if="hostImportLoading" class="p-6 text-center text-sm text-muted-foreground">
+            {{ $t('common.loading') }}
+          </div>
+          <div v-else-if="!hostEntries.length" class="p-6 text-center text-sm text-muted-foreground">
+            {{ $t('store.noHostEntries') }}
+          </div>
+          <div
+            v-for="e in hostEntries"
+            :key="e.ip"
+            class="flex items-center gap-2 border-b px-3 py-2 text-sm last:border-b-0 hover:bg-accent/30"
+          >
+            <div class="flex min-w-0 flex-1 flex-wrap items-center gap-x-3 gap-y-1">
+              <label
+                v-for="h in e.hosts"
+                :key="e.ip + '|' + h"
+                class="flex cursor-pointer items-center gap-1.5"
+              >
+                <input
+                  v-model="hostPicked[e.ip + '|' + h]"
+                  type="checkbox"
+                  class="accent-[rgb(var(--primary))]"
+                >
+                <span class="truncate">{{ h }}</span>
+              </label>
+            </div>
+            <span class="shrink-0 font-mono text-xs text-muted-foreground">{{ e.ip }}</span>
+          </div>
+        </div>
+      </div>
+      <template #footer>
+        <FaButton variant="outline" @click="hostImportVisible = false">{{ $t('common.cancel') }}</FaButton>
+        <FaButton @click="confirmHostImport">{{ $t('store.importSelected') }}</FaButton>
+      </template>
+    </FaModal>
+
+    <!-- 已安装：卸载（选项 + 名称确认） -->
+    <YdDangerDelete
+      v-model:visible="uninstallVisible"
+      :title="$t('store.uninstallTitle', { name: uninstallTarget })"
+      :name="uninstallTarget"
+      :options="UNINSTALL_OPTS"
+      :loading="uninstalling"
+      :confirm-text="$t('store.uninstall')"
+      @confirm="doUninstall"
+    />
+
+    <!-- 已安装：参数编辑（.env，保存重建生效） -->
+    <FaModal v-model="paramsVisible" :title="$t('store.paramsTitle', { name: paramsProject })" class="max-w-2xl!" :destroy-on-close="true">
+      <div class="flex flex-col gap-3">
+        <textarea
+          v-model="paramsText"
+          class="h-72 w-full resize-y rounded-md border border-input bg-muted/30 p-3 font-mono text-xs leading-5 outline-none focus:border-primary"
+          spellcheck="false"
+        />
+        <div class="text-xs text-muted-foreground">
+          {{ $t('store.paramsNote') }}
+        </div>
+      </div>
+      <template #footer>
+        <FaButton variant="outline" @click="paramsVisible = false">{{ $t('common.cancel') }}</FaButton>
+        <FaButton :loading="paramsSaving" @click="saveParams">{{ $t('store.saveRebuild') }}</FaButton>
+      </template>
+    </FaModal>
+
+    <!-- 已安装：日志 -->
+    <FaModal v-model="logsVisible" :title="$t('store.logsTitle', { name: logsProject })" class="max-w-3xl!" :destroy-on-close="true">
+      <YdLogViewer :logs="logsText" height="55vh" :loading="logsLoading" />
+      <template #footer>
+        <FaButton variant="outline" @click="logsVisible = false">{{ $t('common.close') }}</FaButton>
+        <FaButton :loading="logsLoading" @click="refreshLogs">{{ $t('common.refresh') }}</FaButton>
+      </template>
+    </FaModal>
+
     <!-- 添加/编辑源 -->
-    <FaModal v-model="sourceModalVisible" :title="sourceEditing ? '编辑源' : '添加源'" class="max-w-xl!">
+    <FaModal v-model="sourceModalVisible" :title="sourceEditing ? $t('store.editSource') : $t('store.addSource')" class="max-w-xl!">
       <div class="flex flex-col gap-3">
         <div class="flex items-center gap-3">
-          <span class="w-20 shrink-0 text-sm text-muted-foreground">名称</span>
-          <FaInput v-model="sourceForm.name" :disabled="!!sourceEditing?.builtin" placeholder="如：我的私有源" class="flex-1" />
+          <span class="w-20 shrink-0 text-sm text-muted-foreground">{{ $t('common.name') }}</span>
+          <FaInput v-model="sourceForm.name" :disabled="!!sourceEditing?.builtin" :placeholder="$t('store.sourceNamePh')" class="flex-1" />
         </div>
         <div class="flex items-center gap-3">
-          <span class="w-20 shrink-0 text-sm text-muted-foreground">类型</span>
+          <span class="w-20 shrink-0 text-sm text-muted-foreground">{{ $t('common.type') }}</span>
           <select v-model="sourceForm.type" :disabled="!!sourceEditing?.builtin" class="h-9 flex-1 rounded-md border border-input bg-background px-2 text-sm outline-none">
-            <option value="yp-git">YP Git 仓库（推荐）</option>
-            <option value="yp-url">YP 远程 index.json</option>
-            <option value="onepanel">1Panel（1panel.json.zip）</option>
+            <option value="yp-git">{{ $t('store.srcTypeYpGit') }}</option>
+            <option value="yp-url">{{ $t('store.srcTypeYpUrl') }}</option>
+            <option value="onepanel">{{ $t('store.srcTypeOnepanel') }}</option>
           </select>
         </div>
         <div class="flex items-center gap-3">
-          <span class="w-20 shrink-0 text-sm text-muted-foreground">地址</span>
+          <span class="w-20 shrink-0 text-sm text-muted-foreground">{{ $t('store.address') }}</span>
           <FaInput
             v-model="sourceForm.url"
             :placeholder="sourceForm.type === 'yp-git' ? 'https://github.com/you/yp-apps.git' : sourceForm.type === 'onepanel' ? 'https://apps-assets.fit2cloud.com/dev/1panel.json.zip' : 'https://example.com/index.json'"
@@ -817,21 +1359,21 @@ function statusText(s: StoreSource) {
           />
         </div>
         <div v-if="sourceForm.type === 'yp-git'" class="flex items-center gap-3">
-          <span class="w-20 shrink-0 text-sm text-muted-foreground">分支</span>
+          <span class="w-20 shrink-0 text-sm text-muted-foreground">{{ $t('store.branch') }}</span>
           <FaInput v-model="sourceForm.branch" placeholder="main" class="flex-1" />
         </div>
         <div v-if="sourceForm.type === 'yp-git'" class="flex items-center gap-3">
           <span class="w-20 shrink-0 text-sm text-muted-foreground">Token</span>
-          <FaInput v-model="sourceForm.authToken" type="password" placeholder="私有仓库访问 token（可选）" class="flex-1" />
+          <FaInput v-model="sourceForm.authToken" type="password" :placeholder="$t('store.tokenPh')" class="flex-1" />
         </div>
         <div class="flex items-center gap-3">
-          <span class="w-20 shrink-0 text-sm text-muted-foreground">备注</span>
-          <FaInput v-model="sourceForm.remark" placeholder="选填" class="flex-1" />
+          <span class="w-20 shrink-0 text-sm text-muted-foreground">{{ $t('common.remark') }}</span>
+          <FaInput v-model="sourceForm.remark" :placeholder="$t('store.optional')" class="flex-1" />
         </div>
       </div>
       <template #footer>
-        <FaButton variant="outline" @click="sourceModalVisible = false">取消</FaButton>
-        <FaButton :loading="sourceSaving" @click="saveSource">保存</FaButton>
+        <FaButton variant="outline" @click="sourceModalVisible = false">{{ $t('common.cancel') }}</FaButton>
+        <FaButton :loading="sourceSaving" @click="saveSource">{{ $t('common.save') }}</FaButton>
       </template>
     </FaModal>
   </div>

@@ -2,6 +2,7 @@
 import type { SiteItem } from '@/api/modules/site'
 import type { SiteAuthBasic } from '@/api/modules/siteconf'
 import { siteExtraApi } from '@/api/modules/siteconf'
+import { i18n } from '@/locales'
 
 const props = defineProps<{ site: SiteItem }>()
 const emit = defineEmits<{ changed: [] }>()
@@ -17,7 +18,7 @@ async function load() {
     edit.value = JSON.parse(JSON.stringify(conf.value))
   }
   catch (e: any) {
-    toast.error('读取 Basic 认证失败', { description: e?.message })
+    toast.error(i18n.global.t('sites.conf.authbasic.loadFailed'), { description: e?.message })
   }
 }
 
@@ -34,11 +35,11 @@ async function save() {
   try {
     conf.value = await siteExtraApi.updateAuthBasic(props.site.id, edit.value)
     edit.value = JSON.parse(JSON.stringify(conf.value))
-    toast.success('Basic 认证已保存并重载 nginx')
+    toast.success(i18n.global.t('sites.conf.authbasic.saved'))
     emit('changed')
   }
   catch (e: any) {
-    toast.error('保存失败', { description: e?.message })
+    toast.error(i18n.global.t('sites.shared.saveFailed'), { description: e?.message })
   }
   finally {
     saving.value = false
@@ -61,46 +62,46 @@ onMounted(load)
     <div class="rounded-lg border p-4">
       <div class="flex items-center justify-between">
         <div>
-          <div class="text-sm font-medium">启用 Basic 认证</div>
-          <p class="mt-0.5 text-xs text-muted-foreground">整站 HTTP Basic 认证，浏览器弹出账号密码框</p>
+          <div class="text-sm font-medium">{{ $t('sites.conf.authbasic.enable') }}</div>
+          <p class="mt-0.5 text-xs text-muted-foreground">{{ $t('sites.conf.authbasic.enableDesc') }}</p>
         </div>
         <label class="flex cursor-pointer items-center gap-2 text-sm">
-          <input v-model="edit.enable" type="checkbox" @change="toggleEnable"> 启用
+          <input v-model="edit.enable" type="checkbox" @change="toggleEnable"> {{ $t('common.enabled') }}
         </label>
       </div>
     </div>
 
     <div class="rounded-lg border p-4">
       <div class="mb-3 flex items-center justify-between">
-        <span class="text-sm font-medium">认证用户</span>
+        <span class="text-sm font-medium">{{ $t('sites.conf.authbasic.users') }}</span>
         <FaButton variant="outline" size="sm" @click="addUser">
-          <FaIcon name="i-lucide:plus" class="mr-1" /> 加用户
+          <FaIcon name="i-lucide:plus" class="mr-1" /> {{ $t('sites.conf.authbasic.addUser') }}
         </FaButton>
       </div>
       <div class="mb-2 hidden gap-2 text-xs text-muted-foreground md:flex">
-        <span class="w-44">用户名</span>
-        <span class="flex-1">密码（留空表示不修改）</span>
+        <span class="w-44">{{ $t('sites.conf.authbasic.colUser') }}</span>
+        <span class="flex-1">{{ $t('sites.conf.authbasic.colPassword') }}</span>
         <span class="w-8" />
       </div>
       <div v-for="(u, i) in edit.users" :key="i" class="mb-2 flex items-center gap-2">
         <FaInput v-model="u.user" placeholder="user" class="w-44" />
         <FaInput v-model="u.password" type="password" placeholder="••••••" class="flex-1" />
-        <FaButton variant="ghost" size="icon-sm" class="text-red-500!" title="删除" @click="removeUser(i)">
+        <FaButton variant="ghost" size="icon-sm" class="text-red-500!" :title="$t('common.delete')" @click="removeUser(i)">
           <FaIcon name="i-lucide:trash-2" class="text-sm" />
         </FaButton>
       </div>
       <div v-if="!edit.users.length" class="py-4 text-center text-sm text-muted-foreground">
-        暂无用户，点击「加用户」创建
+        {{ $t('sites.conf.authbasic.none') }}
       </div>
       <label v-if="edit.users.length" class="mt-2 flex items-center gap-3 text-sm">
-        <span class="w-24 shrink-0 text-muted-foreground">认证域名称</span>
+        <span class="w-24 shrink-0 text-muted-foreground">{{ $t('sites.conf.authbasic.realm') }}</span>
         <FaInput v-model="edit.realm" placeholder="Restricted" class="w-56" />
       </label>
     </div>
 
     <div class="flex justify-end">
       <FaButton :loading="saving" :disabled="!dirty" @click="save">
-        保存并生效
+        {{ $t('sites.shared.saveApply') }}
       </FaButton>
     </div>
   </div>

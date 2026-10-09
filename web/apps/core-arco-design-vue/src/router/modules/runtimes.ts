@@ -9,7 +9,7 @@ const routes: RouteRecordRaw = {
   component: Layout,
   name: 'runtimes',
   meta: {
-    title: '运行环境',
+    title: 'menu.runtimes',
     icon: 'yd:file-code',
   },
   children: [
@@ -18,7 +18,7 @@ const routes: RouteRecordRaw = {
       name: 'runtimesIndex',
       component: () => import('@/views/runtimes/index.vue'),
       meta: {
-        title: '运行环境',
+        title: 'menu.runtimes',
         menu: false,
       },
     },

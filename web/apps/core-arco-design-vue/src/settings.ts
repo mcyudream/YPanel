@@ -8,7 +8,8 @@ export default setSettings({
     },
     home: {
       enable: true,
-      title: '主机概览',
+      // i18n key（menu.overview）：消费点均经 generateTitle 渲染，切语言即译
+      title: 'menu.overview',
     },
     copyright: {
       enable: true,

@@ -39,9 +39,11 @@ const LEVEL_META: Record<string, { label: string, cls: string }> = {
   SUCCESS: { label: 'DONE', cls: 'text-emerald-500' },
 }
 
-const LINE_RE = /^(\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2}(?:[.,]\d+)?)\s+\[?(\w+)\]?\s*(.*)$/
+const LINE_RE = /^(\d{4}[-/]\d{2}[-/]\d{2}[ T]\d{2}:\d{2}:\d{2}(?:[.,]\d+)?(?:Z|[+-]\d{2}:?\d{2})?)\s+\[?(\w+)\]?\s*(.*)$/
 // 常见无时间戳输出的级别行（agent/docker 输出）
 const LEVEL_ONLY_RE = /^\[(\w+)\]\s*(.*)$/
+// 仅时间戳行（docker logs ISO-Z / nginx 斜杠日期等，无级别 token）
+const TS_ONLY_RE = /^(\d{4}[-/]\d{2}[-/]\d{2}[ T]\d{2}:\d{2}:\d{2}(?:[.,]\d+)?(?:Z|[+-]\d{2}:?\d{2})?)\s+(.*)$/
 
 const lines = computed<LogLine[]>(() => {
   const rawLines = (props.logs || '').split('\n')
@@ -51,6 +53,10 @@ const lines = computed<LogLine[]>(() => {
   const out: LogLine[] = []
   let lastLevel = ''
   for (const raw of rawLines) {
+    // 纯空行（含日志末尾换行产生的尾元素）不渲染，避免出现"只有级别"的空行
+    if (raw.trim() === '') {
+      continue
+    }
     const m = raw.match(LINE_RE)
     if (m) {
       const level = m[2].toUpperCase()
@@ -63,6 +69,11 @@ const lines = computed<LogLine[]>(() => {
       const level = m2[1].toUpperCase()
       lastLevel = level
       out.push({ raw, time: '', level, content: m2[2] || '' })
+      continue
+    }
+    const m3 = raw.match(TS_ONLY_RE)
+    if (m3) {
+      out.push({ raw, time: m3[1].replace('T', ' '), level: lastLevel, content: m3[2] || '' })
       continue
     }
     out.push({ raw, time: '', level: lastLevel, content: raw })
@@ -125,26 +136,25 @@ defineExpose({ lines: filtered })
   <div class="flex min-w-0 flex-col overflow-hidden rounded-lg border bg-muted/30">
     <!-- 工具栏 -->
     <div class="flex flex-wrap items-center gap-2 border-b bg-background/60 px-2 py-1.5 text-xs">
-      <select v-model="levelFilter" class="h-7 rounded border bg-background px-1.5 outline-none">
-        <option value="all">全部级别</option>
-        <option v-for="lv in levelsInLog" :key="lv" :value="lv">
-          {{ LEVEL_META[lv]?.label || lv }}
-        </option>
-      </select>
-      <FaInput v-model="keyword" placeholder="过滤关键字…" class="h-7 w-40! text-xs" />
+      <YdSelect
+        v-model="levelFilter"
+        :options="[{ value: 'all', label: $t('components.ydLogViewer.allLevels') }, ...levelsInLog.map(lv => ({ value: lv, label: LEVEL_META[lv]?.label || lv }))]"
+        size="sm"
+      />
+      <FaInput v-model="keyword" :placeholder="$t('components.ydLogViewer.filterPlaceholder')" class="h-7 w-40! text-xs" />
       <label class="ml-auto flex cursor-pointer items-center gap-1 text-muted-foreground">
         <input v-model="autoScrollRef" type="checkbox" class="accent-[rgb(var(--primary))]">
-        自动滚动
+        {{ $t('components.ydLogViewer.autoScroll') }}
       </label>
-      <span class="text-muted-foreground">{{ filtered.length }} 行</span>
+      <span class="text-muted-foreground">{{ $t('components.ydLogViewer.lines', { n: filtered.length }) }}</span>
     </div>
     <!-- 日志区 -->
-    <div ref="container" class="min-w-0 flex-1 overflow-auto px-2 py-1.5 font-mono text-xs leading-5" :style="{ height }">
+    <div ref="container" class="min-w-0 overflow-auto px-2 py-1.5 font-mono text-xs leading-5" :style="{ height }">
       <div v-if="loading && !filtered.length" class="py-6 text-center text-muted-foreground">
-        日志加载中…
+        {{ $t('components.ydLogViewer.loadingLogs') }}
       </div>
       <div v-else-if="!filtered.length" class="py-6 text-center text-muted-foreground">
-        暂无日志
+        {{ $t('components.ydLogViewer.noLogs') }}
       </div>
       <table v-else class="w-full border-collapse">
         <tbody>

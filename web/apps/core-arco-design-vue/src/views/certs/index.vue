@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import type { Certificate, DnsAccount, AcmeAccount } from '@/api/modules/cert'
 import { certApi } from '@/api/modules/cert'
+import { i18n, tr } from '@/locales'
 
 // B23 证书管理页（对齐 1Panel「网站 → 证书」）：
 // 申请（ACME/DNS 挑战）/ 上传 / 自签 / DNS 账户 / ACME 账户 + 证书全生命周期列表。
@@ -26,7 +27,7 @@ async function load() {
     certs.value = await certApi.list()
   }
   catch (e: any) {
-    toast.error('读取证书列表失败', { description: e?.message })
+    toast.error(i18n.global.t('certs.loadFailed'), { description: e?.message })
   }
   finally {
     loading.value = false
@@ -54,7 +55,6 @@ const filteredCerts = computed(() => {
 
 // ---- 状态展示 ----
 
-const providerLabel: Record<string, string> = { acme: 'DNS 账号', selfsigned: '自签', upload: '手动上传' }
 const caLabel: Record<string, string> = { letsencrypt: "Let's Encrypt", zerossl: 'ZeroSSL', buypass: 'Buypass' }
 
 function expiry(c: Certificate) {
@@ -66,11 +66,11 @@ function expiry(c: Certificate) {
   return { text: d.toISOString().slice(0, 10), cls, days }
 }
 
-const statusLabel: Record<string, { text: string, cls: string }> = {
-  ok: { text: '正常', cls: 'bg-emerald-500/10 text-emerald-600' },
-  expiring: { text: '即将过期', cls: 'bg-amber-500/10 text-amber-600' },
-  expired: { text: '已过期', cls: 'bg-red-500/10 text-red-600' },
-  error: { text: '异常', cls: 'bg-red-500/10 text-red-600' },
+const statusCls: Record<string, string> = {
+  ok: 'bg-emerald-500/10 text-emerald-600',
+  expiring: 'bg-amber-500/10 text-amber-600',
+  expired: 'bg-red-500/10 text-red-600',
+  error: 'bg-red-500/10 text-red-600',
 }
 
 // ---- 申请证书（ACME）----
@@ -86,23 +86,23 @@ function openIssue() {
 
 async function doIssue() {
   if (!issueForm.value.domain.trim()) {
-    toast.warning('请填写主域名')
+    toast.warning(i18n.global.t('certs.requireMainDomain'))
     return
   }
   if (!issueForm.value.dnsAccountId) {
-    toast.warning('请选择 DNS 账户（可在「DNS 账户」中创建）')
+    toast.warning(i18n.global.t('certs.requireDnsAccount'))
     return
   }
   issueSaving.value = true
-  toast.info('正在申请证书，DNS 验证通常需要 1-3 分钟，请勿关闭…')
+  toast.info(i18n.global.t('certs.issuing'))
   try {
     await certApi.issue(issueForm.value)
-    toast.success('证书申请成功')
+    toast.success(i18n.global.t('certs.issued'))
     issueVisible.value = false
     await load()
   }
   catch (e: any) {
-    toast.error('申请失败', { description: e?.message })
+    toast.error(i18n.global.t('certs.issueFailed'), { description: e?.message })
   }
   finally {
     issueSaving.value = false
@@ -122,18 +122,18 @@ function openUpload() {
 
 async function doUpload() {
   if (!uploadForm.value.domain.trim() || !uploadForm.value.certPem.trim() || !uploadForm.value.keyPem.trim()) {
-    toast.warning('主域名、证书内容、私钥内容均必填')
+    toast.warning(i18n.global.t('certs.requireUploadFields'))
     return
   }
   uploadSaving.value = true
   try {
     await certApi.upload(uploadForm.value)
-    toast.success('证书上传成功')
+    toast.success(i18n.global.t('certs.uploaded'))
     uploadVisible.value = false
     await load()
   }
   catch (e: any) {
-    toast.error('上传失败', { description: e?.message })
+    toast.error(i18n.global.t('certs.uploadFailed'), { description: e?.message })
   }
   finally {
     uploadSaving.value = false
@@ -153,18 +153,18 @@ function openSelf() {
 
 async function doSelf() {
   if (!selfForm.value.domain.trim()) {
-    toast.warning('请填写域名')
+    toast.warning(i18n.global.t('certs.requireDomain'))
     return
   }
   selfSaving.value = true
   try {
     await certApi.selfSigned(selfForm.value)
-    toast.success('自签证书已生成')
+    toast.success(i18n.global.t('certs.selfGenerated'))
     selfVisible.value = false
     await load()
   }
   catch (e: any) {
-    toast.error('自签失败', { description: e?.message })
+    toast.error(i18n.global.t('certs.selfFailed'), { description: e?.message })
   }
   finally {
     selfSaving.value = false
@@ -185,18 +185,18 @@ function openDns() {
 
 async function doCreateDns() {
   if (!dnsForm.value.name.trim() || !dnsForm.value.accessKey.trim() || !dnsForm.value.secret.trim()) {
-    toast.warning('名称、AccessKey、Secret 均必填')
+    toast.warning(i18n.global.t('certs.requireDnsFields'))
     return
   }
   dnsSaving.value = true
   try {
     await certApi.createDnsAccount(dnsForm.value)
-    toast.success('DNS 账户已创建')
+    toast.success(i18n.global.t('certs.dnsCreated'))
     dnsForm.value = { name: '', provider: 'aliyun', accessKey: '', secret: '' }
     await loadAccounts()
   }
   catch (e: any) {
-    toast.error('创建失败', { description: e?.message })
+    toast.error(i18n.global.t('certs.createFailed'), { description: e?.message })
   }
   finally {
     dnsSaving.value = false
@@ -205,21 +205,19 @@ async function doCreateDns() {
 
 function removeDns(a: DnsAccount) {
   modal.confirm({
-    title: '删除 DNS 账户',
-    content: `确认删除 DNS 账户 ${a.name}？使用该账户续签的证书将受影响。`,
+    title: i18n.global.t('certs.deleteDnsTitle'),
+    content: i18n.global.t('certs.deleteDnsConfirm', { name: a.name }),
     onConfirm: async () => {
       try {
         await certApi.removeDnsAccount(a.id)
         await loadAccounts()
       }
       catch (e: any) {
-        toast.error('删除失败', { description: e?.message })
+        toast.error(i18n.global.t('certs.deleteFailed'), { description: e?.message })
       }
     },
   })
 }
-
-const providerText: Record<string, string> = { aliyun: '阿里云', dnspod: '腾讯云 DNSPod', cloudflare: 'Cloudflare' }
 
 // ---- ACME 账户管理 ----
 
@@ -235,18 +233,18 @@ function openAcme() {
 
 async function doCreateAcme() {
   if (!acmeForm.value.email.includes('@')) {
-    toast.warning('请填写合法邮箱')
+    toast.warning(i18n.global.t('certs.requireEmail'))
     return
   }
   acmeSaving.value = true
   try {
     await certApi.createAcmeAccount(acmeForm.value)
-    toast.success('ACME 账户已创建')
+    toast.success(i18n.global.t('certs.acmeCreated'))
     acmeForm.value = { email: '', caType: 'letsencrypt', keyType: 'ec-256' }
     await loadAccounts()
   }
   catch (e: any) {
-    toast.error('创建失败', { description: e?.message })
+    toast.error(i18n.global.t('certs.createFailed'), { description: e?.message })
   }
   finally {
     acmeSaving.value = false
@@ -255,15 +253,15 @@ async function doCreateAcme() {
 
 function removeAcme(a: AcmeAccount) {
   modal.confirm({
-    title: '删除 ACME 账户',
-    content: `确认删除 ACME 账户 ${a.email}（${caLabel[a.caType]}）？`,
+    title: i18n.global.t('certs.deleteAcmeTitle'),
+    content: i18n.global.t('certs.deleteAcmeConfirm', { email: a.email, ca: caLabel[a.caType] }),
     onConfirm: async () => {
       try {
         await certApi.removeAcmeAccount(a.id)
         await loadAccounts()
       }
       catch (e: any) {
-        toast.error('删除失败', { description: e?.message })
+        toast.error(i18n.global.t('certs.deleteFailed'), { description: e?.message })
       }
     },
   })
@@ -272,27 +270,27 @@ function removeAcme(a: AcmeAccount) {
 // ---- 证书操作 ----
 
 function renew(c: Certificate) {
-  toast.info(`正在续签 ${c.domain}，请勿关闭…`)
+  toast.info(i18n.global.t('certs.renewing', { domain: c.domain }))
   certApi.renew(c.id).then(() => {
-    toast.success('续签成功')
+    toast.success(i18n.global.t('certs.renewed'))
     load()
   }).catch((e: any) => {
-    toast.error('续签失败', { description: e?.message })
+    toast.error(i18n.global.t('certs.renewFailed'), { description: e?.message })
   })
 }
 
 function removeCert(c: Certificate) {
   modal.confirm({
-    title: '删除证书',
-    content: `确认删除证书 ${c.domain}（${c.certName}）？绑定的站点 HTTPS 将受影响。`,
+    title: i18n.global.t('certs.deleteTitle'),
+    content: i18n.global.t('certs.deleteConfirm', { domain: c.domain, name: c.certName }),
     onConfirm: async () => {
       try {
         await certApi.remove(c.id)
-        toast.success('已删除')
+        toast.success(i18n.global.t('certs.deleted'))
         await load()
       }
       catch (e: any) {
-        toast.error('删除失败', { description: e?.message })
+        toast.error(i18n.global.t('certs.deleteFailed'), { description: e?.message })
       }
     },
   })
@@ -302,7 +300,7 @@ function toggleAutoRenew(c: Certificate) {
   certApi.update(c.id, { autoRenew: !c.autoRenew }).then(() => {
     c.autoRenew = !c.autoRenew
   }).catch((e: any) => {
-    toast.error('更新失败', { description: e?.message })
+    toast.error(i18n.global.t('certs.updateFailed'), { description: e?.message })
   })
 }
 
@@ -320,12 +318,12 @@ async function doEdit() {
   editSaving.value = true
   try {
     await certApi.update(editForm.value.id, { remark: editForm.value.remark, autoRenew: editForm.value.autoRenew })
-    toast.success('已保存')
+    toast.success(i18n.global.t('certs.saved'))
     editVisible.value = false
     await load()
   }
   catch (e: any) {
-    toast.error('保存失败', { description: e?.message })
+    toast.error(i18n.global.t('certs.saveFailed'), { description: e?.message })
   }
   finally {
     editSaving.value = false
@@ -344,7 +342,7 @@ async function openDetail(c: Certificate) {
     detailData.value = await certApi.detail(c.id)
   }
   catch (e: any) {
-    toast.error('读取详情失败', { description: e?.message })
+    toast.error(i18n.global.t('certs.detailLoadFailed'), { description: e?.message })
   }
   finally {
     detailLoading.value = false
@@ -363,35 +361,35 @@ onMounted(() => {
       <template #title>
         <div class="flex items-center gap-2">
           <YdMorphIcon name="shield" :size="24" />
-          <span>证书</span>
+          <span>{{ $t('certs.title') }}</span>
         </div>
       </template>
       <template #description>
-        <span>HTTPS 证书统一管理：ACME 申请（DNS 验证）/ 上传 / 自签，支持自动续签与站点绑定</span>
+        <span>{{ $t('certs.desc') }}</span>
       </template>
       <div class="flex items-center gap-2">
         <FaButton size="sm" @click="openIssue">
-          <FaIcon name="i-lucide:badge-check" class="mr-1" /> 申请证书
+          <FaIcon name="i-lucide:badge-check" class="mr-1" /> {{ $t('certs.issue') }}
         </FaButton>
         <FaButton variant="outline" size="sm" @click="openUpload">
-          <FaIcon name="i-lucide:upload" class="mr-1" /> 上传证书
+          <FaIcon name="i-lucide:upload" class="mr-1" /> {{ $t('certs.upload') }}
         </FaButton>
         <FaButton variant="outline" size="sm" @click="openSelf">
-          <FaIcon name="i-lucide:pen-tool" class="mr-1" /> 自签证书
+          <FaIcon name="i-lucide:pen-tool" class="mr-1" /> {{ $t('certs.selfSigned') }}
         </FaButton>
         <FaButton variant="outline" size="sm" @click="openAcme">
-          <FaIcon name="i-lucide:user-round" class="mr-1" /> Acme 账户
+          <FaIcon name="i-lucide:user-round" class="mr-1" /> {{ $t('certs.acmeAccounts') }}
         </FaButton>
         <FaButton variant="outline" size="sm" @click="openDns">
-          <FaIcon name="i-lucide:cloud" class="mr-1" /> DNS 账户
+          <FaIcon name="i-lucide:cloud" class="mr-1" /> {{ $t('certs.dnsAccounts') }}
         </FaButton>
       </div>
     </FaPageHeader>
 
     <FaPageMain>
       <div class="mb-3 flex items-center gap-2">
-        <FaInput v-model="keyword" placeholder="搜索域名 / 备注" class="w-56!" />
-        <span class="ml-auto text-xs text-muted-foreground">共 {{ filteredCerts.length }} 条</span>
+        <FaInput v-model="keyword" :placeholder="$t('certs.searchPlaceholder')" class="w-56!" />
+        <span class="ml-auto text-xs text-muted-foreground">{{ $t('common.total', { n: filteredCerts.length }) }}</span>
       </div>
 
       <div class="overflow-x-auto rounded-lg border">
@@ -399,47 +397,47 @@ onMounted(() => {
           <thead class="bg-muted/50 text-left text-xs text-muted-foreground">
             <tr>
               <th class="px-3 py-2">ID</th>
-              <th class="px-3 py-2">域名</th>
-              <th class="px-3 py-2">其他域名</th>
-              <th class="px-3 py-2">申请方式</th>
-              <th class="px-3 py-2">状态</th>
-              <th class="px-3 py-2">颁发组织</th>
-              <th class="hidden px-3 py-2 lg:table-cell">备注</th>
-              <th class="px-3 py-2">自动续签</th>
-              <th class="cursor-pointer px-3 py-2 select-none" title="点击切换排序" @click="sortAsc = !sortAsc">
-                过期时间
+              <th class="px-3 py-2">{{ $t('certs.domainCol') }}</th>
+              <th class="px-3 py-2">{{ $t('certs.altDomainsCol') }}</th>
+              <th class="px-3 py-2">{{ $t('certs.providerCol') }}</th>
+              <th class="px-3 py-2">{{ $t('common.status') }}</th>
+              <th class="px-3 py-2">{{ $t('certs.issuerCol') }}</th>
+              <th class="hidden px-3 py-2 lg:table-cell">{{ $t('common.remark') }}</th>
+              <th class="px-3 py-2">{{ $t('certs.autoRenewCol') }}</th>
+              <th class="cursor-pointer px-3 py-2 select-none" :title="$t('certs.sortToggle')" @click="sortAsc = !sortAsc">
+                {{ $t('certs.expiryCol') }}
                 <FaIcon :name="sortAsc ? 'i-lucide:chevron-up' : 'i-lucide:chevron-down'" class="text-[10px]" />
               </th>
-              <th class="px-3 py-2 text-right">操作</th>
+              <th class="px-3 py-2 text-right">{{ $t('common.operation') }}</th>
             </tr>
           </thead>
           <tbody>
             <tr v-if="loading && !certs.length">
-              <td colspan="10" class="px-3 py-10 text-center text-muted-foreground">加载中…</td>
+              <td colspan="10" class="px-3 py-10 text-center text-muted-foreground">{{ $t('common.loading') }}</td>
             </tr>
             <tr v-else-if="!filteredCerts.length">
               <td colspan="10" class="px-3 py-10 text-center text-muted-foreground">
-                暂无证书。点击右上角「申请证书」（需 DNS 账户）或「上传证书」开始。
+                {{ $t('certs.noCerts') }}
               </td>
             </tr>
             <tr v-for="c in filteredCerts" :key="c.id" class="border-t transition-colors hover:bg-accent/30">
               <td class="px-3 py-2 text-xs text-muted-foreground">{{ c.id }}</td>
               <td class="px-3 py-2">
                 <div class="font-medium">{{ c.domain }}</div>
-                <div v-if="c.sites?.length" class="text-xs text-muted-foreground">绑定：{{ c.sites.join('、') }}</div>
+                <div v-if="c.sites?.length" class="text-xs text-muted-foreground">{{ $t('certs.boundTo', { sites: c.sites.join('、') }) }}</div>
               </td>
               <td class="max-w-48 truncate px-3 py-2 font-mono text-xs text-muted-foreground" :title="(c.altDomains || []).join(', ')">
                 {{ (c.altDomains || []).join(', ') || '—' }}
               </td>
               <td class="px-3 py-2 text-xs">
-                {{ providerLabel[c.provider] || c.provider }}
+                {{ tr(`certs.providerLabel.${c.provider}`, c.provider) }}
                 <span v-if="c.provider === 'acme'" class="text-muted-foreground">
-                  （{{ c.dnsAccountId ? 'DNS 账户' : '环境变量' }}）
+                  {{ $t('certs.providerHint', { via: c.dnsAccountId ? $t('certs.viaDns') : $t('certs.viaEnv') }) }}
                 </span>
               </td>
               <td class="px-3 py-2">
-                <span class="rounded-full px-2 py-0.5 text-xs" :class="statusLabel[c.status]?.cls || 'bg-muted text-muted-foreground'">
-                  {{ statusLabel[c.status]?.text || c.status }}
+                <span class="rounded-full px-2 py-0.5 text-xs" :class="statusCls[c.status] || 'bg-muted text-muted-foreground'">
+                  {{ tr(`certs.status.${c.status}`, c.status) }}
                 </span>
               </td>
               <td class="px-3 py-2 text-xs text-muted-foreground">{{ c.issuer || '—' }}</td>
@@ -453,10 +451,10 @@ onMounted(() => {
               <td class="px-3 py-2 text-xs" :class="expiry(c).cls">{{ expiry(c).text }}</td>
               <td class="px-3 py-2">
                 <div class="flex items-center justify-end gap-1">
-                  <FaButton variant="ghost" size="sm" @click="openDetail(c)">详情</FaButton>
-                  <FaButton v-if="c.provider === 'acme'" variant="ghost" size="sm" @click="renew(c)">续签</FaButton>
-                  <FaButton variant="ghost" size="sm" @click="openEdit(c)">编辑</FaButton>
-                  <FaButton variant="ghost" size="sm" class="text-red-500!" @click="removeCert(c)">删除</FaButton>
+                  <FaButton variant="ghost" size="sm" @click="openDetail(c)">{{ $t('common.detail') }}</FaButton>
+                  <FaButton v-if="c.provider === 'acme'" variant="ghost" size="sm" @click="renew(c)">{{ $t('certs.renew') }}</FaButton>
+                  <FaButton variant="ghost" size="sm" @click="openEdit(c)">{{ $t('common.edit') }}</FaButton>
+                  <FaButton variant="ghost" size="sm" class="text-red-500!" @click="removeCert(c)">{{ $t('common.delete') }}</FaButton>
                 </div>
               </td>
             </tr>
@@ -466,187 +464,187 @@ onMounted(() => {
     </FaPageMain>
 
     <!-- 申请证书 -->
-    <FaModal v-model="issueVisible" title="申请证书" :destroy-on-close="true">
+    <FaModal v-model="issueVisible" :title="$t('certs.issue')" :destroy-on-close="true">
       <div class="flex flex-col gap-3">
         <div class="flex items-center gap-3">
-          <span class="w-20 shrink-0 text-sm text-muted-foreground">主域名</span>
-          <FaInput v-model="issueForm.domain" placeholder="如 example.com（自动附带 *.example.com 泛域名）" class="flex-1" />
+          <span class="w-20 shrink-0 text-sm text-muted-foreground">{{ $t('certs.mainDomain') }}</span>
+          <FaInput v-model="issueForm.domain" :placeholder="$t('certs.mainDomainPlaceholder')" class="flex-1" />
         </div>
         <div class="flex items-start gap-3">
-          <span class="w-20 shrink-0 text-sm text-muted-foreground">其他域名</span>
-          <textarea v-model="issueForm.altDomains" class="h-14 flex-1 rounded-md border border-input bg-background p-2 font-mono text-xs outline-none focus:ring-1 focus:ring-primary" placeholder="可选，每行一个或逗号分隔" />
+          <span class="w-20 shrink-0 text-sm text-muted-foreground">{{ $t('certs.altDomainsCol') }}</span>
+          <textarea v-model="issueForm.altDomains" class="h-14 flex-1 rounded-md border border-input bg-background p-2 font-mono text-xs outline-none focus:ring-1 focus:ring-primary" :placeholder="$t('certs.altDomainsPlaceholder')" />
         </div>
         <div class="flex items-center gap-3">
-          <span class="w-20 shrink-0 text-sm text-muted-foreground">Acme 账户</span>
+          <span class="w-20 shrink-0 text-sm text-muted-foreground">{{ $t('certs.acmeAccounts') }}</span>
           <select v-model.number="issueForm.acmeAccountId" class="h-9 flex-1 rounded-md border bg-background px-2 text-sm outline-none focus:border-primary">
-            <option :value="0">默认（面板环境变量邮箱）</option>
+            <option :value="0">{{ $t('certs.defaultAcme') }}</option>
             <option v-for="a in acmeAccounts" :key="a.id" :value="a.id">{{ a.email }}（{{ caLabel[a.caType] }}）</option>
           </select>
         </div>
         <div class="flex items-center gap-3">
-          <span class="w-20 shrink-0 text-sm text-muted-foreground">DNS 账户</span>
+          <span class="w-20 shrink-0 text-sm text-muted-foreground">{{ $t('certs.dnsAccounts') }}</span>
           <select v-model.number="issueForm.dnsAccountId" class="h-9 flex-1 rounded-md border bg-background px-2 text-sm outline-none focus:border-primary">
-            <option v-if="!dnsAccounts.length" :value="0" disabled>暂无 DNS 账户，请先在「DNS 账户」中创建</option>
-            <option v-for="a in dnsAccounts" :key="a.id" :value="a.id">{{ a.name }}（{{ providerText[a.provider] }}）</option>
+            <option v-if="!dnsAccounts.length" :value="0" disabled>{{ $t('certs.noDnsOption') }}</option>
+            <option v-for="a in dnsAccounts" :key="a.id" :value="a.id">{{ a.name }}（{{ tr(`certs.provider.${a.provider}`, a.provider) }}）</option>
           </select>
         </div>
         <div class="flex items-center gap-3">
-          <span class="w-20 shrink-0 text-sm text-muted-foreground">备注</span>
-          <FaInput v-model="issueForm.remark" placeholder="如：通配证书" class="flex-1" />
+          <span class="w-20 shrink-0 text-sm text-muted-foreground">{{ $t('common.remark') }}</span>
+          <FaInput v-model="issueForm.remark" :placeholder="$t('certs.issueRemarkPlaceholder')" class="flex-1" />
         </div>
         <label class="flex cursor-pointer items-center gap-2 text-sm">
-          <input v-model="issueForm.autoRenew" type="checkbox"> 自动续签
-          <span class="text-xs text-muted-foreground">由 acme.sh 定时任务自动续期并在续期后重载 nginx</span>
+          <input v-model="issueForm.autoRenew" type="checkbox"> {{ $t('certs.autoRenew') }}
+          <span class="text-xs text-muted-foreground">{{ $t('certs.autoRenewHint') }}</span>
         </label>
         <div class="rounded-md bg-muted/50 p-3 text-xs text-muted-foreground">
-          使用 DNS API 验证（支持阿里云 / 腾讯云 DNSPod / Cloudflare），无需开放 80 端口，可签发泛域名证书。
+          {{ $t('certs.dnsApiHint') }}
         </div>
       </div>
       <template #footer>
-        <FaButton variant="outline" @click="issueVisible = false">取消</FaButton>
-        <FaButton :loading="issueSaving" @click="doIssue">确认申请</FaButton>
+        <FaButton variant="outline" @click="issueVisible = false">{{ $t('common.cancel') }}</FaButton>
+        <FaButton :loading="issueSaving" @click="doIssue">{{ $t('certs.confirmIssue') }}</FaButton>
       </template>
     </FaModal>
 
     <!-- 上传证书 -->
-    <FaModal v-model="uploadVisible" title="上传证书" :destroy-on-close="true">
+    <FaModal v-model="uploadVisible" :title="$t('certs.upload')" :destroy-on-close="true">
       <div class="flex flex-col gap-3">
         <div class="flex items-center gap-3">
-          <span class="w-20 shrink-0 text-sm text-muted-foreground">证书名称</span>
-          <FaInput v-model="uploadForm.certName" placeholder="可选，默认取主域名" class="flex-1" />
+          <span class="w-20 shrink-0 text-sm text-muted-foreground">{{ $t('certs.certName') }}</span>
+          <FaInput v-model="uploadForm.certName" :placeholder="$t('certs.certNamePlaceholder')" class="flex-1" />
         </div>
         <div class="flex items-center gap-3">
-          <span class="w-20 shrink-0 text-sm text-muted-foreground">主域名</span>
-          <FaInput v-model="uploadForm.domain" placeholder="如 example.com" class="flex-1" />
+          <span class="w-20 shrink-0 text-sm text-muted-foreground">{{ $t('certs.mainDomain') }}</span>
+          <FaInput v-model="uploadForm.domain" :placeholder="$t('certs.domainPlaceholder')" class="flex-1" />
         </div>
         <div class="flex items-start gap-3">
-          <span class="w-20 shrink-0 text-sm text-muted-foreground">证书（PEM）</span>
-          <textarea v-model="uploadForm.certPem" class="h-24 flex-1 rounded-md border border-input bg-background p-2 font-mono text-xs outline-none focus:ring-1 focus:ring-primary" placeholder="-----BEGIN CERTIFICATE-----&#10;…（fullchain 全链）" />
+          <span class="w-20 shrink-0 text-sm text-muted-foreground">{{ $t('certs.certPem') }}</span>
+          <textarea v-model="uploadForm.certPem" class="h-24 flex-1 rounded-md border border-input bg-background p-2 font-mono text-xs outline-none focus:ring-1 focus:ring-primary" :placeholder="$t('certs.certPemPlaceholder')" />
         </div>
         <div class="flex items-start gap-3">
-          <span class="w-20 shrink-0 text-sm text-muted-foreground">私钥（PEM）</span>
-          <textarea v-model="uploadForm.keyPem" class="h-24 flex-1 rounded-md border border-input bg-background p-2 font-mono text-xs outline-none focus:ring-1 focus:ring-primary" placeholder="-----BEGIN PRIVATE KEY-----&#10;…" />
+          <span class="w-20 shrink-0 text-sm text-muted-foreground">{{ $t('certs.keyPem') }}</span>
+          <textarea v-model="uploadForm.keyPem" class="h-24 flex-1 rounded-md border border-input bg-background p-2 font-mono text-xs outline-none focus:ring-1 focus:ring-primary" :placeholder="$t('certs.keyPemPlaceholder')" />
         </div>
         <div class="flex items-center gap-3">
-          <span class="w-20 shrink-0 text-sm text-muted-foreground">备注</span>
+          <span class="w-20 shrink-0 text-sm text-muted-foreground">{{ $t('common.remark') }}</span>
           <FaInput v-model="uploadForm.remark" class="flex-1" />
         </div>
       </div>
       <template #footer>
-        <FaButton variant="outline" @click="uploadVisible = false">取消</FaButton>
-        <FaButton :loading="uploadSaving" @click="doUpload">上传</FaButton>
+        <FaButton variant="outline" @click="uploadVisible = false">{{ $t('common.cancel') }}</FaButton>
+        <FaButton :loading="uploadSaving" @click="doUpload">{{ $t('common.upload') }}</FaButton>
       </template>
     </FaModal>
 
     <!-- 自签证书 -->
-    <FaModal v-model="selfVisible" title="自签证书" :destroy-on-close="true">
+    <FaModal v-model="selfVisible" :title="$t('certs.selfSigned')" :destroy-on-close="true">
       <div class="flex flex-col gap-3">
         <div class="flex items-center gap-3">
-          <span class="w-20 shrink-0 text-sm text-muted-foreground">域名</span>
-          <FaInput v-model="selfForm.domain" placeholder="如 example.com（内网/测试用）" class="flex-1" />
+          <span class="w-20 shrink-0 text-sm text-muted-foreground">{{ $t('certs.domainCol') }}</span>
+          <FaInput v-model="selfForm.domain" :placeholder="$t('certs.selfDomainPlaceholder')" class="flex-1" />
         </div>
         <div class="flex items-center gap-3">
-          <span class="w-20 shrink-0 text-sm text-muted-foreground">有效期</span>
+          <span class="w-20 shrink-0 text-sm text-muted-foreground">{{ $t('certs.validity') }}</span>
           <FaInput v-model.number="selfForm.days" class="w-32!" />
-          <span class="text-xs text-muted-foreground">天</span>
+          <span class="text-xs text-muted-foreground">{{ $t('certs.days') }}</span>
         </div>
         <div class="flex items-center gap-3">
-          <span class="w-20 shrink-0 text-sm text-muted-foreground">备注</span>
+          <span class="w-20 shrink-0 text-sm text-muted-foreground">{{ $t('common.remark') }}</span>
           <FaInput v-model="selfForm.remark" class="flex-1" />
         </div>
         <div class="rounded-md bg-muted/50 p-3 text-xs text-muted-foreground">
-          自签证书浏览器会提示不受信任，仅建议内网或测试环境使用。
+          {{ $t('certs.selfHint') }}
         </div>
       </div>
       <template #footer>
-        <FaButton variant="outline" @click="selfVisible = false">取消</FaButton>
-        <FaButton :loading="selfSaving" @click="doSelf">生成</FaButton>
+        <FaButton variant="outline" @click="selfVisible = false">{{ $t('common.cancel') }}</FaButton>
+        <FaButton :loading="selfSaving" @click="doSelf">{{ $t('certs.generate') }}</FaButton>
       </template>
     </FaModal>
 
     <!-- DNS 账户 -->
-    <FaModal v-model="dnsVisible" title="DNS 账户" :destroy-on-close="true">
+    <FaModal v-model="dnsVisible" :title="$t('certs.dnsAccounts')" :destroy-on-close="true">
       <div class="flex flex-col gap-3">
         <div class="overflow-hidden rounded-lg border">
           <table class="w-full text-sm">
             <thead class="bg-muted/50 text-left text-xs text-muted-foreground">
               <tr>
-                <th class="px-3 py-2">名称</th>
-                <th class="px-3 py-2">类型</th>
-                <th class="px-3 py-2 text-right">操作</th>
+                <th class="px-3 py-2">{{ $t('common.name') }}</th>
+                <th class="px-3 py-2">{{ $t('common.type') }}</th>
+                <th class="px-3 py-2 text-right">{{ $t('common.operation') }}</th>
               </tr>
             </thead>
             <tbody>
               <tr v-if="!dnsAccounts.length">
-                <td colspan="3" class="px-3 py-6 text-center text-xs text-muted-foreground">暂无 DNS 账户</td>
+                <td colspan="3" class="px-3 py-6 text-center text-xs text-muted-foreground">{{ $t('certs.noDnsAccounts') }}</td>
               </tr>
               <tr v-for="a in dnsAccounts" :key="a.id" class="border-t">
                 <td class="px-3 py-2">{{ a.name }}</td>
-                <td class="px-3 py-2 text-xs text-muted-foreground">{{ providerText[a.provider] || a.provider }}</td>
+                <td class="px-3 py-2 text-xs text-muted-foreground">{{ tr(`certs.provider.${a.provider}`, a.provider) }}</td>
                 <td class="px-3 py-2 text-right">
-                  <FaButton variant="ghost" size="sm" class="text-red-500!" @click="removeDns(a)">删除</FaButton>
+                  <FaButton variant="ghost" size="sm" class="text-red-500!" @click="removeDns(a)">{{ $t('common.delete') }}</FaButton>
                 </td>
               </tr>
             </tbody>
           </table>
         </div>
         <div class="rounded-md border p-3">
-          <div class="mb-2 text-sm font-medium">创建 DNS 账户</div>
+          <div class="mb-2 text-sm font-medium">{{ $t('certs.createDnsAccount') }}</div>
           <div class="flex flex-col gap-2">
             <div class="flex items-center gap-2">
-              <FaInput v-model="dnsForm.name" placeholder="名称，如 my-aliyun" class="flex-1" />
+              <FaInput v-model="dnsForm.name" :placeholder="$t('certs.dnsNamePlaceholder')" class="flex-1" />
               <select v-model="dnsForm.provider" class="h-9 rounded-md border bg-background px-2 text-sm outline-none focus:border-primary">
-                <option value="aliyun">阿里云</option>
-                <option value="dnspod">腾讯云 DNSPod</option>
-                <option value="cloudflare">Cloudflare</option>
+                <option value="aliyun">{{ $t('certs.provider.aliyun') }}</option>
+                <option value="dnspod">{{ $t('certs.provider.dnspod') }}</option>
+                <option value="cloudflare">{{ $t('certs.provider.cloudflare') }}</option>
               </select>
             </div>
-            <FaInput v-model="dnsForm.accessKey" placeholder="AccessKey ID（阿里云）/ SecretId（DNSPod）/ Email（Cloudflare Global Key）" />
+            <FaInput v-model="dnsForm.accessKey" :placeholder="$t('certs.accessKeyPlaceholder')" />
             <FaInput v-model="dnsForm.secret" placeholder="AccessKey Secret / SecretKey / Global API Key" type="password" />
             <div class="flex justify-end">
-              <FaButton size="sm" :loading="dnsSaving" @click="doCreateDns">创建</FaButton>
+              <FaButton size="sm" :loading="dnsSaving" @click="doCreateDns">{{ $t('common.create') }}</FaButton>
             </div>
           </div>
         </div>
-        <div class="text-xs text-muted-foreground">凭据加密存储于面板数据库，仅用于 ACME DNS 验证。</div>
+        <div class="text-xs text-muted-foreground">{{ $t('certs.credHint') }}</div>
       </div>
       <template #footer>
-        <FaButton variant="outline" @click="dnsVisible = false">关闭</FaButton>
+        <FaButton variant="outline" @click="dnsVisible = false">{{ $t('common.close') }}</FaButton>
       </template>
     </FaModal>
 
     <!-- Acme 账户 -->
-    <FaModal v-model="acmeVisible" title="Acme 账户" :destroy-on-close="true">
+    <FaModal v-model="acmeVisible" :title="$t('certs.acmeAccounts')" :destroy-on-close="true">
       <div class="flex flex-col gap-3">
         <div class="overflow-hidden rounded-lg border">
           <table class="w-full text-sm">
             <thead class="bg-muted/50 text-left text-xs text-muted-foreground">
               <tr>
-                <th class="px-3 py-2">邮箱</th>
+                <th class="px-3 py-2">{{ $t('certs.emailCol') }}</th>
                 <th class="px-3 py-2">CA</th>
-                <th class="px-3 py-2">密钥算法</th>
-                <th class="px-3 py-2 text-right">操作</th>
+                <th class="px-3 py-2">{{ $t('certs.keyAlgCol') }}</th>
+                <th class="px-3 py-2 text-right">{{ $t('common.operation') }}</th>
               </tr>
             </thead>
             <tbody>
               <tr v-if="!acmeAccounts.length">
-                <td colspan="4" class="px-3 py-6 text-center text-xs text-muted-foreground">暂无账户（申请证书可用面板默认配置）</td>
+                <td colspan="4" class="px-3 py-6 text-center text-xs text-muted-foreground">{{ $t('certs.noAcmeAccounts') }}</td>
               </tr>
               <tr v-for="a in acmeAccounts" :key="a.id" class="border-t">
                 <td class="px-3 py-2">{{ a.email }}</td>
                 <td class="px-3 py-2 text-xs text-muted-foreground">{{ caLabel[a.caType] || a.caType }}</td>
                 <td class="px-3 py-2 font-mono text-xs text-muted-foreground">{{ a.keyType }}</td>
                 <td class="px-3 py-2 text-right">
-                  <FaButton variant="ghost" size="sm" class="text-red-500!" @click="removeAcme(a)">删除</FaButton>
+                  <FaButton variant="ghost" size="sm" class="text-red-500!" @click="removeAcme(a)">{{ $t('common.delete') }}</FaButton>
                 </td>
               </tr>
             </tbody>
           </table>
         </div>
         <div class="rounded-md border p-3">
-          <div class="mb-2 text-sm font-medium">创建 Acme 账户</div>
+          <div class="mb-2 text-sm font-medium">{{ $t('certs.createAcmeAccount') }}</div>
           <div class="flex flex-col gap-2">
-            <FaInput v-model="acmeForm.email" placeholder="邮箱" />
+            <FaInput v-model="acmeForm.email" :placeholder="$t('certs.emailPlaceholder')" />
             <div class="flex items-center gap-2">
               <select v-model="acmeForm.caType" class="h-9 flex-1 rounded-md border bg-background px-2 text-sm outline-none focus:border-primary">
                 <option value="letsencrypt">Let's Encrypt</option>
@@ -659,54 +657,54 @@ onMounted(() => {
                 <option value="rsa-2048">RSA 2048</option>
                 <option value="rsa-4096">RSA 4096</option>
               </select>
-              <FaButton size="sm" :loading="acmeSaving" @click="doCreateAcme">创建</FaButton>
+              <FaButton size="sm" :loading="acmeSaving" @click="doCreateAcme">{{ $t('common.create') }}</FaButton>
             </div>
           </div>
         </div>
       </div>
       <template #footer>
-        <FaButton variant="outline" @click="acmeVisible = false">关闭</FaButton>
+        <FaButton variant="outline" @click="acmeVisible = false">{{ $t('common.close') }}</FaButton>
       </template>
     </FaModal>
 
     <!-- 编辑证书 -->
-    <FaModal v-model="editVisible" title="编辑证书" :destroy-on-close="true">
+    <FaModal v-model="editVisible" :title="$t('certs.editTitle')" :destroy-on-close="true">
       <div class="flex flex-col gap-3">
         <div class="flex items-center gap-3">
-          <span class="w-20 shrink-0 text-sm text-muted-foreground">域名</span>
+          <span class="w-20 shrink-0 text-sm text-muted-foreground">{{ $t('certs.domainCol') }}</span>
           <span class="flex-1 font-mono text-sm">{{ editForm.domain }}</span>
         </div>
         <div class="flex items-center gap-3">
-          <span class="w-20 shrink-0 text-sm text-muted-foreground">备注</span>
+          <span class="w-20 shrink-0 text-sm text-muted-foreground">{{ $t('common.remark') }}</span>
           <FaInput v-model="editForm.remark" class="flex-1" />
         </div>
         <label class="flex cursor-pointer items-center gap-2 text-sm">
-          <input v-model="editForm.autoRenew" type="checkbox"> 自动续签
+          <input v-model="editForm.autoRenew" type="checkbox"> {{ $t('certs.autoRenew') }}
         </label>
       </div>
       <template #footer>
-        <FaButton variant="outline" @click="editVisible = false">取消</FaButton>
-        <FaButton :loading="editSaving" @click="doEdit">保存</FaButton>
+        <FaButton variant="outline" @click="editVisible = false">{{ $t('common.cancel') }}</FaButton>
+        <FaButton :loading="editSaving" @click="doEdit">{{ $t('common.save') }}</FaButton>
       </template>
     </FaModal>
 
     <!-- 证书详情 -->
-    <FaModal v-model="detailVisible" title="证书详情" :destroy-on-close="true">
-      <div v-if="detailLoading" class="py-8 text-center text-sm text-muted-foreground">加载中…</div>
+    <FaModal v-model="detailVisible" :title="$t('certs.detailTitle')" :destroy-on-close="true">
+      <div v-if="detailLoading" class="py-8 text-center text-sm text-muted-foreground">{{ $t('common.loading') }}</div>
       <div v-else-if="detailData" class="space-y-3">
         <div class="rounded-md border p-3 text-sm">
           <div class="grid grid-cols-[5rem_1fr] gap-y-2 text-xs">
-            <span class="text-muted-foreground">主域名</span><span class="font-mono">{{ detailData.cert.domain }}</span>
-            <span class="text-muted-foreground">证书名称</span><span class="font-mono">{{ detailData.cert.certName }}</span>
-            <span class="text-muted-foreground">颁发组织</span><span>{{ detailData.cert.issuer || '—' }}</span>
-            <span class="text-muted-foreground">过期时间</span><span>{{ detailData.cert.notAfter ? new Date(detailData.cert.notAfter).toLocaleString() : '—' }}</span>
-            <span class="text-muted-foreground">绑定站点</span><span>{{ detailData.cert.sites?.join('、') || '未绑定' }}</span>
+            <span class="text-muted-foreground">{{ $t('certs.mainDomain') }}</span><span class="font-mono">{{ detailData.cert.domain }}</span>
+            <span class="text-muted-foreground">{{ $t('certs.certName') }}</span><span class="font-mono">{{ detailData.cert.certName }}</span>
+            <span class="text-muted-foreground">{{ $t('certs.issuerCol') }}</span><span>{{ detailData.cert.issuer || '—' }}</span>
+            <span class="text-muted-foreground">{{ $t('certs.expiryCol') }}</span><span>{{ detailData.cert.notAfter ? new Date(detailData.cert.notAfter).toLocaleString() : '—' }}</span>
+            <span class="text-muted-foreground">{{ $t('certs.boundSites') }}</span><span>{{ detailData.cert.sites?.join('、') || $t('certs.notBound') }}</span>
           </div>
         </div>
-        <pre class="max-h-72 overflow-auto rounded-md bg-muted/50 p-3 font-mono text-[11px] leading-relaxed">{{ detailData.text || '（证书文件不存在）' }}</pre>
+        <pre class="max-h-72 overflow-auto rounded-md bg-muted/50 p-3 font-mono text-[11px] leading-relaxed">{{ detailData.text || $t('certs.noCertFile') }}</pre>
       </div>
       <template #footer>
-        <FaButton variant="outline" @click="detailVisible = false">关闭</FaButton>
+        <FaButton variant="outline" @click="detailVisible = false">{{ $t('common.close') }}</FaButton>
       </template>
     </FaModal>
   </div>

@@ -2,6 +2,7 @@
 import type { SiteItem } from '@/api/modules/site'
 import type { SiteLimitConn } from '@/api/modules/siteconf'
 import { siteExtraApi } from '@/api/modules/siteconf'
+import { i18n } from '@/locales'
 
 const props = defineProps<{ site: SiteItem }>()
 const emit = defineEmits<{ changed: [] }>()
@@ -17,7 +18,7 @@ async function load() {
     edit.value = { ...conf.value }
   }
   catch (e: any) {
-    toast.error('读取连接限制失败', { description: e?.message })
+    toast.error(i18n.global.t('sites.conf.limitconn.loadFailed'), { description: e?.message })
   }
 }
 
@@ -26,11 +27,11 @@ async function save() {
   try {
     conf.value = await siteExtraApi.updateLimitConn(props.site.id, edit.value)
     edit.value = { ...conf.value }
-    toast.success('连接限制已保存并重载 nginx')
+    toast.success(i18n.global.t('sites.conf.limitconn.saved'))
     emit('changed')
   }
   catch (e: any) {
-    toast.error('保存失败', { description: e?.message })
+    toast.error(i18n.global.t('sites.shared.saveFailed'), { description: e?.message })
   }
   finally {
     saving.value = false
@@ -47,24 +48,24 @@ onMounted(load)
     <div class="rounded-lg border p-4">
       <div class="flex items-center justify-between">
         <div>
-          <div class="text-sm font-medium">启用连接数限制</div>
-          <p class="mt-0.5 text-xs text-muted-foreground">限制单 IP 并发连接数，抑制下载占用与简单 CC；请求频率限制在 WAF 中配置</p>
+          <div class="text-sm font-medium">{{ $t('sites.conf.limitconn.enable') }}</div>
+          <p class="mt-0.5 text-xs text-muted-foreground">{{ $t('sites.conf.limitconn.enableDesc') }}</p>
         </div>
         <label class="flex cursor-pointer items-center gap-2 text-sm">
-          <input v-model="edit.enable" type="checkbox"> 启用
+          <input v-model="edit.enable" type="checkbox"> {{ $t('common.enabled') }}
         </label>
       </div>
     </div>
 
     <div class="rounded-lg border p-4">
-      <div class="mb-1 text-sm font-medium">单 IP 最大并发连接</div>
+      <div class="mb-1 text-sm font-medium">{{ $t('sites.conf.limitconn.connPerIP') }}</div>
       <FaInput v-model="edit.connPerIP" type="number" placeholder="20" class="w-40" />
-      <p class="mt-2 text-xs text-muted-foreground">超限请求返回 503；浏览器正常浏览通常同时 6-10 个连接</p>
+      <p class="mt-2 text-xs text-muted-foreground">{{ $t('sites.conf.limitconn.connDesc') }}</p>
     </div>
 
     <div class="flex justify-end">
       <FaButton :loading="saving" :disabled="!dirty" @click="save">
-        保存并生效
+        {{ $t('sites.shared.saveApply') }}
       </FaButton>
     </div>
   </div>

@@ -1,0 +1,63 @@
+// hosts domain messages (Hosts records)
+export default {
+  desc: 'Visual hosts editing: centralized record store → managed block distributed to multi-node /etc/hosts (system/manual entries outside the block are untouched); the proper solution is "Tools → Internal DNS" — this is a fallback (PVE hosts, devices with hardcoded DNS, temporary overrides)',
+  applyToNodes: 'Apply to Nodes',
+  createRecord: 'New Record',
+  editRecord: 'Edit Record',
+  // managed node status
+  managedNodes: 'Managed Nodes',
+  refreshStatus: 'Refresh status',
+  noManaged: 'No managed nodes: after onboarding via "Apply to Nodes", record changes sync to those nodes automatically.',
+  reapply: 'Reapply',
+  reapplied: 'Reapplied',
+  // node state enums (tr dynamic keys, fall back to raw value when missing)
+  state: {
+    match: 'In sync',
+    notApplied: 'Not applied',
+    drift: 'Drifted',
+    offline: 'Offline',
+    error: 'Error',
+  },
+  // node options
+  localNode: ' (local)',
+  offlineNode: ' (offline)',
+  // record table
+  hostnameCol: 'Hostname',
+  noRecords: 'No records yet',
+  footNote: 'Note: records are stored in the panel database; on managed nodes /etc/hosts carries a "ypanel-managed" block and content outside the block is untouched; record changes replay to all managed nodes automatically (auto-rollback on failure). hosts does not support wildcard subdomains — use "Tools → Internal DNS" for wildcards.',
+  // form
+  ipPlaceholder: 'e.g. 192.168.100.2 (IPv4/IPv6 both supported)',
+  hostnamesPlaceholder: 'Space- or comma-separated, e.g. example.com www.example.com',
+  hostnamesHint: 'One IP can carry multiple hostnames; duplicates against other enabled records are rejected (hosts matches the first entry)',
+  optional: 'Optional',
+  sortStatus: 'Sort / Status',
+  smallFirst: 'Lower values apply first',
+  saveApply: 'Save & Apply',
+  createApply: 'Create & Apply',
+  // apply-to-nodes modal
+  applyDesc: 'Pick nodes to onboard: a managed block will be appended to their /etc/hosts (replacing an existing block); record changes then sync automatically.',
+  applyNodes: 'Apply ({n} nodes)',
+  // validation and toasts
+  requireIp: 'Please fill in the IP address',
+  requireHostnames: 'Please fill in at least one hostname',
+  requireNodes: 'Please select nodes to apply',
+  updated: 'Record updated and applied',
+  created: 'Record created and applied',
+  saveFailed: 'Save failed',
+  disabledDone: 'Disabled and applied',
+  enabledDone: 'Enabled and applied',
+  opFailed: 'Operation failed',
+  loadFailed: 'Failed to load records',
+  deleteTitle: 'Delete Record',
+  deleteConfirm: 'Delete "{hostnames} → {ip}"? It will be applied to all managed nodes immediately.',
+  deleted: 'Deleted',
+  deleteFailed: 'Delete failed',
+  partialFailed: 'Apply failed on some nodes ({f}/{t})',
+  failLine: '{node}: {message}',
+  appliedTo: 'Applied to {n} nodes',
+  applyFailed: 'Apply failed',
+  unmanageTitle: 'Unmanage',
+  unmanageConfirm: 'Stop managing hosts on node "{node}"? The managed block will be removed and the file restored (panel records kept).',
+  unmanaged: 'Unmanaged',
+  unmanageFailed: 'Unmanage failed',
+}

@@ -22,7 +22,12 @@ export default defineConfig({
       include: [
         /\.(vue|svelte|[jt]sx|mdx?|astro|elm|php|phtml|html)($|\?)/,
         'src/**/*.{js,ts}',
-        path.resolve(projectRoot, 'packages/components/**/*.{vue,js,ts}'),
+        // 只扫 fa 组件包源码。⚠️ 不能用 packages/components/**：会误入其嵌套 node_modules
+        // （tailwind-merge dist 的类校验器文本含 row-end、*/、/** 等），presetAttributify
+        // 会据此生成值含注释符的属性选择器（[row-end~="/**"]）→ postcss 报 Unclosed
+        // comment/bracket，整个 __uno.css 500 全站裸奔（2026-10-08 M29）
+        path.resolve(projectRoot, 'packages/components/src/**/*.{vue,js,ts}'),
+        path.resolve(projectRoot, 'packages/components/resolver.ts'),
       ],
     },
   },

@@ -3,11 +3,36 @@ import type { ContainerItem } from '@/api/modules/container'
 import { LabelComposeProject } from '@/api/modules/container'
 import apiContainer from '@/api/modules/container'
 import { dockerExtApi } from '@/api/modules/dockerext'
+import { dockerImgApi } from '@/api/modules/dockerenv'
 import FileEditorWorkspace from '@/views/file_management/editor/Workspace.vue'
+import YdDangerDelete from '@/components/YdDangerDelete/index.vue'
 import ContainerForm from '../components/ContainerForm.vue'
+import DockerInstallWizard from '../components/DockerInstallWizard.vue'
+import { i18n, tr } from '@/locales'
+import { useYwEmbed } from '@/views/desktop/embed'
+import { useVpnAccess } from '@/composables/useVpnAccess'
 
 // 容器列表（M23）：批量操作 / 状态与项目过滤 / 品牌 logo / 快速操作。
 const router = useRouter()
+// 桌面承载时：详情下钻开新窗（router.push 会顶掉 /desktop 路由）；经典模式保持路由跳转
+const ywEmbed = useYwEmbed()
+
+function openContainerDetailWin(containerId: string, name?: string) {
+  if (ywEmbed) {
+    // launchOptions.name 供 AI 焦点窗口感知取用（title 同步用人名可读）
+    ywEmbed.openApp('container-detail', { title: name ? i18n.global.t('container.common.containerTitle', { name }) : i18n.global.t('container.common.containerTitle', { name: containerId.slice(0, 12) }), launchOptions: { id: containerId, name: name || '' } })
+    return
+  }
+  router.push(`/container/detail/${containerId}`)
+}
+
+function openAppDetailWin(projectName: string) {
+  if (ywEmbed) {
+    ywEmbed.openApp('container-app-detail', { title: projectName, launchOptions: { project: projectName } })
+    return
+  }
+  router.push(`/container/app/${projectName}`)
+}
 const toast = useFaToast()
 const fileEditorStore = useFileEditorStore()
 
@@ -15,6 +40,13 @@ const containers = ref<ContainerItem[]>([])
 const loading = ref(false)
 const disabled = ref(false)
 const disabledMsg = ref('')
+// M52：Docker 未安装引导——一键安装向导
+const installVisible = ref(false)
+function onInstalled() {
+  disabled.value = false
+  disabledMsg.value = ''
+  load(true)
+}
 const acting = ref('')
 const autoRefresh = ref(true)
 const search = ref('')
@@ -116,10 +148,10 @@ async function load(silent = false) {
   catch (e: any) {
     if (e?.code === 5002) {
       disabled.value = true
-      disabledMsg.value = e?.message || '当前节点未检测到 Docker'
+      disabledMsg.value = e?.message || i18n.global.t('container.list.noDockerCurrent')
     }
     else {
-      disabledMsg.value = e?.message || '加载失败'
+      disabledMsg.value = e?.message || i18n.global.t('container.common.loadFailed')
     }
   }
   finally {
@@ -131,24 +163,93 @@ async function action(c: ContainerItem, act: 'start' | 'stop' | 'restart') {
   acting.value = c.id + act
   try {
     await apiContainer.action(c.id, act)
-    toast.success(`已${act === 'start' ? '启动' : act === 'stop' ? '停止' : '重启'} ${c.name}`)
+    toast.success(i18n.global.t(act === 'start' ? 'container.common.started' : act === 'stop' ? 'container.common.stopped' : 'container.common.restarted', { name: c.name }))
     await load(true)
   }
   catch (e: any) {
-    toast.error('操作失败', { description: e?.message })
+    toast.error(i18n.global.t('container.common.opFailed'), { description: e?.message })
   }
   finally {
     acting.value = ''
   }
 }
 
+// M35：提交为镜像（modal 输入镜像名）
+const commitVisible = ref(false)
+const commitBusy = ref(false)
+const commitTarget = ref<ContainerItem | null>(null)
+const commitImage = ref('')
+
+function commitOne(c: ContainerItem) {
+  commitTarget.value = c
+  commitImage.value = `${c.name}:snapshot`
+  commitVisible.value = true
+}
+
+async function doCommit() {
+  if (!commitTarget.value || !commitImage.value) {
+    return
+  }
+  commitBusy.value = true
+  try {
+    await dockerImgApi.commit(commitTarget.value.name, commitImage.value)
+    toast.success(i18n.global.t('container.list.committedAsImage', { name: commitImage.value }))
+    commitVisible.value = false
+  }
+  catch (e: any) {
+    toast.error(i18n.global.t('container.list.commitFailed'), { description: e?.message })
+  }
+  finally {
+    commitBusy.value = false
+  }
+}
+
+// M35：容器备份（named volumes 导出）
+async function backupOne(c: ContainerItem) {
+  acting.value = c.id + 'backup'
+  try {
+    const out = await dockerImgApi.containerBackup(c.name)
+    if (out.volumes.length) {
+      toast.success(i18n.global.t('container.list.backupDoneWithVolumes', { n: out.volumes.length, dir: out.dir }))
+    }
+    else {
+      toast.success(i18n.global.t('container.list.backupDoneNoVolumes', { dir: out.dir }))
+    }
+  }
+  catch (e: any) {
+    toast.error(i18n.global.t('container.list.backupFailed'), { description: e?.message })
+  }
+  finally {
+    acting.value = ''
+  }
+}
+
+// 危险删除（选项 + 名称确认）
+const delVisible = ref(false)
+const delTarget = ref<ContainerItem | null>(null)
+const delOpts = computed(() => [
+  { key: 'force', label: i18n.global.t('container.list.optForceLabel'), desc: i18n.global.t('container.list.optForceDesc') },
+  { key: 'volumes', label: i18n.global.t('container.list.optVolumesLabel'), desc: i18n.global.t('container.list.optVolumesDesc') },
+])
+
 function removeOne(c: ContainerItem) {
-  const modal = useFaModal()
-  modal.confirm({
-    title: '删除容器',
-    content: `确认删除容器 ${c.name}？可写层数据将一并删除，不可恢复。`,
-    onConfirm: () => batchRemove([c]),
-  })
+  delTarget.value = c
+  delVisible.value = true
+}
+
+async function doDelete(checked: Record<string, boolean>) {
+  if (!delTarget.value) {
+    return
+  }
+  try {
+    await apiContainer.remove(delTarget.value.id, !!checked.force, !!checked.volumes)
+    toast.success(i18n.global.t('container.list.deletedContainer', { name: delTarget.value.name }))
+    delVisible.value = false
+    await load(true)
+  }
+  catch (e: any) {
+    toast.error(i18n.global.t('container.common.deleteFailed'), { description: e?.message })
+  }
 }
 
 const bulkRunning = ref(false)
@@ -162,11 +263,12 @@ async function bulkAction(act: 'start' | 'stop' | 'restart') {
   const results = await Promise.allSettled(list.map(c => apiContainer.action(c.id, act)))
   const ok = results.filter(r => r.status === 'fulfilled').length
   const failed = results.length - ok
+  const label = i18n.global.t(act === 'start' ? 'common.start' : act === 'stop' ? 'common.stop' : 'common.restart')
   if (failed) {
-    toast.warning(`批量${act === 'start' ? '启动' : act === 'stop' ? '停止' : '重启'}完成：${ok} 成功，${failed} 失败`)
+    toast.warning(i18n.global.t('container.list.bulkPartial', { action: label, ok, failed }))
   }
   else {
-    toast.success(`已批量${act === 'start' ? '启动' : act === 'stop' ? '停止' : '重启'} ${ok} 个容器`)
+    toast.success(i18n.global.t('container.list.bulkDone', { action: label, n: ok }))
   }
   await load(true)
   bulkRunning.value = false
@@ -177,7 +279,7 @@ async function batchRemove(list: ContainerItem[]) {
   try {
     const results = await Promise.allSettled(list.map(c => apiContainer.remove(c.id, true)))
     const ok = results.filter(r => r.status === 'fulfilled').length
-    toast.success(`已删除 ${ok}/${list.length} 个容器`)
+    toast.success(i18n.global.t('container.list.bulkDeleted', { ok, total: list.length }))
     selected.value = new Set()
     await load(true)
   }
@@ -193,8 +295,8 @@ function bulkRemove() {
   }
   const modal = useFaModal()
   modal.confirm({
-    title: '批量删除容器',
-    content: `确认删除选中的 ${list.length} 个容器？可写层数据将一并删除，不可恢复。`,
+    title: i18n.global.t('container.list.bulkDeleteTitle'),
+    content: i18n.global.t('container.list.bulkDeleteConfirm', { n: list.length }),
     onConfirm: () => batchRemove(list),
   })
 }
@@ -207,8 +309,8 @@ function openExec(c: ContainerItem) {
 async function pruneContainers() {
   const modal = useFaModal()
   modal.confirm({
-    title: '清理停止容器',
-    content: '确认清理全部已停止容器？',
+    title: i18n.global.t('container.list.pruneStopped'),
+    content: i18n.global.t('container.list.pruneConfirm'),
     onConfirm: async () => {
       try {
         const out = await dockerExtApi.pruneContainers()
@@ -216,17 +318,19 @@ async function pruneContainers() {
         await load(true)
       }
       catch (e: any) {
-        toast.error('清理失败', { description: e?.message })
+        toast.error(i18n.global.t('container.common.pruneFailed'), { description: e?.message })
       }
     },
   })
 }
 
-function fmtPorts(c: ContainerItem) {
-  if (!c.ports?.length) {
-    return ''
+// 组网开启时：端口列给出经虚拟 IP 的一键跳转
+const { portJumpUrl } = useVpnAccess()
+
+function openPortJump(url: string) {
+  if (url) {
+    window.open(url, '_blank', 'noopener')
   }
-  return c.ports.filter(p => p.hostPort).map(p => `${p.hostPort}→${p.containerPort}/${p.proto}`).join(' ')
 }
 
 const createVisible = ref(false)
@@ -263,10 +367,10 @@ onBeforeUnmount(() => {
   <div>
     <!-- 工具条 -->
     <div class="mb-3 flex flex-wrap items-center gap-2">
-      <FaInput v-model="search" placeholder="搜索名称/镜像/ID…" class="h-8 w-52!" />
+      <FaInput v-model="search" :placeholder="$t('container.list.searchPlaceholder')" class="h-8 w-52!" />
       <div class="flex overflow-hidden rounded-md border text-xs">
         <button
-          v-for="s in [{ v: 'all', l: '全部' }, { v: 'running', l: '运行中' }, { v: 'stopped', l: '已停止' }]" :key="s.v"
+          v-for="s in [{ v: 'all', l: $t('common.all') }, { v: 'running', l: $t('container.state.running') }, { v: 'stopped', l: $t('container.list.stateStopped') }]" :key="s.v"
           type="button"
           class="px-2.5 py-1.5 transition-colors"
           :class="stateFilter === s.v ? 'bg-primary text-primary-foreground' : 'hover:bg-accent/50'"
@@ -275,56 +379,59 @@ onBeforeUnmount(() => {
           {{ s.l }}
         </button>
       </div>
-      <select v-model="projectFilter" class="h-8 rounded-md border bg-background px-2 text-xs outline-none">
-        <option value="all">全部项目</option>
-        <option v-for="p in composeProjects" :key="p" :value="p">
-          {{ p }}
-        </option>
-      </select>
+      <YdSelect
+        v-model="projectFilter"
+        :options="[{ value: 'all', label: $t('container.list.allProjects') }, ...composeProjects.map(p => ({ value: p, label: p }))]"
+        size="sm"
+      />
       <label class="flex items-center gap-1 text-xs text-muted-foreground">
         <input v-model="autoRefresh" type="checkbox" class="accent-[var(--primary)]">
-        自动刷新
+        {{ $t('container.list.autoRefresh') }}
       </label>
       <div class="ml-auto flex items-center gap-2">
-        <FaButton variant="outline" size="icon-sm" title="刷新" @click="load()">
+        <FaButton variant="outline" size="icon-sm" :title="$t('common.refresh')" @click="load()">
           <FaIcon name="i-lucide:refresh-cw" class="text-sm" :class="loading ? 'animate-spin' : ''" />
         </FaButton>
         <FaButton variant="outline" size="sm" @click="pruneContainers">
-          清理停止容器
+          {{ $t('container.list.pruneStopped') }}
         </FaButton>
         <FaButton size="sm" @click="createVisible = true">
-          <FaIcon name="i-lucide:plus" class="mr-1" /> 创建容器
+          <FaIcon name="i-lucide:plus" class="mr-1" /> {{ $t('container.list.createContainer') }}
         </FaButton>
       </div>
     </div>
 
     <!-- 批量操作条 -->
     <div v-if="selected.size" class="mb-3 flex flex-wrap items-center gap-2 rounded-md border bg-primary/5 px-3 py-2">
-      <span class="text-sm">已选 <b class="tabular-nums">{{ selected.size }}</b> 个</span>
+      <span class="text-sm">{{ $t('container.list.selectedPrefix') }} <b class="tabular-nums">{{ selected.size }}</b> {{ $t('container.list.selectedSuffix') }}</span>
       <FaButton variant="outline" size="sm" :disabled="bulkRunning" @click="bulkAction('start')">
-        批量启动
+        {{ $t('container.list.bulkStart') }}
       </FaButton>
       <FaButton variant="outline" size="sm" :disabled="bulkRunning" @click="bulkAction('stop')">
-        批量停止
+        {{ $t('container.list.bulkStop') }}
       </FaButton>
       <FaButton variant="outline" size="sm" :disabled="bulkRunning" @click="bulkAction('restart')">
-        批量重启
+        {{ $t('container.list.bulkRestart') }}
       </FaButton>
       <FaButton variant="outline" size="sm" class="text-red-500!" :disabled="bulkRunning" @click="bulkRemove">
-        批量删除
+        {{ $t('container.list.bulkDelete') }}
       </FaButton>
       <FaButton variant="ghost" size="sm" @click="selected = new Set()">
-        取消选择
+        {{ $t('container.list.clearSelection') }}
       </FaButton>
     </div>
 
     <div v-if="disabled" class="mb-4 flex items-center gap-2 rounded-md border border-amber-300 bg-amber-50 p-4 text-sm text-amber-700 dark:border-amber-800 dark:bg-amber-950/30 dark:text-amber-400">
       <YdMorphIcon name="triangle-alert" :size="18" />
-      {{ disabledMsg }}：未检测到可用的 Docker 环境（/var/run/docker.sock）。
+      {{ $t('container.list.noDockerDetail', { msg: disabledMsg }) }}
+      <FaButton size="sm" class="ml-auto" @click="installVisible = true">
+        <FaIcon name="i-lucide:download" class="mr-1" /> {{ $t('container.install.openWizard') }}
+      </FaButton>
     </div>
     <div v-else-if="disabledMsg" class="mb-4 rounded-md border border-red-300 bg-red-50 p-3 text-sm text-red-600 dark:bg-red-950/30">
       {{ disabledMsg }}
     </div>
+    <DockerInstallWizard v-model="installVisible" @installed="onInstalled" />
 
     <!-- 列表 -->
     <div class="overflow-x-auto rounded-lg border">
@@ -334,23 +441,23 @@ onBeforeUnmount(() => {
             <th class="w-9 px-3 py-2">
               <input type="checkbox" :checked="allChecked" class="accent-[var(--primary)]" @change="toggleAll">
             </th>
-            <th class="px-3 py-2">名称</th>
-            <th class="px-3 py-2">镜像</th>
-            <th class="px-3 py-2">状态</th>
-            <th class="hidden px-3 py-2 lg:table-cell">端口</th>
-            <th class="hidden px-3 py-2 xl:table-cell">项目</th>
-            <th class="px-3 py-2 text-right">快速操作</th>
+            <th class="px-3 py-2">{{ $t('common.name') }}</th>
+            <th class="px-3 py-2">{{ $t('container.common.image') }}</th>
+            <th class="px-3 py-2">{{ $t('common.status') }}</th>
+            <th class="hidden px-3 py-2 lg:table-cell">{{ $t('container.common.ports') }}</th>
+            <th class="hidden px-3 py-2 xl:table-cell">{{ $t('container.list.project') }}</th>
+            <th class="px-3 py-2 text-right">{{ $t('container.list.quickActions') }}</th>
           </tr>
         </thead>
         <tbody>
           <tr v-if="loading && !filtered.length">
             <td colspan="7" class="px-3 py-10 text-center text-muted-foreground">
-              加载中…
+              {{ $t('common.loading') }}
             </td>
           </tr>
           <tr v-else-if="!filtered.length">
             <td colspan="7" class="px-3 py-10 text-center text-muted-foreground">
-              暂无容器
+              {{ $t('container.common.noContainers') }}
             </td>
           </tr>
           <tr v-for="c in paged" :key="c.id" class="border-t transition-colors hover:bg-accent/30" :class="selected.has(c.id) ? 'bg-primary/5' : ''">
@@ -360,7 +467,7 @@ onBeforeUnmount(() => {
             <td class="max-w-64 px-3 py-2">
               <div class="flex items-center gap-2">
                 <YdAppIcon :name="c.image" :size="20" />
-                <button type="button" class="cursor-pointer truncate font-mono text-[13px] font-medium hover:text-primary" :title="c.name" @click="router.push(`/container/detail/${c.id}`)">
+                <button type="button" class="cursor-pointer truncate font-mono text-[13px] font-medium hover:text-primary" :title="c.name" @click="openContainerDetailWin(c.id, c.name)">
                   {{ c.name }}
                 </button>
               </div>
@@ -371,17 +478,30 @@ onBeforeUnmount(() => {
             <td class="px-3 py-2">
               <span class="inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-xs whitespace-nowrap" :class="stateStyle[c.state] || stateStyle.exited">
                 <span class="inline-block size-1.5 rounded-full" :class="c.state === 'running' ? 'animate-pulse bg-current' : 'bg-current'" />
-                {{ c.state }}<span v-if="c.status" class="hidden opacity-70 xl:inline">· {{ c.status }}</span>
+                {{ tr(`container.state.${c.state}`) }}<span v-if="c.status" class="hidden opacity-70 xl:inline">· {{ c.status }}</span>
               </span>
             </td>
             <td class="hidden px-3 py-2 font-mono text-xs text-muted-foreground lg:table-cell">
-              {{ fmtPorts(c) || '—' }}
+              <template v-if="c.ports?.some(p => p.hostPort)">
+                <span v-for="(p, i) in c.ports.filter(x => x.hostPort)" :key="i" class="mr-2 inline-flex items-center gap-0.5 whitespace-nowrap">
+                  {{ p.hostPort }}→{{ p.containerPort }}/{{ p.proto }}
+                  <button
+                    v-if="portJumpUrl(p.hostIp, p.hostPort, p.proto)" type="button"
+                    class="cursor-pointer text-muted-foreground transition-colors hover:text-primary"
+                    :title="$t('container.common.portJumpTip', { url: portJumpUrl(p.hostIp, p.hostPort, p.proto) })"
+                    @click="openPortJump(portJumpUrl(p.hostIp, p.hostPort, p.proto))"
+                  >
+                    <FaIcon name="i-lucide:external-link" class="size-3 shrink-0" />
+                  </button>
+                </span>
+              </template>
+              <span v-else>—</span>
             </td>
             <td class="hidden px-3 py-2 xl:table-cell">
               <button
                 v-if="projectOf(c)" type="button"
                 class="cursor-pointer rounded-full bg-primary/10 px-2 py-0.5 text-xs text-primary hover:bg-primary/20"
-                @click="router.push(`/container/app/${projectOf(c)}`)"
+                @click="openAppDetailWin(projectOf(c))"
               >
                 {{ projectOf(c) }}
               </button>
@@ -390,31 +510,37 @@ onBeforeUnmount(() => {
             <td class="px-3 py-2">
               <div class="flex items-center justify-end gap-1">
                 <FaButton v-if="c.state !== 'running'" variant="outline" size="sm" :disabled="acting === c.id + 'start'" @click="action(c, 'start')">
-                  启动
+                  {{ $t('common.start') }}
                 </FaButton>
                 <template v-else>
                   <FaButton variant="outline" size="sm" :disabled="acting === c.id + 'stop'" @click="action(c, 'stop')">
-                    停止
+                    {{ $t('common.stop') }}
                   </FaButton>
                   <FaButton variant="outline" size="sm" :disabled="acting === c.id + 'restart'" @click="action(c, 'restart')">
-                    重启
+                    {{ $t('common.restart') }}
                   </FaButton>
                 </template>
-                <FaButton v-if="c.state === 'running'" variant="ghost" size="icon-sm" title="终端 + 文件" @click="openExec(c)">
+                <FaButton v-if="c.state === 'running'" variant="ghost" size="icon-sm" :title="$t('container.list.terminalAndFiles')" @click="openExec(c)">
                   <FaIcon name="i-lucide:square-terminal" class="text-sm" />
+                </FaButton>
+                <FaButton variant="ghost" size="icon-sm" :title="$t('container.list.commitTitle')" :disabled="acting === c.id + 'commit'" @click="commitOne(c)">
+                  <FaIcon name="i-lucide:camera" class="text-sm" />
+                </FaButton>
+                <FaButton variant="ghost" size="icon-sm" :title="$t('container.list.backupTitle')" :disabled="acting === c.id + 'backup'" @click="backupOne(c)">
+                  <FaIcon name="i-lucide:package" class="text-sm" />
                 </FaButton>
                 <FaButton
                   variant="ghost" size="icon-sm"
                   :class="isCompose(c) ? 'cursor-not-allowed opacity-40' : ''"
-                  :disabled="isCompose(c)" :title="isCompose(c) ? '由 Compose 编排管理，请在编排/应用处修改' : '编辑'"
+                  :disabled="isCompose(c)" :title="isCompose(c) ? $t('container.common.managedByCompose') : $t('common.edit')"
                   @click="!isCompose(c) && openEdit(c)"
                 >
                   <FaIcon name="i-lucide:pencil" class="text-sm" />
                 </FaButton>
-                <FaButton variant="ghost" size="icon-sm" title="详情" @click="router.push(`/container/detail/${c.id}`)">
+                <FaButton variant="ghost" size="icon-sm" :title="$t('common.detail')" @click="openContainerDetailWin(c.id, c.name)">
                   <FaIcon name="i-lucide:info" class="text-sm" />
                 </FaButton>
-                <FaButton variant="ghost" size="icon-sm" title="删除" class="text-red-500!" :disabled="acting === c.id + 'rm'" @click="removeOne(c)">
+                <FaButton variant="ghost" size="icon-sm" :title="$t('common.delete')" class="text-red-500!" :disabled="acting === c.id + 'rm'" @click="removeOne(c)">
                   <FaIcon name="i-lucide:trash" class="text-sm" />
                 </FaButton>
               </div>
@@ -428,7 +554,30 @@ onBeforeUnmount(() => {
     <ContainerForm v-model="createVisible" mode="create" @created="load(true)" />
     <ContainerForm v-model="editVisible" mode="edit" :container-id="editId" @saved="load(true)" />
     <FileEditorWorkspace />
+    <!-- M35：提交为镜像 -->
+    <FaModal v-model="commitVisible" :title="$t('container.list.commitModalTitle', { name: commitTarget?.name || '' })" :destroy-on-close="true">
+      <div class="flex flex-col gap-3">
+        <FaInput v-model="commitImage" :placeholder="$t('container.list.commitPlaceholder')" class="w-full" @keyup.enter="doCommit" />
+        <div class="text-xs text-muted-foreground">{{ $t('container.list.commitHint') }}</div>
+      </div>
+      <template #footer>
+        <FaButton variant="outline" @click="commitVisible = false">
+          {{ $t('common.cancel') }}
+        </FaButton>
+        <FaButton :loading="commitBusy" @click="doCommit">
+          {{ $t('common.submit') }}
+        </FaButton>
+      </template>
+    </FaModal>
   </div>
     </FaPageMain>
-  </div>
+      <YdDangerDelete
+      v-model:visible="delVisible"
+      :title="$t('container.list.deleteTitle', { name: delTarget?.name || '' })"
+      :name="delTarget?.name || ''"
+      :options="delOpts"
+      :confirm-text="$t('common.delete')"
+      @confirm="doDelete"
+    />
+</div>
 </template>

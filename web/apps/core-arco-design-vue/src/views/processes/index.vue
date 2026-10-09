@@ -3,10 +3,17 @@ import type { ProcessItem, ProcessSort, ServiceItem } from '@/api/modules/nodeex
 import { procApi } from '@/api/modules/nodeexec'
 import apiNode from '@/api/modules/node'
 import type { NodeItem } from '@/api/modules/node'
+import { i18n } from '@/locales'
 
 defineOptions({
   name: 'ProcessesIndex',
 })
+
+// 桌面工作台承载时经 props 传入初始节点（launchOptions），经典模式走路由 query
+const props = defineProps<{
+  /** 初始节点 ID（webos 窗口承载时注入，优先于路由 query） */
+  initialNode?: string
+}>()
 
 const route = useRoute()
 const router = useRouter()
@@ -22,11 +29,18 @@ const loadError = ref('')
 
 // ---- 节点选择 ----
 const nodes = ref<NodeItem[]>([])
-const nodeId = ref<'local' | string>((route.query.node as string) || 'local')
+const nodeId = ref<'local' | string>(props.initialNode || (route.query.node as string) || 'local')
 const nodeOptions = computed(() => {
   const online = nodes.value.filter(n => n.online)
-  return [{ id: 'local', name: `${nodes.value.find(n => n.id === 'local')?.name || '本机'}（本机）` }, ...online.filter(n => n.id !== 'local').map(n => ({ id: n.id, name: n.name }))]
+  return [{ id: 'local', name: `${nodes.value.find(n => n.id === 'local')?.name || i18n.global.t('processes.local')}${i18n.global.t('processes.localSuffix')}` }, ...online.filter(n => n.id !== 'local').map(n => ({ id: n.id, name: n.name }))]
 })
+
+/** 节点下拉（FaDropdown：原生 select 展开层不可主题化） */
+const nodeMenuItems = computed(() => [nodeOptions.value.map(n => ({
+  label: n.name,
+  handle: () => pickNode(n.id),
+}))])
+const currentNodeName = computed(() => nodeOptions.value.find(n => n.id === nodeId.value)?.name ?? i18n.global.t('processes.local'))
 
 async function loadNodes() {
   try {
@@ -86,7 +100,7 @@ async function load() {
     await loadTab(tab.value)
   }
   catch (e: any) {
-    loadError.value = e?.message || '加载失败'
+    loadError.value = e?.message || i18n.global.t('processes.loadFailed')
   }
   finally {
     loading.value = false
@@ -100,7 +114,7 @@ async function loadAll() {
     await Promise.all([loadTab('processes'), loadTab('services')])
   }
   catch (e: any) {
-    loadError.value = e?.message || '加载失败'
+    loadError.value = e?.message || i18n.global.t('processes.loadFailed')
   }
   finally {
     loading.value = false
@@ -163,16 +177,16 @@ function fmtRss(n: number) {
 async function kill(p: ProcessItem) {
   const modal = useFaModal()
   modal.confirm({
-    title: '结束进程',
-    content: `确认强制结束进程 ${p.name} (PID ${p.pid})？`,
+    title: i18n.global.t('processes.killTitle'),
+    content: i18n.global.t('processes.killConfirm', { name: p.name, pid: p.pid }),
     onConfirm: async () => {
       try {
         await procApi.kill(p.pid, nodeId.value)
-        useFaToast().success('已结束')
+        useFaToast().success(i18n.global.t('processes.killed'))
         await load()
       }
       catch (e: any) {
-        useFaToast().error('操作失败', { description: e?.message })
+        useFaToast().error(i18n.global.t('processes.opFailed'), { description: e?.message })
       }
     },
   })
@@ -182,11 +196,11 @@ async function svcAction(s: ServiceItem, action: 'start' | 'stop' | 'restart') {
   acting.value = s.name + action
   try {
     await procApi.serviceAction(s.name, action, nodeId.value)
-    useFaToast().success(`已${action === 'start' ? '启动' : action === 'stop' ? '停止' : '重启'} ${s.name}`)
+    useFaToast().success(i18n.global.t(`processes.${action}Done`, { name: s.name }))
     await load()
   }
   catch (e: any) {
-    useFaToast().error('操作失败', { description: e?.message })
+    useFaToast().error(i18n.global.t('processes.opFailed'), { description: e?.message })
   }
   finally {
     acting.value = ''
@@ -218,24 +232,21 @@ onBeforeUnmount(() => {
       <template #title>
         <div class="flex items-center gap-2">
           <YdMorphIcon name="cpu" :size="24" />
-          <span>进程与服务</span>
+          <span>{{ $t('processes.title') }}</span>
         </div>
       </template>
       <template #description>
-        <span>进程与 systemd 服务管理（可选节点）</span>
+        <span>{{ $t('processes.desc') }}</span>
       </template>
       <div class="flex flex-wrap items-center gap-2">
-        <select
-          :value="nodeId"
-          class="h-8 rounded-md border bg-background px-2 text-sm outline-none"
-          @change="pickNode(($event.target as HTMLSelectElement).value)"
-        >
-          <option v-for="n in nodeOptions" :key="n.id" :value="n.id">
-            {{ n.name }}
-          </option>
-        </select>
-        <FaInput v-model="keyword" placeholder="筛选…" class="w-44" />
-        <FaButton variant="outline" size="icon-sm" title="刷新" @click="load">
+        <FaDropdown :items="nodeMenuItems">
+          <FaButton variant="outline" size="sm" class="h-8">
+            {{ currentNodeName }}
+            <FaIcon name="i-lucide:chevron-down" class="ml-1 text-xs text-muted-foreground" />
+          </FaButton>
+        </FaDropdown>
+        <FaInput v-model="keyword" :placeholder="$t('processes.filterPlaceholder')" class="w-44" />
+        <FaButton variant="outline" size="icon-sm" :title="$t('common.refresh')" @click="load">
           <FaIcon name="i-lucide:refresh-cw" class="text-sm" :class="loading ? 'animate-spin' : ''" />
         </FaButton>
       </div>
@@ -244,13 +255,13 @@ onBeforeUnmount(() => {
     <FaPageMain>
       <FaTabs
         v-model="tab" :list="[
-          { label: `进程 (${filteredProcesses.length})`, value: 'processes' },
-          { label: `服务 (${filteredServices.length})`, value: 'services' },
+          { label: $t('processes.tabProcesses', { n: filteredProcesses.length }), value: 'processes' },
+          { label: $t('processes.tabServices', { n: filteredServices.length }), value: 'services' },
         ]"
       />
 
       <div v-if="loadError" class="mt-3 rounded-md border border-red-300 bg-red-50 p-3 text-sm text-red-600 dark:bg-red-950/30">
-        {{ loadError }}（节点离线或 agent 不可达）
+        {{ $t('processes.loadErrorTip', { error: loadError }) }}
       </div>
 
       <!-- 进程 -->
@@ -267,7 +278,7 @@ onBeforeUnmount(() => {
                 </th>
                 <th class="px-3 py-2">
                   <button type="button" class="inline-flex cursor-pointer items-center gap-0.5 select-none hover:text-foreground" @click="toggleProcSort('name')">
-                    名称
+                    {{ $t('common.name') }}
                     <FaIcon v-if="procSortKey === 'name'" :name="procSortOrder === 'asc' ? 'i-lucide:arrow-up' : 'i-lucide:arrow-down'" class="text-[11px]" />
                   </button>
                 </th>
@@ -279,7 +290,7 @@ onBeforeUnmount(() => {
                 </th>
                 <th class="px-3 py-2">
                   <button type="button" class="inline-flex cursor-pointer items-center gap-0.5 select-none hover:text-foreground" @click="toggleProcSort('mem')">
-                    内存%
+                    {{ $t('processes.memCol') }}
                     <FaIcon v-if="procSortKey === 'mem'" :name="procSortOrder === 'asc' ? 'i-lucide:arrow-up' : 'i-lucide:arrow-down'" class="text-[11px]" />
                   </button>
                 </th>
@@ -289,19 +300,19 @@ onBeforeUnmount(() => {
                     <FaIcon v-if="procSortKey === 'rss'" :name="procSortOrder === 'asc' ? 'i-lucide:arrow-up' : 'i-lucide:arrow-down'" class="text-[11px]" />
                   </button>
                 </th>
-                <th class="hidden px-3 py-2 lg:table-cell">用户</th>
-                <th class="px-3 py-2 text-right">操作</th>
+                <th class="hidden px-3 py-2 lg:table-cell">{{ $t('processes.userCol') }}</th>
+                <th class="px-3 py-2 text-right">{{ $t('common.operation') }}</th>
               </tr>
             </thead>
             <tbody>
               <tr v-if="loading && !pagedProcesses.length">
                 <td colspan="7" class="px-3 py-10 text-center text-muted-foreground">
-                  加载中…
+                  {{ $t('common.loading') }}
                 </td>
               </tr>
               <tr v-else-if="!pagedProcesses.length">
                 <td colspan="7" class="px-3 py-10 text-center text-muted-foreground">
-                  无匹配进程
+                  {{ $t('processes.noProcesses') }}
                 </td>
               </tr>
               <tr v-for="p in pagedProcesses" :key="p.pid" class="border-t hover:bg-accent/30">
@@ -312,7 +323,7 @@ onBeforeUnmount(() => {
                 <td class="hidden px-3 py-1.5 text-xs tabular-nums text-muted-foreground md:table-cell">{{ fmtRss(p.memRss) }}</td>
                 <td class="hidden px-3 py-1.5 font-mono text-xs text-muted-foreground lg:table-cell">{{ p.user }}</td>
                 <td class="px-3 py-1.5 text-right">
-                  <FaButton variant="outline" size="sm" @click="kill(p)">结束</FaButton>
+                  <FaButton variant="outline" size="sm" @click="kill(p)">{{ $t('processes.kill') }}</FaButton>
                 </td>
               </tr>
             </tbody>
@@ -329,30 +340,30 @@ onBeforeUnmount(() => {
               <tr>
                 <th class="px-3 py-2">
                   <button type="button" class="inline-flex cursor-pointer items-center gap-0.5 select-none hover:text-foreground" @click="toggleSvcSort('name')">
-                    服务
+                    {{ $t('processes.serviceCol') }}
                     <FaIcon v-if="svcSortKey === 'name'" :name="svcSortOrder === 'asc' ? 'i-lucide:arrow-up' : 'i-lucide:arrow-down'" class="text-[11px]" />
                   </button>
                 </th>
-                <th class="hidden px-3 py-2 md:table-cell">加载</th>
+                <th class="hidden px-3 py-2 md:table-cell">{{ $t('processes.loadCol') }}</th>
                 <th class="px-3 py-2">
                   <button type="button" class="inline-flex cursor-pointer items-center gap-0.5 select-none hover:text-foreground" @click="toggleSvcSort('active')">
-                    状态
+                    {{ $t('common.status') }}
                     <FaIcon v-if="svcSortKey === 'active'" :name="svcSortOrder === 'asc' ? 'i-lucide:arrow-up' : 'i-lucide:arrow-down'" class="text-[11px]" />
                   </button>
                 </th>
-                <th class="hidden px-3 py-2 lg:table-cell">描述</th>
-                <th class="px-3 py-2 text-right">操作</th>
+                <th class="hidden px-3 py-2 lg:table-cell">{{ $t('processes.descCol') }}</th>
+                <th class="px-3 py-2 text-right">{{ $t('common.operation') }}</th>
               </tr>
             </thead>
             <tbody>
               <tr v-if="loading && !pagedServices.length">
                 <td colspan="5" class="px-3 py-10 text-center text-muted-foreground">
-                  加载中…
+                  {{ $t('common.loading') }}
                 </td>
               </tr>
               <tr v-else-if="!pagedServices.length">
                 <td colspan="5" class="px-3 py-10 text-center text-muted-foreground">
-                  无匹配服务
+                  {{ $t('processes.noServices') }}
                 </td>
               </tr>
               <tr v-for="s in pagedServices" :key="s.name" class="border-t hover:bg-accent/30">
@@ -366,9 +377,9 @@ onBeforeUnmount(() => {
                 <td class="hidden max-w-64 truncate px-3 py-1.5 text-xs text-muted-foreground lg:table-cell" :title="s.desc">{{ s.desc }}</td>
                 <td class="px-3 py-1.5 text-right">
                   <div class="inline-flex items-center gap-1">
-                    <FaButton v-if="s.active !== 'active'" variant="outline" size="sm" :disabled="acting === s.name + 'start'" @click="svcAction(s, 'start')">启动</FaButton>
-                    <FaButton v-if="s.active === 'active'" variant="outline" size="sm" :disabled="acting === s.name + 'stop'" @click="svcAction(s, 'stop')">停止</FaButton>
-                    <FaButton v-if="s.active === 'active'" variant="ghost" size="sm" :disabled="acting === s.name + 'restart'" @click="svcAction(s, 'restart')">重启</FaButton>
+                    <FaButton v-if="s.active !== 'active'" variant="outline" size="sm" :disabled="acting === s.name + 'start'" @click="svcAction(s, 'start')">{{ $t('common.start') }}</FaButton>
+                    <FaButton v-if="s.active === 'active'" variant="outline" size="sm" :disabled="acting === s.name + 'stop'" @click="svcAction(s, 'stop')">{{ $t('common.stop') }}</FaButton>
+                    <FaButton v-if="s.active === 'active'" variant="ghost" size="sm" :disabled="acting === s.name + 'restart'" @click="svcAction(s, 'restart')">{{ $t('common.restart') }}</FaButton>
                   </div>
                 </td>
               </tr>

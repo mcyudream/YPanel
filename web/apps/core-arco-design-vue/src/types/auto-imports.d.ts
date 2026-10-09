@@ -80,7 +80,9 @@ declare global {
   const toValue: typeof import('vue').toValue
   const triggerRef: typeof import('vue').triggerRef
   const unref: typeof import('vue').unref
+  const useAiAskStore: typeof import('../store/modules/aiAsk').useAiAskStore
   const useAiChat: typeof import('../composables/useAiChat').useAiChat
+  const useAiQuestionStore: typeof import('../store/modules/aiQuestion').useAiQuestionStore
   const useAppAccountStore: typeof import('../store/modules/app/account').useAppAccountStore
   const useAppAuth: typeof import('../composables/app/auth').useAppAuth
   const useAppKeepAliveStore: typeof import('../store/modules/app/keepAlive').useAppKeepAliveStore
@@ -100,6 +102,7 @@ declare global {
   const useFaModal: typeof import('@fantastic-admin/components').useFaModal
   const useFaToast: typeof import('@fantastic-admin/components').useFaToast
   const useFileEditorStore: typeof import('../store/modules/fileEditor').useFileEditorStore
+  const useHtmlDark: typeof import('../composables/useHtmlDark').useHtmlDark
   const useId: typeof import('vue').useId
   const useLink: typeof import('vue-router').useLink
   const useModel: typeof import('vue').useModel
@@ -112,7 +115,7 @@ declare global {
   const useSlots: typeof import('vue').useSlots
   const useTaskCenterStore: typeof import('../store/modules/taskCenter').useTaskCenterStore
   const useTemplateRef: typeof import('vue').useTemplateRef
-  const useWorkbenchStore: typeof import('../store/modules/app/workbench').useWorkbenchStore
+  const useVpnAccess: typeof import('../composables/useVpnAccess').useVpnAccess
   const watch: typeof import('vue').watch
   const watchEffect: typeof import('vue').watchEffect
   const watchPostEffect: typeof import('vue').watchPostEffect
@@ -124,13 +127,10 @@ declare global {
   export type { Component, Slot, Slots, ComponentPublicInstance, ComputedRef, DirectiveBinding, ExtractDefaultPropTypes, ExtractPropTypes, ExtractPublicPropTypes, InjectionKey, PropType, Ref, ShallowRef, MaybeRef, MaybeRefOrGetter, VNode, WritableComputedRef } from 'vue'
   import('vue')
   // @ts-ignore
-  export type { WorkbenchApp, WorkbenchWindow } from '../store/modules/app/workbench'
-  import('../store/modules/app/workbench')
-  // @ts-ignore
   export type { FileEditorTab, FileEditorGroup, FileEditorLayout, FileEditorCursor } from '../store/modules/fileEditor'
   import('../store/modules/fileEditor')
   // @ts-ignore
-  export type { AiChatStep, AiChatMessage, AiSceneData } from '../composables/useAiChat'
+  export type { AiChatStep, AiKnowledgeRef, AiChatMessage, AiSegment, AiSceneData } from '../composables/useAiChat'
   import('../composables/useAiChat')
   // @ts-ignore
   export type { BusEvent } from '../composables/useEventBus'

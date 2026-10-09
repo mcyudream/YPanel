@@ -9,7 +9,7 @@ const routes: RouteRecordRaw = {
   component: Layout,
   name: 'certs',
   meta: {
-    title: '证书',
+    title: 'menu.certs',
     icon: 'yd:shield',
   },
   children: [
@@ -18,7 +18,7 @@ const routes: RouteRecordRaw = {
       name: 'certsIndex',
       component: () => import('@/views/certs/index.vue'),
       meta: {
-        title: '证书',
+        title: 'menu.certs',
         // fa 单页约定：主导航平铺直达，无二级展开
         menu: false,
       },

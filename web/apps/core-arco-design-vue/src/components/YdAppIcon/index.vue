@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, ref } from 'vue'
 
 // 容器/应用品牌图标：商店应用用 iconUrl，其余按镜像/项目名关键词映射品牌 logo。
 // 注意：brandRules 中的 i-logos: class 必须以字面量出现在本文件，UnoCSS presetIcons 才会构建期内联。
@@ -51,8 +51,11 @@ const brandRules: [string, string][] = [
   ['1panel', 'i-logos:docker-icon'],
 ]
 
+const imgFailed = ref(false)
+
 const resolved = computed(() => {
-  if (props.image) {
+  // 图标加载失败降级为品牌规则（名称关键词映射 logo）
+  if (props.image && !imgFailed.value) {
     return { type: 'img', value: props.image } as const
   }
   const s = (props.name || '').toLowerCase()
@@ -70,7 +73,7 @@ const resolved = computed(() => {
     class="inline-flex shrink-0 items-center justify-center"
     :style="{ width: `${size}px`, height: `${size}px`, fontSize: `${size}px` }"
   >
-    <img v-if="resolved.type === 'img'" :src="resolved.value" alt="" class="h-full w-full rounded-sm object-contain">
+    <img v-if="resolved.type === 'img'" :src="resolved.value" alt="" class="h-full w-full rounded-sm object-contain" @error="imgFailed = true">
     <FaIcon v-else-if="resolved.type === 'brand'" :name="resolved.value" class="size-inherit!" />
     <YdMorphIcon v-else name="container" :size="size" class="opacity-60" />
   </span>

@@ -38,7 +38,7 @@ function handleCollaspe() {
 
 <template>
   <div
-    :class="cn('m-4 flex flex-col overflow-hidden rounded-lg border bg-card transition-[background-color,border-color]', {
+    :class="cn('yp-page-main m-4 flex flex-col overflow-hidden rounded-lg border bg-card transition-[background-color,border-color]', {
       'overflow-hidden': collaspe,
     }, props.class)"
   >

@@ -7,6 +7,7 @@ import { useFileEditorStore } from '@/store/modules/fileEditor'
 import { Pane, Splitpanes } from 'splitpanes'
 import 'splitpanes/dist/splitpanes.css'
 import { useLocalStorage } from '@vueuse/core'
+import { ref } from 'vue'
 import YdFileTree from '../YdFileTree/index.vue'
 import YdMonitorSidebar from '../YdMonitorSidebar/index.vue'
 import Panel from './Panel.vue'
@@ -17,6 +18,40 @@ defineOptions({
 })
 
 const fileEditorStore = useFileEditorStore()
+const panelRef = ref<InstanceType<typeof Panel>>()
+const initialPaste = defineModel<string>('initialPaste', { default: '' })
+/** 拖入数据的 MIME（文件管理器 dragstart 约定） */
+const DRAG_MIME = 'application/x-ypanel-files'
+/** 拖拽悬停高亮（终端区可视反馈） */
+const dropHover = ref(false)
+
+/** shell 引号包裹：含空白或特殊字符的路径用双引号 */
+function quotePath(path: string): string {
+  return /[\s';]/.test(path) ? `"${path.replaceAll('"', '\"')}"` : path
+}
+
+/** 拖入文件 → 活跃终端逐个填入路径（空格分隔，不执行） */
+function onDropToTerminal(e: DragEvent) {
+  dropHover.value = false
+  // 文件拖入：填入引号包裹的路径（不执行）
+  const raw = e.dataTransfer?.getData(DRAG_MIME)
+  if (raw) {
+    try {
+      const payload = JSON.parse(raw) as { items: Array<{ path: string, name: string, isDir: boolean }> }
+      const text = payload.items.map(x => quotePath(x.path)).join(' ')
+      if (text) {
+        panelRef.value?.pasteText(text)
+      }
+    }
+    catch {}
+    return
+  }
+  // 文本拖入（iTerm2 风格）：原样输入到活跃终端
+  const text = e.dataTransfer?.getData('text/plain')
+  if (text) {
+    panelRef.value?.pasteText(text)
+  }
+}
 
 const nodes = ref<NodeItem[]>([])
 const node = useLocalStorage('ypanel.terminal.node', 'local')
@@ -24,6 +59,8 @@ const treeVisible = useLocalStorage('ypanel.terminal.tree', true)
 const monitorVisible = useLocalStorage('ypanel.terminal.monitor', true)
 const treeWidth = useLocalStorage('ypanel.terminal.treeWidth', 18)
 const monitorWidth = useLocalStorage('ypanel.terminal.monitorWidth', 22)
+/** 活动终端会话的当前目录（跟随开关在 Panel 内，空串=不跟随） */
+const termCwd = ref('')
 
 onMounted(async () => {
   try {
@@ -62,6 +99,14 @@ function openInEditor(entry: FileEntry) {
 </script>
 
 <template>
+  <div
+    class="h-full w-full"
+    :class="dropHover ? 'drop-hover' : ''"
+    :data-drop-tip="$t('components.ydTerminal.dropToFillPath')"
+    @dragover.prevent="dropHover = true"
+    @dragleave.prevent="dropHover = false"
+    @drop.prevent="onDropToTerminal"
+  >
   <Splitpanes class="yd-term-workspace h-full w-full" @resized="onResized">
     <Pane
       v-if="treeVisible"
@@ -70,17 +115,20 @@ function openInEditor(entry: FileEntry) {
       max-size="40"
       class="border-r bg-muted/20"
     >
-      <YdFileTree :node="node" title="文件" @open-file="openInEditor" />
+      <YdFileTree :node="node" :cwd="termCwd" :title="$t('components.ydFileTree.files')" @open-file="openInEditor" />
     </Pane>
 
     <Pane min-size="30" class="min-w-0">
       <Panel
+        ref="panelRef"
         v-model:node="node"
+        v-model:initial-paste="initialPaste"
         :nodes="nodes"
         :tree-visible="treeVisible"
         :monitor-visible="monitorVisible"
         @toggle-tree="treeVisible = !treeVisible"
         @toggle-monitor="monitorVisible = !monitorVisible"
+        @cwd="termCwd = $event"
       />
     </Pane>
 
@@ -94,9 +142,27 @@ function openInEditor(entry: FileEntry) {
       <YdMonitorSidebar :node="node" :active="monitorVisible" />
     </Pane>
   </Splitpanes>
+  </div>
 </template>
 
 <style>
+.drop-hover > .yd-term-workspace {
+  outline: 2px dashed oklch(var(--primary) / 60%);
+  outline-offset: -4px;
+}
+.drop-hover > .yd-term-workspace::after {
+  content: attr(data-drop-tip);
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 13px;
+  color: oklch(var(--primary));
+  background: oklch(var(--primary) / 6%);
+  pointer-events: none;
+}
+.yd-term-workspace { position: relative; }
 .yd-term-workspace .splitpanes__splitter {
   position: relative;
   width: 5px;

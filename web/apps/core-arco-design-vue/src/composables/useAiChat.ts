@@ -1,16 +1,28 @@
-// useAiChat：AI 对话状态管理（对接 /api/v1/ai/chat SSE，含工具调用过程展示；每轮结束自动持久化会话）。
-import { ref } from 'vue'
+// useAiChat：AI 对话状态管理（对接 /api/v1/ai/chat SSE，含工具调用/危险操作确认过程展示；每轮结束自动持久化会话）。
+import { computed, ref } from 'vue'
 import { conversationApi } from '@/api/modules/ai'
+import { i18n } from '@/locales'
+import { useAiAskStore } from '@/store/modules/aiAsk'
+import { useAiQuestionStore } from '@/store/modules/aiQuestion'
+import type { AiAskQuestion } from '@/api/modules/ai'
 
 export interface AiChatStep {
   type: string
   name?: string
   detail?: string
-  /** 结果状态：完成/失败（空 = 未结束） */
+  /** 结果状态：完成/失败/已确认/已拒绝/已超时（空 = 未结束） */
   status?: string
   /** 结果摘要 */
   summary?: string
   done?: boolean
+  /** 危险操作确认卡片：后端 ask ID */
+  askId?: string
+  /** 风险分级（ask 卡片用） */
+  risk?: string
+  /** 交互提问卡片：问题集（ask_user 工具） */
+  questions?: AiAskQuestion[]
+  /** 工具原始输出（截断），卡片展开查看 */
+  output?: string
 }
 
 export interface AiKnowledgeRef {
@@ -26,11 +38,32 @@ export interface AiChatMessage {
   error?: boolean
   /** 深度思考（reasoning 流式拼接） */
   reasoning?: string
-  /** 工具/步骤链 */
+  /** 工具/步骤链（旧版渲染路径，保留兼容历史会话） */
   steps: AiChatStep[]
   /** 引用的知识库条目 */
   knowledge?: AiKnowledgeRef[]
+  /** ZCode 式分段序列（M32）：文本与工具块按时间序交错，工具输出为流内一等块 */
+  segments?: AiSegment[]
 }
+
+/** 消息分段：文本段（Markdown）/ 工具块（输出直接可见）/ 交互提问块 */
+export type AiSegment =
+  | { type: 'text', text: string }
+  | {
+    type: 'tool'
+    name: string
+    args: string
+    /** 可读摘要（后端渲染） */
+    summary: string
+    /** 原始输出（截断） */
+    output: string
+    status: string
+    risk?: string
+    /** 危险操作确认：挂起的 ask ID */
+    askId?: string
+    done?: boolean
+  }
+  | { type: 'question', askId: string, questions: AiAskQuestion[], done?: boolean, answer?: string }
 
 export interface AiSceneData {
   page?: string
@@ -45,12 +78,18 @@ function nextId() {
 
 export function useAiChat(options?: {
   scenePath?: () => string
+  /** 场景内聚焦对象（容器名/编排项目/目录等），随 ?focus= 传给后端注入场景摘要 */
+  sceneFocus?: () => string
   providerId?: () => number | undefined
   /** 模型覆盖（同一供应商多模型） */
   model?: () => string | undefined
   autoSave?: boolean
   /** 每轮自动保存成功后的回调（如刷新会话列表） */
   onSaved?: () => void
+  /** 权限模式（M32 仿 ZCode）：read_only / standard / auto，随请求传后端 */
+  mode?: () => string
+  /** 上下文窗口上限（按当前模型），供用量估算；默认 128000 */
+  contextLimit?: () => number
 }) {
   const messages = ref<AiChatMessage[]>([])
   const streaming = ref(false)
@@ -66,12 +105,13 @@ export function useAiChat(options?: {
     if (!messages.value.some(m => m.role === 'assistant' && m.content && !m.error)) {
       return
     }
-    const msgs = messages.value.filter(m => m.content).map(m => ({
+    const msgs = messages.value.filter(m => m.content || m.segments?.length).map(m => ({
       role: m.role,
       content: m.content,
       reasoning: m.reasoning || '',
       steps: m.steps || [],
       knowledge: m.knowledge || [],
+      segments: m.segments || [],
     }))
     try {
       const res = await conversationApi.save(conversationId.value, '', msgs as any)
@@ -123,13 +163,15 @@ export function useAiChat(options?: {
       .map(m => ({ role: m.role, content: m.content }))
 
     try {
-      const resp = await fetch(`api/v1/ai/chat?scene=${encodeURIComponent(options?.scenePath?.() || '/')}`, {
+      const focus = options?.sceneFocus?.() || ''
+      const resp = await fetch(`api/v1/ai/chat?scene=${encodeURIComponent(options?.scenePath?.() || '/')}${focus ? `&focus=${encodeURIComponent(focus)}` : ''}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
         signal: controller.signal,
         body: JSON.stringify({
           providerId: options?.providerId?.(),
           model: options?.model?.() || undefined,
+          mode: options?.mode?.() || undefined,
           messages: history,
         }),
       })
@@ -143,7 +185,7 @@ export function useAiChat(options?: {
         throw new Error(msg)
       }
       if (!resp.body) {
-        throw new Error('无响应体')
+        throw new Error(i18n.global.t('components.useAiChat.noResponseBody'))
       }
       const reader = resp.body.getReader()
       const decoder = new TextDecoder()
@@ -172,35 +214,108 @@ export function useAiChat(options?: {
           catch {
             continue
           }
+          // ---- 段模型辅助：尾段操作 ----
+          const segs = (assistant.segments = assistant.segments || [])
+          function lastTextSeg() {
+            const last = segs[segs.length - 1]
+            if (last && last.type === 'text') {
+              return last
+            }
+            const seg = { type: 'text' as const, text: '' }
+            segs.push(seg)
+            return seg
+          }
+          function lastRunningToolSeg() {
+            for (let i = segs.length - 1; i >= 0; i--) {
+              const seg = segs[i]
+              if (seg.type === 'tool' && !seg.done) {
+                return seg
+              }
+            }
+            return undefined
+          }
+
           if (ev.scene) {
             assistant.steps.push({ type: 'scene', name: '读取页面数据', detail: ev.scene.page || '', done: true })
           }
           if (ev.reasoning) {
             assistant.reasoning = (assistant.reasoning || '') + ev.reasoning
           }
-          if (ev.step) {
+          if (ev.step && ev.step.type === 'tool') {
+            segs.push({ type: 'tool', name: ev.step.name || '', args: ev.step.detail || '', summary: '', output: '', status: 'running' })
             assistant.steps.push({ type: ev.step.type, name: ev.step.name, detail: ev.step.detail })
           }
           if (ev.step_result) {
-            // 把同名未完成步骤置为完成/失败并附结果摘要
+            // 段模型：填充最近的运行中工具块
+            const seg = lastRunningToolSeg()
+            if (seg && seg.name === ev.step_result.name) {
+              seg.summary = ev.step_result.detail || ''
+              seg.output = ev.step_result.output || ''
+              seg.status = ev.step_result.status || '完成'
+              seg.done = true
+            }
+            // 兼容 steps（旧渲染/持久化）
             const st = [...assistant.steps].reverse().find(s => s.type === 'tool' && s.name === ev.step_result.name && !s.done)
             if (st) {
               st.done = true
               st.status = ev.step_result.status || ''
               st.summary = ev.step_result.detail || ''
+              st.output = ev.step_result.output || ''
             }
             else {
-              assistant.steps.push({ type: 'tool_result', name: ev.step_result.name, detail: ev.step_result.detail, status: ev.step_result.status, done: true })
+              assistant.steps.push({ type: 'tool_result', name: ev.step_result.name, detail: ev.step_result.detail, status: ev.step_result.status, done: true, output: ev.step_result.output })
             }
           }
           if (ev.tool) {
             assistant.steps.push({ type: 'action', name: typeof ev.tool === 'string' ? ev.tool : ev.tool.name || '', done: true })
+          }
+          if (ev.ask) {
+            // 危险操作确认：挂到最近运行中的工具段（内联批准/拒绝），同时通知 store
+            const seg = lastRunningToolSeg()
+            if (seg && seg.type === 'tool') {
+              seg.askId = ev.ask.id
+              seg.risk = ev.ask.risk
+            }
+            assistant.steps.push({ type: 'ask', name: ev.ask.tool, detail: ev.ask.args, risk: ev.ask.risk, askId: ev.ask.id })
+            useAiAskStore().request(ev.ask, seg && seg.type === 'tool' ? seg : undefined)
+          }
+          if (ev.ask_user) {
+            // 交互提问：以 ask_user 工具块形态进调用链（问题清单在摘要，答案回填 summary）
+            const qList = (ev.ask_user.questions || []).map((q: AiAskQuestion) => q.question).join('；')
+            segs.push({ type: 'tool', name: 'ask_user', args: JSON.stringify(ev.ask_user.questions || []), summary: i18n.global.t('components.useAiChat.awaitingAnswers', { list: qList }), output: '', status: 'running' })
+            const qseg = segs[segs.length - 1]
+            assistant.steps.push({
+              type: 'question',
+              name: '询问用户',
+              detail: qList,
+              questions: ev.ask_user.questions || [],
+              askId: ev.ask_user.id,
+            })
+            useAiQuestionStore().request(ev.ask_user.id, ev.ask_user.questions || [], qseg)
+          }
+          if (ev.ask_user_result) {
+            const st = [...assistant.steps].reverse().find(x => x.type === 'question' && x.askId === ev.ask_user_result.id)
+            if (st) {
+              st.done = true
+              st.status = '已取消'
+            }
+            useAiQuestionStore().cancelled(ev.ask_user_result.id)
+          }
+          if (ev.ask_result) {
+            // 确认终结：把对应 ask 卡片置为已确认/已拒绝/已超时；弹窗若仍挂起则强制关闭
+            const st = [...assistant.steps].reverse().find(x => x.type === 'ask' && x.askId === ev.ask_result.id)
+            if (st) {
+              st.done = true
+              st.status = ev.ask_result.approved ? '已确认' : (ev.ask_result.reason === 'timeout' ? '已超时' : '已拒绝')
+            }
+            useAiAskStore().settled(ev.ask_result.id)
           }
           if (ev.knowledge) {
             assistant.knowledge = ev.knowledge
           }
           if (ev.content) {
             assistant.content += ev.content
+            lastTextSeg().text += ev.content
           }
           if (ev.error) {
             assistant.error = true
@@ -212,7 +327,7 @@ export function useAiChat(options?: {
     catch (e: any) {
       if (e?.name !== 'AbortError') {
         assistant.error = true
-        assistant.content = `请求失败：${e?.message || e}`
+        assistant.content = i18n.global.t('components.useAiChat.requestFailed', { message: String(e?.message || e) })
       }
     }
     finally {
@@ -247,7 +362,21 @@ export function useAiChat(options?: {
     conversationId.value = 0
   }
 
-  return { messages, streaming, send, stop, regenerate, clear, conversationId }
+  // 上下文用量估算（langchaingo 不透出 usage）：按会话字符数近似折算 tokens
+  const contextUsage = computed(() => {
+    let chars = 0
+    for (const m of messages.value) {
+      chars += (m.content?.length || 0) + (m.reasoning?.length || 0)
+      for (const st of m.steps || []) {
+        chars += (st.detail?.length || 0) + (st.summary?.length || 0)
+      }
+    }
+    const limit = options?.contextLimit?.() || 128000
+    const tokens = Math.min(limit, Math.round(chars / 2.2) + 1500)
+    return { tokens, limit, pct: Math.round((tokens / limit) * 100) }
+  })
+
+  return { messages, streaming, send, stop, regenerate, clear, conversationId, contextUsage }
 }
 
 /** 场景感知 SSE 请求需要 scene 路径时，随 body.scene 一起传给后端 */

@@ -1,11 +1,18 @@
 <script setup lang="ts">
 // AI 对话（智能/对话）：会话列表 + 供应商选择 + 流式对话。
+import { i18n } from '@/locales'
 import type { AIProvider } from '@/api/modules/ai'
 import aiApi, { conversationApi } from '@/api/modules/ai'
 import MessageList from '@/components/YdAiChat/MessageList.vue'
 import Sender from '@/components/YdAiChat/Sender.vue'
 import YdAiBubble from '@/components/YdAiBubble/index.vue'
 import { useAiChat } from '@/composables/useAiChat'
+import { useAiAskStore } from '@/store/modules/aiAsk'
+import { useAiQuestionStore } from '@/store/modules/aiQuestion'
+import AskConfirmPanel from '@/components/YdAiChat/AskConfirmPanel.vue'
+import QuestionPanel from '@/components/YdAiChat/QuestionPanel.vue'
+import { useYwEmbed } from '@/views/desktop/embed'
+import { focusHintOf, lastFocusedWin, scenePathOfApp } from '@/views/desktop/focus-scene'
 
 defineOptions({
   name: 'aiChat',
@@ -14,16 +21,31 @@ defineOptions({
 const toast = useFaToast()
 const router = useRouter()
 
+// 桌面工作台承载时：场景感知改由焦点窗口派生（窗口不换路由，经典的路由感知失效）
+const embed = useYwEmbed()
+
 const providerId = ref<number>(0)
 const providers = ref<AIProvider[]>([])
 
 // ---- 对话 ----
 const model = ref('')
 
-const { messages, streaming, send, clear, conversationId } = useAiChat({
-  scenePath: () => '/',
+const mode = ref<'read_only' | 'standard' | 'auto'>('standard')
+const MODE_META = [
+  { value: 'read_only', label: '只读' },
+  { value: 'standard', label: '标准确认' },
+  { value: 'auto', label: '自动执行' },
+]
+
+const askStore = useAiAskStore()
+const questionStore = useAiQuestionStore()
+
+const { messages, streaming, send, clear, conversationId, contextUsage } = useAiChat({
+  scenePath: () => (embed ? scenePathOfApp(lastFocusedWin.value?.appId ?? '') : '/'),
+  sceneFocus: () => (embed && lastFocusedWin.value ? focusHintOf(lastFocusedWin.value) : ''),
   providerId: () => providerId.value || undefined,
   model: () => model.value || undefined,
+  mode: () => mode.value,
   onSaved: () => loadConversations(),
 })
 
@@ -108,7 +130,7 @@ async function openConversation(id: number) {
     conversationId.value = id
   }
   catch (e: any) {
-    toast.error('读取会话失败', { description: e?.message })
+    toast.error(i18n.global.t('ai.chat.loadConvFailed'), { description: e?.message })
   }
 }
 
@@ -123,7 +145,7 @@ async function saveConversation() {
     await loadConversations()
   }
   catch (e: any) {
-    toast.error('会话保存失败', { description: e?.message })
+    toast.error(i18n.global.t('ai.chat.saveConvFailed'), { description: e?.message })
   }
 }
 
@@ -156,12 +178,12 @@ onActivated(() => {
 </script>
 
 <template>
-  <div>
-    <FaPageMain>
-      <div class="flex h-[calc(100vh-320px)] gap-3">
+  <div :class="embed ? 'flex h-full min-h-0 flex-col' : ''">
+    <FaPageMain :class="embed ? 'min-h-0 flex-1!' : ''" :main-class="embed ? 'min-h-0 flex-1 p-0' : ''">
+      <div :class="embed ? 'flex h-full min-h-0 flex-1 gap-3' : 'flex h-[calc(100vh-320px)] gap-3'">
         <div class="w-52 shrink-0 overflow-y-auto">
           <FaButton size="sm" class="mb-2 w-full" @click="newConversation">
-            <FaIcon name="i-lucide:plus" class="mr-1" /> 新会话
+            <FaIcon name="i-lucide:plus" class="mr-1" /> {{ $t('ai.chat.newConversation') }}
           </FaButton>
           <div
             v-for="c in conversations"
@@ -181,38 +203,26 @@ onActivated(() => {
         </div>
         <div class="flex min-w-0 flex-1 flex-col rounded-lg border">
           <div class="flex items-center gap-2 border-b px-4 py-2 text-sm">
-            <span class="text-muted-foreground">供应商</span>
-            <select v-model="providerId" class="h-8 max-w-44 rounded-md border bg-background px-2 outline-none">
-              <option v-for="p in providers" :key="p.id" :value="p.id">
-                {{ providerLabel(p) }}
-              </option>
-            </select>
-            <select v-if="modelOptions.length > 1" v-model="model" class="h-8 rounded-md border bg-background px-2 font-mono text-xs outline-none">
-              <option v-for="m in modelOptions" :key="m" :value="m">
-                {{ m }}
-              </option>
-            </select>
-            <span v-else class="font-mono text-xs text-muted-foreground">
-              {{ model }}
-            </span>
+            <span class="text-sm font-medium">{{ $t('ai.chat.title') }}</span>
+            <span class="font-mono text-[11px] text-muted-foreground">{{ model || $t('ai.chat.noModel') }}</span>
             <button type="button" class="text-xs text-muted-foreground hover:text-foreground" @click="router.push('/ai/providers')">
-              + 新增
+              {{ $t('ai.chat.providerSettings') }}
             </button>
             <button type="button" class="ml-auto text-xs text-muted-foreground hover:text-red-500" @click="clear()">
-              清空对话
+              {{ $t('ai.chat.clearConversation') }}
             </button>
           </div>
-          <MessageList :messages="messages">
+          <MessageList :messages="messages" class="min-h-0 flex-1">
             <div v-if="!messages.length" class="space-y-3 py-10 text-center">
               <div class="text-4xl">
                 ✨
               </div>
               <div class="text-sm font-medium">
-                YPanel AI 助手
+                {{ $t('ai.chat.assistant') }}
               </div>
               <div class="flex flex-wrap justify-center gap-1.5 pt-2">
                 <button
-                  v-for="s in ['当前服务器状态如何？', '帮我重启 Nginx', '写一个磁盘清理脚本']"
+                  v-for="s in [$t('ai.chat.suggestStatus'), $t('ai.chat.suggestRestart'), $t('ai.chat.suggestScript')]"
                   :key="s"
                   type="button"
                   class="cursor-pointer rounded-full border px-3 py-1 text-xs text-muted-foreground hover:bg-accent/50"
@@ -230,21 +240,62 @@ onActivated(() => {
                   :pending="m.pending"
                   :reasoning="m.reasoning || ''"
                   :steps="m.steps || []"
+                  :segments="m.segments || []"
                   :knowledge="m.knowledge || []"
                   show-actions
                 />
               </div>
             </template>
           </MessageList>
+          <!-- 挂起的确认/提问面板替换输入框位置（ZCode 式） -->
+          <AskConfirmPanel v-if="askStore.payload" class="mx-0.5 mb-0.5" />
+          <QuestionPanel v-else-if="questionStore.id" class="mx-0.5 mb-0.5" />
           <Sender
+            v-else
             :loading="streaming"
-            :placeholder="'输入问题，Enter 发送…；可让我直接查询数据库'"
+            :placeholder="$t('ai.chat.inputPlaceholder')"
             @send="sendChat"
             @stop="() => {}"
           >
+            <template #toolbar>
+              <YdSelect
+                v-model="mode"
+                :options="MODE_META.map(m => ({ value: m.value, label: $t(`ai.chat.mode.${m.value}`) }))"
+                size="sm"
+              />
+              <YdSelect
+                v-model="providerId"
+                :options="providers.map(p => ({ value: p.id, label: providerLabel(p) }))"
+                size="sm"
+                button-class="max-w-36"
+              />
+              <YdSelect
+                v-if="modelOptions.length > 1"
+                v-model="model"
+                :options="modelOptions"
+                size="sm"
+                button-class="max-w-36 font-mono text-[11px]"
+              />
+              <span
+                class="flex items-center gap-1.5 text-[11px] text-muted-foreground"
+                :title="$t('ai.chat.contextTip', { used: contextUsage.tokens.toLocaleString(), limit: Math.round(contextUsage.limit / 1000) })"
+              >
+                <span class="h-1 w-14 overflow-hidden rounded-full bg-muted">
+                  <span
+                    class="block h-full rounded-full transition-all"
+                    :class="contextUsage.pct > 85 ? 'bg-red-500' : contextUsage.pct > 60 ? 'bg-amber-500' : 'bg-emerald-500'"
+                    :style="{ width: `${contextUsage.pct}%` }"
+                  />
+                </span>
+                {{ contextUsage.pct }}%
+              </span>
+            </template>
             <template #actions>
+              <button type="button" class="text-xs text-muted-foreground hover:text-foreground" @click="clear()">
+                {{ $t('common.clear') }}
+              </button>
               <button type="button" class="text-xs text-muted-foreground hover:text-foreground" @click="saveConversation">
-                保存会话
+                {{ $t('common.save') }}
               </button>
             </template>
           </Sender>

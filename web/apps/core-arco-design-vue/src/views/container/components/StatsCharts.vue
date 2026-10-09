@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import echarts from '@/utils/echarts'
 import apiContainer from '@/api/modules/container'
+import { i18n } from '@/locales'
 
 // 容器实时资源图表（M23）：3s 轮询 docker stats 单次采样，滚动窗口折线。
 const props = defineProps<{
@@ -8,14 +9,14 @@ const props = defineProps<{
   active?: boolean
 }>()
 
-const cpuRef = useTemplateRef<HTMLElement>('cpuChart')
-const netRef = useTemplateRef<HTMLElement>('netChart')
+const cpuChartEl = ref<HTMLElement | null>(null)
+const netChartEl = ref<HTMLElement | null>(null)
 const error = ref('')
 const latest = ref<{ cpuPct: number, memUsed: number, memLimit: number, rx: number, tx: number } | null>(null)
 
 const WINDOW = 60
-let cpuChart: echarts.ECharts | null = null
-let netChart: echarts.ECharts | null = null
+let chartCpu: echarts.ECharts | null = null
+let chartNet: echarts.ECharts | null = null
 let timer: ReturnType<typeof setInterval> | null = null
 let prev: { rx: number, tx: number, at: number } | null = null
 
@@ -68,7 +69,7 @@ async function sample() {
     render()
   }
   catch (e: any) {
-    error.value = e?.message || 'stats 采样失败'
+    error.value = e?.message || i18n.global.t('container.stats.sampleFailed')
     stopTimer()
   }
 }
@@ -85,22 +86,23 @@ function baseOption(title: string, yFmt: (v: number) => string) {
 }
 
 function render() {
-  if (cpuChart) {
-    cpuChart.setOption({
-      ...baseOption('CPU / 内存', (v: number) => v >= 1024 ? `${(v / 1024).toFixed(1)}G` : `${v}M`),
+  init()
+  if (chartCpu) {
+    chartCpu.setOption({
+      ...baseOption(i18n.global.t('container.stats.cpuMem'), (v: number) => v >= 1024 ? `${(v / 1024).toFixed(1)}G` : `${v}M`),
       series: [
-        { name: 'CPU%', type: 'line', data: cpuData.value, showSymbol: false, smooth: true, lineStyle: { width: 1.5 }, areaStyle: { opacity: 0.12 } },
-        { name: '内存MB', type: 'line', data: memData.value, showSymbol: false, smooth: true, yAxisIndex: 0 },
+        { name: i18n.global.t('container.stats.seriesCpu'), type: 'line', data: cpuData.value, showSymbol: false, smooth: true, lineStyle: { width: 1.5 }, areaStyle: { opacity: 0.12 } },
+        { name: i18n.global.t('container.stats.seriesMem'), type: 'line', data: memData.value, showSymbol: false, smooth: true, yAxisIndex: 0 },
       ],
       legend: { top: 2, right: 8, textStyle: { fontSize: 10 } },
     })
   }
-  if (netChart) {
-    netChart.setOption({
-      ...baseOption('网络 IO（KB/s）', (v: number) => `${v}`),
+  if (chartNet) {
+    chartNet.setOption({
+      ...baseOption(i18n.global.t('container.stats.netIo'), (v: number) => `${v}`),
       series: [
-        { name: '下行', type: 'line', data: rxData.value, showSymbol: false, smooth: true, areaStyle: { opacity: 0.12 } },
-        { name: '上行', type: 'line', data: txData.value, showSymbol: false, smooth: true },
+        { name: i18n.global.t('container.stats.down'), type: 'line', data: rxData.value, showSymbol: false, smooth: true, areaStyle: { opacity: 0.12 } },
+        { name: i18n.global.t('container.stats.up'), type: 'line', data: txData.value, showSymbol: false, smooth: true },
       ],
       legend: { top: 2, right: 8, textStyle: { fontSize: 10 } },
     })
@@ -123,11 +125,11 @@ function stopTimer() {
 }
 
 function init() {
-  if (cpuRef.value && !cpuChart) {
-    cpuChart = echarts.init(cpuRef.value)
+  if (cpuChartEl.value && !chartCpu) {
+    chartCpu = echarts.init(cpuChartEl.value)
   }
-  if (netRef.value && !netChart) {
-    netChart = echarts.init(netRef.value)
+  if (netChartEl.value && !chartNet) {
+    chartNet = echarts.init(netChartEl.value)
   }
 }
 
@@ -145,26 +147,32 @@ watch(() => props.active, (v) => {
 }, { immediate: true })
 
 const ro = new ResizeObserver(() => {
-  cpuChart?.resize()
-  netChart?.resize()
+  chartCpu?.resize()
+  chartNet?.resize()
 })
 
 onMounted(() => {
-  if (cpuRef.value) {
-    ro.observe(cpuRef.value)
+  if (cpuChartEl.value) {
+    ro.observe(cpuChartEl.value)
   }
-  if (netRef.value) {
-    ro.observe(netRef.value)
+  if (netChartEl.value) {
+    ro.observe(netChartEl.value)
+  }
+  // 兜底：watch(active) 的 nextTick 可能早于 v-if DOM 插入导致 init 落空，挂载后补一次
+  if (props.active) {
+    init()
+    render()
+    startTimer()
   }
 })
 
 onBeforeUnmount(() => {
   stopTimer()
   ro.disconnect()
-  cpuChart?.dispose()
-  netChart?.dispose()
-  cpuChart = null
-  netChart = null
+  chartCpu?.dispose()
+  chartNet?.dispose()
+  chartCpu = null
+  chartNet = null
 })
 </script>
 
@@ -181,7 +189,7 @@ onBeforeUnmount(() => {
       </div>
       <div class="rounded-md border p-2.5">
         <div class="text-xs text-muted-foreground">
-          内存
+          {{ $t('container.stats.mem') }}
         </div>
         <div class="mt-0.5 font-mono text-lg tabular-nums">
           {{ (latest.memUsed / 1048576).toFixed(1) }}<span class="text-xs text-muted-foreground"> / {{ latest.memLimit ? (latest.memLimit / 1048576).toFixed(0) : '?' }} MB</span>
@@ -189,7 +197,7 @@ onBeforeUnmount(() => {
       </div>
       <div class="rounded-md border p-2.5">
         <div class="text-xs text-muted-foreground">
-          下行
+          {{ $t('container.stats.down') }}
         </div>
         <div class="mt-0.5 font-mono text-lg tabular-nums">
           {{ (latest.rx / 1024).toFixed(1) }} <span class="text-xs text-muted-foreground">KB/s</span>
@@ -197,7 +205,7 @@ onBeforeUnmount(() => {
       </div>
       <div class="rounded-md border p-2.5">
         <div class="text-xs text-muted-foreground">
-          上行
+          {{ $t('container.stats.up') }}
         </div>
         <div class="mt-0.5 font-mono text-lg tabular-nums">
           {{ (latest.tx / 1024).toFixed(1) }} <span class="text-xs text-muted-foreground">KB/s</span>
@@ -205,9 +213,9 @@ onBeforeUnmount(() => {
       </div>
     </div>
     <div v-if="error" class="rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-700 dark:bg-amber-950/30 dark:text-amber-400">
-      {{ error }}（容器未运行或刚启动时采样可能失败，切回该页自动重试）
+      {{ $t('container.stats.errorHint', { msg: error }) }}
     </div>
-    <div ref="cpuChart" class="h-56 w-full rounded-md border" />
-    <div ref="netChart" class="h-48 w-full rounded-md border" />
+    <div ref="cpuChartEl" class="h-56 w-full rounded-md border"></div>
+    <div ref="netChartEl" class="h-48 w-full rounded-md border"></div>
   </div>
 </template>

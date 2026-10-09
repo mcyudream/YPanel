@@ -5,6 +5,7 @@ export interface SiteDomainConf {
   domain: string
   domains: string[]
   certDomain: string
+  certNotice?: string
 }
 
 export interface SiteDefaultsConf {
@@ -60,6 +61,13 @@ export interface SiteRunDirConf {
   subdirs: string[]
 }
 
+// M50 监听端口配置域
+export interface SitePortConf {
+  port: number
+  mode: 'container' | 'host'
+  applied: boolean
+}
+
 function base(id: number | string, domain: string) {
   return `api/v1/sites/${id}/conf/${domain}`
 }
@@ -69,8 +77,8 @@ export const siteConfApi = {
     const res = await api.get(base(id, 'domain'), { silent: true })
     return res.data as SiteDomainConf
   },
-  updateDomain: async (id: number | string, domains: string[]) => {
-    const res = await api.put(base(id, 'domain'), { domains })
+  updateDomain: async (id: number | string, domains: string[], primary?: string) => {
+    const res = await api.put(base(id, 'domain'), { domains, primary: primary || '' })
     return res.data as SiteDomainConf
   },
   getDefaults: async (id: number | string) => {
@@ -112,6 +120,15 @@ export const siteConfApi = {
   },
   updateRunDir: async (id: number | string, runDir: string) => {
     await api.put(base(id, 'rundir'), { runDir })
+  },
+  // M50 监听端口（非 80/443 保存后自动追加容器映射 / 联动防火墙放行）
+  getPort: async (id: number | string) => {
+    const res = await api.get(base(id, 'port'), { silent: true })
+    return res.data as SitePortConf
+  },
+  updatePort: async (id: number | string, port: number) => {
+    const res = await api.put(base(id, 'port'), { port })
+    return res.data as SitePortConf
   },
   enableHTTPS: async (id: number | string) => {
     const res = await api.post(base(id, 'https'))

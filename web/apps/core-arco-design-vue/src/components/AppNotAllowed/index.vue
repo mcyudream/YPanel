@@ -35,10 +35,10 @@ function goBack() {
             403
           </h1>
           <div class="text-xl text-secondary-foreground/50 mx-0 text-center">
-            抱歉，你无权访问该页面
+            {{ $t('components.appNotAllowed.forbidden') }}
           </div>
           <FaButton variant="link" class="text-unset" @click="goBack">
-            返回主页
+            {{ $t('components.appNotAllowed.backHome') }}
           </FaButton>
         </div>
       </div>

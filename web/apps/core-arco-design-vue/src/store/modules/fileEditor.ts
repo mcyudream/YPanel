@@ -10,6 +10,7 @@ import type { NodeItem } from '@/api/modules/node'
 import { pushFileHistory } from '@/composables/useFileHistory'
 import { b64ToBytes, decodeWith, detectEol, detectEncoding, languageOf } from '@/composables/useTextEncoding'
 import { isManagedConfig, refreshDiagnostics } from '@/utils/composeDiagnostics'
+import { i18n } from '@/locales'
 import { loadMonaco } from '@/utils/monacoLoader'
 
 export interface FileEditorTab {
@@ -207,7 +208,7 @@ export const useFileEditorStore = defineStore('fileEditor', () => {
         ? await apiCFile.read(cid, path, { raw: true })
         : await apiFile.read(path, nodeId, { raw: true })
       if (res.isBinary) {
-        useFaToast().warning('二进制文件不支持编辑', { description: path })
+        useFaToast().warning(i18n.global.t('components.fileEditor.binaryNotEditable'), { description: path })
         return
       }
       // 空文件（0 字节）contentB64 为空串，是合法内容
@@ -253,12 +254,12 @@ export const useFileEditorStore = defineStore('fileEditor', () => {
         node: nodeId,
         containerId: cid || undefined,
         name,
-        encoding,
-        eol,
+        encoding: encoding || 'utf8',
+        eol: eol || 'lf',
         truncated: res.truncated,
         dirty: false,
-        rawB64: res.contentB64,
-        size: res.size,
+        rawB64: res.contentB64 || '',
+        size: res.size ?? 0,
         saving: false,
       }
       const g = ensureGroup()
@@ -268,7 +269,7 @@ export const useFileEditorStore = defineStore('fileEditor', () => {
     }
     catch (e: unknown) {
       ;(window as unknown as Record<string, unknown>).__openErr = String(e)
-      useFaToast().error('打开文件失败', { description: errMsg(e) })
+      useFaToast().error(i18n.global.t('components.fileEditor.openFailed'), { description: errMsg(e) })
     }
   }
 
@@ -334,14 +335,14 @@ export const useFileEditorStore = defineStore('fileEditor', () => {
         const m = await ensureMonaco()
         const blocking = refreshDiagnostics(m, model, tab.path)
         if (blocking > 0) {
-          useFaToast().error('配置存在语法错误，已阻止保存（请查看编辑器红色标记）')
+          useFaToast().error(i18n.global.t('components.fileEditor.syntaxErrorBlocked'))
           return
         }
       }
       if (tab.containerId) {
         // 容器文件：直存 UTF-8（后端 tar 写回，暂不支持转码）
         if (tab.encoding !== 'utf-8') {
-          useFaToast().error('容器文件暂仅支持 UTF-8 编码保存')
+          useFaToast().error(i18n.global.t('components.fileEditor.containerUtf8Only'))
           return
         }
         await apiCFile.write(tab.containerId, tab.path, content)
@@ -351,10 +352,10 @@ export const useFileEditorStore = defineStore('fileEditor', () => {
       }
       tab.dirty = false
       await pushFileHistory({ key: tabId, content, encoding: tab.encoding, eol: tab.eol, size: content.length })
-      useFaToast().success(tab.encoding === 'utf-8' ? '已保存' : `已以 ${tab.encoding} 编码保存`)
+      useFaToast().success(tab.encoding === 'utf-8' ? i18n.global.t('components.fileEditor.saved') : i18n.global.t('components.fileEditor.savedWithEncoding', { encoding: tab.encoding }))
     }
     catch (e: unknown) {
-      useFaToast().error('保存失败', { description: errMsg(e) })
+      useFaToast().error(i18n.global.t('components.fileEditor.saveFailed'), { description: errMsg(e) })
     }
     finally {
       tab.saving = false
@@ -389,10 +390,10 @@ export const useFileEditorStore = defineStore('fileEditor', () => {
       tab.rawB64 = res.contentB64
       tab.size = res.size
       tab.truncated = res.truncated
-      useFaToast().success('已按盘上最新内容刷新')
+      useFaToast().success(i18n.global.t('components.fileEditor.reloadedFromDisk'))
     }
     catch (e: unknown) {
-      useFaToast().error('重读失败', { description: errMsg(e) })
+      useFaToast().error(i18n.global.t('components.fileEditor.reloadFailed'), { description: errMsg(e) })
     }
   }
 
@@ -421,7 +422,7 @@ export const useFileEditorStore = defineStore('fileEditor', () => {
       }
     }
     catch (e: unknown) {
-      useFaToast().error('编码切换失败', { description: errMsg(e) })
+      useFaToast().error(i18n.global.t('components.fileEditor.encodingSwitchFailed'), { description: errMsg(e) })
     }
   }
 
@@ -505,9 +506,14 @@ export const useFileEditorStore = defineStore('fileEditor', () => {
   }
 
   // ---- 工作台开关 ----
-  async function openWorkspace(path?: string, node?: string, containerId?: string) {
+  // 工作台左侧树的初始目录：编排/配置等入口打开时定位到工作目录（'' = 全盘根）
+  const initialDir = ref('')
+
+  async function openWorkspace(path?: string, node?: string, containerId?: string, initialDirArg?: string) {
     visible.value = true
     currentContainer.value = containerId ?? ''
+    // 仅显式传入时生效（文件管理等全盘入口不传则保持根目录）
+    initialDir.value = initialDirArg || ''
     if (node) {
       currentNode.value = node
     }
@@ -556,6 +562,7 @@ export const useFileEditorStore = defineStore('fileEditor', () => {
     cursor,
     layout,
     open,
+    initialDir,
     closeTab,
     save,
     saveAll,

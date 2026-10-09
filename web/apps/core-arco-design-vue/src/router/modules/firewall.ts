@@ -9,7 +9,7 @@ const routes: RouteRecordRaw = {
   component: Layout,
   name: 'firewall',
   meta: {
-    title: '防火墙',
+    title: 'menu.firewall',
     icon: 'yd:shield',
     auth: ['admin'],
   },
@@ -19,7 +19,7 @@ const routes: RouteRecordRaw = {
       name: 'firewallIndex',
       component: () => import('@/views/firewall/index.vue'),
       meta: {
-        title: '防火墙',
+        title: 'menu.firewall',
         menu: false,
       },
     },

@@ -14,7 +14,7 @@ const props = withDefaults(defineProps<{
   /** 最大化/全屏按钮改为对外抛出 expand 事件 */
   expandOnly?: boolean
 }>(), {
-  title: 'AI 助手',
+  title: undefined,
   width: 480,
   height: 640,
   minWidth: 360,
@@ -127,14 +127,14 @@ onBeforeUnmount(() => {
     >
       <div class="flex items-center gap-2 text-sm font-medium">
         <FaIcon name="i-ri:sparkling-2-line" class="text-primary" />
-        {{ title }}
+        {{ title ?? $t('components.ydAiChat.assistantTitle') }}
       </div>
       <div class="flex items-center gap-1">
         <button
           v-if="maximizable"
           type="button"
           class="rounded p-1 text-muted-foreground hover:bg-accent"
-          title="最大化"
+          :title="$t('components.ydAiChat.maximize')"
           @click="toggleMaximize"
         >
           <FaIcon name="i-lucide:maximize-2" class="text-xs" />
@@ -143,7 +143,7 @@ onBeforeUnmount(() => {
           v-if="fullscreenable"
           type="button"
           class="rounded p-1 text-muted-foreground hover:bg-accent"
-          title="全屏"
+          :title="$t('components.ydAiChat.fullscreen')"
           @click="toggleFullscreen"
         >
           <FaIcon name="i-lucide:expand" class="text-xs" />
@@ -151,7 +151,7 @@ onBeforeUnmount(() => {
         <button
           type="button"
           class="rounded p-1 text-muted-foreground hover:bg-accent"
-          title="关闭"
+          :title="$t('common.close')"
           @click="emit('close')"
         >
           <FaIcon name="i-lucide:x" class="text-xs" />

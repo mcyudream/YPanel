@@ -4,25 +4,27 @@ import { FitAddon } from '@xterm/addon-fit'
 import { Terminal } from '@xterm/xterm'
 import '@xterm/xterm/css/xterm.css'
 import { useReconnectingWs } from '@/composables/useReconnectingWs'
+import { useHtmlDark } from '@/composables/useHtmlDark'
+import { i18n } from '@/locales'
 import { Pane } from 'splitpanes'
 
 // 底部终端面板：xterm 多实例 + useReconnectingWs（PTY 不发心跳）。
 // currentContainer 非空时新会话为容器 exec（裸文本帧 + JSON resize 控制帧）；
-// exec 会话支持重连与更换/自定义 shell（重开会话）；宿主会话断线自动重连。
+// exec 会话支持重连与更换/自定义 shell（重开会话）；宿主会话断线自动重连；
+// 断死（自动重试耗尽/exec 结束）后按 Enter 重开会话。
 const props = defineProps<{
   /** 面板方向：决定容器 class */
   horizontal: boolean
 }>()
 
 const appAccountStore = useAppAccountStore()
-const appSettingsStore = useAppSettingsStore()
 const store = useFileEditorStore()
 
 const shellOptions = [
   { label: '/bin/sh', value: '/bin/sh' },
   { label: '/bin/bash', value: '/bin/bash' },
   { label: '/bin/ash', value: '/bin/ash' },
-  { label: '自定义…', value: '__custom__' },
+  { label: i18n.global.t('files.editor.customShell'), value: '__custom__' },
 ]
 
 interface TermSession {
@@ -33,6 +35,8 @@ interface TermSession {
   /** 容器 exec 的 shell/命令（宿主会话为空） */
   cmd: string
   conn: { send: (data: string | ArrayBuffer) => void, close: () => void } | null
+  /** 自动重试耗尽/exec 结束后的断死态：回车重开会话 */
+  dead: boolean
   term: Terminal
   fit: FitAddon
   send: (data: string) => void
@@ -61,9 +65,11 @@ function wsBase() {
   return ''
 }
 
+const htmlDark = useHtmlDark()
+
 function termTheme() {
   // xterm 默认前景为白色：浅色背景必须显式给深色前景，否则白字白底
-  return appSettingsStore.settings.theme.colorScheme === 'dark'
+  return htmlDark.value
     ? { background: '#1c1c1a', foreground: '#d4d4d4', cursor: '#d4d4d4', cursorAccent: '#1c1c1a' }
     : { background: '#ffffff', foreground: '#1f2328', cursor: '#1f2328', cursorAccent: '#ffffff' }
 }
@@ -85,6 +91,7 @@ function makeConn(s: TermSession) {
     maxRetries: s.containerId ? 0 : 3,
     onMessage: data => s.term.write(typeof data === 'string' ? data : new Uint8Array(data as ArrayBuffer)),
     onOpen: () => {
+      s.dead = false
       requestAnimationFrame(() => {
         try {
           s.fit.fit()
@@ -93,7 +100,10 @@ function makeConn(s: TermSession) {
         catch {}
       })
     },
-    onGiveUp: reason => s.term.write(`\r\n\x1b[31m[${reason}]\x1b[0m\r\n`),
+    onGiveUp: (reason) => {
+      s.dead = true
+      s.term.write(`\r\n\x1b[31m[${reason} · ${i18n.global.t('files.editor.reconnectHint')}]\x1b[0m\r\n`)
+    },
   })
 }
 
@@ -113,11 +123,12 @@ function createSession() {
 
   const s: TermSession = {
     id,
-    title: containerId ? `容器终端 ${id}` : `终端 ${id}`,
+    title: containerId ? i18n.global.t('files.editor.containerTerminal', { n: id }) : i18n.global.t('files.editor.terminal', { n: id }),
     node,
     containerId,
     cmd: '/bin/sh',
     conn: null,
+    dead: false,
     term,
     fit,
     send: (d: string) => s.conn?.send(d),
@@ -127,6 +138,13 @@ function createSession() {
   s.conn = makeConn(s)
   // 容器 exec 为裸文本帧；宿主终端为 JSON 控制帧
   term.onData((data) => {
+    // 断死状态：回车重开会话（exec 会话即按原命令重跑，与工具栏重连按钮同语义）；其余按键丢弃
+    if (s.dead) {
+      if (data === '\r') {
+        restartSession(s)
+      }
+      return
+    }
     s.send(containerId ? data : JSON.stringify({ type: 'input', data }))
   })
 
@@ -138,6 +156,7 @@ function createSession() {
 
 // 重连当前会话：关闭旧连接、清屏、按当前 shell 重开（服务端新 PTY）
 function restartSession(s: TermSession) {
+  s.dead = false
   s.conn?.close()
   s.conn = null
   try {
@@ -248,28 +267,28 @@ onBeforeUnmount(() => {
     <!-- 面板头 -->
     <div class="flex h-8 shrink-0 items-center gap-1 border-b bg-muted/40 px-2 text-[13px]">
       <YdMorphIcon name="square-terminal" :size="14" class="text-muted-foreground" />
-      <span class="mr-1 text-xs font-medium text-muted-foreground">终端</span>
+      <span class="mr-1 text-xs font-medium text-muted-foreground">{{ $t('files.editor.terminalLabel') }}</span>
       <button
         v-for="s in sessions"
         :key="s.id"
         type="button"
         class="group inline-flex cursor-pointer items-center gap-1 rounded px-2 py-0.5 transition-colors"
         :class="activeId === s.id ? 'bg-primary/10 text-foreground' : 'text-muted-foreground hover:bg-accent/50'"
-        :title="s.containerId ? `${s.cmd}（容器）` : s.node"
+        :title="s.containerId ? $t('files.editor.containerSession', { cmd: s.cmd }) : s.node"
         @click="activeId = s.id"
       >
         {{ s.title }}
-        <span v-if="s.containerId" class="text-[10px] opacity-60">· 容器</span>
+        <span v-if="s.containerId" class="text-[10px] opacity-60">· {{ $t('files.editor.containerBadge') }}</span>
         <span v-else-if="s.node !== 'local'" class="text-[10px] opacity-60">@{{ s.node }}</span>
         <span
           class="inline-flex size-3.5 cursor-pointer items-center justify-center rounded-full opacity-0 transition-opacity group-hover:opacity-60 hover:!opacity-100 hover:bg-accent"
-          title="关闭"
+          :title="$t('common.close')"
           @click.stop="closeSession(s.id)"
         >
           <FaIcon name="i-lucide:x" class="text-[9px]" />
         </span>
       </button>
-      <FaButton variant="ghost" size="icon-sm" class="ml-1 size-5!" title="新建终端" @click="createSession">
+      <FaButton variant="ghost" size="icon-sm" class="ml-1 size-5!" :title="$t('files.editor.newTerminal')" @click="createSession">
         <FaIcon name="i-lucide:plus" class="text-xs" />
       </FaButton>
       <div class="ml-auto flex items-center gap-0.5">
@@ -279,22 +298,22 @@ onBeforeUnmount(() => {
           :model-value="activeSession.cmd"
           :options="shellOptions"
           class="h-6! w-32 shrink-0 text-xs!"
-          title="终端类型（更换将重开终端）"
+          :title="$t('files.editor.shellTitle')"
           @update:model-value="changeShell(activeSession, String($event))"
         />
         <FaButton
           variant="ghost"
           size="icon-sm"
           class="size-5!"
-          title="重连当前终端"
+          :title="$t('files.editor.reconnect')"
           @click="activeSession && restartSession(activeSession)"
         >
           <FaIcon name="i-lucide:rotate-cw" class="text-xs" />
         </FaButton>
-        <FaButton variant="ghost" size="icon-sm" class="size-5!" title="切到底部/右侧" @click="store.layout.terminalSide = store.layout.terminalSide === 'bottom' ? 'right' : 'bottom'">
+        <FaButton variant="ghost" size="icon-sm" class="size-5!" :title="$t('files.editor.movePanel')" @click="store.layout.terminalSide = store.layout.terminalSide === 'bottom' ? 'right' : 'bottom'">
           <FaIcon :name="store.layout.terminalSide === 'bottom' ? 'i-lucide:panel-right' : 'i-lucide:panel-bottom'" class="text-xs" />
         </FaButton>
-        <FaButton variant="ghost" size="icon-sm" class="size-5!" title="关闭面板 (Ctrl+J)" @click="store.toggleTerminal()">
+        <FaButton variant="ghost" size="icon-sm" class="size-5!" :title="$t('files.editor.closePanel')" @click="store.toggleTerminal()">
           <FaIcon name="i-lucide:x" class="text-xs" />
         </FaButton>
       </div>
@@ -312,19 +331,19 @@ onBeforeUnmount(() => {
     </div>
 
     <!-- 自定义 shell 输入 -->
-    <FaModal v-model="customPrompt.visible" title="自定义终端命令" class="max-w-lg!" :destroy-on-close="true">
+    <FaModal v-model="customPrompt.visible" :title="$t('files.editor.customCmdTitle')" class="max-w-lg!" :destroy-on-close="true">
       <div class="space-y-2">
         <div class="text-xs text-muted-foreground">
-          容器内可执行的 shell 或命令（如 /bin/bash、zsh），确定后重开终端。
+          {{ $t('files.editor.customCmdHint') }}
         </div>
         <FaInput v-model="customPrompt.value" placeholder="/usr/bin/zsh" class="w-full" @keyup.enter="submitCustomShell" />
       </div>
       <template #footer>
         <FaButton variant="outline" @click="customPrompt.visible = false">
-          取消
+          {{ $t('common.cancel') }}
         </FaButton>
         <FaButton @click="submitCustomShell">
-          确定并重开
+          {{ $t('files.editor.customCmdOk') }}
         </FaButton>
       </template>
     </FaModal>

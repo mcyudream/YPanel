@@ -21,10 +21,10 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <FaDrawer v-model="isShow" title="系统信息" :footer="false">
+  <FaDrawer v-model="isShow" :title="$t('components.appSystemInfo.title')" :footer="false">
     <div v-if="pkg.version">
       <FaDivider>
-        版本号
+        {{ $t('components.appSystemInfo.version') }}
       </FaDivider>
       <div class="text-lg font-bold font-sans text-center">
         {{ pkg.version }}
@@ -32,7 +32,7 @@ onUnmounted(() => {
     </div>
     <div>
       <FaDivider>
-        最后编译时间
+        {{ $t('components.appSystemInfo.lastBuildTime') }}
       </FaDivider>
       <div class="text-lg font-bold font-sans text-center">
         {{ lastBuildTime }}
@@ -40,7 +40,7 @@ onUnmounted(() => {
     </div>
     <div>
       <FaDivider>
-        生产环境依赖
+        {{ $t('components.appSystemInfo.dependencies') }}
       </FaDivider>
       <ul class="text-sm list-none">
         <li v-for="(val, key) in (pkg.dependencies as object)" :key="key" class="px-2 py-1.5 rounded-lg flex items-center justify-between hover-bg-secondary">
@@ -55,7 +55,7 @@ onUnmounted(() => {
     </div>
     <div>
       <FaDivider>
-        开发环境依赖
+        {{ $t('components.appSystemInfo.devDependencies') }}
       </FaDivider>
       <ul class="text-sm list-none">
         <li v-for="(val, key) in (pkg.devDependencies as object)" :key="key" class="px-2 py-1.5 rounded-lg flex items-center justify-between hover-bg-secondary">

@@ -3,6 +3,7 @@ import type * as Monaco from 'monaco-editor'
 import type { ConfigRevisionMeta } from '@/api/modules/revision'
 import apiFile from '@/api/modules/file'
 import { revisionApi } from '@/api/modules/revision'
+import { i18n } from '@/locales'
 import { loadMonaco } from '@/utils/monacoLoader'
 
 // 版本历史面板（无弹窗壳）：列表 / 与当前盘上内容 diff / 一键回滚。
@@ -43,7 +44,7 @@ async function load() {
     entries.value = await revisionApi.list(props.node || 'local', props.path)
   }
   catch (e: any) {
-    loadError.value = e?.message || '版本列表加载失败'
+    loadError.value = e?.message || i18n.global.t('components.ydRevisionHistory.loadFailed')
   }
   finally {
     loading.value = false
@@ -63,29 +64,29 @@ async function openDiff(rev: ConfigRevisionMeta) {
     diffModel = monaco.editor.createModel(current.content)
     diffModelRef.value = diffModel
     diffOriginal.value = revFull.content
-    diffTitle.value = `当前内容 vs 版本 #${rev.id}（${fmtTime(rev.createdAt)}）`
+    diffTitle.value = i18n.global.t('components.ydRevisionHistory.diffTitle', { id: rev.id, time: fmtTime(rev.createdAt) })
     diffOpen.value = true
   }
   catch (e: any) {
-    useFaToast().error('对比失败', { description: e?.message })
+    useFaToast().error(i18n.global.t('components.ydRevisionHistory.diffFailed'), { description: e?.message })
   }
 }
 
 function rollback(rev: ConfigRevisionMeta) {
   const modal = useFaModal()
   modal.confirm({
-    title: '回滚配置',
-    content: `确认把 ${props.path} 回滚到 ${fmtTime(rev.createdAt)} 的版本？当前盘上内容会先自动存一条快照。`,
+    title: i18n.global.t('components.ydRevisionHistory.rollbackConfirmTitle'),
+    content: i18n.global.t('components.ydRevisionHistory.rollbackConfirm', { path: props.path, time: fmtTime(rev.createdAt) }),
     onConfirm: async () => {
       restoringId.value = rev.id
       try {
         await revisionApi.restore(rev.id)
-        useFaToast().success('已回滚，盘上内容已恢复')
+        useFaToast().success(i18n.global.t('components.ydRevisionHistory.rolledBack'))
         emit('restored')
         await load()
       }
       catch (e: any) {
-        useFaToast().error('回滚失败', { description: e?.message })
+        useFaToast().error(i18n.global.t('components.ydRevisionHistory.rollbackFailed'), { description: e?.message })
       }
       finally {
         restoringId.value = 0
@@ -99,30 +100,30 @@ function fmtTime(t: string | number) {
 }
 
 function triggerLabel(t: string) {
-  return t === 'rollback' ? '回滚' : '保存前快照'
+  return t === 'rollback' ? i18n.global.t('components.ydRevisionHistory.triggerRollback') : i18n.global.t('components.ydRevisionHistory.triggerSnapshot')
 }
 </script>
 
 <template>
   <div>
     <div class="text-xs text-muted-foreground">
-      面板保存受管配置（compose 项目文件、daemon.json 等）时自动快照旧内容；每路径保留最近 50 份。{{ path }}
+      {{ $t('components.ydRevisionHistory.hint') }}{{ path }}
     </div>
     <div class="mt-2 overflow-auto rounded-md border" style="max-height: 320px;">
       <table class="w-full text-sm">
         <thead class="sticky top-0 bg-muted/60 text-left text-xs text-muted-foreground backdrop-blur">
           <tr>
-            <th class="px-3 py-2">时间</th>
-            <th class="px-3 py-2">来源</th>
-            <th class="px-3 py-2">操作人</th>
-            <th class="hidden px-3 py-2 md:table-cell">说明</th>
-            <th class="px-3 py-2 text-right">操作</th>
+            <th class="px-3 py-2">{{ $t('common.time') }}</th>
+            <th class="px-3 py-2">{{ $t('components.ydRevisionHistory.colSource') }}</th>
+            <th class="px-3 py-2">{{ $t('components.ydRevisionHistory.colAuthor') }}</th>
+            <th class="hidden px-3 py-2 md:table-cell">{{ $t('components.ydRevisionHistory.colNote') }}</th>
+            <th class="px-3 py-2 text-right">{{ $t('common.operation') }}</th>
           </tr>
         </thead>
         <tbody>
           <tr v-if="loading && !entries.length">
             <td colspan="5" class="px-3 py-8 text-center text-muted-foreground">
-              加载中…
+              {{ $t('common.loading') }}
             </td>
           </tr>
           <tr v-else-if="loadError">
@@ -132,7 +133,7 @@ function triggerLabel(t: string) {
           </tr>
           <tr v-else-if="!entries.length">
             <td colspan="5" class="px-3 py-8 text-center text-muted-foreground">
-              暂无版本（首次通过面板保存后自动记录）
+              {{ $t('components.ydRevisionHistory.empty') }}
             </td>
           </tr>
           <tr v-for="rev in entries" :key="rev.id" class="border-t transition-colors hover:bg-accent/30">
@@ -153,10 +154,10 @@ function triggerLabel(t: string) {
             </td>
             <td class="px-3 py-1.5 text-right">
               <FaButton variant="ghost" size="sm" @click="openDiff(rev)">
-                对比当前
+                {{ $t('components.ydRevisionHistory.diffWithCurrent') }}
               </FaButton>
               <FaButton variant="outline" size="sm" :loading="restoringId === rev.id" @click="rollback(rev)">
-                回滚
+                {{ $t('components.ydRevisionHistory.rollback') }}
               </FaButton>
             </td>
           </tr>
@@ -171,7 +172,7 @@ function triggerLabel(t: string) {
       </div>
       <template #footer>
         <FaButton variant="outline" @click="diffOpen = false">
-          关闭
+          {{ $t('common.close') }}
         </FaButton>
       </template>
     </FaModal>

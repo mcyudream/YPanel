@@ -3,6 +3,7 @@
 // v-model: 图标名（yd: 前缀完整名，如 "yd:server"；空串表示未选择）
 // 特性：名称/关键词搜索、分类过滤、虚拟滚动、morph 动效预览、清除。
 import { computed, ref, watch } from 'vue'
+import { i18n, tr } from '@/locales'
 
 defineOptions({
   name: 'YdIconPicker',
@@ -14,7 +15,7 @@ const props = withDefaults(defineProps<{
   clearable?: boolean
   disabled?: boolean
 }>(), {
-  placeholder: '选择图标',
+  placeholder: undefined,
   clearable: true,
   disabled: false,
 })
@@ -129,6 +130,11 @@ watch(activeCategory, () => {
     gridRef.value.scrollTop = 0
   }
 })
+
+// 分类展示名（数据值为中文，与 data.json 匹配；展示层走词条，缺失回落原值）
+function catLabel(cat: string) {
+  return cat === '全部' ? i18n.global.t('common.all') : tr(`components.ydIconPicker.category.${cat}`, cat)
+}
 </script>
 
 <template>
@@ -142,14 +148,14 @@ watch(activeCategory, () => {
     >
       <YdMorphIcon v-if="currentName" :name="currentName" :size="18" />
       <span class="i-radix-icons:mixer-horizontal opacity-50" style="font-size: 16px;" />
-      <span :class="currentName ? '' : 'opacity-50'">{{ currentName || placeholder }}</span>
+      <span :class="currentName ? '' : 'opacity-50'">{{ currentName || (placeholder ?? $t('components.ydIconPicker.placeholder')) }}</span>
     </button>
     <FaButton
       v-if="clearable && currentName && !disabled"
       variant="ghost"
       size="icon"
       class="size-7"
-      title="清除"
+      :title="$t('components.ydIconPicker.clear')"
       @click="clear"
     >
       <FaIcon name="i-ri:close-line" class="text-sm" />
@@ -157,7 +163,7 @@ watch(activeCategory, () => {
 
     <FaModal
       v-model="visible"
-      title="选择图标"
+      :title="$t('components.ydIconPicker.title')"
       class="lg:max-w-3xl"
       content-class="bg-[var(--g-main-area-bg)]"
     >
@@ -165,7 +171,7 @@ watch(activeCategory, () => {
         <div class="flex flex-wrap items-center gap-2">
           <FaInput
             v-model="keyword"
-            placeholder="搜索图标名或关键词，如 server / folder / lock"
+            :placeholder="$t('components.ydIconPicker.searchPlaceholder')"
             class="w-64"
           >
             <template #start>
@@ -183,7 +189,7 @@ watch(activeCategory, () => {
                 : 'border-border text-muted-foreground hover:bg-accent/50'"
               @click="activeCategory = cat"
             >
-              {{ cat }}
+              {{ catLabel(cat) }}
             </button>
           </div>
         </div>
@@ -195,10 +201,10 @@ watch(activeCategory, () => {
           @scroll.passive="onScroll"
         >
           <div v-if="loading" class="p-8 text-center text-muted-foreground text-sm">
-            图标库加载中…
+            {{ $t('components.ydIconPicker.loading') }}
           </div>
           <div v-else-if="!filtered.length" class="p-8 text-center text-muted-foreground text-sm">
-            未找到匹配图标
+            {{ $t('components.ydIconPicker.notFound') }}
           </div>
           <div v-else class="relative" :style="{ height: `${totalRows * CELL}px` }">
             <div class="absolute inset-x-0" :style="{ top: `${padTop}px` }">
@@ -223,13 +229,13 @@ watch(activeCategory, () => {
         </div>
 
         <div class="flex items-center justify-between text-muted-foreground text-xs">
-          <span>共 {{ filtered.length }} 枚 · 选中：{{ currentName || '无' }}</span>
-          <span>图标随构建本地打包（lucide / ISC）</span>
+          <span>{{ $t('components.ydIconPicker.totalSelected', { n: filtered.length, name: currentName || $t('common.none') }) }}</span>
+          <span>{{ $t('components.ydIconPicker.bundleNote') }}</span>
         </div>
       </div>
       <template #footer>
         <FaButton variant="outline" @click="visible = false">
-          关闭
+          {{ $t('common.close') }}
         </FaButton>
       </template>
     </FaModal>

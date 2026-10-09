@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import type { SiteItem, SiteWaf } from '@/api/modules/site'
 import { wafApi } from '@/api/modules/site'
+import { i18n } from '@/locales'
 
 const props = defineProps<{ site: SiteItem }>()
 const emit = defineEmits<{ changed: [] }>()
@@ -24,7 +25,7 @@ async function load() {
     denyUAs.value = (w.denyUAs || []).join(', ')
   }
   catch (e: any) {
-    toast.error('读取 WAF 配置失败', { description: e?.message })
+    toast.error(i18n.global.t('sites.conf.waf.loadFailed'), { description: e?.message })
   }
   finally {
     loading.value = false
@@ -43,12 +44,12 @@ async function save() {
       burst: Number(form.value.burst) || 20,
     }
     await wafApi.update(props.site.id, w)
-    toast.success('WAF 规则已保存并重载 nginx')
+    toast.success(i18n.global.t('sites.conf.waf.saved'))
     emit('changed')
     await load()
   }
   catch (e: any) {
-    toast.error('保存失败（已回滚）', { description: e?.message })
+    toast.error(i18n.global.t('sites.conf.waf.saveFailedRollback'), { description: e?.message })
   }
   finally {
     saving.value = false
@@ -61,31 +62,31 @@ onMounted(load)
 <template>
   <div class="space-y-5">
     <div class="space-y-4 rounded-lg border p-4">
-      <div class="text-sm font-medium">IP 黑名单（拒绝访问）</div>
+      <div class="text-sm font-medium">{{ $t('sites.conf.waf.denyIps') }}</div>
       <textarea v-model="denyIps" rows="2" class="w-full rounded-md border bg-background p-2 font-mono text-xs outline-none focus:border-primary" placeholder="1.2.3.4, 5.6.7.0/24" />
-      <div class="text-sm font-medium">IP 白名单（永远放行）</div>
+      <div class="text-sm font-medium">{{ $t('sites.conf.waf.allowIps') }}</div>
       <textarea v-model="allowIps" rows="2" class="w-full rounded-md border bg-background p-2 font-mono text-xs outline-none focus:border-primary" placeholder="192.168.1.0/24" />
-      <div class="text-sm font-medium">UA 拦截（每行一条，正则转义后匹配）</div>
+      <div class="text-sm font-medium">{{ $t('sites.conf.waf.denyUAs') }}</div>
       <textarea v-model="denyUAs" rows="2" class="w-full rounded-md border bg-background p-2 font-mono text-xs outline-none focus:border-primary" placeholder="curl&#10;sqlmap" />
     </div>
 
     <div class="rounded-lg border p-4">
       <div class="mb-3 flex items-center justify-between">
         <div>
-          <div class="text-sm font-medium">请求频率限制（limit_req）</div>
-          <p class="mt-0.5 text-xs text-muted-foreground">超限请求返回 503；连接数限制在「连接限制」子页</p>
+          <div class="text-sm font-medium">{{ $t('sites.conf.waf.rateTitle') }}</div>
+          <p class="mt-0.5 text-xs text-muted-foreground">{{ $t('sites.conf.waf.rateDesc') }}</p>
         </div>
         <label class="flex cursor-pointer items-center gap-2 text-sm">
-          <input v-model="form.rateEnable" type="checkbox"> 启用
+          <input v-model="form.rateEnable" type="checkbox"> {{ $t('common.enabled') }}
         </label>
       </div>
       <div v-if="form.rateEnable" class="flex flex-wrap items-center gap-4 text-sm">
         <label class="flex items-center gap-2">
-          阈值（req/s）
+          {{ $t('sites.conf.waf.rate') }}
           <FaInput v-model="form.rate" type="number" class="w-24" />
         </label>
         <label class="flex items-center gap-2">
-          突发容量
+          {{ $t('sites.conf.waf.burst') }}
           <FaInput v-model="form.burst" type="number" class="w-24" />
         </label>
       </div>
@@ -93,7 +94,7 @@ onMounted(load)
 
     <div class="flex justify-end">
       <FaButton :loading="saving" @click="save">
-        保存并生效
+        {{ $t('sites.shared.saveApply') }}
       </FaButton>
     </div>
   </div>

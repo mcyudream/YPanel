@@ -9,9 +9,9 @@ const props = withDefaults(defineProps<{
 }>(), {
   loading: false,
   disabled: false,
-  placeholder: '尽管问，或让我帮你做点什么…',
+  placeholder: undefined,
   suggestions: () => [],
-  disclaimer: '内容由 YPanel AI 生成，请核对重要信息',
+  disclaimer: undefined,
 })
 
 const emit = defineEmits<{
@@ -58,21 +58,23 @@ function onKeydown(e: KeyboardEvent) {
         v-model="text"
         rows="3"
         :disabled="disabled"
-        :placeholder="placeholder"
+        :placeholder="placeholder ?? $t('components.ydAiChat.inputPlaceholder')"
         class="w-full resize-none bg-transparent text-sm outline-none placeholder:text-muted-foreground/70"
         @keydown="onKeydown"
       />
-      <div class="mt-1 flex items-center justify-between">
-        <span class="flex items-center gap-3">
-          <span class="text-[11px] text-muted-foreground/70">{{ disclaimer }}</span>
+      <div class="mt-1 flex items-center justify-between gap-2">
+        <span class="flex min-w-0 items-center gap-2">
+          <!-- ZCode 式发送框控件条：权限模式 / 模型选择 / 上下文用量（由调用方注入） -->
+          <slot name="toolbar" />
+          <span class="hidden truncate text-[11px] text-muted-foreground/70 sm:inline">{{ disclaimer ?? $t('components.ydAiChat.disclaimer') }}</span>
           <!-- 左侧扩展操作（如清空对话） -->
           <slot name="actions" />
         </span>
         <FaButton v-if="loading" size="sm" variant="outline" @click="emit('stop')">
-          停止生成
+          {{ $t('components.ydAiChat.stopGenerating') }}
         </FaButton>
         <FaButton v-else size="sm" :disabled="!text.trim() || disabled" @click="doSend">
-          发送
+          {{ $t('components.ydAiChat.send') }}
         </FaButton>
       </div>
     </div>

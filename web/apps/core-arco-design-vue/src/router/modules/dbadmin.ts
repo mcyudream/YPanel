@@ -9,7 +9,7 @@ const routes: RouteRecordRaw = {
   component: Layout,
   name: 'dbAdmin',
   meta: {
-    title: '数据库管理台',
+    title: 'menu.dbadmin',
     icon: 'yd:database',
   },
   children: [
@@ -18,7 +18,7 @@ const routes: RouteRecordRaw = {
       name: 'dbAdminIndex',
       component: () => import('@/views/dbadmin/index.vue'),
       meta: {
-        title: '数据库管理台',
+        title: 'menu.dbadmin',
         menu: false,
       },
     },
