@@ -1,0 +1,117 @@
+name: Release
+
+# 推送 vX.Y.Z tag 触发：构建前端产物 → embed → 交叉编译 linux amd64/arm64（core+agent）
+# → 打包 + sha256 → 创建 GitHub Release；可选（配置 GITEE_TOKEN secret 后）镜像发布到 Gitee Release。
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  GO_VERSION: '1.26'
+  NODE_VERSION: '22'
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+
+      - uses: pnpm/action-setup@v4
+        with:
+          package_json_file: web/package.json
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+          cache-dependency-path: web/pnpm-lock.yaml
+
+      - name: Build web
+        working-directory: web
+        run: |
+          pnpm install --frozen-lockfile
+          pnpm --filter './apps/*' -r exec vite build
+
+      - name: Sync embed dist
+        run: |
+          rm -rf core/internal/web/dist
+          cp -r web/apps/core-arco-design-vue/dist core/internal/web/dist
+          test -f core/internal/web/dist/index.html
+
+      - name: Build binaries (linux amd64/arm64)
+        run: |
+          VER="${GITHUB_REF_NAME}"
+          mkdir -p build
+          for ARCH in amd64 arm64; do
+            DIR=build/ypanel-linux-${ARCH}
+            mkdir -p "$DIR"
+            CGO_ENABLED=0 GOOS=linux GOARCH=$ARCH \
+              go build -ldflags "-s -w -X main.version=$VER" -o "$DIR/ypanel" ./cmd/ypanel
+            (cd agent && CGO_ENABLED=0 GOOS=linux GOARCH=$ARCH \
+              go build -ldflags "-s -w -X main.version=$VER" -o "../$DIR/ypagent" ./cmd/agent)
+            tar -czf "build/ypanel-linux-${ARCH}.tar.gz" -C "$DIR" ypanel ypagent
+          done
+          (cd build && sha256sum *.tar.gz > sha256sums.txt)
+          ls -la build/
+
+      - name: Smoke test binaries
+        run: |
+          for ARCH in amd64 arm64; do
+            DIR=build/ypanel-linux-${ARCH}
+            if [ "$ARCH" = "amd64" ]; then
+              # amd64 可直接跑：验证二进制可执行与版本注入
+              chmod +x "$DIR/ypanel" "$DIR/ypagent"
+              "$DIR/ypanel" version | grep -q "${GITHUB_REF_NAME}" || { echo "version mismatch"; exit 1; }
+            fi
+          done
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: ypanel-release
+          path: |
+            build/*.tar.gz
+            build/sha256sums.txt
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            build/*.tar.gz
+            build/sha256sums.txt
+          generate_release_notes: true
+
+      # 可选：镜像发布到 Gitee Release（需在 repo secrets 配置 GITEE_TOKEN，缺失时自动跳过）
+      - name: Mirror release to Gitee (optional)
+        if: ${{ env.GITEE_TOKEN != '' }}
+        continue-on-error: true
+        env:
+          GITEE_TOKEN: ${{ secrets.GITEE_TOKEN }}
+        run: |
+          set -e
+          TAG="${GITHUB_REF_NAME}"
+          BODY=$(cat <<'EOF'
+          See GitHub release for details: https://github.com/mcyudream/YPanel/releases/tag/${TAG}
+          EOF
+          )
+          RID=$(curl -sS -X POST "https://gitee.com/api/v5/repos/mcyudream/ypanel/releases" \
+            -H "Content-Type: application/json" \
+            -d "{\"access_token\":\"${GITEE_TOKEN}\",\"tag_name\":\"${TAG}\",\"name\":\"YPanel ${TAG}\",\"body\":\"${TAG} release\",\"prerelease\":false}" \
+            | grep -o '"id":[0-9]*' | head -1 | cut -d: -f2)
+          echo "gitee release id: $RID"
+          for f in build/*.tar.gz build/sha256sums.txt; do
+            curl -sS -X POST "https://gitee.com/api/v5/repos/mcyudream/ypanel/releases/${RID}/attach_files" \
+              -H "Content-Type: multipart/form-data" \
+              -F "access_token=${GITEE_TOKEN}" \
+              -F "file=@${f}" | head -c 200
+            echo " <- $f"
+          done
