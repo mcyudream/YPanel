@@ -39,6 +39,12 @@ func Open(dataDir string) (*gorm.DB, error) {
 			return nil, fmt.Errorf("迁移已装应用索引失败: %w", err)
 		}
 	}
+	// PHP 应用类型：站点域名唯一让位 (domain,port) 复合唯一（同 IP 不同端口多应用共存）
+	if gdb.Migrator().HasIndex(&model.Site{}, "idx_sites_domain") {
+		if err := gdb.Migrator().DropIndex(&model.Site{}, "idx_sites_domain"); err != nil {
+			return nil, fmt.Errorf("迁移站点索引失败: %w", err)
+		}
+	}
 	if err := gdb.AutoMigrate(&model.User{}, &model.Role{}, &model.RolePermission{}, &model.RoleNode{}, &model.LoginLog{}, &model.Setting{}, &model.CronTask{}, &model.CronTaskLog{}, &model.DatabaseInstance{}, &model.Site{}, &model.SiteGroup{}, &model.SitePortLease{}, &model.Certificate{}, &model.DnsAccount{}, &model.AcmeAccount{}, &model.Node{}, &model.PairingCode{}, &model.AlertRule{}, &model.Notification{}, &model.AuditLog{}, &model.MetricRecord{}, &model.AppStoreSource{}, &model.AppStoreApp{}, &model.AppStoreInstall{}, &model.Runtime{}, &model.Script{}, &model.AIProvider{}, &model.AIKnowledge{}, &model.AIKnowledgeDoc{}, &model.AIKnowledgeChunk{}, &model.AIMemory{}, &model.AIConversation{}, &model.AIToolFlag{}, &model.AIOperationLog{}, &model.ConfigRevision{}, &model.NatForwardRule{}, &model.AppTask{}, &model.GitCredential{}, &model.DnsRecord{}, &model.HostRecord{}, &model.HostTarget{}, &model.DatabaseAuditLog{}, &model.MonitorProbe{}, &model.StorageAccount{}, &model.DockerEnvironment{}, &model.LogSearchQuery{}, &model.MetricHourly{}, &model.FileFavorite{}, &model.FileShare{}, &model.MCPOperation{}, &model.DiskGuardEvent{}); err != nil {
 		return nil, fmt.Errorf("数据库迁移失败: %w", err)
 	}

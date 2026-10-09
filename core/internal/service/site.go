@@ -1328,14 +1328,15 @@ func (s *SiteService) Create(ctx context.Context, req SiteCreateInput) (*model.S
 			}
 		}
 	}
-	var count int64
-	_ = s.db.Model(&model.Site{}).Where("name = ? OR domain = ?", req.Name, domain).Count(&count).Error
-	if count > 0 {
-		return nil, errs.New(errs.CodeConflict, "error.siteExists", "站点名或域名已存在")
-	}
 	port, err := validateSitePort(req.Port)
 	if err != nil {
 		return nil, err
+	}
+	// 同域名不同端口是合法形态（如商店 PHP 应用同 IP 多应用），判重收敛到 (domain, port)
+	var count int64
+	_ = s.db.Model(&model.Site{}).Where("name = ? OR (domain = ? AND port = ?)", req.Name, domain, port).Count(&count).Error
+	if count > 0 {
+		return nil, errs.New(errs.CodeConflict, "error.siteExists", "站点名或域名已存在")
 	}
 	// 非 80/443 端口需在宿主侧可分配（容器映射 / 防火墙落点），先预检再动任何副作用
 	if err := s.checkPortFree(ctx, port); err != nil {

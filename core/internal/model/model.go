@@ -196,9 +196,9 @@ type Site struct {
 	ID               uint      `gorm:"primaryKey" json:"id"`
 	Name             string    `gorm:"uniqueIndex;size:32;not null" json:"name"`
 	Type             string    `gorm:"size:8;not null" json:"type"` // static / proxy
-	Domain           string    `gorm:"uniqueIndex;size:255;not null" json:"domain"`
+	Domain           string    `gorm:"uniqueIndex:idx_sites_domain_port;size:255;not null" json:"domain"`
 	Domains          string    `gorm:"type:text" json:"domains"` // 附加域名 JSON 数组（M13 多域名）
-	Port             int       `gorm:"not null;default:80" json:"port"`
+	Port             int       `gorm:"not null;default:80;uniqueIndex:idx_sites_domain_port" json:"port"`
 	ProxyPass        string    `gorm:"size:255" json:"proxyPass"`   // 默认反代规则（"/"）
 	ProxyRules       string    `gorm:"type:text" json:"proxyRules"` // 反代规则 JSON 数组 [{prefix,target,ws}]
 	IndexFiles       string    `gorm:"size:255" json:"indexFiles"`  // 默认文档

@@ -196,24 +196,25 @@ func ensurePanelNetwork(ctx context.Context, ac *agentclient.Client) error {
 
 // StoreService 商店服务。
 type StoreService struct {
-	db    *gorm.DB
-	nodes *NodeService
-	sites *SiteService
-	tasks *TaskService
-	dbs   *DatabaseService
-	http  *http.Client
-	mu    sync.Mutex
-	dir   string // 源缓存目录根 <data>/store-sources
+	db       *gorm.DB
+	nodes    *NodeService
+	sites    *SiteService
+	tasks    *TaskService
+	dbs      *DatabaseService
+	runtimes *RuntimeService // php 应用安装时复用/创建 PHP 运行时
+	http     *http.Client
+	mu       sync.Mutex
+	dir      string // 源缓存目录根 <data>/store-sources
 
 	hostIPOnce sync.Once
 	hostIP     string
 	hostIPErr  error
 }
 
-// NewStoreService 创建（dataDir 为面板数据目录；sites 用于一键反代、tasks 用于任务中心，均可为 nil）。
-func NewStoreService(db *gorm.DB, nodes *NodeService, sites *SiteService, tasks *TaskService, dbs *DatabaseService, dataDir string) *StoreService {
+// NewStoreService 创建（dataDir 为面板数据目录；sites 用于一键反代、tasks 用于任务中心、runtimes 用于 php 应用，均可为 nil）。
+func NewStoreService(db *gorm.DB, nodes *NodeService, sites *SiteService, tasks *TaskService, dbs *DatabaseService, runtimes *RuntimeService, dataDir string) *StoreService {
 	return &StoreService{
-		db: db, nodes: nodes, sites: sites, tasks: tasks, dbs: dbs,
+		db: db, nodes: nodes, sites: sites, tasks: tasks, dbs: dbs, runtimes: runtimes,
 		http: &http.Client{Timeout: 5 * time.Minute},
 		dir:  filepath.Join(dataDir, storeSourceDirName),
 	}
@@ -573,6 +574,11 @@ func (s *StoreService) syncYpManifest(src *model.AppStoreSource, raw []byte, loc
 				fields = append(fields, StoreFormField{
 					EnvKey: p.EnvKey, Label: map[string]string{"zh": "端口"}, Default: p.Default, Type: "number",
 				})
+			}
+			if a.Kind == "php" && localRoot != "" { // php 应用：按 app.json 合成向导字段（PHP 版本下拉/站点地址/端口），前端零改动
+				if mf, merr := loadPHPManifest(filepath.Join(localRoot, filepath.FromSlash(v.Package), "app.json")); merr == nil {
+					fields = append(fields, phpSyntheticFields(mf)...)
+				}
 			}
 			sv.FormFields = fields
 			versions = append(versions, sv)
@@ -1073,10 +1079,15 @@ func (s *StoreService) Install(ctx context.Context, in StoreInstallInput) (map[s
 
 	// 端口占用预检在任务内执行（需 agent exec）
 	input := in
-	task, err := s.tasks.StartTask(TaskStoreInstall, fmt.Sprintf("安装 %s（%s）", row.Name, project), project, 30*time.Minute,
-		func(tctx context.Context, logf TaskLogf) error {
-			return s.runInstall(tctx, logf, row, *ver, input, project, finalParams)
-		})
+	installFn := func(tctx context.Context, logf TaskLogf) error {
+		return s.runInstall(tctx, logf, row, *ver, input, project, finalParams)
+	}
+	if row.Kind == "php" { // php 应用：运行时+站点+源码编排，不走 compose
+		installFn = func(tctx context.Context, logf TaskLogf) error {
+			return s.runInstallPHP(tctx, logf, row, *ver, input, project, finalParams)
+		}
+	}
+	task, err := s.tasks.StartTask(TaskStoreInstall, fmt.Sprintf("安装 %s（%s）", row.Name, project), project, 30*time.Minute, installFn)
 	if err != nil {
 		return nil, err
 	}
@@ -1432,6 +1443,19 @@ func (s *StoreService) Uninstall(ctx context.Context, project string, opts Store
 			ac, aerr := s.clientFor(nodeId)
 			if aerr != nil {
 				return aerr
+			}
+			// php 应用：无 compose 项目，卸载 = 删站点（源码随站点）+ 保留共享运行时
+			var instRow model.AppStoreInstall
+			if ierr := s.db.Where("compose_project = ? AND node_id = ?", project, nodeId).First(&instRow).Error; ierr == nil {
+				var appRow model.AppStoreApp
+				if aerr := s.db.Where("source_id = ? AND key = ?", instRow.SourceID, instRow.Key).First(&appRow).Error; aerr == nil && appRow.Kind == "php" {
+					if uerr := s.uninstallPHP(tctx, logf, project, opts.PurgeData); uerr != nil {
+						return uerr
+					}
+					_ = s.db.Where("compose_project = ? AND node_id = ?", project, nodeId).Delete(&model.AppStoreInstall{}).Error
+					logf("info", "卸载完成")
+					return nil
+				}
 			}
 			dir := "/opt/ypanel/compose/" + project
 			logf("info", "停止并移除容器")
