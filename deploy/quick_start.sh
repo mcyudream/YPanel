@@ -255,6 +255,14 @@ for i in $(seq 1 20); do
   fi
 done
 
+# 安全入口（M49 强制开启，首启自动生成；不带入口段访问面板一律 404 伪装）
+ENTRY=""
+for i in $(seq 1 10); do
+  ENTRY=$(journalctl -u "${SERVICE_NAME}" --no-pager 2>/dev/null | grep -oE '安全入口已自动生成[^/]*/[a-z0-9]{6,}' | tail -1 | grep -oE '/[a-z0-9]{6,}$' || true)
+  [ -n "$ENTRY" ] && break
+  sleep 2
+done
+
 # ---- 可选：独立 agent（多节点场景；面板节点管理生成配对码后手动接入） ----
 if [ "$WITH_AGENT" = "1" ] && [ -f "${INSTALL_DIR}/ypagent" ]; then
   cat > /etc/systemd/system/ypagent.service <<EOF
@@ -281,9 +289,15 @@ PUBLIC_IP=$(curl -sf --connect-timeout 3 https://ifconfig.me 2>/dev/null || host
 echo
 log "=============================================="
 log " YPanel 安装完成${VERSION_NOW:+（版本 ${VERSION_NOW}）}"
-log " 访问地址:  http://${PUBLIC_IP}:${PORT}"
+log " 访问地址:  http://${PUBLIC_IP}:${PORT}${ENTRY}"
 log " 默认账号:  admin"
 log " 初始密码:  ${ADMIN_PASSWORD}"
+if [ -n "$ENTRY" ]; then
+  log " 安全入口:  ${ENTRY}（已拼入访问地址；URL 含入口段请妥善保存，可在面板「安全设置」修改）"
+  log " 注意:      不带入口段的访问一律 404（安全伪装），登录 API 同样要求入口"
+else
+  warn "未能从日志解析安全入口，请执行 journalctl -u ${SERVICE_NAME} | grep 安全入口 获取"
+fi
 log " 数据目录:  ${DATA_DIR}"
 log " 服务管理:  systemctl status ${SERVICE_NAME}"
 log " Docker:    装好面板后可在「容器」域一键安装/管理"
