@@ -65,10 +65,12 @@ export default {
   nodesDetail: 'Node Detail',
   manage: 'Management',
   manageUsers: 'Users',
+  manageRole: 'Roles',
   manageAudit: 'Login Audit',
   manageSecurity: 'Security',
   manageBackup: 'Panel Backup',
   manageStorage: 'Backup Storage',
   selfupdate: 'Panel Settings',
+  diskguard: 'Disk Guard',
   icons: 'Icons',
 }

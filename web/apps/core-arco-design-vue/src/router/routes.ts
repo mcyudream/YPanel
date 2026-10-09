@@ -31,6 +31,7 @@ import CronRoutes from './modules/cron'
 import DatabaseRoutes from './modules/database'
 import DbAdminRoutes from './modules/dbadmin'
 import DnsRoutes from './modules/dns'
+import DiskGuardRoutes from './modules/diskguard'
 import DockerRoutes from './modules/docker'
 import FileRoutes from './modules/file'
 import FirewallRoutes from './modules/firewall'
@@ -216,7 +217,6 @@ const asyncRoutes: RouteRecordMainRaw[] = [
     meta: {
       title: 'menu.system',
       icon: 'yd:shield-check',
-      auth: ['admin'],
     },
     children: [
       FileRoutes,
@@ -228,6 +228,7 @@ const asyncRoutes: RouteRecordMainRaw[] = [
       NodesRoutes,
       NodesDetailRoutes,
       SshRoutes,
+      DiskGuardRoutes,
       ManageRoutes,
       SelfUpdateRoutes,
     ],

@@ -11,7 +11,7 @@ const routes: RouteRecordRaw = {
   meta: {
     title: 'menu.selfupdate',
     icon: 'yd:refresh-cw',
-    auth: ['admin'],
+    auth: ['update:manage'],
   },
   children: [
     {

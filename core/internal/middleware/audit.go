@@ -27,10 +27,19 @@ func Audit(db *gorm.DB) gin.HandlerFunc {
 			Username:  c.GetString(CtxUsername),
 			Method:    c.Request.Method,
 			Path:      path,
+			Detail:    denyDetail(c),
 			IP:        c.ClientIP(),
-			Success:   c.Writer.Status() < 400,
+			Success:   c.Writer.Status() < 400 && !c.GetBool(CtxPermDenied),
 			CreatedAt: time.Now(),
 		}
 		_ = db.Create(&row).Error
 	}
+}
+
+// denyDetail 权限拒绝时在审计明细标注（区别于业务失败）。
+func denyDetail(c *gin.Context) string {
+	if c.GetBool(CtxPermDenied) {
+		return "权限拒绝"
+	}
+	return ""
 }

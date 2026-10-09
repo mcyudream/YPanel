@@ -76,9 +76,7 @@ func (s *SelfUpdateService) CheckAgentUpdate(ctx context.Context, nodeId string)
 		plan.Updatable = true
 		return plan, nil
 	}
-	if compareVersions(plan.AgentVer, plan.Latest) >= 0 {
-		plan.Updatable = false
-	}
+	plan.Updatable = compareVersions(plan.AgentVer, plan.Latest) < 0
 	return plan, nil
 }
 
@@ -125,7 +123,9 @@ func (s *SelfUpdateService) runAgentUpgrade(ctx context.Context, logf TaskLogf, 
 		return err
 	}
 	defer func() { _ = os.RemoveAll(tmpDir) }()
-	tarPath := filepath.Join(tmpDir, "ypanel-linux.tar.gz")
+	// 保留 Release 资产原始文件名（sha256sums.txt 条目按文件名匹配，写死名会对不上）
+	assetName := rel.AssetURL[strings.LastIndex(rel.AssetURL, "/")+1:]
+	tarPath := filepath.Join(tmpDir, assetName)
 	if err := httpDownload(ctx, rel.AssetURL, tarPath); err != nil {
 		return fmt.Errorf("下载失败: %w", err)
 	}

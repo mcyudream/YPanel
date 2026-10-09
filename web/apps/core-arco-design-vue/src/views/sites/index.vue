@@ -432,19 +432,19 @@ onMounted(() => {
           <span class="inline-block size-1.5 rounded-full" :class="status.running ? 'bg-emerald-500' : 'bg-red-500'" />
           nginx（{{ status.mode === 'host' ? $t('sites.list.modeHost') : $t('sites.list.modeContainer') }}）{{ status.running ? $t('sites.list.running') : $t('sites.list.stopped') }} · {{ $t('sites.list.siteCount', { n: status.sites }) }}
         </span>
-        <FaButton v-if="!status?.installed" size="sm" :loading="installing" @click="install">
+        <FaButton v-if="!status?.installed" v-auth="['site:write']" size="sm" :loading="installing" @click="install">
           <YdMorphIcon name="download" :size="14" class="mr-1" /> {{ $t('sites.list.installNginx') }}
         </FaButton>
-        <FaButton v-if="!status?.installed" variant="outline" size="sm" :loading="nginxAdopting" @click="adoptHost">
+        <FaButton v-if="!status?.installed" v-auth="['site:write']" variant="outline" size="sm" :loading="nginxAdopting" @click="adoptHost">
           <FaIcon name="i-lucide:plug-zap" class="mr-1" /> {{ $t('sites.list.adoptHostNginx') }}
         </FaButton>
         <FaButton v-if="status?.installed" variant="outline" size="sm" @click="openScan">
           <YdMorphIcon name="search" :size="14" class="mr-1" /> {{ $t('sites.list.scan') }}
         </FaButton>
-        <FaButton v-if="status?.installed" variant="outline" size="sm" @click="openGroups">
+        <FaButton v-if="status?.installed" v-auth="['site:write']" variant="outline" size="sm" @click="openGroups">
           <FaIcon name="i-lucide:folder" class="mr-1" /> {{ $t('sites.list.groups') }}
         </FaButton>
-        <FaButton v-if="status?.installed" size="sm" @click="openCreate">
+        <FaButton v-if="status?.installed" v-auth="['site:write']" size="sm" @click="openCreate">
           <FaIcon name="i-lucide:plus" class="mr-1" /> {{ $t('sites.list.createSite') }}
         </FaButton>
       </div>

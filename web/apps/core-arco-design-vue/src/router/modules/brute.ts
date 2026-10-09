@@ -11,7 +11,7 @@ const routes: RouteRecordRaw = {
   meta: {
     title: 'menu.bruteForce',
     icon: 'i-lucide:shield-ban',
-    auth: ['admin'],
+    auth: ['tool:bruteforce'],
   },
   children: [
     {

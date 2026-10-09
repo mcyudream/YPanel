@@ -2,6 +2,7 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -11,10 +12,23 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"github.com/ypanel/core/internal/agentclient"
-	"github.com/ypanel/shared/dto"
+	"github.com/ypanel/core/internal/middleware"
 	"github.com/ypanel/core/internal/model"
+	"github.com/ypanel/core/internal/rbac"
 	"github.com/ypanel/core/internal/service"
+	"github.com/ypanel/shared/dto"
 )
+
+// callerCtx 将当前请求的授权上下文注入下游 ctx（AI 工具 / MCP 链路的权限校验依据）。
+// authed 路由上权限集必已注入；空集视为无任何权限（拒绝闭合）。
+func callerCtx(c *gin.Context) context.Context {
+	set, _ := c.Get(middleware.CtxPerms)
+	permSet, _ := set.(map[string]struct{})
+	if permSet == nil {
+		permSet = map[string]struct{}{}
+	}
+	return rbac.WithCaller(c.Request.Context(), rbac.Caller{UserID: c.GetUint(middleware.CtxUID), PermSet: permSet})
+}
 
 // AIAPI AI 助手。
 type AIAPI struct {
@@ -112,7 +126,8 @@ func (a *AIAPI) Chat(c *gin.Context) {
 		cp.Model = req.Model
 		provider = &cp
 	}
-	if err := a.AI.StreamAgentChat(c.Request.Context(), c.Writer, provider, req.Messages, c.Query("scene"), c.Query("focus"), req.Mode); err != nil {
+	// M54：调用者权限随 ctx 下钻——AI 工具执行前按模块/风险校验权限
+	if err := a.AI.StreamAgentChat(callerCtx(c), c.Writer, provider, req.Messages, c.Query("scene"), c.Query("focus"), req.Mode); err != nil {
 		c.SSEvent("error", gin.H{"message": err.Error()})
 	}
 }

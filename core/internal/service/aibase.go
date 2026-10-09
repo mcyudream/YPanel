@@ -22,6 +22,7 @@ import (
 
 	"github.com/ypanel/core/internal/agentclient"
 	"github.com/ypanel/core/internal/model"
+	"github.com/ypanel/core/internal/rbac"
 	"github.com/ypanel/shared/dto"
 )
 
@@ -893,6 +894,8 @@ func (s *AIService) auditOperation(def aiToolDef, args, result, errMsg string, s
 // ---- 工具目录与聚合 ----
 
 // aiToolsAll 按模块聚合的全量工具声明（不含 load_tools 元工具）。
+// 出口统一包权限闸（M54）：调用者权限经 ctx 注入（AI 对话 / MCP 入口），无权限工具执行时报错——
+// 对话与 MCP 两条链路都经 def.Fn 执行，此收口同时覆盖两者。
 func (s *AIService) aiToolsAll(ctx context.Context) []aiToolDef {
 	defs := make([]aiToolDef, 0, 96)
 	defs = append(defs, s.aiToolsSystem(ctx)...)
@@ -914,6 +917,16 @@ func (s *AIService) aiToolsAll(ctx context.Context) []aiToolDef {
 	defs = append(defs, s.aiToolsSrcBuild(ctx)...)
 	defs = append(defs, s.aiToolsDiag(ctx)...)
 	defs = append(defs, s.aiToolsPanelAI(ctx)...)
+	for i := range defs {
+		fn := defs[i].Fn
+		module, risk := defs[i].Module, defs[i].Risk
+		defs[i].Fn = func(c context.Context, args string) (string, error) {
+			if err := rbac.CheckTool(c, module, risk); err != nil {
+				return "", err
+			}
+			return fn(c, args)
+		}
+	}
 	return defs
 }
 

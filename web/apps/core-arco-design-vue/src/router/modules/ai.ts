@@ -15,6 +15,7 @@ function singleModule(path: string, name: string, title: string, icon: string, c
     meta: {
       title,
       icon,
+      auth: ['ai:use'],
     },
     children: [
       {

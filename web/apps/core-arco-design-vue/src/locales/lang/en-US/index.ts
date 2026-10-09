@@ -16,6 +16,7 @@ import container from './container'
 import sites from './sites'
 import database from './database'
 import dbadmin from './dbadmin'
+import rbac from './rbac'
 import manage from './manage'
 import monitor from './monitor'
 import logcenter from './logcenter'
@@ -31,6 +32,7 @@ import certs from './certs'
 import runtimes from './runtimes'
 import store from './store'
 import selfupdate from './selfupdate'
+import diskguard from './diskguard'
 import icons from './icons'
 import ai from './ai'
 import components from './components'
@@ -53,6 +55,7 @@ export default {
   sites,
   database,
   dbadmin,
+  rbac,
   manage,
   monitor,
   logcenter,
@@ -68,6 +71,7 @@ export default {
   runtimes,
   store,
   selfupdate,
+  diskguard,
   icons,
   ai,
   components,

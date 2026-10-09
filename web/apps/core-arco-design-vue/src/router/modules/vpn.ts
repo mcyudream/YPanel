@@ -11,6 +11,7 @@ const routes: RouteRecordRaw = {
   meta: {
     title: 'menu.vpn',
     icon: 'i-lucide:network',
+    auth: ['tool:vpn'],
   },
   children: [
     {

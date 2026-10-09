@@ -11,6 +11,7 @@ const routes: RouteRecordRaw = {
   meta: {
     title: 'menu.dbadmin',
     icon: 'yd:database',
+    auth: ['plugin.db-admin:use'],
   },
   children: [
     {

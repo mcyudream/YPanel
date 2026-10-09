@@ -147,6 +147,9 @@ func (s *Server) Start(ctx context.Context) (base string, wait func(), err error
 	mux.HandleFunc("POST /agent/v1/docker/containers/{id}/update", s.auth(s.handleDockerContainerUpdate))
 	mux.HandleFunc("DELETE /agent/v1/docker/containers/{id}", s.auth(s.handleDockerContainerRemove))
 	mux.HandleFunc("POST /agent/v1/docker/containers/prune", s.auth(s.handleDockerContainersPrune))
+	// M55 磁盘空间保护：批量停容器（改写重启策略）与按快照恢复
+	mux.HandleFunc("POST /agent/v1/docker/guard/stopall", s.auth(s.handleDockerGuardStopAll))
+	mux.HandleFunc("POST /agent/v1/docker/guard/restore", s.auth(s.handleDockerGuardRestore))
 	mux.HandleFunc("GET /agent/v1/docker/daemon-config", s.auth(s.handleDockerDaemonConfig))
 	mux.HandleFunc("PUT /agent/v1/docker/daemon-config", s.auth(s.handleDockerDaemonConfig))
 	mux.HandleFunc("GET /agent/v1/docker/registry", s.auth(s.handleRegistryList))

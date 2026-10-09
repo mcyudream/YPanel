@@ -11,7 +11,7 @@ const routes: RouteRecordRaw = {
   meta: {
     title: 'menu.dns',
     icon: 'yd:radar',
-    auth: ['admin'],
+    auth: ['tool:dns'],
   },
   children: [
     {

@@ -11,6 +11,7 @@ const routes: RouteRecordRaw = {
   meta: {
     title: 'menu.terminal',
     icon: 'yd:square-terminal',
+    auth: ['terminal:access'],
   },
   children: [
     {

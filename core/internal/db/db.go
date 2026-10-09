@@ -12,6 +12,7 @@ import (
 	"gorm.io/gorm/logger"
 
 	"github.com/ypanel/core/internal/model"
+	"github.com/ypanel/core/internal/rbac"
 )
 
 // Open 打开（必要时创建）数据库并执行迁移。
@@ -32,8 +33,11 @@ func Open(dataDir string) (*gorm.DB, error) {
 			return nil, fmt.Errorf("迁移应用索引失败: %w", err)
 		}
 	}
-	if err := gdb.AutoMigrate(&model.User{}, &model.LoginLog{}, &model.Setting{}, &model.CronTask{}, &model.CronTaskLog{}, &model.DatabaseInstance{}, &model.Site{}, &model.SiteGroup{}, &model.SitePortLease{}, &model.Certificate{}, &model.DnsAccount{}, &model.AcmeAccount{}, &model.Node{}, &model.PairingCode{}, &model.AlertRule{}, &model.Notification{}, &model.AuditLog{}, &model.MetricRecord{}, &model.AppStoreSource{}, &model.AppStoreApp{}, &model.AppStoreInstall{}, &model.Runtime{}, &model.Script{}, &model.AIProvider{}, &model.AIKnowledge{}, &model.AIKnowledgeDoc{}, &model.AIKnowledgeChunk{}, &model.AIMemory{}, &model.AIConversation{}, &model.AIToolFlag{}, &model.AIOperationLog{}, &model.ConfigRevision{}, &model.NatForwardRule{}, &model.AppTask{}, &model.GitCredential{}, &model.DnsRecord{}, &model.HostRecord{}, &model.HostTarget{}, &model.DatabaseAuditLog{}, &model.MonitorProbe{}, &model.StorageAccount{}, &model.DockerEnvironment{}, &model.LogSearchQuery{}, &model.MetricHourly{}, &model.FileFavorite{}, &model.FileShare{}, &model.MCPOperation{}); err != nil {
+	if err := gdb.AutoMigrate(&model.User{}, &model.Role{}, &model.RolePermission{}, &model.RoleNode{}, &model.LoginLog{}, &model.Setting{}, &model.CronTask{}, &model.CronTaskLog{}, &model.DatabaseInstance{}, &model.Site{}, &model.SiteGroup{}, &model.SitePortLease{}, &model.Certificate{}, &model.DnsAccount{}, &model.AcmeAccount{}, &model.Node{}, &model.PairingCode{}, &model.AlertRule{}, &model.Notification{}, &model.AuditLog{}, &model.MetricRecord{}, &model.AppStoreSource{}, &model.AppStoreApp{}, &model.AppStoreInstall{}, &model.Runtime{}, &model.Script{}, &model.AIProvider{}, &model.AIKnowledge{}, &model.AIKnowledgeDoc{}, &model.AIKnowledgeChunk{}, &model.AIMemory{}, &model.AIConversation{}, &model.AIToolFlag{}, &model.AIOperationLog{}, &model.ConfigRevision{}, &model.NatForwardRule{}, &model.AppTask{}, &model.GitCredential{}, &model.DnsRecord{}, &model.HostRecord{}, &model.HostTarget{}, &model.DatabaseAuditLog{}, &model.MonitorProbe{}, &model.StorageAccount{}, &model.DockerEnvironment{}, &model.LogSearchQuery{}, &model.MetricHourly{}, &model.FileFavorite{}, &model.FileShare{}, &model.MCPOperation{}, &model.DiskGuardEvent{}); err != nil {
 		return nil, fmt.Errorf("数据库迁移失败: %w", err)
+	}
+	if err := seedRBAC(gdb); err != nil {
+		return nil, fmt.Errorf("角色初始化失败: %w", err)
 	}
 	if err := seedStore(gdb); err != nil {
 		return nil, fmt.Errorf("应用源初始化失败: %w", err)
@@ -43,6 +47,11 @@ func Open(dataDir string) (*gorm.DB, error) {
 
 // ypMainURL YPanel 官方应用源仓库（Gitee 与 GitHub 双平台镜像同步更新，默认走 Gitee）。
 const ypMainURL = "https://gitee.com/mcyudream/YPanel-AppStore.git"
+
+// seedRBAC 内置角色同步 + 存量用户 role_id 回填（幂等，M54）。
+func seedRBAC(gdb *gorm.DB) error {
+	return rbac.New(gdb).Seed()
+}
 
 // seedStore 内置源注册与旧数据归属迁移（幂等）。
 func seedStore(gdb *gorm.DB) error {

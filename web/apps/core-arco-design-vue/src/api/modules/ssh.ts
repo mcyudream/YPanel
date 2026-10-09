@@ -59,6 +59,10 @@ export default {
     const res = await api.post('api/v1/ssh/keys/deploy', data)
     return res.data as { result: 'deployed' | 'exists' }
   },
+  undeployKey: async (data: { keyNode?: string, name: string, targetNode: string }) => {
+    const res = await api.post('api/v1/ssh/keys/undeploy', data)
+    return res.data as { result: 'revoked' | 'absent' }
+  },
   attempts: async (nodeId = 'local', limit = 100) => {
     const res = await api.get('api/v1/ssh/attempts', { silent: true, params: { nodeId, limit } })
     return (res.data || []) as SshAttempt[]

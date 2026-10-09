@@ -30,6 +30,7 @@ import certs from './certs'
 import runtimes from './runtimes'
 import store from './store'
 import selfupdate from './selfupdate'
+import diskguard from './diskguard'
 import icons from './icons'
 import ai from './ai'
 import components from './components'
@@ -66,6 +67,7 @@ module.exports = {
   runtimes,
   store,
   selfupdate,
+  diskguard,
   icons,
   ai,
   components,

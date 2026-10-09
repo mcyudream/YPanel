@@ -3,6 +3,10 @@ export function useAppAuth() {
     const appSettingsStore = useAppSettingsStore()
     const appAccountStore = useAppAccountStore()
     if (appSettingsStore.settings.app.account.auth) {
+      // RBAC 通配（super-admin 权限集含 "*"）全放行；兼容旧角色名判断
+      if (appAccountStore.permissions.includes('*')) {
+        return true
+      }
       return appAccountStore.permissions.includes(permission)
     }
     else {

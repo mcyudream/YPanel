@@ -82,7 +82,7 @@ async function prune() {
       <FaButton variant="outline" size="sm" @click="prune">
         {{ $t('container.volumes.pruneUnused') }}
       </FaButton>
-      <FaButton size="sm" @click="visible = true">
+      <FaButton v-auth="['docker:write']" size="sm" @click="visible = true">
         <FaIcon name="i-lucide:plus" class="mr-1" /> {{ $t('container.volumes.create') }}
       </FaButton>
       <FaButton variant="outline" size="icon-sm" :title="$t('common.refresh')" class="ml-auto" @click="load()">

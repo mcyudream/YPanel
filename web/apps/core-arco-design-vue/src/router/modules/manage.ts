@@ -20,7 +20,17 @@ const routes: RouteRecordRaw = {
       meta: {
         title: 'menu.manageUsers',
         icon: 'yd:users-round',
-        auth: ['admin'],
+        auth: ['user:manage'],
+      },
+    },
+    {
+      path: 'role',
+      name: 'manageRole',
+      component: () => import('@/views/manage/role.vue'),
+      meta: {
+        title: 'menu.manageRole',
+        icon: 'yd:key-round',
+        auth: ['user:manage'],
       },
     },
     {
@@ -30,7 +40,7 @@ const routes: RouteRecordRaw = {
       meta: {
         title: 'menu.manageAudit',
         icon: 'yd:scroll-text',
-        auth: ['admin'],
+        auth: ['audit:read'],
       },
     },
     {
@@ -40,7 +50,7 @@ const routes: RouteRecordRaw = {
       meta: {
         title: 'menu.manageSecurity',
         icon: 'yd:shield',
-        auth: ['admin'],
+        auth: ['setting:write'],
       },
     },
     {
@@ -50,7 +60,7 @@ const routes: RouteRecordRaw = {
       meta: {
         title: 'menu.manageBackup',
         icon: 'yd:save',
-        auth: ['admin'],
+        auth: ['backup:manage'],
       },
     },
     {
@@ -60,7 +70,7 @@ const routes: RouteRecordRaw = {
       meta: {
         title: 'menu.manage',
         icon: 'i-lucide:wrench',
-        auth: ['admin'],
+        auth: ['setting:write'],
       },
     },
     {
@@ -70,7 +80,7 @@ const routes: RouteRecordRaw = {
       meta: {
         title: 'menu.manageStorage',
         icon: 'yd:cloud-backup',
-        auth: ['admin'],
+        auth: ['backup:manage'],
       },
     },
   ],

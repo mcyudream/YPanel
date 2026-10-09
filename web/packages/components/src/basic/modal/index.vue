@@ -115,10 +115,20 @@ function setTransform() {
 watch(isOpen, (val) => {
   if (val) {
     nextTick(() => {
-      if (dialogContentRef.value) {
-        dialogRef.value = dialogContentRef.value.el?.$el
-        setTransform()
+      // DialogPortal/Presence 挂载可能晚于 nextTick：$el 先是 teleport 占位注释节点，
+      // 直接赋值会让 setTransform 抛错并打断弹窗挂载（遮罩残留挡住整页），重试到真实元素
+      let retries = 0
+      const trySet = () => {
+        const el = dialogContentRef.value?.el?.$el as HTMLElement | undefined
+        if (el && typeof el.style === 'object') {
+          dialogRef.value = el
+          setTransform()
+        }
+        else if (retries++ < 10) {
+          requestAnimationFrame(trySet)
+        }
       }
+      trySet()
     })
   }
 })
@@ -185,9 +195,18 @@ function handleOpenAutoFocus(e: Event) {
   if (!props.openAutoFocus) {
     e.preventDefault()
     e.stopPropagation()
-    nextTick(() => {
-      dialogContentRef.value?.el?.$el?.focus()
-    })
+    // $el 可能尚未挂载（占位注释节点无 focus），抛错会中断 reka FocusScope 挂载流程导致弹窗无法出现，重试到真实元素
+    let retries = 0
+    const tryFocus = () => {
+      const el = dialogContentRef.value?.el?.$el as HTMLElement | undefined
+      if (el && typeof el.focus === 'function') {
+        el.focus()
+      }
+      else if (retries++ < 10) {
+        requestAnimationFrame(tryFocus)
+      }
+    }
+    nextTick(tryFocus)
   }
 }
 

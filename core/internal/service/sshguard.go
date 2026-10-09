@@ -501,6 +501,43 @@ echo DEPLOY_OK`
 	return "deployed", nil
 }
 
+// UndeployKey 从目标节点 root 的 authorized_keys 中移除源节点的公钥（按公钥行精确匹配，幂等）。
+func (s *SshGuardService) UndeployKey(ctx context.Context, keyNodeID, name, targetNodeID string) (string, error) {
+	if err := validateKeyName(name); err != nil {
+		return "", err
+	}
+	if _, err := s.nodes.ByID(targetNodeID); err != nil {
+		return "", err
+	}
+	pub, err := s.exec(ctx, keyNodeID, fmt.Sprintf(`if [ -f /root/.ssh/%s.pub ]; then cat /root/.ssh/%s.pub; else echo KEY_NOT_FOUND; fi`, name, name), 15)
+	if err != nil {
+		return "", err
+	}
+	pub = strings.TrimSpace(pub)
+	if pub == "" || strings.Contains(pub, "KEY_NOT_FOUND") {
+		return "", errs.Wrap(errs.ErrBadRequest, "源节点上不存在该公钥")
+	}
+	script := `set -e
+f=/root/.ssh/authorized_keys
+[ -f "$f" ] || { echo REVOKE_ABSENT; exit 0; }
+grep -vF "$YP_PUBKEY" "$f" > "$f.yp-tmp" || true
+if cmp -s "$f" "$f.yp-tmp"; then rm -f "$f.yp-tmp"; echo REVOKE_ABSENT; exit 0; fi
+mv "$f.yp-tmp" "$f"
+chmod 600 "$f"
+echo REVOKE_OK`
+	out, code, err := s.execResp(ctx, targetNodeID, script, map[string]string{"YP_PUBKEY": pub}, 30)
+	if err != nil {
+		return "", err
+	}
+	if code != 0 {
+		return "", errs.Wrapc(errs.CodeFileOpFailed, "撤下失败: "+firstLine(tail(out, 200)))
+	}
+	if strings.Contains(out, "REVOKE_ABSENT") {
+		return "absent", nil
+	}
+	return "revoked", nil
+}
+
 // FailedAttemptsMarked SSH 登录失败 IP 聚合，并按 fail2ban（local）标记封禁状态。
 func (s *SshGuardService) FailedAttemptsMarked(ctx context.Context, nodeID string, f2b *Fail2banService, limit int) ([]SshAttemptEntry, error) {
 	entries, err := s.FailedAttempts(ctx, nodeID, limit)

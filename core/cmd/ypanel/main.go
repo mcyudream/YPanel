@@ -17,6 +17,7 @@ import (
 	"github.com/ypanel/core/internal/config"
 	"github.com/ypanel/core/internal/db"
 	"github.com/ypanel/core/internal/gwserver"
+	"github.com/ypanel/core/internal/rbac"
 	"github.com/ypanel/core/internal/router"
 	"github.com/ypanel/core/internal/service"
 )
@@ -90,6 +91,7 @@ func run(ctx context.Context, cfg *config.Config) error {
 	if err != nil {
 		return err
 	}
+	rbacSvc := rbac.New(gdb)
 
 	// 本机节点：进程内嵌 agent（loopback）
 	nodes, err := service.NewNodeService(ctx, gdb)
@@ -155,6 +157,9 @@ func run(ctx context.Context, cfg *config.Config) error {
 	probeSvc.Start(ctx)
 	histSvc := service.NewHistoryRecorder(gdb, nodes)
 	histSvc.Start(ctx)
+	// M55 磁盘空间保护：低水位自动停容器强制清理（配置走 SettingService，事件落库）
+	diskGuardSvc := service.NewDiskGuardService(gdb, nodes, settings, notifSvc)
+	diskGuardSvc.Start(ctx)
 	revSvc := service.NewRevisionService(gdb, nodes)
 	natSvc := service.NewNatForwardService(gdb, nodes)
 	siteSvc.SetPortDeps(fwSvc, natSvc) // M50 站点端口对账：防火墙放行 + 端口占用检测
@@ -207,7 +212,7 @@ func run(ctx context.Context, cfg *config.Config) error {
 		gin.SetMode(gin.ReleaseMode)
 	}
 	r, err := router.Setup(&router.Deps{
-		Auth: auth, Nodes: nodes, Settings: settings, Cron: cronSvc, DBS: dbSvc, Sites: siteSvc, Certs: certSvc, Groups: groupSvc,
+		Auth: auth, RBAC: rbacSvc, Nodes: nodes, Settings: settings, Cron: cronSvc, DBS: dbSvc, Sites: siteSvc, Certs: certSvc, Groups: groupSvc,
 		Scripts: scriptSvc, DBSvc: dbSvc, Acme: acmeSvc, AI: aiSvc,
 		FW: fwSvc, Alerts: alertSvc,
 		Notif: notifSvc, PanelBP: panelBkSvc, Hist: histSvc,
@@ -220,6 +225,7 @@ func run(ctx context.Context, cfg *config.Config) error {
 		SysSnap: sysSnapSvc,
 		Ftp:     ftpSvc,
 		SshG:    sshGSvc,
+		DiskGuard: diskGuardSvc,
 		F2B:     f2bSvc, DBAdmin: dbAdminSvc, SU: suSvc, Store: storeSvc, Tasks: taskSvc, RT: rtSvc,
 		Vpn: vpnSvc, Probes: probeSvc,
 		DockerExt: dockerExtSvc, Sec: secSvc, Rev: revSvc, NatF: natSvc, DNS: dnsSvc, HS: hostsSvc, Version: version,

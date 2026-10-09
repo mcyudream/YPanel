@@ -11,7 +11,7 @@ const routes: RouteRecordRaw = {
   meta: {
     title: 'menu.logcenter',
     icon: 'i-lucide:scroll-text',
-    auth: ['admin'],
+    auth: ['log:read'],
   },
   children: [
     {

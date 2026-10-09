@@ -11,7 +11,7 @@ const routes: RouteRecordRaw = {
   meta: {
     title: 'menu.sshManage',
     icon: 'i-lucide:terminal',
-    auth: ['admin'],
+    auth: ['tool:ssh'],
   },
   children: [
     {

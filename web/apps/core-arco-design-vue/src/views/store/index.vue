@@ -893,7 +893,7 @@ function statusText(s: StoreSource) {
               <div class="flex gap-1.5">
                 <FaButton v-if="a.upgradable" size="sm" variant="outline" @click="upgrade(a)">{{ $t('store.upgradeV', { v: a.latestVer }) }}</FaButton>
                 <FaButton v-if="a.installed" size="sm" variant="outline" @click="uninstall(a.installInfo?.composeProject || '')">{{ $t('store.uninstall') }}</FaButton>
-                <FaButton v-else size="sm" @click="openInstall(a)">{{ $t('store.install') }}</FaButton>
+                <FaButton v-else v-auth="['store:write']" size="sm" @click="openInstall(a)">{{ $t('store.install') }}</FaButton>
               </div>
             </div>
           </div>
@@ -910,7 +910,7 @@ function statusText(s: StoreSource) {
           <div class="text-sm text-muted-foreground">
             {{ $t('store.sourcesDesc') }}
           </div>
-          <FaButton size="sm" @click="openSourceModal()">
+          <FaButton v-auth="['store:write']" size="sm" @click="openSourceModal()">
             <FaIcon name="i-lucide:plus" class="mr-1" /> {{ $t('store.addSource') }}
           </FaButton>
         </div>
@@ -1056,7 +1056,7 @@ function statusText(s: StoreSource) {
         </div>
 
         <div class="flex justify-end border-t pt-3">
-          <FaButton v-if="!detailInstall" size="sm" :disabled="detailLoading" @click="openInstall(detailApp, detailApp.latestVersion)">
+          <FaButton v-if="!detailInstall" v-auth="['store:write']" size="sm" :disabled="detailLoading" @click="openInstall(detailApp, detailApp.latestVersion)">
             {{ $t('store.installV', { v: detailApp.latestVersion }) }}
           </FaButton>
           <FaButton v-else size="sm" variant="outline" @click="openInstall(detailApp, detailApp.latestVer)">

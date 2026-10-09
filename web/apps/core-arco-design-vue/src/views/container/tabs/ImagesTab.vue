@@ -303,7 +303,7 @@ async function doCheckUpdates() {
         <FaButton variant="outline" size="sm" @click="pruneImages">
           {{ $t('container.images.pruneDangling') }}
         </FaButton>
-        <FaButton size="sm" @click="pullVisible = true">
+        <FaButton v-auth="['docker:write']" size="sm" @click="pullVisible = true">
           <FaIcon name="i-lucide:download" class="mr-1" /> {{ $t('container.images.pull') }}
         </FaButton>
       </div>

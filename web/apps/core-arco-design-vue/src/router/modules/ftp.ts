@@ -11,6 +11,7 @@ const routes: RouteRecordRaw = {
   meta: {
     title: 'menu.ftp',
     icon: 'i-lucide:folder-sync',
+    auth: ['tool:ftp'],
   },
   children: [
     {

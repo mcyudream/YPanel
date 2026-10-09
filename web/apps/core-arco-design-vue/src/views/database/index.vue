@@ -732,10 +732,10 @@ onBeforeUnmount(() => {
         <span>{{ $t('database.description') }}</span>
       </template>
       <div class="flex gap-2">
-        <FaButton size="sm" variant="outline" @click="openExternal">
+        <FaButton v-auth="['db:write']" size="sm" variant="outline" @click="openExternal">
           <FaIcon name="i-lucide:plug-zap" class="mr-1" /> {{ $t('database.actions.external') }}
         </FaButton>
-        <FaButton size="sm" @click="openCreate">
+        <FaButton v-auth="['db:write']" size="sm" @click="openCreate">
           <FaIcon name="i-lucide:plus" class="mr-1" /> {{ $t('database.actions.create') }}
         </FaButton>
       </div>

@@ -1,0 +1,57 @@
+// diskguard 域词条（磁盘空间保护）
+export default {
+  page: {
+    title: '磁盘保护',
+    desc: '磁盘剩余空间低于阈值时自动停止该节点全部容器（面板自身不受影响），强制清理空间后一键恢复；触发态持续压制，防止容器被拉起后再次写满磁盘',
+    refresh: '刷新',
+  },
+  banner: {
+    title: '磁盘空间保护已触发',
+    desc: '以下节点的容器已被自动停止并锁定重启策略，请清理磁盘空间后点击「一键恢复」；清理完成前容器将保持停机',
+  },
+  config: {
+    title: '保护配置',
+    enabled: '启用磁盘空间保护',
+    enabledDesc: '关闭后停止检测；已触发的节点仍保持压制，需手动恢复',
+    threshold: '触发阈值（GB）',
+    thresholdDesc: '根分区或 /var/lib/docker 所在分区任一剩余低于该值即触发（连续 2 个检测周期确认）',
+    exclude: '豁免容器（逗号分隔）',
+    excludeDesc: '触发时不停这些容器；默认豁免面板自建组件 ypanel-nginx、ypanel-dnsmasq，清空即全停',
+    excludePlaceholder: 'ypanel-nginx,ypanel-dnsmasq',
+    save: '保存设置',
+  },
+  nodes: {
+    title: '节点状态',
+    empty: '暂无节点',
+    online: '在线',
+    offline: '离线',
+    triggered: '已触发',
+    normal: '正常',
+    tooOld: 'agent 版本过旧，需升级后才能执行保护动作',
+    noDisk: '未获取到磁盘信息',
+  },
+  events: {
+    title: '触发事件',
+    empty: '暂无触发记录',
+    restoreAll: '一键恢复全部',
+    restore: '恢复',
+    restoring: '恢复中…',
+    triggeredAt: '触发时间',
+    restoredAt: '恢复时间',
+    containers: '停机容器',
+    freeAtTrigger: '触发时剩余',
+    none: '—',
+  },
+  toast: {
+    saved: '保护配置已保存',
+    saveFailed: '保存失败',
+    restoreDone: '恢复完成：启动 {started} 个，失败 {failed} 个',
+    restoreFailed: '恢复失败',
+    loadFailed: '状态加载失败',
+  },
+  modal: {
+    restoreTitle: '一键恢复',
+    restoreAllConfirm: '将按快照恢复全部触发节点的容器（还原重启策略并启动，节点数 {nodes}）。确认执行？',
+    restoreConfirm: '将恢复节点 {node} 的 {count} 个容器（还原重启策略并启动）。确认执行？',
+  },
+}

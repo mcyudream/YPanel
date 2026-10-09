@@ -755,10 +755,10 @@ onBeforeUnmount(() => {
             <FaIcon name="i-lucide:search" class="mr-1" /> {{ $t('common.search') }}
           </FaButton>
         </div>
-        <FaButton variant="outline" size="sm" @click="mkdirVisible = true">
+        <FaButton v-auth="['file:write']" variant="outline" size="sm" @click="mkdirVisible = true">
           <FaIcon name="i-lucide:folder-plus" class="mr-1" /> {{ $t('files.common.newDir') }}
         </FaButton>
-        <FaButton variant="outline" size="sm" :disabled="uploading" @click="pickUpload">
+        <FaButton v-auth="['file:write']" variant="outline" size="sm" :disabled="uploading" @click="pickUpload">
           <FaIcon name="i-lucide:upload" class="mr-1" /> {{ uploading ? $t('files.list.uploading', { n: uploadPercent }) : $t('files.list.uploadFile') }}
         </FaButton>
         <FaDropdown :items="batchMenuItems">

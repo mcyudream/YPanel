@@ -11,7 +11,7 @@ const routes: RouteRecordRaw = {
   meta: {
     title: 'menu.nodes',
     icon: 'yd:network',
-    auth: ['admin'],
+    auth: ['node:read'],
   },
   children: [
     {

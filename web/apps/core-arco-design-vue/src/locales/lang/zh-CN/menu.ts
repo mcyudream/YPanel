@@ -65,10 +65,12 @@ export default {
   nodesDetail: '节点详情',
   manage: '系统管理',
   manageUsers: '用户管理',
+  manageRole: '角色权限',
   manageAudit: '登录审计',
   manageSecurity: '安全设置',
   manageBackup: '面板备份',
   manageStorage: '备份存储',
   selfupdate: '面板设置',
+  diskguard: '磁盘保护',
   icons: '图标库',
 }

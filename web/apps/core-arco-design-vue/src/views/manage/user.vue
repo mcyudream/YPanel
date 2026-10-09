@@ -1,5 +1,7 @@
 <script setup lang="ts">
+import type { RoleItem } from '@/api/modules/role'
 import type { UserInfo } from '@/api/modules/user'
+import apiRole from '@/api/modules/role'
 import apiUser from '@/api/modules/user'
 import { useFaModal } from '@fantastic-admin/components'
 import { i18n } from '@/locales'
@@ -9,10 +11,18 @@ defineOptions({
 })
 
 const users = ref<UserInfo[]>([])
+const roles = ref<RoleItem[]>([])
 const total = ref(0)
 const page = ref(1)
 const pageSize = 20
 const loading = ref(false)
+
+async function loadRoles() {
+  try {
+    roles.value = await apiRole.list()
+  }
+  catch {}
+}
 
 async function load() {
   loading.value = true
@@ -28,7 +38,7 @@ async function load() {
 
 // 创建
 const createVisible = ref(false)
-const createForm = ref({ username: '', password: '', nickname: '', role: 'user' as 'admin' | 'user' })
+const createForm = ref({ username: '', password: '', nickname: '', roleId: 0 })
 
 async function doCreate() {
   if (!createForm.value.username || !createForm.value.password) {
@@ -36,10 +46,10 @@ async function doCreate() {
     return
   }
   try {
-    await apiUser.create(createForm.value)
+    await apiUser.create({ ...createForm.value, roleId: createForm.value.roleId || defaultRoleId() })
     useFaToast().success(i18n.global.t('manage.user.created'))
     createVisible.value = false
-    createForm.value = { username: '', password: '', nickname: '', role: 'user' }
+    createForm.value = { username: '', password: '', nickname: '', roleId: 0 }
     load()
   }
   catch (e: any) {
@@ -50,11 +60,16 @@ async function doCreate() {
 // 编辑
 const editVisible = ref(false)
 const editTarget = ref<UserInfo | null>(null)
-const editForm = ref<{ nickname: string, role: 'admin' | 'user', status: 0 | 1, password: string }>({ nickname: '', role: 'user', status: 1, password: '' })
+const editForm = ref<{ nickname: string, roleId: number, status: 0 | 1, password: string }>({ nickname: '', roleId: 0, status: 1, password: '' })
+
+// 默认角色：operator（与后端兜底一致）
+function defaultRoleId() {
+  return roles.value.find(r => r.key === 'operator')?.id ?? roles.value[0]?.id ?? 0
+}
 
 function openEdit(u: UserInfo) {
   editTarget.value = u
-  editForm.value = { nickname: u.nickname, role: u.role, status: 1, password: '' }
+  editForm.value = { nickname: u.nickname, roleId: u.roleId || defaultRoleId(), status: 1, password: '' }
   // status 不在列表返回中，默认按启用处理（后端 update 为零值跳过）
   editVisible.value = true
 }
@@ -65,7 +80,7 @@ async function doEdit() {
   }
   const data: Record<string, unknown> = {
     nickname: editForm.value.nickname,
-    role: editForm.value.role,
+    roleId: editForm.value.roleId,
   }
   if (editForm.value.password) {
     data.password = editForm.value.password
@@ -100,7 +115,14 @@ function doDelete(u: UserInfo) {
   })
 }
 
-onMounted(load)
+function roleName(key: string) {
+  return roles.value.find(r => r.key === key)?.name ?? key
+}
+
+onMounted(() => {
+  loadRoles()
+  load()
+})
 </script>
 
 <template>
@@ -148,9 +170,9 @@ onMounted(load)
               <td class="px-3 py-2">
                 <span
                   class="rounded-full px-2 py-0.5 text-xs"
-                  :class="u.role === 'admin' ? 'bg-primary/10 text-primary' : 'bg-muted text-muted-foreground'"
+                  :class="u.roleKey === 'super-admin' ? 'bg-primary/10 text-primary' : 'bg-muted text-muted-foreground'"
                 >
-                  {{ u.role }}
+                  {{ roleName(u.roleKey) }}
                 </span>
               </td>
               <td class="hidden px-3 py-2 text-xs tabular-nums text-muted-foreground md:table-cell">
@@ -200,12 +222,12 @@ onMounted(load)
         </div>
         <div class="flex items-center gap-3">
           <span class="w-16 text-sm text-muted-foreground">{{ $t('manage.user.role') }}</span>
-          <select v-model="createForm.role" class="h-9 flex-1 rounded-md border border-input bg-background px-2 text-sm outline-none">
-            <option value="user">
-              {{ $t('manage.user.roleUser') }}
+          <select v-model="createForm.roleId" class="h-9 flex-1 rounded-md border border-input bg-background px-2 text-sm outline-none">
+            <option :value="0" disabled>
+              {{ $t('manage.user.rolePlaceholder') }}
             </option>
-            <option value="admin">
-              {{ $t('manage.user.roleAdmin') }}
+            <option v-for="r in roles" :key="r.id" :value="r.id">
+              {{ r.name }}（{{ r.key }}）
             </option>
           </select>
         </div>
@@ -229,12 +251,9 @@ onMounted(load)
         </div>
         <div class="flex items-center gap-3">
           <span class="w-16 text-sm text-muted-foreground">{{ $t('manage.user.role') }}</span>
-          <select v-model="editForm.role" class="h-9 flex-1 rounded-md border border-input bg-background px-2 text-sm outline-none">
-            <option value="user">
-              user
-            </option>
-            <option value="admin">
-              admin
+          <select v-model="editForm.roleId" class="h-9 flex-1 rounded-md border border-input bg-background px-2 text-sm outline-none">
+            <option v-for="r in roles" :key="r.id" :value="r.id">
+              {{ r.name }}（{{ r.key }}）
             </option>
           </select>
         </div>

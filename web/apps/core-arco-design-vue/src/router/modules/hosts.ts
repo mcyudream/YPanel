@@ -11,7 +11,7 @@ const routes: RouteRecordRaw = {
   meta: {
     title: 'menu.hosts',
     icon: 'yd:book-user',
-    auth: ['admin'],
+    auth: ['tool:hosts'],
   },
   children: [
     {

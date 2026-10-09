@@ -106,6 +106,24 @@ export default {
     pageInfo: '{page} / {pages} ({total} in total)',
   },
 
+
+  role: {
+    title: 'Roles & Permissions',
+    desc: 'Role-permission management (RBAC). Built-in roles are read-only, copy to derive.',
+    createRole: 'New Role',
+    name: 'Name',
+    key: 'Key',
+    keyPlaceholder: 'lowercase letters/digits/hyphens starting with a letter, e.g. ops-team',
+    permCount: 'Perms',
+    remark: 'Remark',
+    builtin: 'Built-in',
+    copy: 'Copy',
+    allPerms: 'All',
+    editTitle: 'Edit Role: {name}',
+    fillRequired: 'Please fill in the required fields',
+    deleteTitle: 'Delete Role',
+    deleteConfirm: 'Delete role "{name}"? This cannot be undone.',
+  },
   user: {
     title: 'User Management',
     desc: 'Panel accounts and roles (admin / user)',
@@ -122,6 +140,7 @@ export default {
     nicknamePlaceholder: 'Optional',
     roleUser: 'user (regular user)',
     roleAdmin: 'admin (administrator)',
+    rolePlaceholder: 'Select a role',
     editTitle: 'Edit: {name}',
     newPassword: 'New Password',
     newPasswordPlaceholder: 'Leave empty to keep unchanged',

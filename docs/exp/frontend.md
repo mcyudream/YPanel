@@ -573,3 +573,17 @@
 - **根因**：① 面板安全入口（SecurityGate）要求 login 请求带 `?entry=`/X-Safe-Entry，经网关代理的 iframe 登录路径上没有；② 根逃逸回捞依赖 Referer 携带 /s/{sid}，但启动期部分动态 import 请求的 Referer 不在（竞态/策略差异），回捞失败落 404 兜底页。
 - **规避/解决**：① 网关识别「目标是本机面板」（端口==面板端口且主机为 loopback/本地网卡地址）时自动注入 `X-Safe-Entry` 头（值取 SecuritySettingsService.SafeEntry()；不对其它目标注入，避免入口值泄漏给局域网服务）；② 网关记录「令牌→最近使用会话」（/s/{sid} 命中时 TouchSession），根逃逸无 Referer 时用最近会话兜底——令牌已过门禁，语义安全。
 - **来源**：2026-10-09，M51 内网浏览器（用户要求实测「经网关登录面板及其功能」暴露，1238-m42 修复）。
+
+### vue-i18n 词条含裸 `@`：弹窗渲染中断、遮罩残留挡住整页点击（错误被全局 errorHandler 吞掉）
+
+- **现象**：SSH 管理页「生成密钥」弹窗点不开（DOM 从未挂载、无网络请求），且**点过一次后全页点击失效**（开关/按钮全部无响应）——用户感知是「开关点不动」；JS 控制台干净，无任何报错。
+- **根因**：三层叠加。①词条 `keyCommentPlaceholder: '可选，如 user@host'` 里的**裸 `@` 是 vue-i18n linked-message 语法字符**（`@:key` / `@.modifier`），message compiler lexer 抛 `SyntaxError: 10`（UNEXPECTED_LEXICAL_ANALYSIS 家族）；②该编译发生在**组件渲染期**（运行时消息编译），异常被 fa 的 `app.config.errorHandler` 吞掉 → **整个弹窗子树渲染中断**，弹窗框架 DOM 永远不出现；③fa DialogContent 的遮罩（overlay）与内容**分别渲染**——遮罩已挂到 body（`fixed inset-0 pointer-events-auto`、z-2000），内容失败后无人关闭它 → **透明全屏层挡住全部点击**。用户侧表现为「A 功能坏了，B/C 也跟着全坏」，实际只有一个根因。
+- **定位手法**：`window.addEventListener('unhandledrejection')` 抓不到（异常走 errorHandler）；**替换 `document.querySelector('#app').__vue_app__.config.errorHandler`** 记录 `(err, inst, info)` 后重现，堆栈直指 vue-i18n `nextToken/parse`。另注意 Vue 同步渲染错误也不会进 unhandledrejection。
+- **规避/解决**：词条文本含 `@` `|` `{`/`}` 必须转义——`@` 用 literal 插值 `{'@'}`（TS 字符串用双引号包裹：`"user{'@'}host"`，单引号串会撞字符串边界）；`|` 只在复数语境用，文案中避免；`{}` 保留给合法 `{name}` 插值。**新增词条入包前扫一遍 `@|{}`**（插值以外）。连带修复：fa Modal 的 `setTransform`/`handleOpenAutoFocus` 对 `dialogContentRef.value?.el?.$el` 加真实元素防护（占位注释节点无 style/focus，此前抛错同样会打断挂载流程）。
+- **来源**：2026-10-09，M53 SSH 页生成密钥弹窗（「弹窗不弹 + 开关点不动」双表象一个根因；替换 errorHandler 一次定位）。
+
+### fa 路由守卫不做 meta.auth 硬拦截：权限硬边界必须在后端，meta.auth 只管菜单观感
+
+- **现象**：直觉认为 fa 的 `meta.auth` 会拦住直连 URL 的越权访问；实测守卫（guards.ts）只做菜单过滤（menu.ts filterAsyncMenus 递归按 auth 过滤、空组自动隐藏）与「父级无 redirect 时跳第一个有权限子路由」，导航本身不校验 `to.meta.auth`——未授权用户手输 URL 仍能渲染页面，只是页面里的 API 全部 403。
+- **规避/解决**：权限模型设计时明确「meta.auth = UI 过滤，后端中间件 = 安全边界」，二者缺一不可但不可互相当作；验收越权用 curl 直调 API 断言 403，不要用页面可达性断言。fa 的 `auth()` 是 permissions 数组 some 交集（composables/app/auth.ts），`v-auth` 指令是无权限时 display:none——按钮级藏按钮够用，但同样不是边界。
+- **来源**：2026-10-09，M54 RBAC P1 改造（admin/user 二值角色 → 角色权限点；fa 侧 permissions 从 ['admin']/['user'] 换成真实权限点列表）。

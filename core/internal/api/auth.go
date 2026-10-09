@@ -8,25 +8,44 @@ import (
 
 	"github.com/ypanel/core/internal/middleware"
 	"github.com/ypanel/core/internal/model"
+	"github.com/ypanel/core/internal/rbac"
 	"github.com/ypanel/core/internal/service"
 	"github.com/ypanel/shared/dto"
 	"github.com/ypanel/shared/errs"
 )
 
-func userInfoOf(u *model.User) dto.UserInfo {
-	return dto.UserInfo{
+func userInfoOf(u *model.User, rb *rbac.Service) dto.UserInfo {
+	info := dto.UserInfo{
 		ID:          u.ID,
 		Username:    u.Username,
 		Nickname:    u.Nickname,
 		Role:        u.Role,
 		LastLoginAt: u.LastLoginAt,
 	}
+	if rb != nil {
+		info.RoleKey = rb.RoleKeyForUser(u)
+		info.RoleID = u.RoleID
+		if info.RoleID == 0 {
+			info.RoleID = rb.RoleKeyToID(info.RoleKey)
+		}
+		// 通配展开为具体权限点：fa 前端 hasPermission 是精确 includes 匹配
+		info.Permissions = rbac.Expand(rb.PermSetForUser(u))
+		if role, err := rb.RoleByID(u.RoleID); err == nil {
+			info.DataScope = role.DataScope
+			info.ScopeAllNodes = role.ScopeAllNodes
+		} else {
+			info.DataScope = "all"
+			info.ScopeAllNodes = true
+		}
+	}
+	return info
 }
 
 // AuthAPI 认证接口。
 type AuthAPI struct {
 	Auth    *service.Auth
 	Sec     *service.SecuritySettingsService
+	RBAC    *rbac.Service
 	Version string
 }
 
@@ -73,7 +92,15 @@ func (a *AuthAPI) Login(c *gin.Context) {
 
 	// M49：会话 cookie——安全入口门禁凭它放行已登录浏览器的根路径刷新/直达（HttpOnly，30 天）
 	c.SetCookie("yp_entry_ok", "1", 30*24*3600, "/", "", false, true)
-	respOK(c, dto.LoginResp{Token: token, ExpireAt: exp, User: userInfoOf(user)})
+	respOK(c, dto.LoginResp{Token: token, ExpireAt: exp, User: userInfoOf(user, a.RBAC)})
+}
+
+// AppPermission GET /api/v1/app/permission（fa 基座权限开关所需：返回当前用户权限集，super-admin 含通配 "*"）
+func (a *AuthAPI) AppPermission(c *gin.Context) {
+	set, _ := c.Get(middleware.CtxPerms)
+	permSet, _ := set.(map[string]struct{})
+	// 通配展开为具体权限点：fa hasPermission 是精确 includes 匹配
+	respOK(c, gin.H{"permissions": rbac.Expand(permSet)})
 }
 
 // Me GET /api/v1/auth/me
@@ -83,7 +110,7 @@ func (a *AuthAPI) Me(c *gin.Context) {
 		respErr(c, errs.ErrUnauthorized)
 		return
 	}
-	respOK(c, userInfoOf(user))
+	respOK(c, userInfoOf(user, a.RBAC))
 }
 
 // Logout POST /api/v1/auth/logout（无状态 JWT：服务端无会话可销毁，前端丢弃 token）
@@ -106,9 +133,29 @@ func (a *AuthAPI) ChangePassword(c *gin.Context) {
 	respOK(c, struct{}{})
 }
 
-// UserAPI 用户管理接口（admin）。
+// UserAPI 用户管理接口（user:manage）。
 type UserAPI struct {
-	DB *gorm.DB
+	DB   *gorm.DB
+	RBAC *rbac.Service
+}
+
+// resolveRoleID 角色解析：RoleID 优先，旧 Role 字符串兜底映射。
+func (u *UserAPI) resolveRoleID(roleID uint, legacyRole string) (uint, string, error) {
+	if roleID > 0 {
+		role, err := u.RBAC.RoleByID(roleID)
+		if err != nil {
+			return 0, "", errs.New(errs.CodeBadRequest, "error.roleNotFound", "角色不存在")
+		}
+		return role.ID, role.Key, nil
+	}
+	key := "operator"
+	if legacyRole == "admin" {
+		key = "super-admin"
+	}
+	if id := u.RBAC.RoleKeyToID(key); id > 0 {
+		return id, key, nil
+	}
+	return 0, "", errs.New(errs.CodeInternal, "error.roleNotSeeded", "内置角色未初始化")
 }
 
 // List GET /api/v1/users
@@ -127,7 +174,7 @@ func (u *UserAPI) List(c *gin.Context) {
 	}
 	items := make([]dto.UserInfo, 0, len(rows))
 	for i := range rows {
-		items = append(items, userInfoOf(&rows[i]))
+		items = append(items, userInfoOf(&rows[i], u.RBAC))
 	}
 	respOK(c, dto.NewPageResp(total, items))
 }
@@ -144,12 +191,17 @@ func (u *UserAPI) Create(c *gin.Context) {
 		respErr(c, errs.New(errs.CodeConflict, "error.userExists", "用户名已存在"))
 		return
 	}
-	user, err := u.create(req.Username, req.Password, req.Nickname, req.Role)
+	roleID, roleKey, err := u.resolveRoleID(req.RoleID, req.Role)
 	if err != nil {
 		respErr(c, err)
 		return
 	}
-	respOK(c, userInfoOf(user))
+	user, err := u.create(req.Username, req.Password, req.Nickname, roleID, roleKey)
+	if err != nil {
+		respErr(c, err)
+		return
+	}
+	respOK(c, userInfoOf(user, u.RBAC))
 }
 
 // Update PUT /api/v1/users/:id
@@ -172,10 +224,30 @@ func (u *UserAPI) Update(c *gin.Context) {
 	if req.Nickname != nil {
 		updates["nickname"] = *req.Nickname
 	}
-	if req.Role != nil {
-		updates["role"] = *req.Role
+	if req.RoleID != nil || req.Role != nil {
+		roleID, roleKey, err := u.resolveRoleID(derefUint(req.RoleID), derefString(req.Role))
+		if err != nil {
+			respErr(c, err)
+			return
+		}
+		// 最后一个超管保护：降级/改角色前确认还有其他在用超级账号
+		if u.RBAC.IsSuperUser(&user) && roleKey != "super-admin" {
+			if n, err := u.RBAC.CountActiveSuperUsers(user.ID); err == nil && n == 0 {
+				respErr(c, errs.New(errs.CodeBadRequest, "error.lastSuperAdmin", "不能降级最后一个超级管理员"))
+				return
+			}
+		}
+		updates["role_id"] = roleID
+		updates["role"] = roleKey
 	}
-	if req.Status != nil {
+	if req.Status != nil && *req.Status != 1 && u.RBAC.IsSuperUser(&user) {
+		// 禁用超级账号前确认还有其他在用超级账号
+		if n, err := u.RBAC.CountActiveSuperUsers(user.ID); err == nil && n == 0 {
+			respErr(c, errs.New(errs.CodeBadRequest, "error.lastSuperAdmin", "不能禁用最后一个超级管理员"))
+			return
+		}
+		updates["status"] = *req.Status
+	} else if req.Status != nil {
 		updates["status"] = *req.Status
 	}
 	if req.Password != nil {
@@ -193,7 +265,7 @@ func (u *UserAPI) Update(c *gin.Context) {
 			return
 		}
 	}
-	respOK(c, userInfoOf(&user))
+	respOK(c, userInfoOf(&user, u.RBAC))
 }
 
 // Delete DELETE /api/v1/users/:id
@@ -207,11 +279,36 @@ func (u *UserAPI) Delete(c *gin.Context) {
 		respErr(c, errs.New(errs.CodeBadRequest, "error.cannotDeleteSelf", "不能删除自己"))
 		return
 	}
+	var user model.User
+	if err := u.DB.First(&user, id).Error; err != nil {
+		respErr(c, errs.New(errs.CodeNotFound, "error.userNotFound", "用户不存在"))
+		return
+	}
+	if u.RBAC.IsSuperUser(&user) {
+		if n, err := u.RBAC.CountActiveSuperUsers(user.ID); err == nil && n == 0 {
+			respErr(c, errs.New(errs.CodeBadRequest, "error.lastSuperAdmin", "不能删除最后一个超级管理员"))
+			return
+		}
+	}
 	if err := u.DB.Delete(&model.User{}, id).Error; err != nil {
 		respErr(c, err)
 		return
 	}
 	respOK(c, struct{}{})
+}
+
+func derefUint(p *uint) uint {
+	if p == nil {
+		return 0
+	}
+	return *p
+}
+
+func derefString(p *string) string {
+	if p == nil {
+		return ""
+	}
+	return *p
 }
 
 // LoginLogs GET /api/v1/audit/logins

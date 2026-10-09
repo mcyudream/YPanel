@@ -106,6 +106,24 @@ export default {
     pageInfo: '{page} / {pages}（共 {total} 条）',
   },
 
+
+  role: {
+    title: '角色权限',
+    desc: '角色—权限点管理（RBAC），内置角色不可改、可复制派生',
+    createRole: '新建角色',
+    name: '角色名称',
+    key: '角色标识',
+    keyPlaceholder: '小写字母开头的字母/数字/连字符，如 ops-team',
+    permCount: '权限点数',
+    remark: '备注',
+    builtin: '内置',
+    copy: '复制',
+    allPerms: '全部',
+    editTitle: '编辑角色：{name}',
+    fillRequired: '请填写必填项',
+    deleteTitle: '删除角色',
+    deleteConfirm: '确定删除角色「{name}」？该操作不可恢复。',
+  },
   user: {
     title: '用户管理',
     desc: '面板账号与角色（admin / user）',
@@ -122,6 +140,7 @@ export default {
     nicknamePlaceholder: '选填',
     roleUser: 'user（普通用户）',
     roleAdmin: 'admin（管理员）',
+    rolePlaceholder: '请选择角色',
     editTitle: '编辑：{name}',
     newPassword: '新密码',
     newPasswordPlaceholder: '留空不修改',

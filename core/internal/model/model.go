@@ -9,7 +9,8 @@ type User struct {
 	Username     string     `gorm:"uniqueIndex;size:32;not null" json:"username"`
 	Password     string     `gorm:"size:72;not null" json:"-"` // bcrypt
 	Nickname     string     `gorm:"size:64" json:"nickname"`
-	Role         string     `gorm:"size:16;not null;default:user" json:"role"` // admin / user
+	Role         string     `gorm:"size:16;not null;default:user" json:"role"` // 旧二值角色：M54 起冻结只读（冗余 role key），权限以 RoleID 为准
+	RoleID       uint       `gorm:"index;not null;default:0" json:"roleId"`    // 关联 Role；0 = 按 Role 旧值回退映射
 	Status       int        `gorm:"not null;default:1" json:"status"`          // 1 启用 0 禁用
 	TokenVersion int        `gorm:"not null;default:1" json:"-"`               // 改密/强制下线时递增
 	LastLoginAt  *time.Time `json:"lastLoginAt"`
@@ -636,5 +637,20 @@ type LogSearchQuery struct {
 	EndAt          *time.Time `json:"endAt"`
 	Pinned         bool       `gorm:"not null;default:false;index" json:"pinned"`
 	Remark         string     `gorm:"size:64" json:"remark"` // 常用查询命名
+	CreatedAt      time.Time  `json:"createdAt"`
+}
+
+// DiskGuardEvent 磁盘空间保护触发事件（M55）。
+// 存在 RestoredAt 为空的事件即该节点处于触发态：容器被压制停机，需管理员一键恢复。
+type DiskGuardEvent struct {
+	ID             uint       `gorm:"primaryKey" json:"id"`
+	NodeID         string     `gorm:"size:32;not null;index" json:"nodeId"`
+	NodeName       string     `gorm:"size:64" json:"nodeName"`
+	TriggeredAt    time.Time  `json:"triggeredAt"`
+	RestoredAt     *time.Time `json:"restoredAt"`
+	FreeBytes      uint64     `json:"freeBytes"`      // 触发时观测到的最低剩余
+	ThresholdBytes uint64     `json:"thresholdBytes"` // 触发时阈值
+	ContainersJSON string     `gorm:"type:text" json:"-"`
+	Remark         string     `gorm:"size:512" json:"remark"` // 压制追停/恢复结果等备注
 	CreatedAt      time.Time  `json:"createdAt"`
 }

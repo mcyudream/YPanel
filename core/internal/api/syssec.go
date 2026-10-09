@@ -194,6 +194,24 @@ func (a *SshAPI) DeployKey(c *gin.Context) {
 	respOK(c, gin.H{"result": result})
 }
 
+// UndeployKey POST /api/v1/ssh/keys/undeploy {keyNode,name,targetNode}（从目标节点撤下公钥）
+func (a *SshAPI) UndeployKey(c *gin.Context) {
+	req, ok := bind[struct {
+		KeyNode    string `json:"keyNode"`
+		Name       string `json:"name" binding:"required"`
+		TargetNode string `json:"targetNode" binding:"required"`
+	}](c)
+	if !ok {
+		return
+	}
+	result, err := a.Ssh.UndeployKey(c.Request.Context(), req.KeyNode, req.Name, req.TargetNode)
+	if err != nil {
+		respErr(c, err)
+		return
+	}
+	respOK(c, gin.H{"result": result})
+}
+
 // FailedAttempts GET /api/v1/ssh/attempts?nodeId=&limit=（SSH 失败登录聚合，标记已封禁）
 func (a *SshAPI) FailedAttempts(c *gin.Context) {
 	n := 100

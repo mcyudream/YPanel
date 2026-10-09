@@ -11,7 +11,7 @@ const routes: RouteRecordRaw = {
   meta: {
     title: 'menu.firewall',
     icon: 'yd:shield',
-    auth: ['admin'],
+    auth: ['tool:firewall'],
   },
   children: [
     {

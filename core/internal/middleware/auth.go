@@ -1,4 +1,4 @@
-// Package middleware gin 中间件：会话鉴权、CORS、访问日志。
+// Package middleware gin 中间件：会话鉴权、权限点、CORS、访问日志。
 package middleware
 
 import (
@@ -9,6 +9,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	"github.com/ypanel/core/internal/rbac"
 	"github.com/ypanel/core/internal/service"
 	"github.com/ypanel/shared/errs"
 )
@@ -18,11 +19,14 @@ const (
 	CtxUID      = "uid"
 	CtxUsername = "username"
 	CtxRole     = "role"
+	CtxRoleKey  = "roleKey"
 )
 
 // Auth 会话鉴权。
 // token 来源：Authorization: Bearer（首选）；兼容 ?token=（WS/下载等无法带 header 的场景）。
-func Auth(auth *service.Auth) gin.HandlerFunc {
+// 鉴权通过后注入权限集（CtxPerms）与角色 key（CtxRoleKey），供 RequirePerm 与业务使用；
+// 权限实时查库（rbac 内部缓存），改角色后下一个请求即生效。
+func Auth(auth *service.Auth, rbacSvc *rbac.Service) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		token := bearerToken(c.GetHeader("Authorization"))
 		if token == "" {
@@ -41,20 +45,17 @@ func Auth(auth *service.Auth) gin.HandlerFunc {
 		c.Set(CtxUsername, claims.Username)
 		if u, err := auth.ByID(claims.UID); err == nil {
 			c.Set(CtxRole, u.Role)
+			permSet := rbacSvc.PermSetForUser(u)
+			c.Set(CtxPerms, permSet)
+			c.Set(CtxRoleKey, rbacSvc.RoleKeyForUser(u))
 		}
 		c.Next()
 	}
 }
 
-// Admin 仅管理员。
+// Admin 仅超级权限（M54 过渡形态：权限集含通配，等价内置 super-admin）。
 func Admin() gin.HandlerFunc {
-	return func(c *gin.Context) {
-		if c.GetString(CtxRole) != "admin" {
-			abort(c, errs.ErrForbidden)
-			return
-		}
-		c.Next()
-	}
+	return RequirePerm(rbac.Wildcard)
 }
 
 func bearerToken(h string) string {

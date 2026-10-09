@@ -7,15 +7,15 @@ import (
 	"github.com/ypanel/shared/errs"
 )
 
-// create 建用户（统一 bcrypt）。
-func (u *UserAPI) create(username, password, nickname, role string) (*model.User, error) {
+// create 建用户（统一 bcrypt；roleKey 冗余旧字段，roleID 为权限依据）。
+func (u *UserAPI) create(username, password, nickname string, roleID uint, roleKey string) (*model.User, error) {
 	hash, err := u.hashPassword(password)
 	if err != nil {
 		return nil, err
 	}
 	user := &model.User{
 		Username: username, Password: hash, Nickname: nickname,
-		Role: role, Status: 1, TokenVersion: 1,
+		RoleID: roleID, Role: roleKey, Status: 1, TokenVersion: 1,
 	}
 	if err := u.DB.Create(user).Error; err != nil {
 		return nil, errs.Wrapc(errs.CodeConflict, err.Error())

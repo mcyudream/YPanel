@@ -1,0 +1,57 @@
+// Disk guard domain messages (Disk Guard)
+export default {
+  page: {
+    title: 'Disk Guard',
+    desc: 'Automatically stops all containers on a node when free disk space falls below the threshold (the panel itself is unaffected); restore with one click after cleanup. While triggered, suppression keeps containers down to prevent refilling the disk',
+    refresh: 'Refresh',
+  },
+  banner: {
+    title: 'Disk space protection triggered',
+    desc: 'Containers on the nodes below were stopped automatically with restart policies locked. Clean up disk space and click "Restore"; containers stay stopped until then',
+  },
+  config: {
+    title: 'Protection Settings',
+    enabled: 'Enable disk space protection',
+    enabledDesc: 'Disabling only stops detection; triggered nodes remain suppressed until manually restored',
+    threshold: 'Trigger threshold (GB)',
+    thresholdDesc: 'Triggers when free space on / or the partition hosting /var/lib/docker falls below this value (confirmed over 2 consecutive check cycles)',
+    exclude: 'Excluded containers (comma-separated)',
+    excludeDesc: 'These containers are not stopped on trigger; panel components ypanel-nginx and ypanel-dnsmasq are exempt by default — clear to stop everything',
+    excludePlaceholder: 'ypanel-nginx,ypanel-dnsmasq',
+    save: 'Save Settings',
+  },
+  nodes: {
+    title: 'Node Status',
+    empty: 'No nodes',
+    online: 'Online',
+    offline: 'Offline',
+    triggered: 'Triggered',
+    normal: 'Normal',
+    tooOld: 'Agent version too old; upgrade required for protection actions',
+    noDisk: 'No disk info',
+  },
+  events: {
+    title: 'Trigger Events',
+    empty: 'No trigger records',
+    restoreAll: 'Restore All',
+    restore: 'Restore',
+    restoring: 'Restoring…',
+    triggeredAt: 'Triggered At',
+    restoredAt: 'Restored At',
+    containers: 'Stopped Containers',
+    freeAtTrigger: 'Free at Trigger',
+    none: '—',
+  },
+  toast: {
+    saved: 'Protection settings saved',
+    saveFailed: 'Save failed',
+    restoreDone: 'Restore finished: {started} started, {failed} failed',
+    restoreFailed: 'Restore failed',
+    loadFailed: 'Failed to load status',
+  },
+  modal: {
+    restoreTitle: 'Restore',
+    restoreAllConfirm: 'Restore containers on all triggered nodes from snapshots (restore restart policies and start, {nodes} nodes). Confirm?',
+    restoreConfirm: 'Restore {count} containers on node {node} (restore restart policies and start). Confirm?',
+  },
+}

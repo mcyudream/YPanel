@@ -7,6 +7,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	"github.com/ypanel/core/internal/rbac"
 	"github.com/ypanel/core/internal/service"
 )
 
@@ -15,6 +16,7 @@ type MCPServerAPI struct {
 	MCP  *service.MCPService
 	Auth *service.Auth
 	Ops  *service.MCPOperationService
+	RBAC *rbac.Service
 }
 
 // Handler ANY /api/v1/mcp（Bearer token 或 ?token= 鉴权；mcp.enabled 关闭时 404）
@@ -31,11 +33,21 @@ func (a *MCPServerAPI) Handler(c *gin.Context) {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "missing token"})
 		return
 	}
-	if _, err := a.Auth.ParseToken(token); err != nil {
+	claims, err := a.Auth.ParseToken(token)
+	if err != nil {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid token"})
 		return
 	}
-	a.MCP.HTTPHandler().ServeHTTP(c.Writer, c.Request)
+	// M54：MCP 不经业务路由中间件，在此按调用者权限闭合（解析失败按空权限集拒绝）
+	var permSet map[string]struct{}
+	if u, err := a.Auth.ByID(claims.UID); err == nil && a.RBAC != nil {
+		permSet = a.RBAC.PermSetForUser(u)
+	}
+	if permSet == nil {
+		permSet = map[string]struct{}{}
+	}
+	ctx := rbac.WithCaller(c.Request.Context(), rbac.Caller{UserID: claims.UID, PermSet: permSet})
+	a.MCP.HTTPHandler().ServeHTTP(c.Writer, c.Request.WithContext(ctx))
 }
 
 // Status GET /api/v1/mcp/status（管理视图：开关/白名单/默认集）

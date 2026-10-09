@@ -6,6 +6,11 @@ export interface YPanelUserInfo {
   username: string
   nickname: string
   role: 'admin' | 'user'
+  roleKey: string
+  permissions: string[]
+  dataScope: 'all' | 'assigned'
+  scopeAllNodes: boolean
+  nodes: string[]
   lastLoginAt?: string | null
 }
 
@@ -42,13 +47,13 @@ export default {
     }
   },
 
-  // 权限：由角色推导（M0 权限模型：admin 全量 / user 只读业务）
+  // 权限：/auth/me 直出权限点列表（M54 RBAC，super-admin 为 ["*"]）
   permission: async () => {
     const res = await api.get('api/v1/auth/me')
     return {
       ...res,
       data: {
-        permissions: res.data.role === 'admin' ? ['admin'] : ['user'],
+        permissions: res.data.permissions ?? [],
       },
     }
   },

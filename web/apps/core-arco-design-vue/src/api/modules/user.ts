@@ -5,6 +5,12 @@ export interface UserInfo {
   username: string
   nickname: string
   role: 'admin' | 'user'
+  roleId: number
+  roleKey: string
+  permissions: string[]
+  dataScope: 'all' | 'assigned'
+  scopeAllNodes: boolean
+  nodes: string[]
   lastLoginAt?: string | null
 }
 
@@ -28,9 +34,9 @@ export default {
     const res = await api.get(`api/v1/users?page=${page}&pageSize=${pageSize}`)
     return res.data as PageResp<UserInfo>
   },
-  create: (data: { username: string, password: string, nickname?: string, role: 'admin' | 'user' }) =>
+  create: (data: { username: string, password: string, nickname?: string, roleId: number }) =>
     api.post('api/v1/users', data),
-  update: (id: number, data: { password?: string, nickname?: string, role?: 'admin' | 'user', status?: 0 | 1 }) =>
+  update: (id: number, data: { password?: string, nickname?: string, roleId?: number, status?: 0 | 1 }) =>
     api.put(`api/v1/users/${id}`, data),
   remove: (id: number) => api.delete(`api/v1/users/${id}`),
   loginLogs: async (page = 1, pageSize = 20) => {

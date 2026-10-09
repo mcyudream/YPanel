@@ -357,7 +357,7 @@ async function runScript(s: ScriptItem) {
         <FaButton variant="outline" size="sm" @click="openLogs()">
           <FaIcon name="i-lucide:scroll-text" class="mr-1" /> {{ $t('cron.allRecords') }}
         </FaButton>
-        <FaButton size="sm" @click="openCreate">
+        <FaButton v-auth="['cron:write']" size="sm" @click="openCreate">
           <FaIcon name="i-lucide:plus" class="mr-1" /> {{ $t('cron.newTask') }}
         </FaButton>
       </div>
@@ -416,7 +416,7 @@ async function runScript(s: ScriptItem) {
               </td>
               <td class="px-3 py-2">
                 <div class="flex items-center justify-end gap-1">
-                  <FaButton variant="outline" size="sm" @click="runNow(t)">
+                  <FaButton v-auth="['cron:write']" variant="outline" size="sm" @click="runNow(t)">
                     {{ $t('cron.run') }}
                   </FaButton>
                   <FaButton variant="ghost" size="sm" @click="openLogs(t.id)">

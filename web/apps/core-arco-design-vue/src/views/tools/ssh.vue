@@ -30,7 +30,8 @@ async function loadNodes() {
 
 // ---- sshd 配置 ----
 const sshCfg = ref<SshConfig | null>(null)
-const sshBusy = ref(false)
+// 各控件独立 pending（布尔开关/端口），避免互相禁用与全局卡死
+const pendingField = ref('')
 const sshPort = ref(22)
 
 async function loadSsh() {
@@ -45,7 +46,13 @@ async function loadSsh() {
 }
 
 async function setSsh(patch: Partial<SshConfig>, msg: string) {
-  sshBusy.value = true
+  const field = Object.keys(patch)[0] || 'port'
+  pendingField.value = field
+  // 乐观更新：点击立即翻转视觉；失败回弹（服务器为准）
+  const prev = sshCfg.value ? { ...sshCfg.value } : null
+  if (sshCfg.value) {
+    sshCfg.value = { ...sshCfg.value, ...patch }
+  }
   try {
     sshCfg.value = await api.setConfig(patch, nodeId.value)
     sshPort.value = sshCfg.value?.port || 22
@@ -53,12 +60,19 @@ async function setSsh(patch: Partial<SshConfig>, msg: string) {
   }
   catch (e: any) {
     toast.error(i18n.global.t('tools.ssh.updateFail'), { description: e?.message })
-    await loadSsh() // 失败回弹开关状态
+    if (prev) {
+      sshCfg.value = prev // 回弹到点击前状态
+    }
+    else {
+      await loadSsh()
+    }
   }
   finally {
-    sshBusy.value = false
+    pendingField.value = ''
   }
 }
+
+const fieldBusy = (f: string) => pendingField.value === f
 
 function applyPort() {
   const p = Number(sshPort.value)
@@ -140,11 +154,11 @@ async function doImport() {
   }
 }
 
-// 分发
+// 分发（支持多选节点批量）
 const deployVisible = ref(false)
 const deployBusy = ref(false)
 const deployKey = ref<SshKey | null>(null)
-const deployTarget = ref('')
+const deployTargets = ref<string[]>([])
 
 const deployTargetOptions = computed(() => nodes.value
   .filter(n => n.id !== nodeId.value)
@@ -156,38 +170,71 @@ const deployTargetOptions = computed(() => nodes.value
 
 function openDeploy(k: SshKey) {
   deployKey.value = k
-  deployTarget.value = deployTargetOptions.value.find(o => !o.disabled)?.value || ''
+  deployTargets.value = []
   deployVisible.value = true
 }
 
+function toggleDeployTarget(id: string) {
+  const i = deployTargets.value.indexOf(id)
+  if (i >= 0) {
+    deployTargets.value.splice(i, 1)
+  }
+  else {
+    deployTargets.value.push(id)
+  }
+}
+
 async function doDeploy() {
-  if (!deployKey.value || !deployTarget.value) {
+  if (!deployKey.value || !deployTargets.value.length) {
     return
   }
   deployBusy.value = true
+  let ok = 0
+  let exists = 0
+  const fails: string[] = []
   try {
-    const out = await api.deployKey({ keyNode: nodeId.value, name: deployKey.value.name, targetNode: deployTarget.value })
-    toast.success(out.result === 'exists' ? i18n.global.t('tools.ssh.deployExists') : i18n.global.t('tools.ssh.deployDone'))
+    for (const target of deployTargets.value) {
+      try {
+        const out = await api.deployKey({ keyNode: nodeId.value, name: deployKey.value.name, targetNode: target })
+        if (out.result === 'exists') {
+          exists++
+        }
+        else {
+          ok++
+        }
+      }
+      catch (e: any) {
+        fails.push(`${nodes.value.find(n => n.id === target)?.name || target}: ${e?.message || e}`)
+      }
+    }
+    const t = deployTargets.value.length
+    if (!fails.length) {
+      toast.success(i18n.global.t('tools.ssh.deployBatchDone', { ok, exists, total: t }))
+    }
+    else {
+      toast.warning(i18n.global.t('tools.ssh.deployBatchPartial', { ok, exists, fail: fails.length }), { description: fails.join('\n') })
+    }
     deployVisible.value = false
     await loadKeys()
-  }
-  catch (e: any) {
-    toast.error(i18n.global.t('tools.ssh.deployFail'), { description: e?.message })
   }
   finally {
     deployBusy.value = false
   }
 }
 
-// 删除
+// 删除（可选联动撤下已分发副本）
 const delVisible = ref(false)
 const delBusy = ref(false)
 const delKey = ref<SshKey | null>(null)
 const delWithPrivate = ref(false)
+const delWithRevoke = ref(false)
+
+const delDeployedNodes = computed(() => (delKey.value?.deployedOn || []).filter(d => d.deployed).map(d => d.nodeName))
 
 function openDelete(k: SshKey) {
   delKey.value = k
   delWithPrivate.value = false
+  delWithRevoke.value = false
   delVisible.value = true
 }
 
@@ -197,6 +244,24 @@ async function doDelete() {
   }
   delBusy.value = true
   try {
+    if (delWithRevoke.value) {
+      const revokes: string[] = []
+      for (const d of delKey.value.deployedOn || []) {
+        if (!d.deployed) {
+          continue
+        }
+        try {
+          await api.undeployKey({ keyNode: nodeId.value, name: delKey.value.name, targetNode: d.nodeId })
+          revokes.push(d.nodeName)
+        }
+        catch (e: any) {
+          toast.warning(i18n.global.t('tools.ssh.revokeNodeFail', { node: d.nodeName }), { description: e?.message })
+        }
+      }
+      if (revokes.length) {
+        toast.success(i18n.global.t('tools.ssh.revokeDone', { nodes: revokes.join('、') }))
+      }
+    }
     await api.deleteKey({ nodeId: nodeId.value, name: delKey.value.name, withPrivate: delWithPrivate.value })
     toast.success(i18n.global.t('tools.ssh.deleteDone'))
     delVisible.value = false
@@ -210,13 +275,55 @@ async function doDelete() {
   }
 }
 
-async function copyPubkey(k: SshKey) {
+async function copyText(text: string): Promise<boolean> {
   try {
-    await navigator.clipboard.writeText(k.publicKey)
-    toast.success(i18n.global.t('tools.ssh.copied'))
+    await navigator.clipboard.writeText(text)
+    return true
   }
   catch {
+    // HTTP 环境（非 secure context）无 clipboard API，降级 execCommand
+    try {
+      const ta = document.createElement('textarea')
+      ta.value = text
+      ta.style.position = 'fixed'
+      ta.style.opacity = '0'
+      document.body.appendChild(ta)
+      ta.select()
+      const ok = document.execCommand('copy')
+      document.body.removeChild(ta)
+      return ok
+    }
+    catch {
+      return false
+    }
+  }
+}
+
+async function copyPubkey(k: SshKey) {
+  const ok = await copyText(k.publicKey)
+  if (ok) {
+    toast.success(i18n.global.t('tools.ssh.copied'))
+  }
+  else {
     toast.error(i18n.global.t('tools.ssh.copyFail'))
+  }
+}
+
+function downloadPubkey(k: SshKey) {
+  try {
+    const blob = new Blob([`${k.publicKey}\n`], { type: 'text/plain' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `${k.name}.pub`
+    document.body.appendChild(a)
+    a.click()
+    document.body.removeChild(a)
+    URL.revokeObjectURL(url)
+    toast.success(i18n.global.t('tools.ssh.downloadDone'))
+  }
+  catch (e: any) {
+    toast.error(i18n.global.t('tools.ssh.downloadFail'), { description: e?.message })
   }
 }
 
@@ -272,16 +379,16 @@ onMounted(async () => {
           <div v-if="sshCfg" class="mt-3 gap-3 grid grid-cols-1 lg:grid-cols-4 md:grid-cols-2">
             <div class="px-3 py-2 border rounded-md flex items-center justify-between">
               <span class="text-xs">{{ $t('tools.ssh.passwordAuth') }}</span>
-              <FaSwitch :model-value="sshCfg.passwordAuth" :disabled="sshBusy" @update:model-value="(v: any) => setSsh({ passwordAuth: v }, $t('tools.ssh.passwordAuthUpdated'))" />
+              <FaSwitch :model-value="sshCfg.passwordAuth" :disabled="fieldBusy('passwordAuth')" @update:model-value="(v: any) => setSsh({ passwordAuth: v }, $t('tools.ssh.passwordAuthUpdated'))" />
             </div>
             <div class="px-3 py-2 border rounded-md flex items-center justify-between">
               <span class="text-xs">{{ $t('tools.ssh.pubkeyAuth') }}</span>
-              <FaSwitch :model-value="sshCfg.pubkeyAuth" :disabled="sshBusy" @update:model-value="(v: any) => setSsh({ pubkeyAuth: v }, $t('tools.ssh.pubkeyAuthUpdated'))" />
+              <FaSwitch :model-value="sshCfg.pubkeyAuth" :disabled="fieldBusy('pubkeyAuth')" @update:model-value="(v: any) => setSsh({ pubkeyAuth: v }, $t('tools.ssh.pubkeyAuthUpdated'))" />
             </div>
             <div class="px-3 py-2 border rounded-md flex items-center justify-between">
               <span class="text-xs">{{ $t('tools.ssh.rootLogin') }}</span>
               <FaSelect
-                :model-value="sshCfg.permitRootLogin" :disabled="sshBusy" class="w-28!"
+                :model-value="sshCfg.permitRootLogin" :disabled="fieldBusy('permitRootLogin')" class="w-28!"
                 :options="[
                   { label: $t('tools.ssh.rootYes'), value: 'yes' },
                   { label: $t('tools.ssh.rootProhibit'), value: 'prohibit-password' },
@@ -294,7 +401,7 @@ onMounted(async () => {
               <span class="text-xs">{{ $t('tools.ssh.portLabel') }}</span>
               <div class="flex gap-1 items-center">
                 <FaInput v-model="sshPort" type="number" class="w-20" />
-                <FaButton size="sm" variant="outline" :disabled="sshBusy" @click="applyPort">
+                <FaButton size="sm" variant="outline" :disabled="fieldBusy('port')" @click="applyPort">
                   {{ $t('tools.ssh.apply') }}
                 </FaButton>
               </div>
@@ -338,6 +445,9 @@ onMounted(async () => {
                   </FaButton>
                   <FaButton variant="ghost" size="sm" @click="copyPubkey(k)">
                     {{ $t('tools.ssh.copy') }}
+                  </FaButton>
+                  <FaButton variant="ghost" size="sm" @click="downloadPubkey(k)">
+                    {{ $t('tools.ssh.download') }}
                   </FaButton>
                   <FaButton variant="ghost" size="sm" class="text-red-500!" @click="openDelete(k)">
                     {{ $t('common.delete') }}
@@ -408,12 +518,34 @@ onMounted(async () => {
       </template>
     </FaModal>
 
-    <!-- 分发 -->
+    <!-- 分发（多选节点批量） -->
     <FaModal v-model="deployVisible" :title="$t('tools.ssh.deployTitle', { name: deployKey?.name || '' })" :destroy-on-close="true">
       <div class="text-sm space-y-3">
-        <div class="flex gap-3 items-center">
-          <span class="text-muted-foreground shrink-0 w-24">{{ $t('tools.ssh.targetNode') }}</span>
-          <FaSelect v-model="deployTarget" :options="deployTargetOptions" class="flex-1" />
+        <div class="flex gap-3 items-start">
+          <span class="text-muted-foreground pt-1.5 shrink-0 w-24">{{ $t('tools.ssh.targetNode') }}</span>
+          <div class="flex-1 space-y-1">
+            <label
+              v-for="o in deployTargetOptions" :key="o.value"
+              class="px-3 py-1.5 border rounded-md flex gap-2 items-center"
+              :class="o.disabled ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer hover:bg-muted/40'"
+            >
+              <input
+                type="checkbox" class="accent-primary" :disabled="o.disabled"
+                :checked="deployTargets.includes(o.value as string)"
+                @change="toggleDeployTarget(o.value as string)"
+              >
+              <span>{{ o.label }}</span>
+              <span
+                v-if="(deployKey?.deployedOn || []).some(d => d.nodeId === o.value && d.deployed)"
+                class="text-[11px] text-emerald-600 ml-auto px-1.5 py-0.5 rounded-full bg-emerald-500/10"
+              >
+                {{ $t('tools.ssh.alreadyDeployed') }}
+              </span>
+            </label>
+            <div v-if="!deployTargetOptions.length" class="text-xs text-muted-foreground">
+              {{ $t('tools.ssh.noTargetNodes') }}
+            </div>
+          </div>
         </div>
         <div class="text-[11px] text-muted-foreground font-mono p-2 border rounded-md bg-muted/30 break-all">
           {{ deployKey?.fingerprint }}
@@ -427,18 +559,27 @@ onMounted(async () => {
           <FaButton variant="outline" size="sm" @click="deployVisible = false">
             {{ $t('common.cancel') }}
           </FaButton>
-          <FaButton size="sm" :loading="deployBusy" :disabled="!deployTarget" @click="doDeploy">
-            {{ $t('tools.ssh.deploy') }}
+          <FaButton size="sm" :loading="deployBusy" :disabled="!deployTargets.length" @click="doDeploy">
+            {{ $t('tools.ssh.deploy') }}{{ deployTargets.length ? `（${deployTargets.length}）` : '' }}
           </FaButton>
         </div>
       </template>
     </FaModal>
 
-    <!-- 删除 -->
+    <!-- 删除（可选联动撤下） -->
     <FaModal v-model="delVisible" :title="$t('tools.ssh.deleteTitle', { name: delKey?.name || '' })" :destroy-on-close="true">
       <div class="text-sm space-y-3">
         <div class="text-muted-foreground">
           {{ $t('tools.ssh.deleteHint') }}
+        </div>
+        <div v-if="delDeployedNodes.length" class="text-xs p-2.5 border rounded-md bg-amber-500/5 space-y-2">
+          <div class="text-muted-foreground">
+            {{ $t('tools.ssh.deleteRevokeHint', { nodes: delDeployedNodes.join('、') }) }}
+          </div>
+          <label class="flex gap-2 cursor-pointer items-center">
+            <input v-model="delWithRevoke" type="checkbox" class="accent-primary">
+            <span>{{ $t('tools.ssh.deleteRevoke') }}</span>
+          </label>
         </div>
         <label class="flex gap-2 items-center">
           <input v-model="delWithPrivate" type="checkbox" class="accent-primary">

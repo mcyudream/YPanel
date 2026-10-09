@@ -11,7 +11,7 @@ const routes: RouteRecordRaw = {
   meta: {
     title: 'menu.alert',
     icon: 'yd:bell',
-    auth: ['admin'],
+    auth: ['alert:read'],
   },
   children: [
     {

@@ -395,7 +395,7 @@ onBeforeUnmount(() => {
         <FaButton variant="outline" size="sm" @click="pruneContainers">
           {{ $t('container.list.pruneStopped') }}
         </FaButton>
-        <FaButton size="sm" @click="createVisible = true">
+        <FaButton v-auth="['docker:write']" size="sm" @click="createVisible = true">
           <FaIcon name="i-lucide:plus" class="mr-1" /> {{ $t('container.list.createContainer') }}
         </FaButton>
       </div>

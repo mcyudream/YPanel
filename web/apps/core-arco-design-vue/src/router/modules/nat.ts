@@ -11,7 +11,7 @@ const routes: RouteRecordRaw = {
   meta: {
     title: 'menu.nat',
     icon: 'yd:network',
-    auth: ['admin'],
+    auth: ['tool:nat'],
   },
   children: [
     {

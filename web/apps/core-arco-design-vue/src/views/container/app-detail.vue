@@ -368,7 +368,7 @@ onBeforeUnmount(() => {
         <FaButton variant="outline" size="icon-sm" :title="$t('common.refresh')" @click="load()">
           <FaIcon name="i-lucide:refresh-cw" class="text-sm" :class="loading ? 'animate-spin' : ''" />
         </FaButton>
-        <FaButton v-if="running === 0" size="sm" :loading="acting === 'up'" @click="doUp">
+        <FaButton v-if="running === 0" v-auth="['compose:write']" size="sm" :loading="acting === 'up'" @click="doUp">
           {{ $t('common.start') }}
         </FaButton>
         <template v-else>

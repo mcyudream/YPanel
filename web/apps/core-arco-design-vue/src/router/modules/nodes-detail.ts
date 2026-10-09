@@ -14,7 +14,7 @@ const routes: RouteRecordRaw = {
   meta: {
     title: 'menu.nodesDetail',
     menu: false,
-    auth: ['admin'],
+    auth: ['node:read'],
   },
   children: [
     {
