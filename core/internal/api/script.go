@@ -71,3 +71,18 @@ func (a *ScriptAPI) Delete(c *gin.Context) {
 	}
 	respOK(c, struct{}{})
 }
+
+// Run POST /api/v1/scripts/:id/run（M36：手动执行 + 留痕）
+func (a *ScriptAPI) Run(c *gin.Context) {
+	id, err := strconv.ParseUint(c.Param("id"), 10, 64)
+	if err != nil || id == 0 {
+		respErr(c, errBadRequest("脚本 ID 不合法"))
+		return
+	}
+	out, err := a.Scripts.Run(c.Request.Context(), uint(id))
+	if err != nil {
+		respErr(c, err)
+		return
+	}
+	respOK(c, out)
+}

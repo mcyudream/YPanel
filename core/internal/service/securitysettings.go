@@ -4,6 +4,8 @@ package service
 
 import (
 	"context"
+	crand "crypto/rand"
+	"fmt"
 	"strconv"
 	"strings"
 
@@ -12,20 +14,23 @@ import (
 
 // SecuritySettings 安全基线键值。
 const (
-	KeyTwoFAEnabled     = "security.2fa_enabled"     // "1"/"0"（admin 全局开关）
-	KeyTwoFASecret      = "security.2fa_secret"      // TOTP 密钥（base32）
-	KeySafeEntry        = "security.safe_entry"      // 安全入口路径段，如 "my-panel"；空=关闭
-	KeyAllowedIPs       = "security.allowed_ips"     // 逗号分隔白名单；空=不限制
-	KeySessionTimeoutHr = "security.session_timeout" // 会话超时（小时），默认 24
+	KeyTwoFAEnabled     = "security.2fa_enabled"      // "1"/"0"（admin 全局开关）
+	KeyTwoFASecret      = "security.2fa_secret"       // TOTP 密钥（base32）
+	KeySafeEntry        = "security.safe_entry"       // 安全入口路径段，如 "my-panel"；空=关闭
+	KeyAllowedIPs       = "security.allowed_ips"      // 逗号分隔白名单；空=不限制
+	KeySessionTimeoutHr = "security.session_timeout"  // 会话超时（小时），默认 24
+	KeyMinPasswordLen   = "security.min_password_len" // 密码最小长度（M40，0=不限制）
 )
 
 // SecuritySettingsData 设置数据。
 type SecuritySettingsData struct {
-	TwoFAEnabled  bool   `json:"twoFaEnabled"`
-	TwoFASecret   string `json:"twoFaSecret,omitempty"` // 仅绑定流程返回
-	SafeEntry     string `json:"safeEntry"`
-	AllowedIPs    string `json:"allowedIps"`
-	SessionHours  int    `json:"sessionHours"`
+	TwoFAEnabled   bool   `json:"twoFaEnabled"`
+	TwoFASecret    string `json:"twoFaSecret,omitempty"` // 仅绑定流程返回
+	SafeEntry      string `json:"safeEntry"`
+	AllowedIPs     string `json:"allowedIps"`
+	SessionHours   int    `json:"sessionHours"`
+	MinPasswordLen int    `json:"minPasswordLen"`
+	DangerLock     bool   `json:"dangerLock"`
 }
 
 // SecuritySettingsService 安全设置服务。
@@ -45,13 +50,59 @@ func (s *SecuritySettingsService) Get(ctx context.Context) SecuritySettingsData 
 	if hours <= 0 {
 		hours = 24
 	}
+	minLen, _ := strconv.Atoi(s.settings.Get(KeyMinPasswordLen, "0"))
+	dangerLock := s.DangerLockEnabled()
 	return SecuritySettingsData{
-		TwoFAEnabled: enabled,
-		TwoFASecret:  "", // 密钥不回显，仅 2FA setup 时返回一次
-		SafeEntry:    s.settings.Get(KeySafeEntry, ""),
-		AllowedIPs:   s.settings.Get(KeyAllowedIPs, ""),
-		SessionHours: hours,
+		TwoFAEnabled:   enabled,
+		TwoFASecret:    "", // 密钥不回显，仅 2FA setup 时返回一次
+		SafeEntry:      s.settings.Get(KeySafeEntry, ""),
+		AllowedIPs:     s.settings.Get(KeyAllowedIPs, ""),
+		SessionHours:   hours,
+		MinPasswordLen: minLen,
+		DangerLock:     dangerLock,
 	}
+}
+
+// GenerateSafeEntry 生成 8 位随机安全入口（无易混淆字符）。
+func GenerateSafeEntry() string {
+	const chars = "abcdefghjkmnpqrstuvwxyz23456789"
+	b := make([]byte, 8)
+	_, _ = crand.Read(b)
+	for i := range b {
+		b[i] = chars[int(b[i])%len(chars)]
+	}
+	return string(b)
+}
+
+// EnsureSafeEntry 启动时确保安全入口已开启（M49 强制策略）：为空则生成 8 位随机入口。
+func (s *SecuritySettingsService) EnsureSafeEntry() (string, bool, error) {
+	entry := strings.Trim(s.settings.Get(KeySafeEntry, ""), "/ ")
+	if entry != "" {
+		return entry, false, nil
+	}
+	entry = GenerateSafeEntry()
+	if err := s.settings.Set(KeySafeEntry, entry); err != nil {
+		return "", false, err
+	}
+	return entry, true, nil
+}
+
+// CheckPasswordPolicy 密码策略校验（M40）。len<=0 表示不限制。
+func (s *SecuritySettingsService) CheckPasswordPolicy(password string) error {
+	minLen, _ := strconv.Atoi(s.settings.Get(KeyMinPasswordLen, "0"))
+	if minLen > 0 && len([]rune(password)) < minLen {
+		return errs.Wrap(errs.ErrBadRequest, fmt.Sprintf("密码长度不足（至少 %d 位）", minLen))
+	}
+	return nil
+}
+
+// SetMinPasswordLen 设置密码最小长度。
+func (s *SecuritySettingsService) SetMinPasswordLen(n int) error {
+	if n < 0 || n > 64 {
+		return errs.Wrap(errs.ErrBadRequest, "密码最小长度需在 0-64（0=不限制）")
+	}
+	err := s.settings.Set(KeyMinPasswordLen, strconv.Itoa(n))
+	return err
 }
 
 // Enable2FA 生成并启用 2FA 密钥（返回 secret 与 otpauth URI 供绑定）。
@@ -76,12 +127,14 @@ func (s *SecuritySettingsService) Disable2FA(ctx context.Context) error {
 
 // Update 更新入口/白名单/会话超时（clientIP 用于防自锁：白名单非空时当前 IP 必须在列）。
 func (s *SecuritySettingsService) Update(ctx context.Context, safeEntry, allowedIPs string, sessionHours int, clientIP string) error {
-	if safeEntry != "" {
-		safeEntry = strings.Trim(safeEntry, "/ ")
-		for _, r := range safeEntry {
-			if !isSafeEntryRune(r) {
-				return errs.Wrap(errs.ErrBadRequest, "安全入口仅允许字母/数字/中划线/下划线")
-			}
+	// M49：安全入口强制开启，长度 ≥6 位
+	safeEntry = strings.Trim(safeEntry, "/ ")
+	if len(safeEntry) < 6 {
+		return errs.Wrap(errs.ErrBadRequest, "安全入口强制开启且长度不得小于 6 位")
+	}
+	for _, r := range safeEntry {
+		if !isSafeEntryRune(r) {
+			return errs.Wrap(errs.ErrBadRequest, "安全入口仅允许字母/数字/中划线/下划线")
 		}
 	}
 	for _, ip := range strings.Split(allowedIPs, ",") {

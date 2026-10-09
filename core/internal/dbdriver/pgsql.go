@@ -4,32 +4,80 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"sync"
 
-	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/ypanel/shared/errs"
 )
 
 type pgDriver struct {
-	pool *pgxpool.Pool
+	mu    sync.Mutex
+	host  string
+	port  int
+	user  string
+	pwd   string
+	pools map[string]*pgxpool.Pool // 按库名缓存连接池（含基座 "postgres"）
 }
 
 func newPostgres(host string, port int, user, password string) (Driver, error) {
-	dsn := fmt.Sprintf("postgres://%s:%s@%s:%d/postgres", user, password, host, port)
-	pool, err := pgxpool.New(context.Background(), dsn)
+	d := &pgDriver{host: host, port: port, user: user, pwd: password, pools: map[string]*pgxpool.Pool{}}
+	if _, err := d.poolFor(context.Background(), "postgres"); err != nil {
+		return nil, errs.Wrapc(errs.CodeFileOpFailed, err.Error())
+	}
+	return d, nil
+}
+
+// dsnOf 构造指定库的 DSN（不能对整串 Replace：用户名可能等于库名，"//postgres:" 会误伤）。
+func (d *pgDriver) dsnOf(database string) string {
+	return fmt.Sprintf("postgres://%s:%s@%s:%d/%s", d.user, d.pwd, d.host, d.port, database)
+}
+
+// poolFor 取指定库的连接池（惰性创建并缓存）。
+func (d *pgDriver) poolFor(ctx context.Context, database string) (*pgxpool.Pool, error) {
+	if database == "" {
+		database = "postgres"
+	}
+	if err := ValidateIdent(database); err != nil {
+		return nil, err
+	}
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if p, ok := d.pools[database]; ok {
+		return p, nil
+	}
+	pool, err := pgxpool.New(ctx, d.dsnOf(database))
 	if err != nil {
 		return nil, errs.Wrapc(errs.CodeFileOpFailed, err.Error())
 	}
-	return &pgDriver{pool: pool}, nil
+	d.pools[database] = pool
+	return pool, nil
+}
+
+// dropPool 关闭并移除某库的池（删库后调用）。
+func (d *pgDriver) dropPool(database string) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if p, ok := d.pools[database]; ok {
+		p.Close()
+		delete(d.pools, database)
+	}
 }
 
 func (d *pgDriver) Ping(ctx context.Context) error {
-	return d.pool.Ping(ctx)
+	p, err := d.poolFor(ctx, "postgres")
+	if err != nil {
+		return err
+	}
+	return p.Ping(ctx)
 }
 
 func (d *pgDriver) ListDatabases(ctx context.Context) ([]DatabaseInfo, error) {
-	rows, err := d.pool.Query(ctx, `
+	p, err := d.poolFor(ctx, "postgres")
+	if err != nil {
+		return nil, err
+	}
+	rows, err := p.Query(ctx, `
 		SELECT d.datname, pg_database_size(d.datname), pg_encoding_to_char(d.encoding)
 		FROM pg_database d
 		WHERE NOT d.datistemplate AND d.datname != 'postgres'`)
@@ -55,7 +103,12 @@ func (d *pgDriver) CreateDatabase(ctx context.Context, name, charset string) err
 		return err
 	}
 	_ = charset // PG 编码由模板库决定，M4 不暴露
-	_, err := d.pool.Exec(ctx, fmt.Sprintf(`CREATE DATABASE %q`, name))
+	p, err := d.poolFor(ctx, "postgres")
+	if err != nil {
+		return err
+	}
+	// CREATE DATABASE 不允许在事务块内，pgx Exec 单语句即自动提交
+	_, err = p.Exec(ctx, fmt.Sprintf(`CREATE DATABASE %q`, name))
 	return err
 }
 
@@ -63,17 +116,28 @@ func (d *pgDriver) DropDatabase(ctx context.Context, name string) error {
 	if err := ValidateIdent(name); err != nil {
 		return err
 	}
+	p, err := d.poolFor(ctx, "postgres")
+	if err != nil {
+		return err
+	}
 	// 断开既有连接后删除
-	if _, err := d.pool.Exec(ctx,
+	if _, err := p.Exec(ctx,
 		fmt.Sprintf(`SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = '%s' AND pid <> pg_backend_pid()`, name)); err != nil {
 		return err
 	}
-	_, err := d.pool.Exec(ctx, fmt.Sprintf(`DROP DATABASE IF EXISTS %q`, name))
-	return err
+	if _, err := p.Exec(ctx, fmt.Sprintf(`DROP DATABASE IF EXISTS %q`, name)); err != nil {
+		return err
+	}
+	d.dropPool(name)
+	return nil
 }
 
 func (d *pgDriver) ListUsers(ctx context.Context) ([]UserInfo, error) {
-	rows, err := d.pool.Query(ctx, `
+	p, err := d.poolFor(ctx, "postgres")
+	if err != nil {
+		return nil, err
+	}
+	rows, err := p.Query(ctx, `
 		SELECT rolname, rolsuper::text, rolcanlogin::text
 		FROM pg_roles WHERE rolname NOT LIKE 'pg\_%'`)
 	if err != nil {
@@ -106,7 +170,11 @@ func (d *pgDriver) CreateUser(ctx context.Context, name, host, password string) 
 	}
 	// PG 无 host 概念，忽略入参
 	// 密码已过白名单（无引号），单引号字面量拼接安全
-	_, err := d.pool.Exec(ctx, fmt.Sprintf(`CREATE ROLE %q LOGIN PASSWORD '%s'`, name, password))
+	p, err := d.poolFor(ctx, "postgres")
+	if err != nil {
+		return err
+	}
+	_, err = p.Exec(ctx, fmt.Sprintf(`CREATE ROLE %q LOGIN PASSWORD '%s'`, name, password))
 	return err
 }
 
@@ -114,7 +182,11 @@ func (d *pgDriver) DropUser(ctx context.Context, name, host string) error {
 	if err := ValidateIdent(name); err != nil {
 		return err
 	}
-	_, err := d.pool.Exec(ctx, fmt.Sprintf(`DROP ROLE IF EXISTS %q`, name))
+	p, err := d.poolFor(ctx, "postgres")
+	if err != nil {
+		return err
+	}
+	_, err = p.Exec(ctx, fmt.Sprintf(`DROP ROLE IF EXISTS %q`, name))
 	return err
 }
 
@@ -122,24 +194,59 @@ func (d *pgDriver) ChangePassword(ctx context.Context, name, host, password stri
 	if err := ValidateIdent(name); err != nil {
 		return err
 	}
-	_, err := d.pool.Exec(ctx, fmt.Sprintf(`ALTER ROLE %q PASSWORD '%s'`, name, password))
+	p, err := d.poolFor(ctx, "postgres")
+	if err != nil {
+		return err
+	}
+	_, err = p.Exec(ctx, fmt.Sprintf(`ALTER ROLE %q PASSWORD '%s'`, name, password))
 	return err
 }
 
 func (d *pgDriver) Close() {
-	d.pool.Close()
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	for _, p := range d.pools {
+		p.Close()
+	}
+	d.pools = map[string]*pgxpool.Pool{}
 }
-
-var _ = pgx.QueryExecModeCacheStatement
 
 // EnableRemote 创建远端管理角色（B3）。
 func (d *pgDriver) EnableRemote(ctx context.Context, password string) error {
-	_, err := d.pool.Exec(ctx, fmt.Sprintf("CREATE ROLE remote WITH LOGIN SUPERUSER PASSWORD '%s'", password))
+	p, err := d.poolFor(ctx, "postgres")
+	if err != nil {
+		return err
+	}
+	_, err = p.Exec(ctx, fmt.Sprintf("CREATE ROLE remote WITH LOGIN SUPERUSER PASSWORD '%s'", password))
 	return err
 }
 
 // DisableRemote 回收远端管理角色（B3）。
 func (d *pgDriver) DisableRemote(ctx context.Context) error {
-	_, err := d.pool.Exec(ctx, "DROP ROLE IF EXISTS remote")
+	p, err := d.poolFor(ctx, "postgres")
+	if err != nil {
+		return err
+	}
+	_, err = p.Exec(ctx, "DROP ROLE IF EXISTS remote")
+	return err
+}
+
+// GrantDatabase 授权账号对指定库的全部权限（M32）：PG 直接改库 owner（一条语句获得全权，含 schema）。
+func (d *pgDriver) GrantDatabase(ctx context.Context, database, user, host string) error {
+	if err := ValidateIdent(database); err != nil {
+		return err
+	}
+	if err := ValidateIdent(user); err != nil {
+		return err
+	}
+	if strings.HasPrefix(strings.ToLower(user), "pg_") {
+		return errs.Wrap(errs.ErrBadRequest, "PostgreSQL 角色名不允许以 pg_ 开头（系统保留）")
+	}
+	pool, err := d.poolFor(ctx, "postgres")
+	if err != nil {
+		return err
+	}
+	defer pool.Close()
+	_, err = pool.Exec(ctx, fmt.Sprintf(`ALTER DATABASE "%s" OWNER TO "%s"`, database, user))
 	return err
 }

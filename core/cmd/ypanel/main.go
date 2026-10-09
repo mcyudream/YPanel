@@ -16,6 +16,7 @@ import (
 
 	"github.com/ypanel/core/internal/config"
 	"github.com/ypanel/core/internal/db"
+	"github.com/ypanel/core/internal/gwserver"
 	"github.com/ypanel/core/internal/router"
 	"github.com/ypanel/core/internal/service"
 )
@@ -96,8 +97,13 @@ func run(ctx context.Context, cfg *config.Config) error {
 		return fmt.Errorf("启动内嵌 agent 失败: %w", err)
 	}
 
+	// 任务中心（迁移等长跑任务）
+	taskSvc := service.NewTaskService(gdb)
+
 	// 数据库实例管理（凭据加密密钥由 JWT 密钥派生）
-	dbSvc := service.NewDatabaseService(gdb, nodes, string(auth.Secret()))
+	dbSvc := service.NewDatabaseService(gdb, nodes, taskSvc, string(auth.Secret()))
+	// 商店已装的数据库应用自动接管（启动即扫 + 30s 周期，接管失败自动重试）
+	dbSvc.StartAutoAdopt(ctx)
 	siteSvc := service.NewSiteService(gdb, nodes)
 	certSvc := service.NewCertificateService(gdb, nodes, siteSvc, string(auth.Secret()))
 	certSvc.SetEnvGetter(os.Getenv)
@@ -106,30 +112,79 @@ func run(ctx context.Context, cfg *config.Config) error {
 
 	// 计划任务调度器（B4：依赖数据库备份/站点备份服务）
 	cronSvc := service.NewCron(gdb, nodes)
+	// 远程备份存储（M34）：账号管理 + 备份产物上传/拉回
+	storageSvc := service.NewStorageService(gdb, nodes, string(auth.Secret()))
+	backupSvc := service.NewBackupService(nodes, storageSvc)
+	dockerEnvSvc := service.NewDockerEnvService(gdb, nodes, string(auth.Secret()))
+	dockerImgSvc := service.NewDockerImgService(nodes)
+	fileExtSvc := service.NewFileExtService(gdb, nodes)
+	sysToolSvc := service.NewSystemToolService(nodes)
+	panelBkSvc := service.NewPanelBackupService(nodes)
+	panelBkSvc.SetStorage(storageSvc)
 	cronSvc.DBSvc = dbSvc
 	cronSvc.SiteBk = service.NewSiteBackupService(nodes)
-	scriptSvc := service.NewScriptService(gdb)
+	cronSvc.SiteBk.SetStorage(storageSvc)
+	cronSvc.BackupSrv = backupSvc
+	cronSvc.Certs = certSvc
+	dbSvc.SetStorage(storageSvc)
+	scriptSvc := service.NewScriptService(gdb, nodes)
 	if err := cronSvc.Start(); err != nil {
 		return fmt.Errorf("启动计划任务调度失败: %w", err)
 	}
 	defer cronSvc.Stop()
-	taskSvc := service.NewTaskService(gdb)
-	storeSvc := service.NewStoreService(gdb, nodes, siteSvc, taskSvc, cfg.DataDir)
-	fwSvc := service.NewFirewallService(nodes, cfg.Port)
+	storeSvc := service.NewStoreService(gdb, nodes, siteSvc, taskSvc, dbSvc, cfg.DataDir)
+	vpnSvc := service.NewVPNService(gdb, nodes, settings, taskSvc, storeSvc)
+	fwSvc := service.NewFirewallService(gdb, nodes, cfg.Port)
 	f2bSvc := service.NewFail2banService(nodes)
 	dbAdminSvc := service.NewDBAdminService(gdb, dbSvc)
-	aiSvc := service.NewAIService(gdb, nodes, dbSvc, dbAdminSvc, settings, service.NewSkillsManager(nodes, settings))
-	rtSvc := service.NewRuntimeService(gdb, nodes)
+	rtSvc := service.NewRuntimeService(gdb, nodes, taskSvc)
 	dockerExtSvc := service.NewDockerExtService(nodes, taskSvc)
+	dockerInstallSvc := service.NewDockerInstallService(nodes, taskSvc)
 	suSvc := service.NewSelfUpdateService(nodes, version)
 	notifSvc := service.NewNotificationService(gdb)
+	cronSvc.Notif = notifSvc
+	dashboardSvc := service.NewDashboardService(gdb, nodes, dockerExtSvc, notifSvc)
 	secSvc := service.NewSecuritySettingsService(settings)
-	alertSvc := service.NewAlertService(gdb, nodes, notifSvc)
+	// M49：安全入口强制开启——存量空入口自动生成随机 8 位
+	if entry, generated, err := secSvc.EnsureSafeEntry(); err == nil && generated {
+		slog.Info("安全入口已自动生成（强制策略）", "entry", "/"+entry)
+	}
+	alertSvc := service.NewAlertService(gdb, nodes, notifSvc, settings)
 	alertSvc.Start(ctx)
+	probeSvc := service.NewProbeService(gdb, nodes, notifSvc)
+	probeSvc.Start(ctx)
 	histSvc := service.NewHistoryRecorder(gdb, nodes)
 	histSvc.Start(ctx)
 	revSvc := service.NewRevisionService(gdb, nodes)
 	natSvc := service.NewNatForwardService(gdb, nodes)
+	siteSvc.SetPortDeps(fwSvc, natSvc) // M50 站点端口对账：防火墙放行 + 端口占用检测
+	dnsSvc := service.NewDnsService(gdb, nodes, settings)
+	hostsSvc := service.NewHostsService(gdb, nodes)
+	credSvc := service.NewGitCredService(gdb)
+	src2Svc := &service.Src2ComposeService{Nodes: nodes, Tasks: taskSvc, Creds: credSvc}
+	logCentralSvc := service.NewLogCentralService(gdb, settings, nodes)
+	alertSvc.SetLogCentral(logCentralSvc) // P3 日志量告警：VL 聚合计数（metric=log 规则）
+	// M51：桌面工作台内网浏览器——会话式反代网关（第二端口）
+	webgwSvc := service.NewWebGwService(ctx, settings)
+	webgwSvc.SetSelfEntry(cfg.Port, secSvc.SafeEntry) // 经网关浏览面板自身时补安全入口
+	webgwSvc.SetNodes(nodes)
+	// M31：AI 工具治理升级——全量服务依赖装配（原 126 行 aiSvc 创建移至此处，确保全部依赖就绪）
+	aiSvc := service.NewAIService(gdb, service.AIDeps{
+		Nodes: nodes, DBSvc: dbSvc, DBAdmin: dbAdminSvc, Settings: settings,
+		Skills: service.NewSkillsManager(nodes, settings),
+		Sites:  siteSvc, Certs: certSvc, Runtimes: rtSvc, DockerX: dockerExtSvc,
+		FW: fwSvc, NAT: natSvc, Hosts: hostsSvc, DNS: dnsSvc, Cron: cronSvc,
+		Store: storeSvc, F2B: f2bSvc, Src2: src2Svc,
+	})
+	// M41：MCP 对外开放（复用 AI 注册表 read 工具）
+	mcpSvc := service.NewMCPService(gdb, aiSvc, settings)
+	snapSvc := service.NewSnapshotService(gdb, nodes, panelBkSvc, settings)
+	sysSnapSvc := service.NewSystemSnapshotService(nodes, taskSvc, dbSvc, gdb, panelBkSvc)
+	ftpSvc := service.NewFtpService(nodes)
+	sshGSvc := service.NewSshGuardService(nodes)
+	panelBkSvc.SetPruneFn(func(keep int) int { n, _ := snapSvc.Prune(context.Background(), "local", keep); return n })
+	mcpOpSvc := service.NewMCPOperationService(gdb)
+	mcpSvc.RegisterWriteDeps(nodes, panelBkSvc, mcpOpSvc)
 	// M24 NAT 转发启动重放：失败仅告警不阻断启动（agent 不可达 / iptables 缺失属预期场景）
 	go func() {
 		fails, err := natSvc.ApplyAll(ctx)
@@ -141,6 +196,12 @@ func run(ctx context.Context, cfg *config.Config) error {
 			slog.Warn("NAT 转发启动重放失败", "node", nodeId, "err", applyErr.Error())
 		}
 	}()
+	// M50 站点端口启动重放：compose 映射 / 防火墙放行与站点表对账，自愈漂移（失败仅告警）
+	go func() {
+		if err := siteSvc.ReconcilePorts(ctx); err != nil {
+			slog.Warn("站点端口对账失败", "err", err.Error())
+		}
+	}()
 
 	if os.Getenv("GIN_MODE") == "" {
 		gin.SetMode(gin.ReleaseMode)
@@ -149,9 +210,21 @@ func run(ctx context.Context, cfg *config.Config) error {
 		Auth: auth, Nodes: nodes, Settings: settings, Cron: cronSvc, DBS: dbSvc, Sites: siteSvc, Certs: certSvc, Groups: groupSvc,
 		Scripts: scriptSvc, DBSvc: dbSvc, Acme: acmeSvc, AI: aiSvc,
 		FW: fwSvc, Alerts: alertSvc,
-		Notif: notifSvc, PanelBP: service.NewPanelBackupService(nodes), Hist: histSvc,
-		F2B: f2bSvc, DBAdmin: dbAdminSvc, SU: suSvc, Store: storeSvc, Tasks: taskSvc, RT: rtSvc,
-		DockerExt: dockerExtSvc, Sec: secSvc, Rev: revSvc, NatF: natSvc, Version: version,
+		Notif: notifSvc, PanelBP: panelBkSvc, Hist: histSvc,
+		Storage: storageSvc, BackupSrv: backupSvc,
+		DockerEnv: dockerEnvSvc, DockerImg: dockerImgSvc,
+		FileExt: fileExtSvc,
+		SysTool: sysToolSvc,
+		MCP:     mcpSvc, OpsM: mcpOpSvc,
+		Snap:    snapSvc,
+		SysSnap: sysSnapSvc,
+		Ftp:     ftpSvc,
+		SshG:    sshGSvc,
+		F2B:     f2bSvc, DBAdmin: dbAdminSvc, SU: suSvc, Store: storeSvc, Tasks: taskSvc, RT: rtSvc,
+		Vpn: vpnSvc, Probes: probeSvc,
+		DockerExt: dockerExtSvc, Sec: secSvc, Rev: revSvc, NatF: natSvc, DNS: dnsSvc, HS: hostsSvc, Version: version,
+		DockerInstall: dockerInstallSvc,
+		Src2: src2Svc, Creds: credSvc, LogCentral: logCentralSvc, WebGW: webgwSvc, Dashboard: dashboardSvc,
 	})
 	if err != nil {
 		return err
@@ -163,7 +236,15 @@ func run(ctx context.Context, cfg *config.Config) error {
 		_ = srv.Close()
 	}()
 
-	slog.Info("YPanel 启动完成", "version", version, "addr", cfg.Addr(), "data", cfg.DataDir)
+	// M51 内网浏览器网关（第二端口；TLS 与面板共用证书）
+	gwSrv := gwserver.New(webgwSvc, cfg.GwAddr(), cfg.TLSCert, cfg.TLSKey)
+	go func() {
+		if err := gwSrv.ListenAndServe(ctx); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			slog.Error("内网浏览器网关启动失败", "err", err)
+		}
+	}()
+
+	slog.Info("YPanel 启动完成", "version", version, "addr", cfg.Addr(), "gw", cfg.GwAddr(), "data", cfg.DataDir)
 	scheme := "http"
 	if cfg.TLSCert != "" && cfg.TLSKey != "" {
 		scheme = "https"

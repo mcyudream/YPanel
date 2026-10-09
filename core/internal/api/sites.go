@@ -1,16 +1,29 @@
 package api
 
 import (
-	"strconv"
 	"github.com/gin-gonic/gin"
+	"log/slog"
+	"strconv"
 
 	"github.com/ypanel/core/internal/service"
+	"time"
 )
 
 // SiteAPI 站点接口。
 type SiteAPI struct {
 	Sites *service.SiteService
 	Acme  *service.AcmeService
+	DNS   *service.DnsService // 站点域名对齐内网 DNS（变更后 best-effort 重载）
+}
+
+// dnsAlignRefresh 站点增删/启停/改域名后重载内网 DNS 对齐（best-effort，失败仅记日志）。
+func (a *SiteAPI) dnsAlignRefresh(c *gin.Context) {
+	if a.DNS == nil {
+		return
+	}
+	if err := a.DNS.OnSitesChanged(c.Request.Context()); err != nil {
+		slog.Warn("站点对齐 DNS 重载失败", "err", err.Error())
+	}
 }
 
 // Status GET /api/v1/nginx/status
@@ -50,7 +63,7 @@ func (a *SiteAPI) SetMode(c *gin.Context) {
 	if !ok {
 		return
 	}
-	if err := a.Sites.SetNginxMode(req.Mode); err != nil {
+	if err := a.Sites.SetNginxMode(c.Request.Context(), req.Mode); err != nil {
 		respErr(c, err)
 		return
 	}
@@ -163,15 +176,15 @@ func (a *SiteAPI) List(c *gin.Context) {
 // Create POST /api/v1/sites
 func (a *SiteAPI) Create(c *gin.Context) {
 	req, ok := bind[struct {
-		Name         string                  `json:"name" binding:"required"`
-		Type         string                  `json:"type" binding:"required,oneof=static proxy php"`
-		Domain       string                  `json:"domain" binding:"required"`
-		ExtraDomains []string                `json:"extraDomains"`
-		Port         int                     `json:"port"`
-		ProxyRules   []service.ProxyRule     `json:"proxyRules"`
-		ProxyPass    string                  `json:"proxyPass"`
-		IndexFiles   string                  `json:"indexFiles"`
-		RuntimeID    uint                    `json:"runtimeId"`
+		Name         string              `json:"name" binding:"required"`
+		Type         string              `json:"type" binding:"required,oneof=static proxy php"`
+		Domain       string              `json:"domain" binding:"required"`
+		ExtraDomains []string            `json:"extraDomains"`
+		Port         int                 `json:"port"`
+		ProxyRules   []service.ProxyRule `json:"proxyRules"`
+		ProxyPass    string              `json:"proxyPass"`
+		IndexFiles   string              `json:"indexFiles"`
+		RuntimeID    uint                `json:"runtimeId"`
 	}](c)
 	if !ok {
 		return
@@ -188,6 +201,7 @@ func (a *SiteAPI) Create(c *gin.Context) {
 		respErr(c, err)
 		return
 	}
+	a.dnsAlignRefresh(c)
 	respOK(c, site)
 }
 
@@ -213,10 +227,14 @@ func (a *SiteAPI) Delete(c *gin.Context) {
 		respErr(c, err)
 		return
 	}
-	if err := a.Sites.Delete(c.Request.Context(), id, c.DefaultQuery("purge", "false") == "true"); err != nil {
+	if err := a.Sites.Delete(c.Request.Context(), id, service.SiteDeleteOptions{
+		PurgeFiles:   c.DefaultQuery("purge", "false") == "true",
+		PurgeBackups: c.DefaultQuery("backups", "false") == "true",
+	}); err != nil {
 		respErr(c, err)
 		return
 	}
+	a.dnsAlignRefresh(c)
 	respOK(c, struct{}{})
 }
 
@@ -232,6 +250,7 @@ func (a *SiteAPI) SetEnabled(enabled bool) gin.HandlerFunc {
 			respErr(c, err)
 			return
 		}
+		a.dnsAlignRefresh(c)
 		respOK(c, struct{}{})
 	}
 }
@@ -297,6 +316,7 @@ func (a *SiteAPI) Adopt(c *gin.Context) {
 		respErr(c, err)
 		return
 	}
+	a.dnsAlignRefresh(c)
 	respOK(c, site)
 }
 
@@ -379,6 +399,70 @@ func (a *SiteAPI) IssueSelfSigned(c *gin.Context) {
 		return
 	}
 	if err := a.Sites.IssueSelfSigned(c.Request.Context(), id); err != nil {
+		respErr(c, err)
+		return
+	}
+	respOK(c, struct{}{})
+}
+
+// BatchOperate POST /api/v1/sites/batch {ids,action,purgeFiles,purgeBackups}（M39）
+func (a *SiteAPI) BatchOperate(c *gin.Context) {
+	req, ok := bind[struct {
+		IDs          []uint `json:"ids" binding:"required,min=1"`
+		Action       string `json:"action" binding:"required,oneof=enable disable delete"`
+		PurgeFiles   bool   `json:"purgeFiles"`
+		PurgeBackups bool   `json:"purgeBackups"`
+	}](c)
+	if !ok {
+		return
+	}
+	if err := a.Sites.BatchOperate(c.Request.Context(), req.IDs, req.Action, service.SiteDeleteOptions{PurgeFiles: req.PurgeFiles, PurgeBackups: req.PurgeBackups}); err != nil {
+		respErr(c, err)
+		return
+	}
+	respOK(c, struct{}{})
+}
+
+// SetDefault POST /api/v1/sites/:id/default（M39）
+func (a *SiteAPI) SetDefault(c *gin.Context) {
+	id, err := idParam(c)
+	if err != nil {
+		respErr(c, err)
+		return
+	}
+	if err := a.Sites.SetDefault(c.Request.Context(), id); err != nil {
+		respErr(c, err)
+		return
+	}
+	respOK(c, struct{}{})
+}
+
+// SetExpire PUT /api/v1/sites/:id/expire {expireAt|null}（M39）
+func (a *SiteAPI) SetExpire(c *gin.Context) {
+	id, err := idParam(c)
+	if err != nil {
+		respErr(c, err)
+		return
+	}
+	req, ok := bind[struct {
+		ExpireAt *string `json:"expireAt"`
+	}](c)
+	if !ok {
+		return
+	}
+	var t *time.Time
+	if req.ExpireAt != nil && *req.ExpireAt != "" {
+		parsed, perr := time.Parse("2006-01-02", *req.ExpireAt)
+		if perr != nil {
+			parsed, perr = time.Parse(time.RFC3339, *req.ExpireAt)
+		}
+		if perr != nil {
+			respErr(c, errBadRequest("到期时间格式应为 YYYY-MM-DD"))
+			return
+		}
+		t = &parsed
+	}
+	if err := a.Sites.SetExpire(id, t); err != nil {
 		respErr(c, err)
 		return
 	}

@@ -5,6 +5,7 @@ package service
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"strings"
 
 	"github.com/ypanel/core/internal/model"
@@ -13,12 +14,13 @@ import (
 
 // ---- 域：domain 域名管理 ----
 
-// SiteDomainConf 域名配置（主域名只读，附加域名增删）。
+// SiteDomainConf 域名配置（主域名可通过 primary 切换，附加域名增删）。
 type SiteDomainConf struct {
 	Name       string   `json:"name"`
 	Domain     string   `json:"domain"`
 	Domains    []string `json:"domains"`
 	CertDomain string   `json:"certDomain"`
+	CertNotice string   `json:"certNotice"` // 主域名切换后的证书适配提示（空 = 无需处理）
 }
 
 // GetDomainConf 读取域名配置。
@@ -31,8 +33,10 @@ func (s *SiteService) GetDomainConf(id uint) (SiteDomainConf, error) {
 	return SiteDomainConf{Name: site.Name, Domain: site.Domain, Domains: extra, CertDomain: site.CertDomain}, nil
 }
 
-// UpdateDomainConf 更新附加域名（主域名不可改；证书域名随主域名时需重签）。
-func (s *SiteService) UpdateDomainConf(ctx context.Context, id uint, domains []string) (SiteDomainConf, error) {
+// UpdateDomainConf 更新域名。primary 为空时仅更新附加域名；primary 为站点已有域名且异于
+// 当前主域名时切换主域名（位置交换，nginx server_name 集合不变）：自签证书自动按新主域名
+// 重签，证书库条目不覆盖新主域名时在 CertNotice 返回提示。
+func (s *SiteService) UpdateDomainConf(ctx context.Context, id uint, domains []string, primary string) (SiteDomainConf, error) {
 	site, err := s.siteByID(id)
 	if err != nil {
 		return SiteDomainConf{}, err
@@ -41,8 +45,41 @@ func (s *SiteService) UpdateDomainConf(ctx context.Context, id uint, domains []s
 	if err != nil {
 		return SiteDomainConf{}, err
 	}
+	newPrimary := strings.ToLower(strings.TrimSpace(primary))
+	certNotice := ""
+	switching := newPrimary != "" && newPrimary != site.Domain
+	if switching {
+		// 新主域名必须是本站已有域名：库中附加域名之一，或仍在提交列表中（兼容两种提交形态——
+		// 前端交换预览会把新主域名从列表移除、旧主域名放回列表；直调 API 则可能仍留在列表里）
+		owned := false
+		extra, _ := parseExtraDomains(site)
+		for _, d := range extra {
+			if d == newPrimary {
+				owned = true
+				break
+			}
+		}
+		inSubmitted := false
+		for _, d := range cleaned {
+			if d == newPrimary {
+				inSubmitted = true
+				break
+			}
+		}
+		if !owned && !inSubmitted {
+			return SiteDomainConf{}, errs.New(errs.CodeBadRequest, "error.badRequest", "新主域名必须是站点已有域名（主域名或附加域名）: "+newPrimary)
+		}
+		taken, err := s.domainTakenByOther(site.ID, newPrimary)
+		if err != nil {
+			return SiteDomainConf{}, err
+		}
+		if taken {
+			return SiteDomainConf{}, errs.New(errs.CodeBadRequest, "error.badRequest", "域名已被其他站点占用: "+newPrimary)
+		}
+		cleaned = switchedExtras(cleaned, site.Domain, newPrimary)
+	}
 	for _, d := range cleaned {
-		if d == site.Domain {
+		if d == newPrimary {
 			return SiteDomainConf{}, errs.Wrap(errs.ErrBadRequest, "附加域名不能与主域名重复: "+d)
 		}
 	}
@@ -51,13 +88,104 @@ func (s *SiteService) UpdateDomainConf(ctx context.Context, id uint, domains []s
 		b, _ := json.Marshal(cleaned)
 		raw = string(b)
 	}
-	if err := s.db.Model(site).Update("domains", raw).Error; err != nil {
+	updates := map[string]any{"domains": raw}
+	if switching {
+		// 证书联动：自签先按新主域名重签（失败整体不落库）；证书库条目仅检查并提示
+		if site.CertDomain != "" {
+			if site.CertID == 0 {
+				if err := s.selfSign(ctx, newPrimary, nil); err != nil {
+					return SiteDomainConf{}, err
+				}
+				updates["cert_domain"] = newPrimary
+			} else {
+				var cert model.Certificate
+				if err := s.db.First(&cert, site.CertID).Error; err == nil && !certCovers(&cert, newPrimary) {
+					certNotice = fmt.Sprintf("主域名已切换为 %s，但证书「%s」未覆盖该域名，HTTPS 访问新域名将告警，请重新签发或更换证书", newPrimary, cert.CertName)
+				}
+			}
+		}
+		updates["domain"] = newPrimary
+	}
+	if err := s.db.Model(site).Updates(updates).Error; err != nil {
+		return SiteDomainConf{}, err
+	}
+	site, err = s.siteByID(id) // 回读：confTemplate 需要切换后的 Domain/CertDomain/Domains
+	if err != nil {
 		return SiteDomainConf{}, err
 	}
 	if err := s.writeConf(ctx, site, confTemplate(site, site.CertDomain != "", parseWaf(site))); err != nil {
 		return SiteDomainConf{}, err
 	}
-	return s.GetDomainConf(id)
+	out, err := s.GetDomainConf(id)
+	if err != nil {
+		return SiteDomainConf{}, err
+	}
+	out.CertNotice = certNotice
+	return out, nil
+}
+
+// switchedExtras 计算切换主域名后的附加列表（纯函数）：移除新主域名（调用方仍留在列表的形态），
+// 旧主域名缺失时补入尾部，保证站点域名集合守恒。
+func switchedExtras(submitted []string, oldPrimary, newPrimary string) []string {
+	kept := make([]string, 0, len(submitted)+1)
+	hasOld := false
+	for _, d := range submitted {
+		if d == newPrimary {
+			continue
+		}
+		if d == oldPrimary {
+			hasOld = true
+		}
+		kept = append(kept, d)
+	}
+	if !hasOld {
+		kept = append(kept, oldPrimary)
+	}
+	return kept
+}
+
+// domainTakenByOther 检查域名是否被其他站点占用（主域名或附加域名；站点量级小，内存比对）。
+func (s *SiteService) domainTakenByOther(siteID uint, domain string) (bool, error) {
+	var sites []model.Site
+	if err := s.db.Where("id <> ?", siteID).Find(&sites).Error; err != nil {
+		return false, err
+	}
+	for i := range sites {
+		st := &sites[i]
+		if st.Domain == domain {
+			return true, nil
+		}
+		extra, _ := parseExtraDomains(st)
+		for _, d := range extra {
+			if strings.ToLower(strings.TrimSpace(d)) == domain {
+				return true, nil
+			}
+		}
+	}
+	return false, nil
+}
+
+// certCovers 判断证书是否覆盖域名（主域名/其他域名/一级泛域名，泛域名不覆盖裸域与多级子域）。
+func certCovers(cert *model.Certificate, domain string) bool {
+	if cert.Domain == domain {
+		return true
+	}
+	var alts []string
+	if cert.AltDomains != "" {
+		_ = json.Unmarshal([]byte(cert.AltDomains), &alts)
+	}
+	for _, a := range alts {
+		a = strings.ToLower(strings.TrimSpace(a))
+		if a == domain {
+			return true
+		}
+		if strings.HasPrefix(a, "*.") {
+			if i := strings.IndexByte(domain, '.'); i > 0 && domain[i+1:] == a[2:] {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func parseExtraDomains(site *model.Site) ([]string, error) {

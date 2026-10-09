@@ -1,0 +1,30 @@
+services:
+  php:
+    build:
+      context: .
+      args:
+        BASE_IMAGE: __BASE_IMAGE__
+        PHP_EXTENSIONS: "__EXTENSIONS__"
+        APK_MIRROR: "__APK_MIRROR__"
+    image: __IMAGE__
+    container_name: php-__NAME__
+    restart: unless-stopped
+    command: ["/usr/bin/supervisord", "-n", "-c", "/etc/supervisord.conf"]
+    cap_add:
+      - SYS_PTRACE
+    environment:
+      TZ: "__TZ__"
+    volumes:
+      - /opt/ypanel/nginx/www:/var/www
+      - ./conf/php.ini:/usr/local/etc/php/php.ini
+      - ./conf/php-fpm.conf:/usr/local/etc/php-fpm.conf
+      - ./log:/var/log/php
+      - ./supervisor/supervisord.conf:/etc/supervisord.conf
+      - ./supervisor/supervisor.d:/etc/supervisor.d
+      - ./supervisor/log:/var/log/supervisor
+    networks:
+      - ypanel_default
+
+networks:
+  ypanel_default:
+    external: true

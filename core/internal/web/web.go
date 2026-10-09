@@ -37,12 +37,14 @@ func Register(r *gin.Engine) error {
 				return
 			}
 		}
-		// SPA fallback
+		// SPA fallback：入口 html 禁缓存（发版后浏览器立即加载新版本，避免卡旧页面）；
+		// 带 hash 的静态 chunk 由浏览器长缓存。
 		index, err := fs.ReadFile(sub, "index.html")
 		if err != nil {
 			c.String(http.StatusServiceUnavailable, "前端产物未构建：请在 web/ 下执行 pnpm build 后重新编译")
 			return
 		}
+		c.Header("Cache-Control", "no-cache, no-store, must-revalidate")
 		c.Data(http.StatusOK, "text/html; charset=utf-8", index)
 	})
 	return nil

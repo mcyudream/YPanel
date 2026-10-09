@@ -29,6 +29,7 @@ const (
 	TaskStoreInstall   = "store-install"
 	TaskStoreUninstall = "store-uninstall"
 	TaskImagePull      = "image-pull"
+	TaskDockerInstall  = "docker-install"
 )
 
 // TaskService 任务服务。

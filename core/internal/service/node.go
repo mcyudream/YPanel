@@ -112,19 +112,58 @@ func (s *NodeService) ListNodes() []map[string]any {
 	}
 	for _, r := range rows {
 		out = append(out, map[string]any{
-			"id":         fmt.Sprintf("%d", r.ID),
-			"name":       r.Name,
-			"remote":     true,
-			"addr":       r.Addr,
-			"hostname":   r.Hostname,
-			"os":         r.OS,
-			"arch":       r.Arch,
-			"version":    r.Version,
-			"online":     time.Since(r.LastSeenAt) < onlineWindow,
-			"lastSeenAt": r.LastSeenAt,
+			"id": fmt.Sprintf("%d", r.ID), "name": r.Name, "remote": true, "addr": r.Addr,
+			"hostname": r.Hostname, "os": r.OS, "arch": r.Arch, "version": r.Version,
+			"online": time.Since(r.LastSeenAt) < onlineWindow, "lastSeenAt": r.LastSeenAt,
+			// M43 服务器资产
+			"expireDate":     r.ExpireDate,
+			"monthlyPrice":   r.MonthlyPrice,
+			"trafficQuotaGB": r.TrafficQuotaGB,
+			"assetRemark":    r.AssetRemark,
+			"remainingValue": remainingValue(r),
+			"daysLeft":       daysLeft(r),
 		})
 	}
 	return out
+}
+
+// daysLeft 节点剩余天数（无到期日返回 -1）。
+func daysLeft(r model.Node) int {
+	if r.ExpireDate == nil {
+		return -1
+	}
+	return int(time.Until(*r.ExpireDate).Hours() / 24)
+}
+
+// remainingValue 剩余价值估算（M43）：月价 × 剩余天数/30，到期为 0；价格无数字返回空串。
+func remainingValue(r model.Node) string {
+	if r.ExpireDate == nil || r.MonthlyPrice == "" {
+		return ""
+	}
+	re := regexp.MustCompile(`[0-9]+(\.[0-9]+)?`)
+	m := re.FindString(r.MonthlyPrice)
+	if m == "" {
+		return ""
+	}
+	var price float64
+	if _, err := fmt.Sscanf(m, "%g", &price); err != nil || price <= 0 {
+		return ""
+	}
+	left := time.Until(*r.ExpireDate).Hours() / 24
+	if left < 0 {
+		left = 0
+	}
+	val := price * left / 30
+	return fmt.Sprintf("%.2f", val)
+}
+
+// UpdateAsset 更新节点资产字段（M43）。
+func (s *NodeService) UpdateAsset(id uint, expireDate *time.Time, monthlyPrice string, trafficQuotaGB int, assetRemark string) error {
+	updates := map[string]any{
+		"expire_date": expireDate, "monthly_price": monthlyPrice,
+		"traffic_quota_gb": trafficQuotaGB, "asset_remark": assetRemark,
+	}
+	return s.db.Model(&model.Node{}).Where("id = ?", id).Updates(updates).Error
 }
 
 // pairingCodeChars 配对码字符集（去混淆字符）。
@@ -209,4 +248,15 @@ func (s *NodeService) DeleteNode(id string) error {
 		return errs.Wrap(errs.ErrBadRequest, "本机节点不可删除")
 	}
 	return s.db.Delete(&model.Node{}, id).Error
+}
+
+// RemoteIDs 远程节点 ID 列表（M46 快照 prune 全节点用）。
+func (s *NodeService) RemoteIDs() []string {
+	rows := []model.Node{}
+	_ = s.db.Order("id").Find(&rows).Error
+	out := make([]string, 0, len(rows))
+	for _, r := range rows {
+		out = append(out, fmt.Sprintf("%d", r.ID))
+	}
+	return out
 }

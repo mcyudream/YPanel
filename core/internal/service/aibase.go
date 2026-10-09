@@ -4,12 +4,18 @@
 package service
 
 import (
+	"log/slog"
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"sort"
 	"strings"
+	"sync"
+	"time"
 
 	"github.com/tmc/langchaingo/tools"
 	"gorm.io/gorm"
@@ -64,12 +70,59 @@ type ChatStep struct {
 
 // AIService AI 助手。
 type AIService struct {
-	db       *gorm.DB
-	nodes    *NodeService
-	dbSvc    *DatabaseService
-	adminSvc *DBAdminService
-	settings *SettingService
-	skills   *SkillsManager
+	db        *gorm.DB
+	nodes     *NodeService
+	dbSvc     *DatabaseService
+	adminSvc  *DBAdminService
+	settings  *SettingService
+	skills    *SkillsManager
+	sites     *SiteService
+	certs     *CertificateService
+	runtimes  *RuntimeService
+	dockerX   *DockerExtService
+	fw        *FirewallService
+	nat       *NatForwardService
+	hosts     *HostsService
+	dns       *DnsService
+	cron      *Cron
+	store     *StoreService
+	f2b       *Fail2banService
+	src2      *Src2ComposeService
+	pendingAsks sync.Map // askID → *aiAskRequest（等待用户确认的危险操作）
+	pendingQuestions sync.Map // questionID → *aiQuestionRequest（等待用户回答的交互提问）
+}
+
+// AIDeps AI 服务外部依赖（main 装配注入；M31 扩展全域能力所需服务）。
+type AIDeps struct {
+	Nodes    *NodeService
+	DBSvc    *DatabaseService
+	DBAdmin  *DBAdminService
+	Settings *SettingService
+	Skills   *SkillsManager
+	Sites    *SiteService
+	Certs    *CertificateService
+	Runtimes *RuntimeService
+	DockerX  *DockerExtService
+	FW       *FirewallService
+	NAT      *NatForwardService
+	Hosts    *HostsService
+	DNS      *DnsService
+	Cron     *Cron
+	Store    *StoreService
+	F2B      *Fail2banService
+	Src2     *Src2ComposeService
+}
+
+// NewAIService 创建。
+func NewAIService(db *gorm.DB, deps AIDeps) *AIService {
+	return &AIService{
+		db: db, nodes: deps.Nodes, dbSvc: deps.DBSvc, adminSvc: deps.DBAdmin,
+		settings: deps.Settings, skills: deps.Skills,
+		sites: deps.Sites, certs: deps.Certs, runtimes: deps.Runtimes, dockerX: deps.DockerX,
+		fw: deps.FW, nat: deps.NAT, hosts: deps.Hosts, dns: deps.DNS, cron: deps.Cron,
+		store: deps.Store, f2b: deps.F2B, src2: deps.Src2,
+		pendingAsks: sync.Map{},
+	}
 }
 
 // ListSkills 转发技能列表。
@@ -97,10 +150,7 @@ func (s *AIService) UploadSkillZip(ctx context.Context, data []byte) (string, st
 	return s.skills.UploadZip(ctx, data)
 }
 
-// NewAIService 创建。
-func NewAIService(db *gorm.DB, nodes *NodeService, dbSvc *DatabaseService, adminSvc *DBAdminService, settings *SettingService, skills *SkillsManager) *AIService {
-	return &AIService{db: db, nodes: nodes, dbSvc: dbSvc, adminSvc: adminSvc, settings: settings, skills: skills}
-}
+// NewAIService 创建（见 AIDeps）。
 
 // ---- 供应商 CRUD ----
 
@@ -337,11 +387,19 @@ func (s *AIService) searchKnowledge(query string) []KnowledgeHit {
 
 // ---- 场景感知 ----
 
-// SceneContext 按页面路径返回数据摘要。
-func (s *AIService) SceneContext(ctx context.Context, path string) map[string]any {
+// SceneContext 按页面路径返回数据摘要；focus 非空时标注用户当前聚焦对象（桌面工作台焦点窗口感知）。
+func (s *AIService) SceneContext(ctx context.Context, path string, focus string) map[string]any {
+	sc := s.sceneData(ctx, path)
+	if focus != "" {
+		sc["focus"] = focus
+	}
+	return sc
+}
+
+func (s *AIService) sceneData(ctx context.Context, path string) map[string]any {
 	node, err := s.nodes.ByID("local")
 	if err != nil {
-		return nil
+		return map[string]any{"page": path}
 	}
 	ac := agentclient.New(node.BaseURL, node.Token)
 	switch {
@@ -369,13 +427,17 @@ func (s *AIService) SceneContext(ctx context.Context, path string) map[string]an
 }
 
 // buildSceneSummary 场景摘要文本。
-func (s *AIService) buildSceneSummary(ctx context.Context, path string) string {
-	sc := s.SceneContext(ctx, path)
+func (s *AIService) buildSceneSummary(ctx context.Context, path string, focus string) string {
+	sc := s.SceneContext(ctx, path, focus)
 	b, _ := json.Marshal(sc)
 	if len(b) > 4096 {
 		return "用户当前所在面板页面实时数据（JSON 截断）：" + string(b[:4096])
 	}
-	return "用户当前所在面板页面实时数据（JSON）：" + string(b)
+	text := "用户当前所在面板页面实时数据（JSON）：" + string(b)
+	if focus != "" {
+		text += "；用户当前正在查看的对象：" + focus
+	}
+	return text
 }
 
 // ---- 工具系统 ----
@@ -461,311 +523,401 @@ func matchAny(kw string, fields ...string) bool {
 	return false
 }
 
-// aiTool 单个工具（实现 langchaingo tools.Tool 接口）。
-type aiTool struct {
-	name        string
-	description string
-	fn          func(ctx context.Context, input string) (string, error)
+// ---- 工具系统（M31 治理化：模块注册表 + 风险分级 + JSON Schema + ask 确认） ----
+
+// 工具风险分级：read 查询自动执行；write 新增/编辑；danger 删除/停启/清理等不可逆或影响运行态的操作。
+const (
+	aiRiskRead   = "read"
+	aiRiskWrite  = "write"
+	aiRiskDanger = "danger"
+)
+
+// ask 确认模式（settings ai.ask_mode）：strict = write+danger 都需用户确认（默认）；
+// danger_only = 仅 danger 级确认，write 自动执行。
+const (
+	aiAskStrict      = "strict"
+	aiAskDangerOnly  = "danger_only"
+	settingAIAskMode = "ai.ask_mode"
+	aiAskTimeout     = 120 * time.Second
+)
+
+// 工具模块 key。
+const (
+	aiModMeta       = "meta"
+	aiModSystem     = "system"
+	aiModContainers = "docker_containers"
+	aiModImages     = "docker_images"
+	aiModNetworks   = "docker_networks"
+	aiModVolumes    = "docker_volumes"
+	aiModCompose    = "compose"
+	aiModFiles      = "files"
+	aiModProc       = "processes"
+	aiModExec       = "exec"
+	aiModDB         = "databases"
+	aiModSites      = "sites_certs"
+	aiModRuntime    = "runtimes"
+	aiModNetSec     = "firewall_net"
+	aiModTasks      = "tasks"
+	aiModStore      = "store"
+	aiModSrcBuild   = "srcbuild"
+	aiModDiag       = "diagnostics"
+	aiModAI         = "panel_ai"
+)
+
+// aiModule 模块元数据（load_tools 目录 + 管理页分组）。
+type aiModule struct {
+	Key   string
+	Title string
+	Desc  string
 }
 
-func (t *aiTool) Name() string        { return t.name }
-func (t *aiTool) Description() string { return t.description }
+// aiModuleRegistry 功能模块注册表（顺序即目录展示顺序）。
+var aiModuleRegistry = []aiModule{
+	{aiModSystem, "系统概览", "主机 CPU/内存/磁盘/网络实时数据、磁盘占用分析、面板纳管节点列表"},
+	{aiModContainers, "容器管理", "容器列表/详情/日志/资源占用，创建容器，启停重启，删除，清理已停止容器"},
+	{aiModImages, "镜像管理", "镜像列表、拉取镜像、删除镜像、清理悬空镜像"},
+	{aiModNetworks, "容器网络", "网络列表、创建网络、删除网络"},
+	{aiModVolumes, "存储卷", "卷列表、创建卷、删除卷、清理未使用卷"},
+	{aiModCompose, "编排应用", "compose 项目列表/日志/配置读写、上线、服务启停重启、下线、删除项目"},
+	{aiModFiles, "文件管理", "主机文件浏览/搜索/读取，写入/建目录/改名/复制/压缩解压/权限，删除"},
+	{aiModProc, "进程服务", "进程与服务列表、终止进程、服务启停重启"},
+	{aiModExec, "命令执行", "主机任意 shell 命令执行与 AI 工作空间执行（最高风险，务必先向用户确认用途）"},
+	{aiModDB, "数据库", "实例/库/表/用户查询与只读 SQL，建库/建用户，行级增删改，删库/删用户"},
+	{aiModSites, "网站证书", "站点列表/访问日志/创建/配置编辑/启停/删除，证书列表/续签/删除"},
+	{aiModRuntime, "运行环境", "PHP 等运行时列表/详情、启停重启、删除"},
+	{aiModNetSec, "网络安全", "防火墙规则、NAT 转发、Hosts 记录、内网 DNS 记录的查询与增删"},
+	{aiModTasks, "计划任务", "计划任务列表/新建/立即执行/删除，任务中心状态与日志查询（应用安装/源码构建等异步任务跟踪）"},
+	{aiModStore, "应用商店", "按需求检索应用（如博客/图床/网盘/数据库）、查看应用详情与安装参数、一键安装/卸载、查看已装应用与升级状态"},
+	{aiModSrcBuild, "源码构建", "从 git 仓库预检语言栈与构建参数，创建源码构建部署任务（自动生成 compose 并构建跑通）"},
+	{aiModDiag, "诊断排查", "端口监听检查、HTTP 探测、DNS 解析验证、systemd 服务日志(journalctl)、从 URL 下载文件到服务器"},
+	{aiModAI, "AI 自身", "长期记忆沉淀与知识库深读（常驻工具，无需加载）"},
+}
+
+// aiModuleTitle 模块 key → 标题（未知 key 原样返回）。
+func aiModuleTitle(key string) string {
+	for _, m := range aiModuleRegistry {
+		if m.Key == key {
+			return m.Title
+		}
+	}
+	return key
+}
+
+// sceneAIModules 场景路径 → 预注入模块（用户所在功能页对话时该域工具直接可用，无需 load_tools）。
+func sceneAIModules(path string) []string {
+	switch {
+	case strings.HasPrefix(path, "/container"):
+		return []string{aiModContainers}
+	case strings.HasPrefix(path, "/docker"):
+		return []string{aiModImages, aiModNetworks, aiModVolumes}
+	case strings.HasPrefix(path, "/compose") || strings.HasPrefix(path, "/app"):
+		return []string{aiModCompose, aiModSrcBuild}
+	case strings.HasPrefix(path, "/store"):
+		return []string{aiModStore}
+	case strings.HasPrefix(path, "/sites") || strings.HasPrefix(path, "/certs"):
+		return []string{aiModSites}
+	case strings.HasPrefix(path, "/runtimes"):
+		return []string{aiModRuntime}
+	case strings.HasPrefix(path, "/database"):
+		return []string{aiModDB}
+	case strings.HasPrefix(path, "/tools"):
+		return []string{aiModTasks}
+	case strings.HasPrefix(path, "/system"):
+		return []string{aiModFiles, aiModProc, aiModNetSec}
+	}
+	return nil
+}
+
+// aiToolDef 单个工具声明：模块归属 + 风险分级 + JSON Schema 入参。
+type aiToolDef struct {
+	Name       string
+	Desc       string
+	Module     string
+	Risk       string
+	Parameters map[string]any
+	Fn         func(ctx context.Context, args string) (string, error)
+}
+
+// aiTool langchaingo tools.Tool 适配器。
+type aiTool struct{ def aiToolDef }
+
+func (t *aiTool) Name() string        { return t.def.Name }
+func (t *aiTool) Description() string { return t.def.Desc }
 func (t *aiTool) Call(ctx context.Context, input string) (string, error) {
-	return t.fn(ctx, input)
+	return t.def.Fn(ctx, input)
 }
 
-// builtinTools 内置系统工具全集（不受开关过滤，管理页与工具循环共用）。
-func (s *AIService) builtinTools(ctx context.Context) []tools.Tool {
-	run := func(command string) (string, error) {
-		node, nerr := s.nodes.ByID("local")
-		if nerr != nil {
-			return "", nerr
-		}
-		ac := agentclient.New(node.BaseURL, node.Token)
-		res, err := agentclient.DoJSON[dto.ExecReq, dto.ExecResp](ac, ctx, "POST", "/agent/v1/exec",
-			&dto.ExecReq{Command: command, TimeoutSecs: 120})
-		if err != nil {
-			return "", err
-		}
-		out := strings.TrimSpace(res.Output)
-		if res.ExitCode != 0 {
-			return fmt.Sprintf("exit=%d\n%s", res.ExitCode, out), nil
-		}
-		if out == "" {
-			out = "(无输出)"
-		}
-		return out, nil
-	}
+// ---- 入参解析与出参封装 ----
 
-	return []tools.Tool{
-		&aiTool{
-			name:        "get_overview",
-			description: "获取服务器实时概览：CPU/内存/磁盘/负载/网络速率。无参数，input 传空。",
-			fn: func(_ context.Context, _ string) (string, error) {
-				node, nerr := s.nodes.ByID("local")
-				if nerr != nil {
-					return "", nerr
-				}
-				ac := agentclient.New(node.BaseURL, node.Token)
-				ov, err := agentclient.GetJSON[dto.SystemOverview](ac, ctx, "/agent/v1/sysinfo/overview")
-				if err != nil {
-					return "", err
-				}
-				b, _ := json.Marshal(map[string]any{
-					"cpuPercent": ov.CPU.UsagePercent, "cores": ov.CPU.LogicalCount,
-					"memPercent": ov.Memory.UsagePercent, "memUsedGB": float64(ov.Memory.Used) / 1e9,
-					"load1": ov.Load.Load1, "disk": ov.Disks,
-					"rxSpeedBps": ov.Network.RxSpeedBps, "txSpeedBps": ov.Network.TxSpeedBps,
-				})
-				return string(b), nil
-			},
-		},
-		&aiTool{
-			name:        "list_containers",
-			description: "列出 Docker 容器（分页，勿假设一次返回全部）。input 可选 JSON：{\"search\":\"名称/镜像/ID 关键词\",\"state\":\"running 或 stopped\",\"sort\":\"name|state|image|created\",\"order\":\"asc|desc\",\"page\":1,\"pageSize\":20}，全部可省略（默认第 1 页 20 条，按名称排序）。返回 {total,page,pageSize,items}；total 超过当前页时按需翻页或加 search 收窄。",
-			fn: func(_ context.Context, input string) (string, error) {
-				node, nerr := s.nodes.ByID("local")
-				if nerr != nil {
-					return "", nerr
-				}
-				ac := agentclient.New(node.BaseURL, node.Token)
-				out, err := agentclient.GetJSON[[]dto.ContainerItem](ac, ctx, "/agent/v1/docker/containers")
-				if err != nil {
-					return "", err
-				}
-				items := []dto.ContainerItem{}
-				if out != nil {
-					items = *out
-				}
-				q := parseListQuery(input)
-				filtered := make([]dto.ContainerItem, 0, len(items))
-				for _, c := range items {
-					if !matchAny(q.Search, c.Name, c.Image, c.ID) {
-						continue
-					}
-					if q.State != "" && c.State != q.State {
-						continue
-					}
-					filtered = append(filtered, c)
-				}
-				var less func(a, b dto.ContainerItem) bool
-				switch q.Sort {
-				case "state":
-					less = func(a, b dto.ContainerItem) bool { return a.State < b.State }
-				case "image":
-					less = func(a, b dto.ContainerItem) bool { return a.Image < b.Image }
-				case "created":
-					less = func(a, b dto.ContainerItem) bool { return a.Created.Before(b.Created) }
-				default:
-					less = func(a, b dto.ContainerItem) bool { return a.Name < b.Name }
-				}
-				pageItems, total := paginateList(filtered, q, less)
-				b, _ := json.Marshal(map[string]any{"total": total, "page": q.Page, "pageSize": q.PageSize, "items": pageItems})
-				return string(b), nil
-			},
-		},
-		&aiTool{
-			name:        "container_action",
-			description: "对容器执行操作。input 为 JSON：{\"name\":\"容器名\",\"action\":\"start|stop|restart\"}",
-			fn: func(_ context.Context, input string) (string, error) {
-				var p struct {
-					Name   string `json:"name"`
-					Action string `json:"action"`
-				}
-				if err := json.Unmarshal([]byte(input), &p); err != nil {
-					return "", err
-				}
-				if p.Action != "start" && p.Action != "stop" && p.Action != "restart" {
-					return "", fmt.Errorf("不支持的操作: %s", p.Action)
-				}
-				return run(fmt.Sprintf("docker %s %s", p.Action, p.Name))
-			},
-		},
-		&aiTool{
-			name:        "list_sites",
-			description: "列出网站站点（分页/搜索）。input 可选 JSON：{\"search\":\"站点名/域名关键词\",\"sort\":\"name|type|domain\",\"order\":\"asc|desc\",\"page\":1,\"pageSize\":20}，全部可省略。返回 {total,page,pageSize,items}。",
-			fn: func(_ context.Context, input string) (string, error) {
-				sites := []model.Site{}
-				if err := s.db.Find(&sites).Error; err != nil {
-					return "", err
-				}
-				q := parseListQuery(input)
-				filtered := make([]model.Site, 0, len(sites))
-				for _, st := range sites {
-					if matchAny(q.Search, st.Name, st.Domain, st.Domains) {
-						filtered = append(filtered, st)
-					}
-				}
-				var less func(a, b model.Site) bool
-				switch q.Sort {
-				case "type":
-					less = func(a, b model.Site) bool { return a.Type < b.Type }
-				case "domain":
-					less = func(a, b model.Site) bool { return a.Domain < b.Domain }
-				default:
-					less = func(a, b model.Site) bool { return a.Name < b.Name }
-				}
-				pageItems, total := paginateList(filtered, q, less)
-				b, _ := json.Marshal(map[string]any{"total": total, "page": q.Page, "pageSize": q.PageSize, "items": pageItems})
-				return string(b), nil
-			},
-		},
-		&aiTool{
-			name:        "read_file",
-			description: "读取服务器上的文本文件内容（前 100KB）。input 为文件绝对路径。",
-			fn: func(_ context.Context, input string) (string, error) {
-				p := strings.TrimSpace(input)
-				if p == "" || !strings.HasPrefix(p, "/") {
-					return "", fmt.Errorf("需要绝对路径")
-				}
-				return run(fmt.Sprintf("head -c 102400 '%s'", strings.ReplaceAll(p, "'", "'\\''")))
-			},
-		},
-		&aiTool{
-			name:        "run_in_workspace",
-			description: "在 AI 工作空间沙箱目录（" + workspaceDir + "）中执行 shell 命令，用于运行脚本/代码/写文件。input 为 shell 命令字符串。",
-			fn: func(_ context.Context, input string) (string, error) {
-				command := strings.TrimSpace(input)
-				if command == "" {
-					return "", fmt.Errorf("命令为空")
-				}
-				return run(fmt.Sprintf("mkdir -p '%s' && cd '%s' && %s", workspaceDir, workspaceDir, command))
-			},
-		},
-		&aiTool{
-			name:        "list_database_instances",
-			description: "列出面板管理的数据库实例（分页/搜索）。input 可选 JSON：{\"search\":\"名称/类型/备注关键词\",\"sort\":\"name|type\",\"order\":\"asc|desc\",\"page\":1,\"pageSize\":20}，全部可省略。返回 {total,page,pageSize,items}；实例 ID 用于 query_database。",
-			fn: func(_ context.Context, input string) (string, error) {
-				out, err := s.dbSvc.List(ctx)
-				if err != nil {
-					return "", err
-				}
-				q := parseListQuery(input)
-				filtered := make([]map[string]any, 0, len(out))
-				for _, row := range out {
-					if matchAny(q.Search, fmt.Sprint(row["name"]), fmt.Sprint(row["type"]), fmt.Sprint(row["remark"]), fmt.Sprint(row["host"])) {
-						filtered = append(filtered, row)
-					}
-				}
-				var less func(a, b map[string]any) bool
-				switch q.Sort {
-				case "type":
-					less = func(a, b map[string]any) bool { return fmt.Sprint(a["type"]) < fmt.Sprint(b["type"]) }
-				default:
-					less = func(a, b map[string]any) bool { return fmt.Sprint(a["name"]) < fmt.Sprint(b["name"]) }
-				}
-				pageItems, total := paginateList(filtered, q, less)
-				b, _ := json.Marshal(map[string]any{"total": total, "page": q.Page, "pageSize": q.PageSize, "items": pageItems})
-				return string(b), nil
-			},
-		},
-		&aiTool{
-			name:        "query_database",
-			description: "对数据库实例执行只读 SQL（仅 SELECT/SHOW/DESC/EXPLAIN，最多 40 行）。input 为 JSON：{\"instanceId\":1,\"database\":\"库名\",\"sql\":\"SELECT ...\"}。先调 list_database_instances 获取实例 ID。",
-			fn: func(_ context.Context, input string) (string, error) {
-				var p struct {
-					InstanceID uint   `json:"instanceId"`
-					Database   string `json:"database"`
-					SQL        string `json:"sql"`
-				}
-				if err := json.Unmarshal([]byte(input), &p); err != nil {
-					return "", err
-				}
-				return s.aiQueryDatabase(ctx, p.InstanceID, p.Database, p.SQL)
-			},
-		},
-		&aiTool{
-			name:        "save_memory",
-			description: "把本次对话中值得长期记住的运维经验/用户偏好/服务器特性沉淀为记忆（下次对话自动可用）。input 为一句话记忆内容。",
-			fn: func(_ context.Context, input string) (string, error) {
-				content := strings.TrimSpace(input)
-				// 模型可能传 {"content":"..."} 或 {"input":"..."} 包装，取内层纯文本
-				var probe struct {
-					Content string `json:"content"`
-					Input   string `json:"input"`
-				}
-				if json.Unmarshal([]byte(content), &probe) == nil && (probe.Content != "" || probe.Input != "") {
-					if probe.Content != "" {
-						content = strings.TrimSpace(probe.Content)
-					} else {
-						content = strings.TrimSpace(probe.Input)
-					}
-				}
-				if content == "" {
-					return "", fmt.Errorf("记忆内容为空")
-				}
-				if err := s.db.Create(&model.AIMemory{Content: content}).Error; err != nil {
-					return "", err
-				}
-				return "已记住", nil
-			},
-		},
-		&aiTool{
-			name:        "read_knowledge",
-			description: "按需深读知识库（回答引用了知识片段后如需更多上下文时使用）。input JSON 二选一：{\"search\":\"关键词\"} 返回命中的条目/文档章节清单（标题+摘要）；{\"doc\":\"文档标题关键词\"} 返回最匹配文档的全文（截断 6000 字）。",
-			fn: func(_ context.Context, input string) (string, error) {
-				var p struct {
-					Search string `json:"search"`
-					Doc    string `json:"doc"`
-				}
-				raw := strings.TrimSpace(input)
-				_ = json.Unmarshal([]byte(raw), &p)
-				var wrapper struct {
-					Input string `json:"input"`
-				}
-				if json.Unmarshal([]byte(raw), &wrapper) == nil && wrapper.Input != "" {
-					_ = json.Unmarshal([]byte(wrapper.Input), &p)
-				}
-				if p.Doc != "" {
-					docs := []model.AIKnowledgeDoc{}
-					if err := s.db.Where("title LIKE ? OR filename LIKE ?", "%"+p.Doc+"%", "%"+p.Doc+"%").Order("id desc").Find(&docs).Error; err != nil {
-						return "", err
-					}
-					if len(docs) == 0 {
-						return "未找到匹配文档：" + p.Doc, nil
-					}
-					content := docs[0].Content
-					if len(content) > 6000 {
-						content = content[:6000] + "…（已截断，全文见知识库）"
-					}
-					b, _ := json.Marshal(map[string]any{"title": docs[0].Title, "content": content})
-					return string(b), nil
-				}
-				if p.Search == "" {
-					return "需提供 search 或 doc 参数", nil
-				}
-				hits := s.searchKnowledge(p.Search)
-				if len(hits) == 0 {
-					return "知识库无命中：" + p.Search, nil
-				}
-				var sb strings.Builder
-				for _, h := range hits {
-					summary := h.Body
-					if len(summary) > 160 {
-						summary = summary[:160] + "…"
-					}
-					sb.WriteString("【" + h.Title + "】" + summary + "\n")
-				}
-				sb.WriteString("（如需某文档全文，用 {\"doc\":\"标题关键词\"} 再查）")
-				return sb.String(), nil
-			},
-		},
+// unwrapArgs 兼容历史形态：模型把入参包成 {"input":"<json 字符串>"} 时解开取内层。
+func unwrapArgs(input string) string {
+	s := strings.TrimSpace(input)
+	var probe map[string]json.RawMessage
+	if json.Unmarshal([]byte(s), &probe) == nil {
+		if inner, ok := probe["input"]; ok && len(probe) == 1 {
+			return string(inner)
+		}
 	}
+	return s
 }
 
-// toolsFor 组装工具集：内置系统工具按开关过滤 + MCP 工具。
-func (s *AIService) toolsFor(ctx context.Context) []tools.Tool {
-	flags := s.ToolFlags()
-	out := make([]tools.Tool, 0, len(s.builtinTools(ctx)))
-	for _, t := range s.builtinTools(ctx) {
-		if enabled, ok := flags[t.Name()]; !ok || enabled {
-			out = append(out, t)
-		}
+// parseToolArgs 入参 JSON 解析（先解 wrapper 再反序列化）。
+func parseToolArgs[T any](input string) (T, error) {
+	var v T
+	if err := json.Unmarshal([]byte(unwrapArgs(input)), &v); err != nil {
+		return v, fmt.Errorf("入参应为 JSON 对象: %v", err)
 	}
-	return out
+	return v, nil
 }
 
-// ToolFlags 工具开关表（未记录 = 启用）。
+// toolOut 工具结果 JSON 化。
+func toolOut(v any) (string, error) {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return "", err
+	}
+	return string(b), nil
+}
+
+// truncText 按字符截断（模型上下文友好）。
+func truncText(s string, n int) string {
+	r := []rune(s)
+	if len(r) <= n {
+		return s
+	}
+	return string(r[:n]) + "…(已截断)"
+}
+
+// ---- JSON Schema 构造 ----
+
+func schObj(props map[string]any, required ...string) map[string]any {
+	if required == nil {
+		required = []string{}
+	}
+	return map[string]any{"type": "object", "properties": props, "required": required}
+}
+
+func schStr(desc string) map[string]any  { return map[string]any{"type": "string", "description": desc} }
+func schInt(desc string) map[string]any  { return map[string]any{"type": "integer", "description": desc} }
+func schBool(desc string) map[string]any { return map[string]any{"type": "boolean", "description": desc} }
+
+func schEnum(desc string, values ...string) map[string]any {
+	return map[string]any{"type": "string", "description": desc, "enum": values}
+}
+
+func schArr(desc string, items map[string]any) map[string]any {
+	return map[string]any{"type": "array", "description": desc, "items": items}
+}
+
+// ---- agent 通道助手 ----
+
+// acLocal 本地节点 agentclient。
+func (s *AIService) acLocal() (*agentclient.Client, error) {
+	node, err := s.nodes.ByID("local")
+	if err != nil {
+		return nil, err
+	}
+	return agentclient.New(node.BaseURL, node.Token), nil
+}
+
+// hostExec 经 agent 通道在主机执行 shell（默认 120s 超时）。
+func (s *AIService) hostExec(ctx context.Context, command string) (string, error) {
+	ac, err := s.acLocal()
+	if err != nil {
+		return "", err
+	}
+	res, err := agentclient.DoJSON[dto.ExecReq, dto.ExecResp](ac, ctx, "POST", "/agent/v1/exec",
+		&dto.ExecReq{Command: command, TimeoutSecs: 120})
+	if err != nil {
+		return "", err
+	}
+	out := strings.TrimSpace(res.Output)
+	if res.ExitCode != 0 {
+		return fmt.Sprintf("exit=%d\n%s", res.ExitCode, out), nil
+	}
+	if out == "" {
+		out = "(无输出)"
+	}
+	return out, nil
+}
+
+// agentGetJSON 调 agent JSON 接口（包级泛型函数：Go 方法不允许类型参数）。
+func agentGetJSON[T any](s *AIService, ctx context.Context, path string) (*T, error) {
+	ac, err := s.acLocal()
+	if err != nil {
+		return nil, err
+	}
+	return agentclient.GetJSON[T](ac, ctx, path)
+}
+
+// agentPostJSON 调 agent JSON 接口（POST）。
+func agentPostJSON[Req any, Resp any](s *AIService, ctx context.Context, path string, body *Req) (*Resp, error) {
+	ac, err := s.acLocal()
+	if err != nil {
+		return nil, err
+	}
+	return agentclient.DoJSON[Req, Resp](ac, ctx, "POST", path, body)
+}
+
+// agentText 调 agent 文本响应端点（容器/compose 日志等非信封端点）。
+func (s *AIService) agentText(ctx context.Context, path string) (string, error) {
+	ac, err := s.acLocal()
+	if err != nil {
+		return "", err
+	}
+	req, err := ac.NewRequest(ctx, http.MethodGet, path, nil)
+	if err != nil {
+		return "", err
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("agent HTTP %d", resp.StatusCode)
+	}
+	b, err := io.ReadAll(io.LimitReader(resp.Body, 192<<10))
+	if err != nil {
+		return "", err
+	}
+	out := strings.TrimSpace(string(b))
+	if out == "" {
+		out = "(无日志)"
+	}
+	return out, nil
+}
+
+// hostExecTimeout 带自定义超时的主机命令执行（上限 300s）。
+func (s *AIService) hostExecTimeout(ctx context.Context, command string, timeoutSecs int) (string, error) {
+	if timeoutSecs < 1 || timeoutSecs > 300 {
+		timeoutSecs = 120
+	}
+	ac, err := s.acLocal()
+	if err != nil {
+		return "", err
+	}
+	res, err := agentclient.DoJSON[dto.ExecReq, dto.ExecResp](ac, ctx, "POST", "/agent/v1/exec",
+		&dto.ExecReq{Command: command, TimeoutSecs: timeoutSecs})
+	if err != nil {
+		return "", err
+	}
+	out := strings.TrimSpace(res.Output)
+	if res.ExitCode != 0 {
+		return fmt.Sprintf("exit=%d\n%s", res.ExitCode, out), nil
+	}
+	if out == "" {
+		out = "(无输出)"
+	}
+	return out, nil
+}
+
+// agentDeleteJSON 调 agent DELETE 接口（DockerExt 透传通道）。
+func (s *AIService) agentDeleteJSON(ctx context.Context, path string) (json.RawMessage, error) {
+	return s.dockerX.Delete(ctx, path)
+}
+
+// ---- ask 确认（一次性审批，fail-closed：超时/取消/无应答一律拒绝） ----
+
+// aiAskRequest 待用户确认的危险操作。
+type aiAskRequest struct {
+	ch chan bool
+}
+
+// aiQuestionRequest 待用户回答的交互提问（ask_user 工具）。
+type aiQuestionRequest struct {
+	ch chan string // 答案 JSON 文本
+}
+
+// ResolveAsk 落用户的确认/拒绝结果；ask 不存在（已超时清理）返回 false。
+func (s *AIService) ResolveAsk(id string, approve bool) bool {
+	v, ok := s.pendingAsks.Load(id)
+	if !ok {
+		return false
+	}
+	req := v.(*aiAskRequest)
+	select {
+	case req.ch <- approve:
+	default:
+	}
+	return true
+}
+
+// ResolveQuestion 落用户的提问回答（answers JSON 文本）；问题不存在（已取消）返回 false。
+func (s *AIService) ResolveQuestion(id string, answers string) bool {
+	v, ok := s.pendingQuestions.Load(id)
+	slog.Info("ai ask-question received", "id", id, "found", ok)
+	if !ok {
+		return false
+	}
+	req := v.(*aiQuestionRequest)
+	select {
+	case req.ch <- answers:
+	default:
+	}
+	return true
+}
+
+func randAskID() string {
+	b := make([]byte, 8)
+	_, _ = rand.Read(b)
+	return hex.EncodeToString(b)
+}
+
+// AskMode 当前确认模式。
+func (s *AIService) AskMode() string {
+	m := s.settings.Get(settingAIAskMode, aiAskStrict)
+	if m != aiAskStrict && m != aiAskDangerOnly {
+		return aiAskStrict
+	}
+	return m
+}
+
+// SetAskMode 设置确认模式（strict / danger_only）。
+func (s *AIService) SetAskMode(mode string) error {
+	if mode != aiAskStrict && mode != aiAskDangerOnly {
+		return errWrapAI("确认模式仅支持 strict / danger_only")
+	}
+	return s.settings.Set(settingAIAskMode, mode)
+}
+
+// auditOperation 写/danger 操作审计落库（含被拒绝/超时的 ask）。
+func (s *AIService) auditOperation(def aiToolDef, args, result, errMsg string, success bool, action string) {
+	merged := maskSensitive(strings.TrimSpace(strings.TrimSpace(result) + "\n" + strings.TrimSpace(errMsg)))
+	_ = s.db.Create(&model.AIOperationLog{
+		Tool: def.Name, Module: def.Module, Risk: def.Risk, Action: action,
+		Args: truncText(args, 2000), Result: truncText(merged, 480), Success: success,
+	}).Error
+}
+
+// ---- 工具目录与聚合 ----
+
+// aiToolsAll 按模块聚合的全量工具声明（不含 load_tools 元工具）。
+func (s *AIService) aiToolsAll(ctx context.Context) []aiToolDef {
+	defs := make([]aiToolDef, 0, 96)
+	defs = append(defs, s.aiToolsSystem(ctx)...)
+	defs = append(defs, s.aiToolsContainers(ctx)...)
+	defs = append(defs, s.aiToolsImages(ctx)...)
+	defs = append(defs, s.aiToolsNetworks(ctx)...)
+	defs = append(defs, s.aiToolsVolumes(ctx)...)
+	defs = append(defs, s.aiToolsCompose(ctx)...)
+	defs = append(defs, s.aiToolsFiles(ctx)...)
+	defs = append(defs, s.aiToolsProc(ctx)...)
+	defs = append(defs, s.aiToolsExec(ctx)...)
+	defs = append(defs, s.aiToolsDatabases(ctx)...)
+	defs = append(defs, s.aiToolsDBMore(ctx)...)
+	defs = append(defs, s.aiToolsSites(ctx)...)
+	defs = append(defs, s.aiToolsRuntimes(ctx)...)
+	defs = append(defs, s.aiToolsNetSec(ctx)...)
+	defs = append(defs, s.aiToolsTasks(ctx)...)
+	defs = append(defs, s.aiToolsStore(ctx)...)
+	defs = append(defs, s.aiToolsSrcBuild(ctx)...)
+	defs = append(defs, s.aiToolsDiag(ctx)...)
+	defs = append(defs, s.aiToolsPanelAI(ctx)...)
+	return defs
+}
+
+// ToolFlags 工具开关表（无记录 = 启用）。
 func (s *AIService) ToolFlags() map[string]bool {
 	rows := []model.AIToolFlag{}
 	_ = s.db.Find(&rows).Error
@@ -776,7 +928,140 @@ func (s *AIService) ToolFlags() map[string]bool {
 	return m
 }
 
-// ListTools 系统工具清单（管理页：名称/描述/开关）。
+// aiToolsByModule 应用用户开关过滤后按模块聚合。
+func (s *AIService) aiToolsByModule(ctx context.Context) map[string][]aiToolDef {
+	flags := s.ToolFlags()
+	m := make(map[string][]aiToolDef, len(aiModuleRegistry))
+	for _, d := range s.aiToolsAll(ctx) {
+		if enabled, ok := flags[d.Name]; ok && !enabled {
+			continue
+		}
+		m[d.Module] = append(m[d.Module], d)
+	}
+	return m
+}
+
+// loadToolsDef 目录元工具：模型按需展开模块工具集（expanded 随会话循环存活，Fn 内更新）。
+func (s *AIService) loadToolsDef(expanded map[string]bool, byMod map[string][]aiToolDef) aiToolDef {
+	var catalog strings.Builder
+	for _, m := range aiModuleRegistry {
+		state := ""
+		if expanded[m.Key] {
+			state = "（已加载）"
+		}
+		fmt.Fprintf(&catalog, "- %s | %s | %s%s\n", m.Key, m.Title, m.Desc, state)
+	}
+	return aiToolDef{
+		Name:   "load_tools",
+		Module: aiModMeta,
+		Risk:   aiRiskRead,
+		Desc: "加载面板功能模块的工具集（当前会话默认只有常驻工具：系统概览/记忆/知识库等）。\n" +
+			"模块目录（key | 名称 | 能力）：\n" + catalog.String() +
+			"input 为 JSON：{\"module\":\"模块key\"}，多个用逗号分隔（如 \"databases,files\"）。加载成功后相关工具在后续直接可用；与用户当前所在页面相关的模块通常已预加载。",
+		Parameters: schObj(map[string]any{
+			"module": schStr("要加载的模块 key，多个用英文逗号分隔"),
+		}, "module"),
+		Fn: func(_ context.Context, input string) (string, error) {
+			var p struct {
+				Module string `json:"module"`
+			}
+			if err := json.Unmarshal([]byte(unwrapArgs(input)), &p); err != nil {
+				return "", err
+			}
+			p.Module = strings.TrimSpace(p.Module)
+			if p.Module == "" {
+				return "", fmt.Errorf("缺少 module 参数")
+			}
+			known := map[string]bool{}
+			for _, m := range aiModuleRegistry {
+				known[m.Key] = true
+			}
+			var loaded, missing []string
+			for _, key := range strings.Split(p.Module, ",") {
+				key = strings.TrimSpace(key)
+				if key == "" || key == aiModMeta {
+					continue
+				}
+				if !known[key] {
+					missing = append(missing, key)
+					continue
+				}
+				if !expanded[key] {
+					expanded[key] = true
+				}
+				if defs := byMod[key]; len(defs) > 0 {
+					loaded = append(loaded, fmt.Sprintf("%s(%d 个)", key, len(defs)))
+				} else {
+					loaded = append(loaded, key+"（模块内工具全部被用户停用）")
+				}
+			}
+			msg := "已加载模块工具：" + strings.Join(loaded, "、") + "，后续可直接调用。"
+			if len(missing) > 0 {
+				msg += " 未知的模块 key：" + strings.Join(missing, "、") + "。"
+			}
+			return msg, nil
+		},
+	}
+}
+
+// toolDefsFor 会话工具集：load_tools + 常驻（system/panel_ai）+ 场景预注入 + 已展开模块，全部经开关过滤。
+// read_only 模式只保留 read 级工具（write/danger 不注入）。
+func (s *AIService) toolDefsFor(ctx context.Context, scenePath string, expanded map[string]bool, mode string) []aiToolDef {
+	byMod := s.aiToolsByModule(ctx)
+	modules := []string{aiModSystem, aiModAI}
+	modules = append(modules, sceneAIModules(scenePath)...)
+	for key := range expanded {
+		modules = append(modules, key)
+	}
+	seen := map[string]bool{aiModMeta: true}
+	defs := []aiToolDef{s.loadToolsDef(expanded, byMod)}
+	for _, key := range modules {
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+		defs = append(defs, byMod[key]...)
+	}
+	if mode == aiModeReadOnly {
+		readonly := defs[:0]
+		for _, d := range defs {
+			if d.Risk == aiRiskRead || d.Name == "load_tools" || d.Name == "ask_user" {
+				readonly = append(readonly, d)
+			}
+		}
+		defs = readonly
+	}
+	return defs
+}
+
+// builtinTools 兼容旧接口（管理页清单/开关过滤基准）：全量工具的 langchaingo 形态。
+// 模块按 aiModuleRegistry 注册顺序排列（map 遍历无序，直接迭代会导致管理页分组乱序）。
+func (s *AIService) builtinTools(ctx context.Context) []tools.Tool {
+	byMod := s.aiToolsByModule(ctx)
+	defs := []aiToolDef{s.loadToolsDef(map[string]bool{}, byMod)}
+	for _, m := range aiModuleRegistry {
+		defs = append(defs, byMod[m.Key]...)
+	}
+	out := make([]tools.Tool, 0, len(defs))
+	for i := range defs {
+		out = append(out, &aiTool{def: defs[i]})
+	}
+	return out
+}
+
+// findToolDef 在会话工具集中定位工具声明。
+func findToolDef(defs []aiToolDef, name string) (aiToolDef, bool) {
+	for _, d := range defs {
+		if d.Name == name {
+			return d, true
+		}
+	}
+	return aiToolDef{}, false
+}
+
+// ---- 管理页接口 ----
+
+// ListTools 系统工具清单（名称/描述/模块/风险/开关）。
 func (s *AIService) ListTools() []map[string]any {
 	flags := s.ToolFlags()
 	builtins := s.builtinTools(context.Background())
@@ -786,8 +1071,10 @@ func (s *AIService) ListTools() []map[string]any {
 		if v, ok := flags[t.Name()]; ok {
 			enabled = v
 		}
+		def := t.(*aiTool).def
 		out = append(out, map[string]any{
-			"name": t.Name(), "description": t.Description(), "enabled": enabled,
+			"name": def.Name, "description": def.Desc, "module": def.Module,
+			"moduleTitle": aiModuleTitle(def.Module), "risk": def.Risk, "enabled": enabled,
 		})
 	}
 	return out
@@ -796,11 +1083,14 @@ func (s *AIService) ListTools() []map[string]any {
 // SetToolFlag 设置工具开关。
 func (s *AIService) SetToolFlag(name string, enabled bool) error {
 	known := false
-	for _, t := range s.builtinTools(context.Background()) {
-		if t.Name() == name {
+	for _, t := range s.aiToolsAll(context.Background()) {
+		if t.Name == name {
 			known = true
 			break
 		}
+	}
+	if name == "load_tools" {
+		known = true
 	}
 	if !known {
 		return errWrapAI("未知工具: " + name)
@@ -811,4 +1101,19 @@ func (s *AIService) SetToolFlag(name string, enabled bool) error {
 		return err
 	}
 	return s.db.Model(&model.AIToolFlag{}).Where("name = ?", name).Update("enabled", enabled).Error
+}
+
+// ListOperationLogs 操作审计分页（写/danger 工具的执行与 ask 结果）。
+func (s *AIService) ListOperationLogs(page, pageSize int) map[string]any {
+	if page < 1 {
+		page = 1
+	}
+	if pageSize < 1 || pageSize > 100 {
+		pageSize = 20
+	}
+	var total int64
+	_ = s.db.Model(&model.AIOperationLog{}).Count(&total).Error
+	rows := []model.AIOperationLog{}
+	_ = s.db.Order("id desc").Limit(pageSize).Offset((page - 1) * pageSize).Find(&rows).Error
+	return map[string]any{"total": total, "page": page, "pageSize": pageSize, "items": rows}
 }

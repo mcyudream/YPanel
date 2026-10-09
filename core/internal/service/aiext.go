@@ -20,7 +20,7 @@ func (s *AIService) aiQueryDatabase(ctx context.Context, instanceID uint, databa
 	if s.dbSvc == nil {
 		return "", fmt.Errorf("数据库服务未就绪")
 	}
-	res, err := s.adminSvc.Query(ctx, instanceID, database, sqlText)
+	res, err := s.adminSvc.RunQuery(ctx, instanceID, database, sqlText, 200)
 	if err != nil {
 		return "", err
 	}
@@ -56,39 +56,6 @@ func (s *AIService) listDatabaseInstances(ctx context.Context) (string, error) {
 	}
 	b, _ := json.Marshal(out)
 	return string(b), nil
-}
-
-// toolsFor 追加：数据库问答两工具（追加进 toolsFor 返回切片之后调用）。
-func (s *AIService) aiDatabaseTools(ctx context.Context) []aiTool {
-	return []aiTool{
-		{
-			name:        "list_database_instances",
-			description: "列出面板管理的全部数据库实例（id/类型/端口）。无参数，input 传空。",
-			fn: func(_ context.Context, _ string) (string, error) {
-				out, err := s.dbSvc.List(ctx)
-				if err != nil {
-					return "", err
-				}
-				b, _ := json.Marshal(out)
-				return string(b), nil
-			},
-		},
-		{
-			name:        "query_database",
-			description: "对指定数据库实例执行只读 SQL 查询（仅 SELECT/SHOW/DESC/EXPLAIN 白名单，最多 40 行）。input 为 JSON：{\"instanceId\":1,\"database\":\"库名\",\"sql\":\"SELECT ...\"}",
-			fn: func(_ context.Context, input string) (string, error) {
-				var p struct {
-					InstanceID uint   `json:"instanceId"`
-					Database   string `json:"database"`
-					SQL        string `json:"sql"`
-				}
-				if err := json.Unmarshal([]byte(input), &p); err != nil {
-					return "", err
-				}
-				return s.aiQueryDatabase(ctx, p.InstanceID, p.Database, p.SQL)
-			},
-		},
-	}
 }
 
 // ---- 长期记忆（AI 自动沉淀的运维经验/用户偏好，与手动知识库区分） ----

@@ -269,6 +269,12 @@ func (a *Auth) ChangePassword(id uint, oldPwd, newPwd string) error {
 	if bcrypt.CompareHashAndPassword([]byte(u.Password), []byte(oldPwd)) != nil {
 		return errs.New(errs.CodeOldPassWrong, "error.oldPassWrong", "原密码错误")
 	}
+	// M40：密码策略（未配置则不限制）
+	if a.security != nil {
+		if err := a.security.CheckPasswordPolicy(newPwd); err != nil {
+			return err
+		}
+	}
 	hash, err := bcrypt.GenerateFromPassword([]byte(newPwd), bcrypt.DefaultCost)
 	if err != nil {
 		return err

@@ -7,7 +7,7 @@
 //
 // kind：app 普通应用 / service 面板功能依赖的环境服务 / middleware 可共享复用中间件。
 // 版本包形态：downloadUrl（远端 tar.gz，agent 端下载解压）或 package（yp-git 仓库内目录，core 读文件写入）。
-// 安装 = compose 目录 + .env 渲染 + docker compose up（接入 1panel-network，与站点反代互通）。
+// 安装 = compose 目录 + .env 渲染 + docker compose up（接入统一网络，与站点反代互通；支持可选网络/时区/hosts）。
 package service
 
 import (
@@ -29,6 +29,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/goccy/go-yaml"
 	"gorm.io/gorm"
 
 	"github.com/ypanel/core/internal/agentclient"
@@ -102,6 +103,9 @@ type ypApps struct {
 	Arch         []string   `json:"arch"`
 	Logo         string     `json:"logo"`
 	Readme       string     `json:"readme"`
+	Website      string     `json:"website"`   // 官网
+	SourceURL    string     `json:"sourceUrl"` // 开源社区
+	Document     string     `json:"document"`  // 文档
 	ReverseProxy string     `json:"reverseProxy"`
 	Versions     []ypVerion `json:"versions"`
 }
@@ -150,21 +154,36 @@ type StoreAppItem struct {
 	InstallInfo  *model.AppStoreInstall `json:"installInfo,omitempty"`
 }
 
+// PanelNetwork 面板统一容器网络：商店应用/运行环境/数据库/nginx 全部接入，容器名互通。
+const PanelNetwork = "ypanel_default"
+
+// ensurePanelNetwork 确保统一网络存在（幂等）。
+func ensurePanelNetwork(ctx context.Context, ac *agentclient.Client) error {
+	_, err := agentclient.DoJSON[dto.ExecReq, dto.ExecResp](ac, ctx, "POST", "/agent/v1/exec",
+		&dto.ExecReq{Command: "docker network create " + PanelNetwork + " 2>/dev/null; true", TimeoutSecs: 60})
+	return err
+}
+
 // StoreService 商店服务。
 type StoreService struct {
 	db    *gorm.DB
 	nodes *NodeService
 	sites *SiteService
 	tasks *TaskService
+	dbs   *DatabaseService
 	http  *http.Client
 	mu    sync.Mutex
 	dir   string // 源缓存目录根 <data>/store-sources
+
+	hostIPOnce sync.Once
+	hostIP     string
+	hostIPErr  error
 }
 
 // NewStoreService 创建（dataDir 为面板数据目录；sites 用于一键反代、tasks 用于任务中心，均可为 nil）。
-func NewStoreService(db *gorm.DB, nodes *NodeService, sites *SiteService, tasks *TaskService, dataDir string) *StoreService {
+func NewStoreService(db *gorm.DB, nodes *NodeService, sites *SiteService, tasks *TaskService, dbs *DatabaseService, dataDir string) *StoreService {
 	return &StoreService{
-		db: db, nodes: nodes, sites: sites, tasks: tasks,
+		db: db, nodes: nodes, sites: sites, tasks: tasks, dbs: dbs,
 		http: &http.Client{Timeout: 5 * time.Minute},
 		dir:  filepath.Join(dataDir, storeSourceDirName),
 	}
@@ -394,7 +413,13 @@ func (s *StoreService) syncOnePanel(ctx context.Context, src *model.AppStoreSour
 			Icon         string   `json:"icon"`
 			Tags         []string `json:"tags"`
 			LastModified int64    `json:"lastModified"`
-			Versions     []struct {
+			AdditionalProperties struct {
+				Website       string   `json:"website"`
+				GitHub        string   `json:"github"`
+				Document      string   `json:"document"`
+				Architectures []string `json:"architectures"`
+			} `json:"additionalProperties"`
+			Versions []struct {
 				ID          string `json:"id"`
 				Name        string `json:"name"`
 				DownloadURL string `json:"downloadUrl"`
@@ -420,7 +445,12 @@ func (s *StoreService) syncOnePanel(ctx context.Context, src *model.AppStoreSour
 			Key: a.ID, Name: a.Name, Title: a.Title,
 			Description: truncStr(a.Description, 500), ReadMe: a.ReadMe,
 			IconURL: a.Icon, Tags: strings.Join(a.Tags, ","),
-			Kind: "app", VersionsJSON: marshalJSON(versions), LatestVersion: latestVersionOf(versions),
+			Kind: "app",
+			Website: truncStr(a.AdditionalProperties.Website, 500),
+			SourceURL: truncStr(a.AdditionalProperties.GitHub, 500),
+			Document: truncStr(a.AdditionalProperties.Document, 500),
+			Arch: strings.Join(a.AdditionalProperties.Architectures, ","),
+			VersionsJSON: marshalJSON(versions), LatestVersion: latestVersionOf(versions),
 			LastModified: a.LastModified,
 		})
 	}
@@ -517,6 +547,7 @@ func (s *StoreService) syncYpManifest(src *model.AppStoreSource, raw []byte, loc
 			Description: truncStr(a.Description, 500), ReadMe: readme,
 			IconURL: iconURL, Tags: a.Category, Kind: kind, Author: a.Author,
 			Arch: strings.Join(a.Arch, ","), ReverseProxy: a.ReverseProxy,
+			Website: truncStr(a.Website, 500), SourceURL: truncStr(a.SourceURL, 500), Document: truncStr(a.Document, 500),
 			VersionsJSON: marshalJSON(versions), LatestVersion: latestVersionOf(versions),
 		})
 	}
@@ -548,6 +579,10 @@ func (s *StoreService) gitCheckout(ctx context.Context, src *model.AppStoreSourc
 		ref := "HEAD"
 		if branch != "" {
 			ref = branch
+		}
+		// 源地址/凭据可能已编辑：先同步 origin 指向（clone 时缓存的旧地址/旧 token），否则 fetch 仍走旧源
+		if err := s.gitRun(ctx, dir, "remote", "set-url", "origin", url); err != nil {
+			return "", errs.Wrap(errs.ErrAgentUnreach, "源仓库 remote 更新失败: "+err.Error())
 		}
 		if err := s.gitRun(ctx, dir, "fetch", "--depth", "1", "origin", ref); err != nil {
 			return "", errs.Wrap(errs.ErrAgentUnreach, "源仓库 fetch 失败: "+err.Error())
@@ -709,7 +744,8 @@ func (s *StoreService) Tags() []map[string]any {
 		enabled[src.ID] = src.Enabled
 	}
 	var rows []model.AppStoreApp
-	_ = s.db.Select("tags").Find(&rows).Error
+	// source_id 必须一并查出，否则启用源过滤会把全部行（SourceID=0）丢弃
+	_ = s.db.Select("source_id", "tags").Find(&rows).Error
 	counts := map[string]int{}
 	for _, r := range rows {
 		if !enabled[r.SourceID] {
@@ -791,12 +827,155 @@ func (s *StoreService) AppIcon(sourceID uint, key string) ([]byte, string, error
 
 // StoreInstallInput 安装入参。
 type StoreInstallInput struct {
-	SourceID uint              `json:"sourceId" binding:"required"`
-	Key      string            `json:"key" binding:"required"`
-	Version  string            `json:"version"`
-	Name     string            `json:"name" binding:"required"`
-	Params   map[string]string `json:"params"`
-	Domain   string            `json:"domain"` // 可选：安装后一键反代域名
+	SourceID uint           `json:"sourceId" binding:"required"`
+	Key      string         `json:"key" binding:"required"`
+	Version  string         `json:"version"`
+	Name     string         `json:"name" binding:"required"`
+	Params   map[string]any `json:"params"` // 宽容类型：数字型字段（端口等）可能以 number 提交
+	Domain   string         `json:"domain"` // 可选：安装后一键反代域名
+	// 高级选项
+	Network        string   `json:"network"`        // 接入网络；空 = ypanel_default
+	CreateNetwork  bool     `json:"createNetwork"`  // network 不存在时创建
+	Timezone       string   `json:"timezone"`       // 非空注入 TZ 环境变量（compose override）
+	ExtraHosts     []string `json:"extraHosts"`     // 额外 hosts 映射（host:ip，compose override extra_hosts）
+	MountHostsFile bool     `json:"mountHostsFile"` // 挂载宿主机 /etc/hosts 到容器（实时同步）
+
+	// 使用已有数据库实例（M32）：识别到应用包的数据库 host 参数后，把应用装到指定纳管实例上
+	ExternalDB *StoreExternalDB `json:"externalDB,omitempty"`
+}
+
+// StoreExternalDB 安装时外接数据库实例选项。
+type StoreExternalDB struct {
+	InstanceID      uint   `json:"instanceId" binding:"required"`
+	Database        string `json:"database"`        // 目标库名；空 = 应用 key
+	User            string `json:"user"`            // 应用账号名；空 = <key>_user
+	CreateIfMissing bool   `json:"createIfMissing"` // 库/账号不存在时自动创建
+}
+
+// dbFieldSet 应用包数据库参数键集（由 formFields 识别）。
+type dbFieldSet struct {
+	Host, Port, Name, User, Password string
+}
+
+var networkNamePattern = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$`)
+
+var tzPattern = regexp.MustCompile(`^[A-Za-z0-9_+\-/]{1,64}$`)
+
+var extraHostPattern = regexp.MustCompile(`^[a-zA-Z0-9._-]{1,253}:[0-9a-fA-F.:]{1,45}$`)
+
+// resolveInstallNetwork 解析安装目标网络（校验/按需创建），返回网络名。
+func (s *StoreService) resolveInstallNetwork(ctx context.Context, ac *agentclient.Client, in StoreInstallInput) (string, error) {
+	name := strings.TrimSpace(in.Network)
+	if name == "" {
+		name = PanelNetwork
+	}
+	if !networkNamePattern.MatchString(name) {
+		return "", errs.Wrap(errs.ErrBadRequest, "网络名不合法（字母/数字/中划线/下划线）")
+	}
+	out, err := agentclient.DoJSON[dto.ExecReq, dto.ExecResp](ac, ctx, "POST", "/agent/v1/exec",
+		&dto.ExecReq{Command: "docker network inspect " + name + " >/dev/null 2>&1 && echo ok || echo missing", TimeoutSecs: 60})
+	if err != nil {
+		return "", err
+	}
+	if name == "host" {
+		return name, nil // host 网络模式由 compose 改写处理，不参与 network connect
+	}
+	exists := strings.Contains(out.Output, "ok")
+	if !exists {
+		if name == PanelNetwork || in.CreateNetwork {
+			if _, cerr := agentclient.DoJSON[dto.ExecReq, dto.ExecResp](ac, ctx, "POST", "/agent/v1/exec",
+				&dto.ExecReq{Command: "docker network create " + name, TimeoutSecs: 60}); cerr != nil {
+				return "", errs.Wrap(errs.ErrBadRequest, "创建网络失败: "+cerr.Error())
+			}
+		} else {
+			return "", errs.Wrap(errs.ErrBadRequest, "网络不存在: "+name+"（可勾选创建）")
+		}
+	}
+	return name, nil
+}
+
+// writeComposeOverride 生成 docker-compose.override.yml（TZ / extra_hosts / 挂载主机 hosts，compose up 自动合并全部服务）。
+func (s *StoreService) writeComposeOverride(ctx context.Context, logf TaskLogf, ac *agentclient.Client, dir, tz string, hosts []string, mountHostsFile bool) error {
+	if tz == "" && len(hosts) == 0 && !mountHostsFile {
+		return nil
+	}
+	// 服务名由 agent 端 docker compose config --services 动态获取，逐服务注入 override
+	var script strings.Builder
+	script.WriteString(`svcs=$(docker compose config --services) && { echo "services:"; for s in $svcs; do echo "  $s:";`)
+	if tz != "" {
+		script.WriteString(` echo "    environment:"; echo "      TZ: ` + tz + `";`)
+	}
+	if len(hosts) > 0 {
+		script.WriteString(` echo "    extra_hosts:";`)
+		for _, h := range hosts {
+			script.WriteString(` printf '      - "%s"\n' "` + h + `";`)
+		}
+	}
+	if mountHostsFile {
+		// 只读挂载宿主机 /etc/hosts（compose volumes 列表与原服务挂载合并，容器内与主机 hosts 实时同步）
+		script.WriteString(` echo "    volumes:"; echo "      - /etc/hosts:/etc/hosts:ro";`)
+	}
+	script.WriteString(` done; } > docker-compose.override.yml`)
+	out, err := agentclient.DoJSON[dto.ExecReq, dto.ExecResp](ac, ctx, "POST", "/agent/v1/exec",
+		&dto.ExecReq{Command: fmt.Sprintf("cd %s && %s", dir, script.String()), TimeoutSecs: 120})
+	if err != nil {
+		return err
+	}
+	if out.ExitCode != 0 {
+		return errs.Wrapc(errs.CodeFileOpFailed, "生成 override 失败: "+tailOutput(out.Output, 400))
+	}
+	logf("info", "已注入 compose override（时区/hosts）")
+	return nil
+}
+
+// rewriteComposeHostNetwork 把 compose 改写为 host 网络模式：全部服务移除 networks、注入 network_mode: host。
+// 1p 包 compose 结构规整（机械生成），标准 YAML 解析改写可靠。
+func (s *StoreService) rewriteComposeHostNetwork(ctx context.Context, ac *agentclient.Client, composePath string) error {
+	out, err := agentclient.GetJSON[dto.FileReadResp](ac, ctx, "/agent/v1/files/read?path="+escapeURL2(composePath))
+	if err != nil {
+		return errs.Wrap(errs.ErrBadRequest, "读取 compose 失败: "+err.Error())
+	}
+	var doc map[string]any
+	if err := yaml.Unmarshal([]byte(out.Content), &doc); err != nil {
+		return errs.Wrap(errs.ErrBadRequest, "compose 解析失败: "+err.Error())
+	}
+	services, _ := doc["services"].(map[string]any)
+	if len(services) == 0 {
+		return errs.Wrap(errs.ErrBadRequest, "compose 内无 services 定义")
+	}
+	for name, raw := range services {
+		svc, ok := raw.(map[string]any)
+		if !ok {
+			continue
+		}
+		delete(svc, "networks")
+		svc["network_mode"] = "host"
+		services[name] = svc
+	}
+	delete(doc, "networks")
+	rewritten, err := yaml.Marshal(doc)
+	if err != nil {
+		return err
+	}
+	_, err = agentclient.DoJSON[dto.FileWriteReq, struct{}](ac, ctx, "POST", "/agent/v1/files/write",
+		&dto.FileWriteReq{Path: composePath, Content: string(rewritten)})
+	return err
+}
+
+// stringifyParam 参数值统一转字符串（JSON number 是 float64，fmt.Sprint 会出科学计数法）。
+func stringifyParam(v any) string {
+	switch n := v.(type) {
+	case string:
+		return n
+	case float64:
+		return strconv.FormatFloat(n, 'f', -1, 64)
+	case bool:
+		return strconv.FormatBool(n)
+	case nil:
+		return ""
+	default:
+		return fmt.Sprint(n)
+	}
 }
 
 // Install 安装商店应用（异步任务：立即返回任务 ID，日志在任务中心/向导内轮询）。
@@ -821,7 +1000,7 @@ func (s *StoreService) Install(ctx context.Context, in StoreInstallInput) (map[s
 			continue
 		}
 		finalParams[f.EnvKey] = sanitizeParam(fmt.Sprint(f.Default))
-		if f.Random && f.Type == "password" && (in.Params == nil || in.Params[f.EnvKey] == "") {
+		if f.Random && f.Type == "password" && (in.Params == nil || stringifyParam(in.Params[f.EnvKey]) == "") {
 			finalParams[f.EnvKey] = randomHex(12)
 		}
 	}
@@ -829,13 +1008,21 @@ func (s *StoreService) Install(ctx context.Context, in StoreInstallInput) (map[s
 		if !paramKeyPattern.MatchString(k) {
 			return nil, errs.Wrap(errs.ErrBadRequest, "参数名不合法: "+k)
 		}
-		if v != "" {
-			finalParams[k] = sanitizeParam(v)
+		if sv := sanitizeParam(stringifyParam(v)); sv != "" {
+			finalParams[k] = sv
+		}
+	}
+	// 密码类字段兜底：用户/ AI 未提供非空值且无 random 声明时，拒绝落固定 default 之外的空值——
+	// envKey 含 PASSWORD 且最终为空一律随机生成（防 1Panel 包弱 default 泄漏后的空密码）。
+	for _, f := range ver.FormFields {
+		if f.Type == "password" && strings.Contains(strings.ToUpper(f.EnvKey), "PASSWORD") && finalParams[f.EnvKey] == "" {
+			finalParams[f.EnvKey] = randomHex(12)
 		}
 	}
 	project := "app-" + in.Name
 	finalParams["CONTAINER_NAME"] = project
 	finalParams["CONTAINER_NAME1"] = project + "-1"
+
 
 	// 端口占用预检在任务内执行（需 agent exec）
 	input := in
@@ -870,24 +1057,59 @@ func (s *StoreService) runInstall(ctx context.Context, logf TaskLogf, app model.
 		return err
 	}
 
-	logs, err := s.deployCompose(ctx, logf, app, ver, project, params)
+	// 高级选项校验：网络（不存在可创建）、时区、hosts
+	network, err := s.resolveInstallNetwork(ctx, ac, in)
+	if err != nil {
+		return err
+	}
+	tz := strings.TrimSpace(in.Timezone)
+	if tz != "" && !tzPattern.MatchString(tz) {
+		return errs.Wrap(errs.ErrBadRequest, "时区格式不合法（如 Asia/Shanghai）")
+	}
+	hosts := make([]string, 0, len(in.ExtraHosts))
+	for _, h := range in.ExtraHosts {
+		h = strings.TrimSpace(h)
+		if h == "" {
+			continue
+		}
+		if !extraHostPattern.MatchString(h) {
+			return errs.Wrap(errs.ErrBadRequest, "hosts 映射格式不合法（需 域名:IP）: "+h)
+		}
+		hosts = append(hosts, h)
+	}
+
+	logs, err := s.deployCompose(ctx, logf, app, ver, in, project, params, network, tz, hosts, in.MountHostsFile)
 	if err != nil {
 		return err
 	}
 	_ = logs
 
-	// 已装记录 upsert（同名重装=换版本）
+	// 已装记录 upsert（同名重装=换版本，参数同步落库供"参数"查看）
 	var exist model.AppStoreInstall
 	if err := s.db.Where("compose_project = ?", project).First(&exist).Error; err == nil {
 		_ = s.db.Model(&exist).Updates(map[string]any{
 			"source_id": app.SourceID, "key": app.Key, "name": in.Name, "version": ver.ID,
+			"params_json": marshalJSON(params),
 		}).Error
 	} else {
 		_ = s.db.Create(&model.AppStoreInstall{
-			SourceID: app.SourceID, Key: app.Key, Name: in.Name, Version: ver.ID, ComposeProject: project,
+			SourceID: app.SourceID, Key: app.Key, Name: in.Name, Version: ver.ID,
+			ComposeProject: project, ParamsJSON: marshalJSON(params),
 		}).Error
 	}
 	logf("info", "安装完成，项目 %s 已启动", project)
+
+	// 数据库类应用：等待初始化就绪后自动接管至数据库模块（对齐 1Panel「装完即可管理」）
+	if dbServiceKeys[app.Key] && s.dbs != nil {
+		logf("info", "检测到数据库类应用，等待初始化后自动接管（最多 90 秒）…")
+		actx, cancel := context.WithTimeout(ctx, 90*time.Second)
+		if _, aerr := s.dbs.AdoptWithRetry(actx, project, 12, 5*time.Second); aerr != nil {
+			logf("warn", "自动接管未完成: %s（可稍后在数据库页手动接管）", aerr.Error())
+		} else {
+			logf("info", "已自动接管至数据库模块，可直接管理库/用户/备份")
+		}
+		cancel()
+	}
 
 	// 一键反代（失败不回滚安装）
 	if in.Domain != "" && app.ReverseProxy != "" && s.sites != nil {
@@ -953,8 +1175,8 @@ func (s *StoreService) precheckPorts(ctx context.Context, logf TaskLogf, params 
 	return nil
 }
 
-// deployCompose 两种包形态的统一部署（步骤日志写任务）。
-func (s *StoreService) deployCompose(ctx context.Context, logf TaskLogf, app model.AppStoreApp, ver StoreVersion, project string, params map[string]string) (string, error) {
+// deployCompose 两种包形态的统一部署（步骤日志写任务；network 为解析后的目标网络）。
+func (s *StoreService) deployCompose(ctx context.Context, logf TaskLogf, app model.AppStoreApp, ver StoreVersion, in StoreInstallInput, project string, params map[string]string, network, tz string, hosts []string, mountHostsFile bool) (string, error) {
 	ac, err := s.client()
 	if err != nil {
 		return "", err
@@ -978,6 +1200,10 @@ func (s *StoreService) deployCompose(ctx context.Context, logf TaskLogf, app mod
 	if err := step("创建目录", fmt.Sprintf("mkdir -p %s", dir), 60); err != nil {
 		return strings.Join(logs, "\n"), err
 	}
+	// 清理上次部署的遗留（docker 会为缺失的挂载源自动建同名目录，残留会导致整包拷贝类型冲突）；数据卷目录 data 保留
+	if err := step("清理旧文件", fmt.Sprintf("cd %s && find . -mindepth 1 -maxdepth 1 ! -name 'data' -exec rm -rf {} +", dir), 120); err != nil {
+		return strings.Join(logs, "\n"), err
+	}
 	switch {
 	case ver.DownloadURL != "":
 		// 远端包：agent 端下载解压
@@ -988,22 +1214,49 @@ func (s *StoreService) deployCompose(ctx context.Context, logf TaskLogf, app mod
 		if err := step("解压", fmt.Sprintf("cd %s && tar xzf pkg.tar.gz", dir), 300); err != nil {
 			return strings.Join(logs, "\n"), err
 		}
-		if err := step("定位 compose", fmt.Sprintf("cd %s && find . -name 'docker-compose.y*ml' -o -name 'compose.y*ml' | head -1 | xargs -I{} cp {} ./docker-compose.yml", dir), 60); err != nil {
+		// 整包内容上移到项目根：1p 包常带 conf/ 等附属文件（compose 相对挂载 ./conf/my.cnf），只拷 compose 会导致挂载失败；
+		// 同时把包内写死的 1panel-network 替换为目标网络
+		tidy := `p=$(find . -name 'docker-compose.y*ml' -o -name 'compose.y*ml' | head -1) && cp "$p" ./docker-compose.yml && d=$(dirname "$p") && if [ "$d" != "." ]; then cp -rf "$d"/. ./; fi && rm -f pkg.tar.gz && sed -i 's/1panel-network/` + network + `/g' docker-compose.yml`
+		if err := step("整理应用包", fmt.Sprintf("cd %s && %s", dir, tidy), 120); err != nil {
 			return strings.Join(logs, "\n"), err
 		}
+		if network == "host" {
+			if rerr := s.rewriteComposeHostNetwork(ctx, ac, dir+"/docker-compose.yml"); rerr != nil {
+				return strings.Join(logs, "\n"), rerr
+			}
+			logf("info", "已改写为 host 网络模式")
+		}
 	case ver.LocalDir != "":
-		// 本地包（yp-git）：core 读缓存目录写入 agent
-		n, werr := s.writeLocalPackage(ctx, app.SourceID, ver.LocalDir, dir)
+		// 本地包（yp-git）：core 读缓存目录写入 agent（compose 内网络名替换为目标网络）
+		n, werr := s.writeLocalPackage(ctx, app.SourceID, ver.LocalDir, dir, network)
 		if werr != nil {
 			return strings.Join(logs, "\n"), errs.Wrapc(errs.CodeFileOpFailed, "写入应用包失败: "+werr.Error())
+		}
+		if network == "host" {
+			if rerr := s.rewriteComposeHostNetwork(ctx, ac, dir+"/docker-compose.yml"); rerr != nil {
+				return strings.Join(logs, "\n"), rerr
+			}
+			logf("info", "已改写为 host 网络模式")
 		}
 		logs = append(logs, fmt.Sprintf("写入应用包 %d 个文件 ✓", n))
 		logf("info", "写入应用包 %d 个文件 ✓", n)
 	default:
 		return strings.Join(logs, "\n"), errs.Wrap(errs.ErrBadRequest, "版本包地址缺失")
 	}
-	if err := step("创建网络", "docker network create 1panel-network 2>/dev/null; true", 60); err != nil {
-		return strings.Join(logs, "\n"), err
+	if network != "host" {
+		if err := step("接入网络", "docker network inspect "+network+" >/dev/null 2>&1 || docker network create "+network, 60); err != nil {
+			return strings.Join(logs, "\n"), err
+		}
+	}
+	// M32：外接数据库实例——compose 已写盘，读模板识别数据库参数键集后建库建号并注入（赶在 .env 生成前）
+	if in.ExternalDB != nil {
+		composeText := ""
+		if res, rerr := agentclient.GetJSON[dto.FileReadResp](ac, ctx, "/agent/v1/files/read?path="+escapeURL2(dir+"/docker-compose.yml")); rerr == nil && res != nil {
+			composeText = res.Content
+		}
+		if err := s.applyExternalDB(ctx, logf, ver, in, params, composeText); err != nil {
+			return strings.Join(logs, "\n"), err
+		}
 	}
 	// .env 渲染
 	var envBuf strings.Builder
@@ -1021,8 +1274,14 @@ func (s *StoreService) deployCompose(ctx context.Context, logf TaskLogf, app mod
 	}
 	logs = append(logs, "写入 .env ✓")
 	logf("info", "写入 .env ✓")
-	// 先 pull（大镜像耗时长，进度/错误完整可读）再 up
-	_ = step("拉取镜像", fmt.Sprintf("cd %s && docker compose -p %s pull --quiet 2>&1 | tail -5; test ${PIPESTATUS[0]} -eq 0", dir, project), 1800)
+	// 时区 / hosts 映射：compose override（up 自动合并全部服务）
+	if oerr := s.writeComposeOverride(ctx, logf, ac, dir, tz, hosts, mountHostsFile); oerr != nil {
+		return strings.Join(logs, "\n"), oerr
+	}
+	// 镜像本地齐全时跳过 pull（compose pull 会连 registry 校验 digest，网络受限时干等）；
+	// 有缺失才 pull（大镜像耗时长，进度/错误完整可读）
+	pullCmd := `missing=0; for img in $(grep -E '^[[:space:]]*image:' docker-compose.yml | awk '{print $2}' | tr -d '"'); do docker image inspect "$img" >/dev/null 2>&1 || missing=1; done; if [ "$missing" -ne 0 ]; then docker compose -p ` + project + ` pull --quiet 2>&1 | tail -5; test ${PIPESTATUS[0]} -eq 0; fi`
+	_ = step("检查镜像", fmt.Sprintf("cd %s && %s", dir, pullCmd), 1800)
 	if err := step("compose up", fmt.Sprintf("cd %s && docker compose -p %s up -d", dir, project), 600); err != nil {
 		return strings.Join(logs, "\n"), err
 	}
@@ -1030,7 +1289,7 @@ func (s *StoreService) deployCompose(ctx context.Context, logf TaskLogf, app mod
 }
 
 // writeLocalPackage 把仓库内包目录的文本文件写入 agent 目标目录（compose 文件统一命名 docker-compose.yml）。
-func (s *StoreService) writeLocalPackage(ctx context.Context, sourceID uint, pkgRel, remoteDir string) (int, error) {
+func (s *StoreService) writeLocalPackage(ctx context.Context, sourceID uint, pkgRel, remoteDir, network string) (int, error) {
 	root := filepath.Join(s.dir, fmt.Sprintf("src-%d", sourceID))
 	pkgDir := filepath.Join(root, filepath.FromSlash(pkgRel))
 	if !strings.HasPrefix(pkgDir, filepath.Clean(root)+string(os.PathSeparator)) {
@@ -1065,11 +1324,19 @@ func (s *StoreService) writeLocalPackage(ctx context.Context, sourceID uint, pkg
 				name = "docker-compose.yml"
 			}
 		}
+		// 包内容物约定在 package/ 子目录一层：附属文件落到项目根（compose 相对路径挂载可达），
+		// 否则只处理 compose 的旧逻辑会把附属文件埋进 package/ 导致挂载源缺失（dockerd 自动建同名目录）
+		name = strings.TrimPrefix(name, "package/")
 		b, err := os.ReadFile(p)
 		if err != nil {
 			return err
 		}
-		if err := s.writeViaAgent(ctx, remoteDir+"/"+name, string(b)); err != nil {
+		content := string(b)
+		if strings.HasSuffix(name, ".yml") || strings.HasSuffix(name, ".yaml") {
+			// compose 内网络统一为所选安装网络
+			content = strings.ReplaceAll(content, "1panel-network", network)
+		}
+		if err := s.writeViaAgent(ctx, remoteDir+"/"+name, content); err != nil {
 			return err
 		}
 		count++
@@ -1084,29 +1351,62 @@ func (s *StoreService) writeLocalPackage(ctx context.Context, sourceID uint, pkg
 	return count, nil
 }
 
-// Uninstall 卸载（异步任务：compose down + 清目录，保留数据卷）。
-func (s *StoreService) Uninstall(ctx context.Context, project string) (map[string]any, error) {
+// StoreUninstallOptions 卸载选项（级联资源勾选）。
+type StoreUninstallOptions struct {
+	PurgeData   bool // 删除应用数据（compose 目录含数据卷/数据库文件）
+	RemoveImage bool // 删除应用镜像（compose 内全部 image）
+	CascadeDB   bool // 级联移除关联的数据库纳管记录与备份
+}
+
+// Uninstall 卸载（异步任务）：compose down；数据/镜像/级联按选项执行，默认保留数据目录。
+func (s *StoreService) Uninstall(ctx context.Context, project string, opts StoreUninstallOptions) (map[string]any, error) {
 	if !storeAppNamePattern.MatchString(strings.TrimPrefix(project, "app-")) {
 		return nil, errs.ErrBadRequest
 	}
 	if s.tasks == nil {
 		return nil, errs.Wrap(errs.ErrBadRequest, "任务服务不可用")
 	}
-	task, err := s.tasks.StartTask(TaskStoreUninstall, fmt.Sprintf("卸载 %s", project), project, 10*time.Minute,
+	task, err := s.tasks.StartTask(TaskStoreUninstall, fmt.Sprintf("卸载 %s", project), project, 15*time.Minute,
 		func(tctx context.Context, logf TaskLogf) error {
 			ac, aerr := s.client()
 			if aerr != nil {
 				return aerr
 			}
 			dir := "/opt/ypanel/compose/" + project
-			logf("info", "停止并移除容器（数据卷保留在项目目录）")
+			logf("info", "停止并移除容器")
+			// down 失败不阻塞（项目目录/容器可能已被手动清理，僵尸记录照样可卸载）
 			out, oerr := agentclient.DoJSON[dto.ExecReq, dto.ExecResp](ac, tctx, "POST", "/agent/v1/exec",
-				&dto.ExecReq{Command: fmt.Sprintf("cd %s 2>/dev/null && docker compose -p %s down; rm -rf %s", dir, project, dir), TimeoutSecs: 300})
-			if oerr != nil {
-				return oerr
+				&dto.ExecReq{Command: fmt.Sprintf("cd %s 2>/dev/null && docker compose -p %s down", dir, project), TimeoutSecs: 300})
+			if oerr != nil || out.ExitCode != 0 {
+				logf("warn", "停止容器未成功（可能已被移除），继续清理")
 			}
-			if out.ExitCode != 0 {
-				return errs.Wrapc(errs.CodeFileOpFailed, "卸载失败: "+tailOutput(out.Output, 800))
+			if opts.PurgeData {
+				logf("info", "删除应用数据（compose 目录，含数据卷/数据库文件）")
+				_, _ = agentclient.DoJSON[dto.FileDeleteReq, struct{}](ac, tctx, "POST", "/agent/v1/files/delete",
+					&dto.FileDeleteReq{Paths: []string{dir}})
+			} else {
+				logf("info", "应用数据已保留在 %s（重装同名应用可复用）", dir)
+			}
+			if opts.RemoveImage {
+				logf("info", "删除应用镜像")
+				images := `for img in $(grep -E "^[[:space:]]*image:" docker-compose.yml | awk '{print $2}' | tr -d '"'); do docker rmi -f "$img" 2>/dev/null && echo "removed $img"; done`
+				out2, _ := agentclient.DoJSON[dto.ExecReq, dto.ExecResp](ac, tctx, "POST", "/agent/v1/exec",
+					&dto.ExecReq{Command: fmt.Sprintf("cd %s && %s", dir, images), TimeoutSecs: 300})
+				if out2.ExitCode == 0 && strings.TrimSpace(out2.Output) != "" {
+					for _, l := range strings.Split(strings.TrimSpace(out2.Output), "\n") {
+						logf("info", "%s", l)
+					}
+				}
+			}
+			if opts.CascadeDB {
+				var linked []model.DatabaseInstance
+				_ = s.db.Where("compose_project = ?", project).Find(&linked).Error
+				for _, d := range linked {
+					logf("info", "级联移除数据库纳管记录 %s（%s）及其备份", d.Name, d.Type)
+					_, _ = agentclient.DoJSON[dto.FileDeleteReq, struct{}](ac, tctx, "POST", "/agent/v1/files/delete",
+						&dto.FileDeleteReq{Paths: []string{"/opt/ypanel/backups/" + d.Type + "/" + d.Name}})
+					_ = s.db.Delete(&model.DatabaseInstance{}, d.ID).Error
+				}
 			}
 			_ = s.db.Where("compose_project = ?", project).Delete(&model.AppStoreInstall{}).Error
 			logf("info", "卸载完成")
@@ -1123,6 +1423,194 @@ func (s *StoreService) Installed() []model.AppStoreInstall {
 	out := []model.AppStoreInstall{}
 	_ = s.db.Order("id desc").Find(&out).Error
 	return out
+}
+
+// StoreInstallInfo 已安装应用详情（列表卡片聚合：状态/端口/图标/可升级/参数）。
+type StoreInstallInfo struct {
+	ID             uint              `json:"id"`
+	SourceID       uint              `json:"sourceId"`
+	Key            string            `json:"key"`
+	Name           string            `json:"name"`
+	Remark         string            `json:"remark"`
+	AppName        string            `json:"appName"`
+	IconURL        string            `json:"iconUrl"`
+	Version        string            `json:"version"`
+	LatestVersion  string            `json:"latestVersion"`
+	Upgradable     bool              `json:"upgradable"`
+	ComposeProject string            `json:"composeProject"`
+	Running        bool              `json:"running"`
+	Ports          []int             `json:"ports"`
+	Params         map[string]string `json:"params"` // 密码类值已打码
+	CreatedAt      time.Time         `json:"createdAt"`
+}
+
+// InstalledDetailed 已安装详情聚合（含 compose 运行状态、应用元数据与安装参数）。
+func (s *StoreService) InstalledDetailed(ctx context.Context) ([]StoreInstallInfo, error) {
+	installs := s.Installed()
+	if len(installs) == 0 {
+		return []StoreInstallInfo{}, nil
+	}
+	// 应用元数据（icon/名称/最新版本）
+	type appMeta struct {
+		name, icon, latest string
+	}
+	metas := map[string]appMeta{}
+	for _, i := range installs {
+		mk := fmt.Sprintf("%d/%s", i.SourceID, i.Key)
+		if _, ok := metas[mk]; ok {
+			continue
+		}
+		var a model.AppStoreApp
+		if err := s.db.Select("name", "icon_url", "latest_version").Where("source_id = ? AND key = ?", i.SourceID, i.Key).First(&a).Error; err == nil {
+			metas[mk] = appMeta{name: a.Name, icon: a.IconURL, latest: a.LatestVersion}
+		}
+	}
+	// compose 运行状态
+	running := map[string]bool{}
+	if ac, err := s.client(); err == nil {
+		if projects, perr := agentclient.GetJSON[[]dto.ComposeProject](ac, ctx, "/agent/v1/compose/projects"); perr == nil {
+			for _, p := range projectsSafe(projects) {
+				running[p.Name] = p.Running > 0
+			}
+		}
+	}
+	out := make([]StoreInstallInfo, 0, len(installs))
+	for _, i := range installs {
+		info := StoreInstallInfo{
+			ID: i.ID, SourceID: i.SourceID, Key: i.Key, Name: i.Name, Remark: i.Remark, Version: i.Version,
+			ComposeProject: i.ComposeProject, Running: running[i.ComposeProject],
+			CreatedAt: i.CreatedAt, Params: map[string]string{}, Ports: []int{},
+		}
+		if m, ok := metas[fmt.Sprintf("%d/%s", i.SourceID, i.Key)]; ok {
+			info.AppName = m.name
+			info.IconURL = m.icon
+			info.LatestVersion = m.latest
+			info.Upgradable = m.latest != "" && i.Version != m.latest
+		}
+		var params map[string]string
+		if i.ParamsJSON != "" {
+			_ = json.Unmarshal([]byte(i.ParamsJSON), &params)
+		}
+		for k, v := range params {
+			lk := strings.ToUpper(k)
+			if strings.Contains(lk, "PASSWORD") || strings.Contains(lk, "SECRET") || strings.Contains(lk, "PASSWD") {
+				info.Params[k] = "******"
+				continue
+			}
+			info.Params[k] = v
+			if strings.Contains(lk, "PORT") {
+				if n, perr := strconv.Atoi(v); perr == nil && n > 0 && n < 65536 {
+					info.Ports = append(info.Ports, n)
+				}
+			}
+		}
+		sort.Ints(info.Ports)
+		out = append(out, info)
+	}
+	return out, nil
+}
+
+// InstalledAction 已安装应用操作：start / stop / restart / rebuild。
+func (s *StoreService) InstalledAction(ctx context.Context, project, action string) error {
+	if !storeAppNamePattern.MatchString(strings.TrimPrefix(project, "app-")) {
+		return errs.ErrBadRequest
+	}
+	var count int64
+	_ = s.db.Model(&model.AppStoreInstall{}).Where("compose_project = ?", project).Count(&count).Error
+	if count == 0 {
+		return errs.New(errs.CodeNotFound, "error.installNotFound", "安装记录不存在")
+	}
+	ac, err := s.client()
+	if err != nil {
+		return err
+	}
+	var cmd string
+	switch action {
+	case "start":
+		_, err = agentclient.DoJSON[dto.ComposeActionReq, map[string]string](ac, ctx, "POST", "/agent/v1/compose/up",
+			&dto.ComposeActionReq{Name: project})
+		return err
+	case "stop":
+		_, err = agentclient.DoJSON[dto.ComposeActionReq, map[string]string](ac, ctx, "POST", "/agent/v1/compose/down",
+			&dto.ComposeActionReq{Name: project})
+		return err
+	case "restart":
+		cmd = fmt.Sprintf("docker compose -p %s restart", project)
+	case "rebuild":
+		cmd = fmt.Sprintf("docker compose -p %s up -d --force-recreate", project)
+	default:
+		return errs.Wrap(errs.ErrBadRequest, "不支持的操作: "+action)
+	}
+	out, err := agentclient.DoJSON[dto.ExecReq, dto.ExecResp](ac, ctx, "POST", "/agent/v1/exec",
+		&dto.ExecReq{Command: cmd, TimeoutSecs: 300})
+	if err != nil {
+		return err
+	}
+	if out.ExitCode != 0 {
+		return errs.Wrapc(errs.CodeFileOpFailed, action+" 失败: "+tailOutput(out.Output, 800))
+	}
+	return nil
+}
+
+// InstallEnv 读取安装参数 .env（admin；含密码明文）。
+func (s *StoreService) InstallEnv(ctx context.Context, project string) (map[string]string, error) {
+	if !storeAppNamePattern.MatchString(strings.TrimPrefix(project, "app-")) {
+		return nil, errs.ErrBadRequest
+	}
+	ac, err := s.client()
+	if err != nil {
+		return nil, err
+	}
+	out, err := agentclient.GetJSON[dto.FileReadResp](ac, ctx, "/agent/v1/files/read?path="+escapeURL2("/opt/ypanel/compose/"+project+"/.env"))
+	if err != nil {
+		return nil, errs.Wrap(errs.ErrNotFound, "未找到参数文件（.env）")
+	}
+	env := map[string]string{}
+	for _, line := range strings.Split(out.Content, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		if k, v, ok := strings.Cut(line, "="); ok {
+			env[strings.TrimSpace(k)] = strings.TrimSpace(v)
+		}
+	}
+	return env, nil
+}
+
+// SaveInstallEnv 保存参数 .env 并重建容器使其生效（admin）。
+func (s *StoreService) SaveInstallEnv(ctx context.Context, project string, content string) error {
+	if !storeAppNamePattern.MatchString(strings.TrimPrefix(project, "app-")) {
+		return errs.ErrBadRequest
+	}
+	// 行格式校验：仅允许 KEY=VALUE / 注释 / 空行，防注入 compose 上下文
+	for _, line := range strings.Split(content, "\n") {
+		t := strings.TrimSpace(line)
+		if t == "" || strings.HasPrefix(t, "#") {
+			continue
+		}
+		k, _, ok := strings.Cut(t, "=")
+		if !ok || !paramKeyPattern.MatchString(strings.TrimSpace(k)) {
+			return errs.Wrap(errs.ErrBadRequest, "参数行不合法（需 KEY=VALUE 格式）: "+truncStr(t, 60))
+		}
+	}
+	ac, err := s.client()
+	if err != nil {
+		return err
+	}
+	if _, err := agentclient.DoJSON[dto.FileWriteReq, struct{}](ac, ctx, "POST", "/agent/v1/files/write",
+		&dto.FileWriteReq{Path: "/opt/ypanel/compose/" + project + "/.env", Content: content}); err != nil {
+		return err
+	}
+	out, err := agentclient.DoJSON[dto.ExecReq, dto.ExecResp](ac, ctx, "POST", "/agent/v1/exec",
+		&dto.ExecReq{Command: fmt.Sprintf("docker compose -p %s up -d --force-recreate", project), TimeoutSecs: 300})
+	if err != nil {
+		return err
+	}
+	if out.ExitCode != 0 {
+		return errs.Wrapc(errs.CodeFileOpFailed, "参数已保存，但重建容器失败: "+tailOutput(out.Output, 800))
+	}
+	return nil
 }
 
 // ---------- 工具 ----------
@@ -1235,4 +1723,247 @@ var paramKeyPattern = regexp.MustCompile(`^[A-Z][A-Z0-9_]{0,63}$`)
 func escapeURL2(s string) string {
 	r := strings.NewReplacer("%", "%25", " ", "%20", "?", "%3F", "#", "%23", "&", "%26", "+", "%2B", "/", "%2F")
 	return r.Replace(s)
+}
+
+// ---- M32：安装外接数据库实例 ----
+
+var (
+	dbFieldHostStem = regexp.MustCompile(`(DB|MYSQL|SQL|MONGO|DATABASE|MARIA)`)
+	dbFieldHostRe   = regexp.MustCompile(`^[A-Z0-9_]*HOST$`)
+)
+
+// dbFieldSetOf 从 formFields 与 compose 模板变量引用（${VAR}）的并集识别数据库参数键集
+// （*_HOST 结尾且含 DB/SQL 等词干，同前缀推导 PORT/NAME/USER/PASSWORD）。
+// 1Panel 包的 PANEL_DB_HOST/PORT 常为模板引用而非表单字段（系统按所选数据库自动注入），必须扫模板。
+func dbFieldSetOf(fields []StoreFormField, composeText string) *dbFieldSet {
+	keys := make([]string, 0, len(fields))
+	for _, f := range fields {
+		if f.EnvKey != "" {
+			keys = append(keys, strings.ToUpper(f.EnvKey))
+		}
+	}
+	for _, m := range regexp.MustCompile(`\$\{([A-Z0-9_]+)\}`).FindAllStringSubmatch(composeText, -1) {
+		keys = append(keys, m[1])
+	}
+	for _, k := range keys {
+		if !dbFieldHostRe.MatchString(k) || !dbFieldHostStem.MatchString(strings.TrimSuffix(strings.TrimPrefix(k, "PANEL_"), "_HOST")) {
+			continue
+		}
+		prefix := strings.TrimSuffix(k, "HOST")
+		fs := &dbFieldSet{Host: k}
+		if hasKey(keys, prefix+"PORT") {
+			fs.Port = prefix + "PORT"
+		}
+		for _, cand := range []string{prefix + "NAME", prefix + "DATABASE"} {
+			if hasKey(keys, cand) {
+				fs.Name = cand
+				break
+			}
+		}
+		for _, cand := range []string{prefix + "USER", prefix + "USERNAME"} {
+			if hasKey(keys, cand) {
+				fs.User = cand
+				break
+			}
+		}
+		// 密码优先 USER_PASSWORD（应用账号），回退 PASSWORD/ROOT_PASSWORD
+		for _, cand := range []string{prefix + "USER_PASSWORD", prefix + "PASSWORD", prefix + "ROOT_PASSWORD"} {
+			if hasKey(keys, cand) {
+				fs.Password = cand
+				break
+			}
+		}
+		return fs
+	}
+	return nil
+}
+
+func hasKey(keys []string, k string) bool {
+	for _, x := range keys {
+		if x == k {
+			return true
+		}
+	}
+	return false
+}
+
+// applyExternalDB 外接实例落地：reveal 凭据 → 按需建库建号（幂等）→ 注入连接参数。
+// 连接地址：面板容器实例用宿主内网 IP + 映射端口（应用容器→宿主可达）；外部实例用 host 原样。
+func (s *StoreService) applyExternalDB(ctx context.Context, logf TaskLogf, ver StoreVersion, in StoreInstallInput, params map[string]string, composeText string) error {
+	ext := in.ExternalDB
+	fs := dbFieldSetOf(ver.FormFields, composeText)
+	if fs == nil || fs.Host == "" {
+		return errs.Wrap(errs.ErrBadRequest, "未识别到数据库连接参数（*_HOST）")
+	}
+	inst, err := s.dbs.ByID(ext.InstanceID)
+	if err != nil {
+		return err
+	}
+	if inst.Type != "mysql" && inst.Type != "postgres" {
+		return errs.Wrap(errs.ErrBadRequest, fmt.Sprintf("暂仅支持 mysql/postgres 实例外接，实例类型: %s", inst.Type))
+	}
+	info, err := s.dbs.ConnectInfo(ctx, ext.InstanceID)
+	if err != nil {
+		return errs.Wrapc(errs.CodeInternal, "读取实例连接信息失败: "+err.Error())
+	}
+
+	dbName := ext.Database
+	if dbName == "" {
+		dbName = in.Key
+	}
+	dbUser := ext.User
+	if dbUser == "" {
+		dbUser = in.Key + "_user"
+	}
+	dbPass := randomHex(12)
+
+	// 幂等建库建号（已存在即复用）
+	if ext.CreateIfMissing {
+		existing, err := s.dbs.Databases(ctx, ext.InstanceID)
+		if err != nil {
+			return errs.Wrapc(errs.CodeInternal, "列出实例数据库失败: "+err.Error())
+		}
+		found := false
+		for _, d := range existing {
+			if d.Name == dbName {
+				found = true
+				break
+			}
+		}
+		if found {
+			// 生产约束：不允许覆盖已有数据库——换名新建（追加序号）直到可用
+			base := dbName
+			for i := 2; i <= 50; i++ {
+				cand := fmt.Sprintf("%s%d", base, i)
+				candExists := false
+				for _, d := range existing {
+					if d.Name == cand {
+						candExists = true
+						break
+					}
+				}
+				if !candExists {
+					dbName = cand
+					found = false
+					break
+				}
+			}
+			logf("info", "数据库 %s 已存在（不允许覆盖），已改用新库名 %s", base, dbName)
+		}
+		if !found {
+			if err := s.dbs.CreateDatabase(ctx, ext.InstanceID, dbName, ""); err != nil {
+				return errs.Wrapc(errs.CodeInternal, "创建数据库 "+dbName+" 失败: "+err.Error())
+			}
+			logf("info", "已在实例 %s 创建数据库 %s", inst.Name, dbName)
+		}
+		users, err := s.dbs.Users(ctx, ext.InstanceID)
+		if err != nil {
+			return errs.Wrapc(errs.CodeInternal, "列出实例账号失败: "+err.Error())
+		}
+		userFound := false
+		for _, u := range users {
+			if u.Name == dbUser {
+				userFound = true
+				break
+			}
+		}
+		if !userFound {
+			if err := s.dbs.CreateUser(ctx, ext.InstanceID, dbUser, "%", dbPass); err != nil {
+				return errs.Wrapc(errs.CodeInternal, "创建账号 "+dbUser+" 失败: "+err.Error())
+			}
+			logf("info", "已在实例 %s 创建账号 %s", inst.Name, dbUser)
+		} else {
+			// 已存在账号不允许覆盖密码（用户约束）：换名新建（追加序号）直到可用
+			base := dbUser
+			for i := 2; i <= 50; i++ {
+				cand := fmt.Sprintf("%s%d", base, i)
+				if len(cand) > 32 {
+					cand = cand[:28] + fmt.Sprintf("%d", i)
+				}
+				candExists := false
+				users2, uerr := s.dbs.Users(ctx, ext.InstanceID)
+				if uerr == nil {
+					for _, u := range users2 {
+						if u.Name == cand {
+							candExists = true
+							break
+						}
+					}
+				}
+				if !candExists {
+					dbUser = cand
+					break
+				}
+			}
+			if err := s.dbs.CreateUser(ctx, ext.InstanceID, dbUser, "%", dbPass); err != nil {
+				return errs.Wrapc(errs.CodeInternal, "创建账号 "+dbUser+" 失败: "+err.Error())
+			}
+			logf("info", "账号 %s 已存在（不覆盖密码），已新建账号 %s", base, dbUser)
+		}
+		if err := s.dbs.GrantUserDatabase(ctx, ext.InstanceID, dbName, dbUser, "%"); err != nil {
+			return errs.Wrapc(errs.CodeInternal, "授权 "+dbUser+" 访问 "+dbName+" 失败: "+err.Error())
+		}
+		logf("info", "已授权 %s 访问 %s", dbUser, dbName)
+	} else {
+		logf("info", "跳过建库建号（未勾选自动创建），请确保 %s/%s 已存在", dbName, dbUser)
+	}
+
+	// 连接地址策略（M32）：应用默认接入统一网络，与实例容器同网络时用「容器名:内部端口」直连
+	// （docker DNS，不依赖宿主端口映射）；不同网络或外部实例用宿主内网 IP + 映射端口
+	// （实例凭据里的回环地址在应用容器内指向容器自身，必须改写）。
+	appNet := in.Network
+	if appNet == "" {
+		appNet = PanelNetwork
+	}
+	host := info.LanIP
+	port := info.MapPort
+	if info.Container != "" && strings.Contains(info.Networks, appNet) {
+		host = info.Container
+		port = info.InnerPort
+		logf("info", "实例容器与应用同在 %s 网络，连接地址使用 %s:%s（容器名直连）", appNet, host, port)
+	} else {
+		logf("info", "实例与应用不同网络或为外部实例，连接地址使用宿主内网 %s:%s", host, port)
+	}
+
+	if fs.Host != "" {
+		params[fs.Host] = host
+	}
+	if fs.Port != "" {
+		params[fs.Port] = port
+	}
+	if fs.Name != "" {
+		params[fs.Name] = dbName
+	}
+	if fs.User != "" {
+		params[fs.User] = dbUser
+	}
+	if fs.Password != "" {
+		params[fs.Password] = dbPass
+	}
+	logf("info", "已注入外接数据库参数（实例 %s，库 %s，账号 %s）", inst.Name, dbName, dbUser)
+	return nil
+}
+
+// hostLanIP 宿主内网 IP（agent hostname -I 首个地址，进程内缓存）。
+func (s *StoreService) hostLanIP(ctx context.Context) (string, error) {
+	s.hostIPOnce.Do(func() {
+		ac, err := s.client()
+		if err != nil {
+			s.hostIPErr = err
+			return
+		}
+		res, err := agentclient.DoJSON[dto.ExecReq, dto.ExecResp](ac, ctx, "POST", "/agent/v1/exec",
+			&dto.ExecReq{Command: "hostname -I | awk '{print $1}'", TimeoutSecs: 15})
+		if err != nil {
+			s.hostIPErr = err
+			return
+		}
+		ip := strings.TrimSpace(res.Output)
+		if ip == "" {
+			s.hostIPErr = fmt.Errorf("宿主未返回内网 IP")
+			return
+		}
+		s.hostIP = ip
+	})
+	return s.hostIP, s.hostIPErr
 }

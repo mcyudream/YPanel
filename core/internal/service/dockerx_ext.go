@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"io"
 	"fmt"
 	"net/http"
 	"strings"
@@ -63,6 +64,31 @@ func (s *DockerExtService) client() (*agentclient.Client, error) {
 		return nil, err
 	}
 	return agentclient.New(node.BaseURL, node.Token), nil
+}
+
+// PassthroughPost 透传 POST 请求（返回原始 JSON），用于 agent 侧 POST 动作路由。
+func (s *DockerExtService) PassthroughPost(ctx context.Context, path string) (json.RawMessage, error) {
+	ac, err := s.client()
+	if err != nil {
+		return nil, err
+	}
+	req, err := ac.NewRequest(ctx, http.MethodPost, path, nil)
+	if err != nil {
+		return nil, errs.Wrap(errs.ErrAgentUnreach, err.Error())
+	}
+	resp, err := ac.HTTP.Do(req)
+	if err != nil {
+		return nil, errs.Wrap(errs.ErrAgentUnreach, err.Error())
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusOK {
+		return nil, errs.Wrap(errs.ErrAgentUnreach, fmt.Sprintf("agent HTTP %d", resp.StatusCode))
+	}
+	raw, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, errs.Wrap(errs.ErrAgentUnreach, err.Error())
+	}
+	return json.RawMessage(raw), nil
 }
 
 // passthrough 透传 GET 请求（返回原始 JSON）。
@@ -289,12 +315,46 @@ func (s *DockerExtService) ContainerCreate(ctx context.Context, req ExtContainer
 }
 
 // ContainerRemove 删除容器。
-func (s *DockerExtService) ContainerRemove(ctx context.Context, id string, force bool) error {
+func (s *DockerExtService) ContainerRemove(ctx context.Context, id string, force bool, volumes bool) error {
 	ac, err := s.client()
 	if err != nil {
 		return err
 	}
 	_, err = agentclient.DoJSON[struct{}, struct{}](ac, ctx, http.MethodDelete,
-		"/agent/v1/docker/containers/"+id+"?force="+boolStr(force), nil)
+		"/agent/v1/docker/containers/"+id+"?force="+boolStr(force)+"&v="+boolStr(volumes), nil)
+	return err
+}
+
+// ExtContainerUpdateReq 资源限制/重启策略热更新参数（与 agent dockerx.ContainerUpdateReq 字段一致）。
+type ExtContainerUpdateReq struct {
+	MemoryMB int64   `json:"memoryMB"`
+	Cpus     float64 `json:"cpus"`
+	Restart  string  `json:"restart"`
+}
+
+// ContainerRecreate 编辑保存：删除并按新参数重建同名容器（compose 管理的容器被 agent 拒绝）。
+func (s *DockerExtService) ContainerRecreate(ctx context.Context, id string, req ExtContainerCreateReq) (string, error) {
+	ac, err := s.client()
+	if err != nil {
+		return "", err
+	}
+	out, err := agentclient.DoJSON[ExtContainerCreateReq, struct {
+		ID string `json:"id"`
+	}](ac, ctx, http.MethodPost, "/agent/v1/docker/containers/"+id+"/recreate", &req)
+	if err != nil {
+		return "", err
+	}
+	return out.ID, nil
+}
+
+// ContainerUpdateResources 资源限制/重启策略热更新（docker update，免重建）。
+func (s *DockerExtService) ContainerUpdateResources(ctx context.Context, id string, req ExtContainerUpdateReq) error {
+	ac, err := s.client()
+	if err != nil {
+		return err
+	}
+	_, err = agentclient.DoJSON[ExtContainerUpdateReq, struct {
+		Warnings []string `json:"warnings"`
+	}](ac, ctx, http.MethodPost, "/agent/v1/docker/containers/"+id+"/update", &req)
 	return err
 }

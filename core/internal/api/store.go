@@ -5,6 +5,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	"github.com/ypanel/core/internal/middleware"
 	"github.com/ypanel/core/internal/service"
 )
 
@@ -168,9 +169,56 @@ func (a *StoreAPI) Icon(c *gin.Context) {
 	c.Data(200, ct, data)
 }
 
-// Installed GET /api/v1/store/installed
+// Installed GET /api/v1/store/installed（详情聚合：状态/端口/图标/可升级/参数）
 func (a *StoreAPI) Installed(c *gin.Context) {
-	respOK(c, a.Store.Installed())
+	out, err := a.Store.InstalledDetailed(c.Request.Context())
+	if err != nil {
+		respErr(c, err)
+		return
+	}
+	respOK(c, out)
+}
+
+// InstalledAction POST /api/v1/store/installed/:project/:action（start|stop|restart|rebuild）
+func (a *StoreAPI) InstalledAction(c *gin.Context) {
+	if err := a.Store.InstalledAction(c.Request.Context(), c.Param("project"), c.Param("action")); err != nil {
+		respErr(c, err)
+		return
+	}
+	respOK(c, struct{}{})
+}
+
+// InstallEnv GET /api/v1/store/installed/:project/env（admin，含密码明文）
+func (a *StoreAPI) InstallEnv(c *gin.Context) {
+	if c.GetString(middleware.CtxRole) != "admin" {
+		respErr(c, errBadRequest("仅管理员可查看安装参数"))
+		return
+	}
+	out, err := a.Store.InstallEnv(c.Request.Context(), c.Param("project"))
+	if err != nil {
+		respErr(c, err)
+		return
+	}
+	respOK(c, out)
+}
+
+// SaveInstallEnv PUT /api/v1/store/installed/:project/env（admin，保存并重建容器生效）
+func (a *StoreAPI) SaveInstallEnv(c *gin.Context) {
+	if c.GetString(middleware.CtxRole) != "admin" {
+		respErr(c, errBadRequest("仅管理员可修改安装参数"))
+		return
+	}
+	req, ok := bind[struct {
+		Content string `json:"content" binding:"required"`
+	}](c)
+	if !ok {
+		return
+	}
+	if err := a.Store.SaveInstallEnv(c.Request.Context(), c.Param("project"), req.Content); err != nil {
+		respErr(c, err)
+		return
+	}
+	respOK(c, struct{}{})
 }
 
 // Install POST /api/v1/store/install
@@ -187,9 +235,44 @@ func (a *StoreAPI) Install(c *gin.Context) {
 	respOK(c, out)
 }
 
-// Uninstall DELETE /api/v1/store/install/:project
+// Uninstall DELETE /api/v1/store/install/:project（任务化；?purgeData=&rmi=&cascadeDB=）
 func (a *StoreAPI) Uninstall(c *gin.Context) {
-	out, err := a.Store.Uninstall(c.Request.Context(), c.Param("project"))
+	opts := service.StoreUninstallOptions{
+		PurgeData:   c.DefaultQuery("purgeData", "false") == "true",
+		RemoveImage: c.DefaultQuery("rmi", "false") == "true",
+		CascadeDB:   c.DefaultQuery("cascadeDB", "false") == "true",
+	}
+	out, err := a.Store.Uninstall(c.Request.Context(), c.Param("project"), opts)
+	if err != nil {
+		respErr(c, err)
+		return
+	}
+	respOK(c, out)
+}
+
+// ScanLocalStore POST /api/v1/store/local/scan（商店收尾：本地包扫描入库）
+func (a *StoreAPI) ScanLocalStore(c *gin.Context) {
+	out, err := a.Store.ScanLocalStore(c.Request.Context())
+	if err != nil {
+		respErr(c, err)
+		return
+	}
+	respOK(c, out)
+}
+
+// CheckUpgrades GET /api/v1/store/upgrades/check（已装应用升级检查）
+func (a *StoreAPI) CheckUpgrades(c *gin.Context) {
+	out, err := a.Store.CheckUpgrades(c.Request.Context())
+	if err != nil {
+		respErr(c, err)
+		return
+	}
+	respOK(c, out)
+}
+
+// UpgradeApp POST /api/v1/store/installed/:project/upgrade（升级到源内最新版）
+func (a *StoreAPI) UpgradeApp(c *gin.Context) {
+	out, err := a.Store.UpgradeApp(c.Request.Context(), c.Param("project"))
 	if err != nil {
 		respErr(c, err)
 		return

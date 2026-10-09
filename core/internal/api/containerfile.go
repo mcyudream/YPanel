@@ -142,6 +142,19 @@ func (f *ContainerFileAPI) Chmod(c *gin.Context) {
 	respOK(c, struct{}{})
 }
 
+// Chown POST /api/v1/docker/containers/:id/files/chown
+func (f *ContainerFileAPI) Chown(c *gin.Context) {
+	req, ok := bind[dto.FileChownReq](c)
+	if !ok {
+		return
+	}
+	if _, err := agentclient.DoJSON[dto.FileChownReq, struct{}](f.client(c), c.Request.Context(), http.MethodPost, f.basePath(c)+"/chown", req); err != nil {
+		respErr(c, err)
+		return
+	}
+	respOK(c, struct{}{})
+}
+
 // containerUploadReq 容器文件上传（JSON base64）。
 type containerUploadReq struct {
 	Path       string `json:"path" binding:"required"`

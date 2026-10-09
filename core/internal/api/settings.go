@@ -12,6 +12,7 @@ var settingsWhitelist = map[string]bool{
 	"panel.language":   true, // 语言 zh-CN / en
 	"panel.theme.mode": true, // 默认主题 light / dark / auto
 	"panel.entry":      true, // 安全入口路径（空 = 关闭）
+	"desktop.layout":   true, // 桌面工作台布局 JSON（M44 导出/导入，服务器侧备份）
 }
 
 // SettingsAPI 面板设置。

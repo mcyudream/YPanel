@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"log/slog"
 	"strconv"
 
 	"github.com/gin-gonic/gin"
@@ -12,6 +13,17 @@ import (
 // SiteConfAPI 站点配置域接口（对标 1Panel 站点详情子页：每域独立读写）。
 type SiteConfAPI struct {
 	Sites *service.SiteService
+	DNS   *service.DnsService // 域名变更后 best-effort 重载内网 DNS 对齐
+}
+
+// dnsAlignRefresh 域名变更后重载内网 DNS 对齐（best-effort，失败仅记日志）。
+func (a *SiteConfAPI) dnsAlignRefresh(c *gin.Context) {
+	if a.DNS == nil {
+		return
+	}
+	if err := a.DNS.OnSitesChanged(c.Request.Context()); err != nil {
+		slog.Warn("站点对齐 DNS 重载失败", "err", err.Error())
+	}
 }
 
 // confGet GET 泛型代理。
@@ -71,7 +83,8 @@ func (a *SiteConfAPI) GetDomain(c *gin.Context) {
 	respOK(c, out)
 }
 
-// UpdateDomain PUT /api/v1/sites/:id/conf/domain {domains}
+// UpdateDomain PUT /api/v1/sites/:id/conf/domain {domains, primary}
+// primary 为空 = 仅更新附加域名；为站点已有域名且异于当前主域名 = 切换主域名。
 func (a *SiteConfAPI) UpdateDomain(c *gin.Context) {
 	id, err := siteIDParam(c)
 	if err != nil {
@@ -80,15 +93,17 @@ func (a *SiteConfAPI) UpdateDomain(c *gin.Context) {
 	}
 	req, ok := bind[struct {
 		Domains []string `json:"domains"`
+		Primary string   `json:"primary"`
 	}](c)
 	if !ok {
 		return
 	}
-	out, err := a.Sites.UpdateDomainConf(c.Request.Context(), id, req.Domains)
+	out, err := a.Sites.UpdateDomainConf(c.Request.Context(), id, req.Domains, req.Primary)
 	if err != nil {
 		respErr(c, err)
 		return
 	}
+	a.dnsAlignRefresh(c)
 	respOK(c, out)
 }
 
@@ -296,4 +311,17 @@ func (a *SiteConfAPI) GetLoadBalance(c *gin.Context) { confGet(c, a.Sites.GetLoa
 // UpdateLoadBalance PUT /api/v1/sites/:id/conf/loadbalance
 func (a *SiteConfAPI) UpdateLoadBalance(c *gin.Context) {
 	confPut(c, a.Sites.UpdateLoadBalance)
+}
+
+// GetPort GET /api/v1/sites/:id/conf/port（M50 监听端口）
+func (a *SiteConfAPI) GetPort(c *gin.Context) { confGet(c, a.Sites.GetPortConf) }
+
+// UpdatePort PUT /api/v1/sites/:id/conf/port {port}
+// 非 80/443 端口保存后自动落点：container 模式追加容器映射并重建，host 模式联动防火墙放行。
+func (a *SiteConfAPI) UpdatePort(c *gin.Context) {
+	confPut(c, func(ctx context.Context, id uint, req struct {
+		Port int `json:"port"`
+	}) (service.SitePortConf, error) {
+		return a.Sites.UpdatePortConf(ctx, id, req.Port)
+	})
 }

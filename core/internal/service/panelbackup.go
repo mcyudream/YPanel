@@ -17,8 +17,16 @@ const panelBackupDir = "/opt/ypanel/backups/panel"
 
 // PanelBackupService 面板备份：SQLite 快照（VACUUM INTO）+ 配置说明。
 type PanelBackupService struct {
-	nodes *NodeService
+	nodes   *NodeService
+	storage *StorageService // 可选：备份产物远程上传（M34）
+	pruneFn func(keep int) int // 可选：创建后保留清理（M46，由 SnapshotService 注入）
 }
+
+// SetStorage 注入远程存储服务。
+func (s *PanelBackupService) SetStorage(st *StorageService) { s.storage = st }
+
+// SetPruneFn 注入保留清理函数（M46，SnapshotService.Prune("local", keep)）。
+func (s *PanelBackupService) SetPruneFn(fn func(keep int) int) { s.pruneFn = fn }
 
 // NewPanelBackupService 创建。
 func NewPanelBackupService(nodes *NodeService) *PanelBackupService {
@@ -33,8 +41,8 @@ func (s *PanelBackupService) client() (*agentclient.Client, error) {
 	return agentclient.New(node.BaseURL, node.Token), nil
 }
 
-// Create 创建面板备份（SQLite VACUUM INTO 一致性快照）。
-func (s *PanelBackupService) Create(ctx context.Context) (map[string]any, error) {
+// Create 创建面板备份（SQLite VACUUM INTO 一致性快照）；opts 可选远程上传（远端快照简化版）。
+func (s *PanelBackupService) Create(ctx context.Context, opts ...BackupUploadOpts) (map[string]any, error) {
 	ac, err := s.client()
 	if err != nil {
 		return nil, err
@@ -52,7 +60,21 @@ func (s *PanelBackupService) Create(ctx context.Context) (map[string]any, error)
 	if out.ExitCode != 0 {
 		return map[string]any{"output": out.Output}, errs.Wrapc(errs.CodeFileOpFailed, "面板备份失败: "+firstLine(out.Output))
 	}
-	return map[string]any{"file": file, "path": target}, nil
+	res := map[string]any{"file": file, "path": target}
+	// M46：创建后按全局保留份数自动清理（snapshot.keep，默认 10）
+	if s.pruneFn != nil {
+		if removed := s.pruneFn(0); removed > 0 {
+			res["pruned"] = removed
+		}
+	}
+	if len(opts) > 0 && opts[0].StorageAccountID > 0 && s.storage != nil {
+		key, uerr := s.storage.UploadAgentFile(ctx, opts[0].StorageAccountID, "panel", target, opts[0].Keep)
+		if uerr != nil {
+			return res, errs.Wrapc(errs.CodeFileOpFailed, "本地备份成功，远端上传失败: "+uerr.Error())
+		}
+		res["remoteKey"] = key
+	}
+	return res, nil
 }
 
 // List 备份列表。

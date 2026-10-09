@@ -4,6 +4,11 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+	"strings"
+	"net/url"
+	"path/filepath"
+	"sync"
+	"time"
 
 	"github.com/gin-gonic/gin"
 
@@ -11,6 +16,7 @@ import (
 	"github.com/ypanel/core/internal/middleware"
 	"github.com/ypanel/core/internal/service"
 	"github.com/ypanel/shared/dto"
+	"github.com/ypanel/shared/errs"
 )
 
 // SystemAPI 主机监控接口（代理 agent）。
@@ -44,10 +50,73 @@ func (s *SystemAPI) Overview(c *gin.Context) {
 	respOK(c, resp)
 }
 
+// HostEntries GET /api/v1/system/hosts（读宿主机 /etc/hosts，过滤 localhost/回环，供容器 hosts 映射导入）。
+func (s *SystemAPI) HostEntries(c *gin.Context) {
+	resp, err := agentclient.DoJSON[dto.ExecReq, dto.ExecResp](s.client(c), c.Request.Context(), "POST", "/agent/v1/exec",
+		&dto.ExecReq{Command: "cat /etc/hosts 2>/dev/null || true", TimeoutSecs: 30})
+	if err != nil {
+		respErr(c, err)
+		return
+	}
+	type hostEntry struct {
+		IP    string   `json:"ip"`
+		Hosts []string `json:"hosts"`
+	}
+	entries := []hostEntry{}
+	for _, line := range strings.Split(resp.Output, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		fields := strings.Fields(line)
+		if len(fields) < 2 {
+			continue
+		}
+		ip := fields[0]
+		lip := strings.ToLower(ip)
+		if lip == "127.0.0.1" || strings.HasPrefix(lip, "127.") ||
+			// IPv6 仅保留全局单播（2xxx/3xxx），滤掉 ::1/链路本地/多播等无意义条目
+			(strings.Contains(lip, ":") && !strings.HasPrefix(lip, "2") && !strings.HasPrefix(lip, "3")) {
+			continue
+		}
+		hosts := []string{}
+		for _, h := range fields[1:] {
+			h = strings.ToLower(h)
+			if h == "localhost" || strings.HasSuffix(h, ".localdomain") || strings.HasSuffix(h, ".local") {
+				continue
+			}
+			hosts = append(hosts, h)
+		}
+		if len(hosts) > 0 {
+			entries = append(entries, hostEntry{IP: ip, Hosts: hosts})
+		}
+	}
+	respOK(c, entries)
+}
+
 // History GET /api/v1/system/history?seconds=
 func (s *SystemAPI) History(c *gin.Context) {
 	seconds := c.DefaultQuery("seconds", "600")
 	out, err := agentclient.GetJSON[[]dto.MetricSample](s.client(c), c.Request.Context(), "/agent/v1/sysinfo/history?seconds="+seconds)
+	if err != nil {
+		respErr(c, err)
+		return
+	}
+	respOK(c, out)
+}
+
+// DiskUsageTree GET /api/v1/disk/usage?path=/var[&refresh=1]（du 语义目录占用；agent 24h 缓存，refresh=1 绕过重算）
+func (s *SystemAPI) DiskUsageTree(c *gin.Context) {
+	p := filepath.Clean(c.Query("path"))
+	if !filepath.IsAbs(p) || c.Query("path") == "" {
+		respErr(c, errs.ErrBadRequest)
+		return
+	}
+	q := "/agent/v1/disk/usage?path=" + url.QueryEscape(p)
+	if c.Query("refresh") == "1" {
+		q += "&refresh=1"
+	}
+	out, err := agentclient.GetJSON[dto.DiskUsageTree](s.client(c), c.Request.Context(), q)
 	if err != nil {
 		respErr(c, err)
 		return
@@ -136,6 +205,19 @@ func (f *FileAPI) Rename(c *gin.Context) {
 	respOK(c, struct{}{})
 }
 
+// Copy POST /api/v1/files/copy
+func (f *FileAPI) Copy(c *gin.Context) {
+	req, ok := bind[dto.FileCopyReq](c)
+	if !ok {
+		return
+	}
+	if _, err := agentclient.DoJSON[dto.FileCopyReq, struct{}](f.client(c), c.Request.Context(), http.MethodPost, "/agent/v1/files/copy", req); err != nil {
+		respErr(c, err)
+		return
+	}
+	respOK(c, struct{}{})
+}
+
 // Delete POST /api/v1/files/delete
 func (f *FileAPI) Delete(c *gin.Context) {
 	req, ok := bind[dto.FileDeleteReq](c)
@@ -149,7 +231,7 @@ func (f *FileAPI) Delete(c *gin.Context) {
 	respOK(c, struct{}{})
 }
 
-// Chmod POST /api/v1/files/chmod {path, mode}
+// Chmod POST /api/v1/files/chmod {path, mode, recursive}
 func (f *FileAPI) Chmod(c *gin.Context) {
 	req, ok := bind[dto.FileChmodReq](c)
 	if !ok {
@@ -162,7 +244,30 @@ func (f *FileAPI) Chmod(c *gin.Context) {
 	respOK(c, struct{}{})
 }
 
-// Compress POST /api/v1/files/compress {src, dest}
+// Chown POST /api/v1/files/chown {path, owner, group, recursive}
+func (f *FileAPI) Chown(c *gin.Context) {
+	req, ok := bind[dto.FileChownReq](c)
+	if !ok {
+		return
+	}
+	if _, err := agentclient.DoJSON[dto.FileChownReq, struct{}](f.client(c), c.Request.Context(), http.MethodPost, "/agent/v1/files/chown", req); err != nil {
+		respErr(c, err)
+		return
+	}
+	respOK(c, struct{}{})
+}
+
+// Owners GET /api/v1/files/owners（系统用户/组枚举）
+func (f *FileAPI) Owners(c *gin.Context) {
+	out, err := agentclient.GetJSON[dto.FileOwnersResp](f.client(c), c.Request.Context(), "/agent/v1/files/owners")
+	if err != nil {
+		respErr(c, err)
+		return
+	}
+	respOK(c, out)
+}
+
+// Compress POST /api/v1/files/compress {src?, srcs?, dest}
 func (f *FileAPI) Compress(c *gin.Context) {
 	req, ok := bind[dto.FileCompressReq](c)
 	if !ok {
@@ -268,13 +373,52 @@ func (d *DockerAPI) List(c *gin.Context) {
 	respOK(c, out)
 }
 
+// 容器最近一次操作失败记录（内存，重启即清）：id → {action, message, at}。
+// Docker/agent 不保存历史错误，面板留存供详情页排障展示。
+var (
+	containerOpErrMu sync.Mutex
+	containerOpErr   = map[string]containerOpErrEntry{}
+)
+
+type containerOpErrEntry struct {
+	Action  string `json:"action"`
+	Message string `json:"message"`
+	At      time.Time `json:"at"`
+}
+
+func recordContainerOpErr(id, action string, err error) {
+	containerOpErrMu.Lock()
+	defer containerOpErrMu.Unlock()
+	containerOpErr[id] = containerOpErrEntry{Action: action, Message: errs.From(err).Message, At: time.Now()}
+}
+
+// ContainerLastOpErr GET /api/v1/docker/containers/:id/last-op-err
+func (d *DockerAPI) ContainerLastOpErr(c *gin.Context) {
+	containerOpErrMu.Lock()
+	defer containerOpErrMu.Unlock()
+	e, ok := containerOpErr[c.Param("id")]
+	if !ok {
+		respOK(c, (*containerOpErrEntry)(nil))
+		return
+	}
+	respOK(c, &e)
+}
+
 // Action POST /api/v1/docker/containers/:id/:action
 func (d *DockerAPI) Action(c *gin.Context) {
-	path := "/agent/v1/docker/containers/" + c.Param("id") + "/" + c.Param("action")
+	id := c.Param("id")
+	action := c.Param("action")
+	path := "/agent/v1/docker/containers/" + id + "/" + action
 	if _, err := agentclient.DoJSON[struct{}, struct{}](d.client(c), c.Request.Context(), http.MethodPost, path, &struct{}{}); err != nil {
+		if action == "start" || action == "restart" {
+			recordContainerOpErr(id, action, err)
+		}
 		respErr(c, err)
 		return
 	}
+	containerOpErrMu.Lock()
+	delete(containerOpErr, id)
+	containerOpErrMu.Unlock()
 	respOK(c, struct{}{})
 }
 

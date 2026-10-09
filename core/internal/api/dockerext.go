@@ -1,6 +1,7 @@
 package api
 
 import (
+	"strings"
 	"encoding/json"
 	"net/http"
 	"net/url"
@@ -10,6 +11,7 @@ import (
 	"github.com/gorilla/websocket"
 
 	"github.com/ypanel/core/internal/service"
+	"github.com/ypanel/shared/errs"
 )
 
 func json2any(raw json.RawMessage) any {
@@ -51,7 +53,8 @@ func (a *DockerExtAPI) ImagePull(c *gin.Context) {
 
 // ImageRemove DELETE /api/v1/docker/images/:id
 func (a *DockerExtAPI) ImageRemove(c *gin.Context) {
-	if err := a.Ext.ImageRemove(c.Request.Context(), c.Param("id"), c.Query("force") == "1"); err != nil {
+	imageRef := strings.TrimPrefix(c.Param("id"), "/")
+	if err := a.Ext.ImageRemove(c.Request.Context(), imageRef, c.Query("force") == "1"); err != nil {
 		respErr(c, err)
 		return
 	}
@@ -60,7 +63,22 @@ func (a *DockerExtAPI) ImageRemove(c *gin.Context) {
 
 // ImagesPrune POST /api/v1/docker/images/prune
 func (a *DockerExtAPI) ImagesPrune(c *gin.Context) {
-	out, err := a.Ext.Passthrough(c.Request.Context(), "/agent/v1/docker/images/prune")
+	a.pruneViaPost(c, "/agent/v1/docker/images/prune")
+}
+
+// Usage GET /api/v1/docker/usage（system df 用量统计；agent 侧实算 size，前端懒加载）
+func (a *DockerExtAPI) Usage(c *gin.Context) {
+	out, err := a.Ext.Passthrough(c.Request.Context(), "/agent/v1/docker/usage")
+	if err != nil {
+		respErr(c, err)
+		return
+	}
+	respOK(c, json2any(out))
+}
+
+// BuildCachePrune POST /api/v1/docker/buildcache/prune（清空构建缓存，返回释放字节数）
+func (a *DockerExtAPI) BuildCachePrune(c *gin.Context) {
+	out, err := a.Ext.PassthroughPost(c.Request.Context(), "/agent/v1/docker/buildcache/prune")
 	if err != nil {
 		respErr(c, err)
 		return
@@ -139,12 +157,7 @@ func (a *DockerExtAPI) VolumeRemove(c *gin.Context) {
 
 // VolumesPrune POST /api/v1/docker/volumes/prune
 func (a *DockerExtAPI) VolumesPrune(c *gin.Context) {
-	out, err := a.Ext.Passthrough(c.Request.Context(), "/agent/v1/docker/volumes/prune")
-	if err != nil {
-		respErr(c, err)
-		return
-	}
-	respOK(c, json2any(out))
+	a.pruneViaPost(c, "/agent/v1/docker/volumes/prune")
 }
 
 // ContainersPrune POST /api/v1/docker/containers/prune
@@ -160,6 +173,38 @@ func (a *DockerExtAPI) ContainersPrune(c *gin.Context) {
 // ContainerInspect GET /api/v1/docker/containers/:id/inspect
 func (a *DockerExtAPI) ContainerInspect(c *gin.Context) {
 	out, err := a.Ext.Passthrough(c.Request.Context(), "/agent/v1/docker/containers/"+c.Param("id")+"/inspect")
+	if err != nil {
+		respErr(c, err)
+		return
+	}
+	respOK(c, json2any(out))
+}
+
+// pruneViaPost POST 透传并解包 agent 信封，统一返回 {output}。
+func (a *DockerExtAPI) pruneViaPost(c *gin.Context, path string) {
+	out, err := a.Ext.PassthroughPost(c.Request.Context(), path)
+	if err != nil {
+		respErr(c, err)
+		return
+	}
+	var body struct {
+		Code    int    `json:"code"`
+		Message string `json:"message"`
+		Data    struct {
+			Output string `json:"output"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(out, &body); err != nil || body.Code != 0 {
+		respErr(c, errs.Wrapc(errs.CodeFileOpFailed, "清理失败: "+body.Message))
+		return
+	}
+	respOK(c, gin.H{"output": body.Data.Output})
+}
+
+// ContainerRootfs GET /api/v1/docker/containers/:id/rootfs
+// 返回容器可写层宿主目录（供无法启动的容器经宿主文件通道直读/修复）。
+func (a *DockerExtAPI) ContainerRootfs(c *gin.Context) {
+	out, err := a.Ext.Passthrough(c.Request.Context(), "/agent/v1/docker/containers/"+c.Param("id")+"/rootfs")
 	if err != nil {
 		respErr(c, err)
 		return
@@ -249,7 +294,34 @@ func (a *DockerExtAPI) ContainerCreate(c *gin.Context) {
 
 // ContainerRemove DELETE /api/v1/docker/containers/:id
 func (a *DockerExtAPI) ContainerRemove(c *gin.Context) {
-	if err := a.Ext.ContainerRemove(c.Request.Context(), c.Param("id"), c.Query("force") == "1"); err != nil {
+	if err := a.Ext.ContainerRemove(c.Request.Context(), c.Param("id"), c.Query("force") == "1", c.Query("v") == "1"); err != nil {
+		respErr(c, err)
+		return
+	}
+	respOK(c, struct{}{})
+}
+
+// ContainerRecreate POST /api/v1/docker/containers/:id/recreate（编辑保存：删除重建）
+func (a *DockerExtAPI) ContainerRecreate(c *gin.Context) {
+	req, ok := bind[service.ExtContainerCreateReq](c)
+	if !ok {
+		return
+	}
+	id, err := a.Ext.ContainerRecreate(c.Request.Context(), c.Param("id"), *req)
+	if err != nil {
+		respErr(c, err)
+		return
+	}
+	respOK(c, gin.H{"id": id})
+}
+
+// ContainerUpdate POST /api/v1/docker/containers/:id/update（docker update 热更新）
+func (a *DockerExtAPI) ContainerUpdate(c *gin.Context) {
+	req, ok := bind[service.ExtContainerUpdateReq](c)
+	if !ok {
+		return
+	}
+	if err := a.Ext.ContainerUpdateResources(c.Request.Context(), c.Param("id"), *req); err != nil {
 		respErr(c, err)
 		return
 	}

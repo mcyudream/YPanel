@@ -24,7 +24,9 @@ func SecurityGate(sec *service.SecuritySettingsService) gin.HandlerFunc {
 			entry := sec.SafeEntry()
 			if entry != "" {
 				e := c.Query("entry")
-				if e != entry && c.GetHeader("X-Safe-Entry") != entry {
+				// M49：入口路径访问已种 yp_entry_ok cookie（HttpOnly），视为已通过入口
+				ck, cerr := c.Cookie(EntryCookieName)
+				if e != entry && c.GetHeader("X-Safe-Entry") != entry && (cerr != nil || ck != "1") {
 					c.AbortWithStatus(http.StatusNotFound)
 					return
 				}

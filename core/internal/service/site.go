@@ -8,6 +8,7 @@ import (
 	"path"
 	"regexp"
 	"strings"
+	"sync"
 	"time"
 
 	"gorm.io/gorm"
@@ -35,6 +36,10 @@ var proxyTargetPattern = regexp.MustCompile(`^https?://[a-zA-Z0-9._-]+(:[0-9]{1,
 type SiteService struct {
 	db    *gorm.DB
 	nodes *NodeService
+	// 端口对账依赖（SetPortDeps 装配期注入）；reconcileMu 串行化对账，避免并发重写 compose
+	fw          *FirewallService
+	nat         *NatForwardService
+	reconcileMu sync.Mutex
 }
 
 // NewSiteService 创建站点服务。
@@ -48,31 +53,6 @@ func (s *SiteService) client() (*agentclient.Client, error) {
 		return nil, err
 	}
 	return agentclient.New(node.BaseURL, node.Token), nil
-}
-
-// nginxComposeTemplate nginx 容器 compose 配置。
-func nginxComposeTemplate() string {
-	return `services:
-  nginx:
-    image: nginx:stable-alpine
-    container_name: ` + nginxContainer + `
-    ports:
-      - "80:80"
-      - "443:443"
-    volumes:
-      - /opt/ypanel/nginx/conf.d:/etc/nginx/conf.d
-      - /opt/ypanel/nginx/certs:/etc/nginx/certs
-      - /opt/ypanel/nginx/www:/var/www
-      - /opt/ypanel/nginx/logs:/var/log/nginx
-      - /opt/ypanel/nginx/cache:/var/cache/nginx
-    networks:
-      - 1panel-network
-    restart: unless-stopped
-
-networks:
-  1panel-network:
-    external: true
-`
 }
 
 // ensureNginx 确保 nginx 环境可用（幂等）：host 模式仅保证目录与默认配置；container 模式安装并启动容器。
@@ -89,9 +69,16 @@ func (s *SiteService) ensureNginx(ctx context.Context) error {
 		}
 	}
 	if s.nginxMode() != "host" {
-		// compose 配置 + up（已存在则覆盖无害）
+		// 统一网络
+		if err := ensurePanelNetwork(ctx, ac); err != nil {
+			return err
+		}
+		// compose 配置按站点表当前 desired 渲染（含既有附加端口；本站新端口由随后的
+		// ReconcilePorts 追加）——用基础模板覆盖会先抹掉已生效映射，造成多余重建
+		var rows []model.Site
+		_ = s.db.Find(&rows).Error
 		if _, err := agentclient.DoJSON[dto.ComposeWriteReq, struct{}](ac, ctx, "POST", "/agent/v1/compose/config",
-			&dto.ComposeWriteReq{Name: nginxProject, Content: nginxComposeTemplate()}); err != nil {
+			&dto.ComposeWriteReq{Name: nginxProject, Content: nginxComposeTemplate(siteDesiredExtraPorts(rows))}); err != nil {
 			return err
 		}
 		if _, err := agentclient.DoJSON[dto.ComposeActionReq, map[string]string](ac, ctx, "POST", "/agent/v1/compose/up",
@@ -136,16 +123,28 @@ func (s *SiteService) nginxMode() string {
 	return "container"
 }
 
-// SetNginxMode 设置 nginx 环境模式。
-func (s *SiteService) SetNginxMode(mode string) error {
+// SetNginxMode 设置 nginx 环境模式；切换后端口落点换域，host→container 先收回防火墙放行
+// （container→host 由 ReconcilePorts 直接在防火墙侧落点），再统一对账。
+func (s *SiteService) SetNginxMode(ctx context.Context, mode string) error {
 	if mode != "container" && mode != "host" {
 		return errs.Wrap(errs.ErrBadRequest, "模式仅支持 container/host")
 	}
 	var row model.Setting
 	if err := s.db.Where("`key` = ?", settingKeyNginxMode).First(&row).Error; err != nil {
-		return s.db.Create(&model.Setting{Key: settingKeyNginxMode, Value: mode}).Error
+		if err := s.db.Create(&model.Setting{Key: settingKeyNginxMode, Value: mode}).Error; err != nil {
+			return err
+		}
+	} else if err := s.db.Model(&row).Update("value", mode).Error; err != nil {
+		return err
 	}
-	return s.db.Model(&row).Update("value", mode).Error
+	if mode == "container" && s.fw != nil {
+		var leases []model.SitePortLease
+		_ = s.db.Find(&leases).Error
+		for _, l := range leases {
+			_ = s.fw.RevokePortAllowed(ctx, l.Port, l.Proto)
+		}
+	}
+	return s.ReconcilePorts(ctx)
 }
 
 // AdoptHostNginx 接管本机 nginx：探测二进制与 systemd 服务，接管后站点配置仍写 /opt/ypanel/nginx/conf.d。
@@ -170,7 +169,7 @@ func (s *SiteService) AdoptHostNginx(ctx context.Context) (map[string]any, error
 		_, _ = agentclient.DoJSON[dto.FileMkdirReq, struct{}](ac, ctx, "POST", "/agent/v1/files/mkdir",
 			&dto.FileMkdirReq{Path: d})
 	}
-	if err := s.SetNginxMode("host"); err != nil {
+	if err := s.SetNginxMode(ctx, "host"); err != nil {
 		return nil, err
 	}
 	_ = active
@@ -222,7 +221,7 @@ func (s *SiteService) Status(ctx context.Context) (map[string]any, error) {
 	_ = s.db.Model(&model.Site{}).Count(&count).Error
 	return map[string]any{
 		"installed": installed, "running": running, "mode": mode,
-		"sites": count,
+		"sites":  count,
 		"hostIP": "",
 	}, nil
 }
@@ -234,25 +233,25 @@ func (s *SiteService) Install(ctx context.Context) error {
 
 // ProxyRule 反代规则（location 前缀 → 后端）。
 type ProxyRule struct {
-	Prefix   string `json:"prefix"` // 如 /api（空 = "/"）
-	Target   string `json:"target"` // http(s)://host:port
-	WebSocket bool  `json:"ws"`
+	Prefix    string `json:"prefix"` // 如 /api（空 = "/"）
+	Target    string `json:"target"` // http(s)://host:port
+	WebSocket bool   `json:"ws"`
 }
 
 // siteMeta 站点生成期元数据（多域名/规则/日志/伪静态/缓存/自定义 location）。
 type siteMeta struct {
-	ExtraDomains    []string        `json:"extraDomains,omitempty"`
-	ProxyRules      []ProxyRule     `json:"proxyRules,omitempty"`
-	IndexFiles      string          `json:"indexFiles,omitempty"`
-	LogsEnabled     bool            `json:"logsEnabled"`
-	RewriteName     string          `json:"rewriteName,omitempty"`
-	RewriteContent  string          `json:"rewriteContent,omitempty"`
-	CustomLocations []CustomLocation `json:"customLocations,omitempty"`
-	ErrorPage404    string          `json:"errorPage404,omitempty"`
-	CacheEnable     bool            `json:"cacheEnable"`
-	CacheDuration   string          `json:"cacheDuration,omitempty"`
-	RuntimeID       uint            `json:"runtimeId,omitempty"`
-	RuntimeContainer string         `json:"runtimeContainer,omitempty"`
+	ExtraDomains     []string         `json:"extraDomains,omitempty"`
+	ProxyRules       []ProxyRule      `json:"proxyRules,omitempty"`
+	IndexFiles       string           `json:"indexFiles,omitempty"`
+	LogsEnabled      bool             `json:"logsEnabled"`
+	RewriteName      string           `json:"rewriteName,omitempty"`
+	RewriteContent   string           `json:"rewriteContent,omitempty"`
+	CustomLocations  []CustomLocation `json:"customLocations,omitempty"`
+	ErrorPage404     string           `json:"errorPage404,omitempty"`
+	CacheEnable      bool             `json:"cacheEnable"`
+	CacheDuration    string           `json:"cacheDuration,omitempty"`
+	RuntimeID        uint             `json:"runtimeId,omitempty"`
+	RuntimeContainer string           `json:"runtimeContainer,omitempty"`
 }
 
 // parseSiteMeta 解析站点附加元数据（兼容旧数据：仅主域名 + 默认规则）。
@@ -498,6 +497,11 @@ func confTemplate(site *model.Site, ssl bool, waf SiteWaf) string {
 
 	names := append([]string{site.Domain}, meta.ExtraDomains...)
 	serverNames := strings.Join(names, " ")
+	// M39：默认站点标记（default_server；同刻仅一个，由 SetDefault 保证）
+	defFlag := ""
+	if site.IsDefault {
+		defFlag = " default_server"
+	}
 
 	// 反代缓存 zone（conf.d 顶层 = http 上下文，目录挂载于 cache 卷）
 	if meta.CacheEnable && site.Type == "proxy" {
@@ -524,7 +528,7 @@ func confTemplate(site *model.Site, ssl bool, waf SiteWaf) string {
 			if ssl {
 				listenSSL = " ssl"
 			}
-			b.WriteString(fmt.Sprintf("# ypanel-site:%d\nserver {\n    listen %d%s;\n    server_name %s;\n", site.ID, site.Port, listenSSL, serverNames))
+			b.WriteString(fmt.Sprintf("# ypanel-site:%d\nserver {\n    listen %d%s%s;\n    server_name %s;\n", site.ID, site.Port, listenSSL, defFlag, serverNames))
 			b.WriteString(wafServer)
 			b.WriteString("}\n\n")
 		case "deny":
@@ -536,7 +540,7 @@ func confTemplate(site *model.Site, ssl bool, waf SiteWaf) string {
 		if httpsCfg.HTTP2 {
 			listenSSLFlag += " http2"
 		}
-		b.WriteString(fmt.Sprintf("# ypanel-site:%d\nserver {\n    listen 443%s;\n    server_name %s;\n", site.ID, listenSSLFlag, serverNames))
+		b.WriteString(fmt.Sprintf("# ypanel-site:%d\nserver {\n    listen 443%s%s;\n    server_name %s;\n", site.ID, listenSSLFlag, defFlag, serverNames))
 		fmt.Fprintf(&b, "    ssl_certificate     /etc/nginx/certs/%s.crt;\n    ssl_certificate_key /etc/nginx/certs/%s.key;\n", site.CertDomain, site.CertDomain)
 		// TLS 协议版本与加密套件
 		protos := make([]string, 0, len(httpsCfg.TLSVersions))
@@ -580,7 +584,7 @@ func confTemplate(site *model.Site, ssl bool, waf SiteWaf) string {
 		if ssl {
 			listenSSL = " ssl"
 		}
-		b.WriteString(fmt.Sprintf("# ypanel-site:%d\nserver {\n    listen %d%s;\n    server_name %s;\n", site.ID, site.Port, listenSSL, serverNames))
+		b.WriteString(fmt.Sprintf("# ypanel-site:%d\nserver {\n    listen %d%s%s;\n    server_name %s;\n", site.ID, site.Port, listenSSL, defFlag, serverNames))
 	}
 
 	b.WriteString(wafServer)
@@ -699,7 +703,7 @@ func confTemplate(site *model.Site, ssl bool, waf SiteWaf) string {
 				prefix = "/"
 			}
 			fmt.Fprintf(&b, "    location %s {\n", prefix)
-			// LB: 
+			// LB:
 			if lb2 := extra.LoadBalance; lb2 != nil && lb2.Enable && len(lb2.Upstreams) > 1 {
 				fmt.Fprintf(&b, "        proxy_pass http://lb_%s;\n", site.Name)
 			} else {
@@ -981,6 +985,74 @@ func (s *SiteService) Config(ctx context.Context, id uint) (string, error) {
 }
 
 // SetEnabled 启用/禁用（conf 删除/重建）。
+// BatchOperate 批量操作（M39）：enable / disable / delete。
+func (s *SiteService) BatchOperate(ctx context.Context, ids []uint, action string, opts SiteDeleteOptions) error {
+	for _, id := range ids {
+		var err error
+		switch action {
+		case "enable":
+			err = s.SetEnabled(ctx, id, true)
+		case "disable":
+			err = s.SetEnabled(ctx, id, false)
+		case "delete":
+			err = s.Delete(ctx, id, opts)
+		default:
+			return errs.Wrap(errs.ErrBadRequest, "不支持的操作: "+action)
+		}
+		if err != nil {
+			return errs.Wrapc(errs.CodeBadRequest, fmt.Sprintf("站点 #%d 处理失败: %v", id, err))
+		}
+	}
+	return nil
+}
+
+// SetDefault 设为默认站点（nginx default_server；同刻仅一个）。M39
+func (s *SiteService) SetDefault(ctx context.Context, id uint) error {
+	site, err := s.siteByID(id)
+	if err != nil {
+		return err
+	}
+	if !site.Enabled {
+		return errs.Wrap(errs.ErrBadRequest, "禁用状态的站点不能设为默认")
+	}
+	ac, err := s.client()
+	if err != nil {
+		return err
+	}
+	// 旧默认取消并重写 conf
+	var olds []model.Site
+	_ = s.db.Where("is_default = ? AND id <> ?", true, id).Find(&olds).Error
+	for _, o := range olds {
+		_ = s.db.Model(&model.Site{}).Where("id = ?", o.ID).Update("is_default", false).Error
+		if o.Enabled {
+			_ = s.writeConf(ctx, &o, confTemplate(&o, o.CertDomain != "", parseWaf(&o)))
+		}
+	}
+	if err := s.db.Model(site).Update("is_default", true).Error; err != nil {
+		return err
+	}
+	// 占位 default.conf 去掉 default_server 标记（避免与站点默认重复冲突）
+	if out, rerr := agentclient.GetJSON[dto.FileReadResp](ac, ctx, "/agent/v1/files/read?path="+escapeURL(path.Join(nginxConfDir, "default.conf"))); rerr == nil && strings.Contains(out.Content, "default_server") {
+		patched := strings.ReplaceAll(out.Content, "listen 80 default_server;", "listen 80;")
+		patched = strings.ReplaceAll(patched, "listen 443 ssl default_server;", "listen 443 ssl;")
+		_, _ = agentclient.DoJSON[dto.FileWriteReq, struct{}](ac, ctx, "POST", "/agent/v1/files/write",
+			&dto.FileWriteReq{Path: path.Join(nginxConfDir, "default.conf"), Content: patched})
+	}
+	fresh, err := s.siteByID(id)
+	if err != nil {
+		return err
+	}
+	if err := s.writeConf(ctx, fresh, confTemplate(fresh, fresh.CertDomain != "", parseWaf(fresh))); err != nil {
+		return err
+	}
+	return s.reloadNginx(ctx)
+}
+
+// SetExpire 设置网站到期时间（M39；nil=清除）。
+func (s *SiteService) SetExpire(id uint, expireAt *time.Time) error {
+	return s.db.Model(&model.Site{}).Where("id = ?", id).Update("expire_at", expireAt).Error
+}
+
 func (s *SiteService) SetEnabled(ctx context.Context, id uint, enabled bool) error {
 	site, err := s.siteByID(id)
 	if err != nil {
@@ -999,16 +1071,30 @@ func (s *SiteService) SetEnabled(ctx context.Context, id uint, enabled bool) err
 		if err := s.reloadNginx(ctx); err != nil {
 			return err
 		}
-		return s.db.Model(site).Update("enabled", false).Error
+		if err := s.db.Model(site).Update("enabled", false).Error; err != nil {
+			return err
+		}
+		// 停用后端口引用可能归零，对账回收映射/放行
+		return s.ReconcilePorts(ctx)
 	}
 	if err := s.writeConf(ctx, site, confTemplate(site, site.CertDomain != "", parseWaf(site))); err != nil {
 		return err
 	}
-	return s.db.Model(site).Update("enabled", true).Error
+	if err := s.db.Model(site).Update("enabled", true).Error; err != nil {
+		return err
+	}
+	// 启用后端口重新纳入落点
+	return s.ReconcilePorts(ctx)
 }
 
 // Delete 删除站点。
-func (s *SiteService) Delete(ctx context.Context, id uint, purgeFiles bool) error {
+// SiteDeleteOptions 站点删除选项（级联资源勾选）。
+type SiteDeleteOptions struct {
+	PurgeFiles   bool // 删除站点目录（www/sites/<name>）
+	PurgeBackups bool // 删除站点备份（backups/sites/<name>_*.tar.gz）
+}
+
+func (s *SiteService) Delete(ctx context.Context, id uint, opts SiteDeleteOptions) error {
 	site, err := s.siteByID(id)
 	if err != nil {
 		return err
@@ -1018,13 +1104,22 @@ func (s *SiteService) Delete(ctx context.Context, id uint, purgeFiles bool) erro
 		return err
 	}
 	_, _ = agentclient.DoJSON[dto.FileDeleteReq, struct{}](ac, ctx, "POST", "/agent/v1/files/delete",
-		&dto.FileDeleteReq{Paths: []string{path.Join(nginxConfDir, site.Name + ".conf")}})
-	if purgeFiles {
+		&dto.FileDeleteReq{Paths: []string{path.Join(nginxConfDir, site.Name+".conf")}})
+	if opts.PurgeFiles {
 		_, _ = agentclient.DoJSON[dto.FileDeleteReq, struct{}](ac, ctx, "POST", "/agent/v1/files/delete",
 			&dto.FileDeleteReq{Paths: []string{path.Join(nginxWwwDir, "sites", site.Name)}})
 	}
+	if opts.PurgeBackups && siteNamePattern.MatchString(site.Name) {
+		// 备份为平铺 tar.gz（<name>_<ts>.tar.gz），按前缀清理
+		_, _ = agentclient.DoJSON[dto.ExecReq, dto.ExecResp](ac, ctx, "POST", "/agent/v1/exec",
+			&dto.ExecReq{Command: fmt.Sprintf("rm -f /opt/ypanel/backups/sites/%s_*.tar.gz", site.Name), TimeoutSecs: 60})
+	}
 	_ = s.reloadNginx(ctx)
-	return s.db.Delete(&model.Site{}, id).Error
+	if err := s.db.Delete(&model.Site{}, id).Error; err != nil {
+		return err
+	}
+	// 删除后端口引用可能归零，对账回收映射/放行
+	return s.ReconcilePorts(ctx)
 }
 
 // GetByIDF 单条站点查询（F8：详情页免拉全量列表）。
@@ -1102,6 +1197,7 @@ func (s *SiteService) List(ctx context.Context) ([]map[string]any, error) {
 			"indexFiles": r.IndexFiles, "logsEnabled": r.LogsEnabled,
 			"groupId": r.GroupID, "groupName": groupName, "remark": r.Remark,
 			"runDir": r.RunDir, "certId": r.CertID, "certNotAfter": notAfter,
+			"isDefault": r.IsDefault, "expireAt": r.ExpireAt,
 			"enabled": r.Enabled, "onDisk": onDisk, "nginxRunning": nginxRunning,
 			"createdAt": r.CreatedAt,
 		})
@@ -1130,17 +1226,23 @@ func (s *SiteService) Create(ctx context.Context, req SiteCreateInput) (*model.S
 	runtimeContainer := ""
 	if req.Type == "php" {
 		if req.RuntimeID == 0 {
-			return nil, errs.Wrap(errs.ErrBadRequest, "PHP 站点需绑定运行环境")
+			return nil, errs.New(errs.CodeBadRequest, "error.badRequest", "PHP 站点需绑定运行环境")
 		}
 		var rt model.Runtime
 		if err := s.db.First(&rt, req.RuntimeID).Error; err != nil {
-			return nil, errs.Wrap(errs.ErrBadRequest, "运行环境不存在")
+			return nil, errs.New(errs.CodeNotFound, "error.notFound", "运行环境不存在")
+		}
+		if rt.Type != "php" {
+			return nil, errs.New(errs.CodeBadRequest, "error.badRequest", "仅 PHP 运行环境可绑定 PHP 站点（代码运行时请用反代站点指向其宿主端口）")
 		}
 		if rt.Origin == "external" {
 			// 外部接管：fastcgi 直连地址以 ext: 前缀区分容器名
 			runtimeContainer = "ext:" + rt.FCGIAddr
 		} else {
-			runtimeContainer = "php-" + rt.Name
+			runtimeContainer = rt.ContainerName
+			if runtimeContainer == "" {
+				runtimeContainer = "php-" + rt.Name
+			}
 		}
 	}
 	if req.Type == "proxy" {
@@ -1157,6 +1259,14 @@ func (s *SiteService) Create(ctx context.Context, req SiteCreateInput) (*model.S
 	_ = s.db.Model(&model.Site{}).Where("name = ? OR domain = ?", req.Name, domain).Count(&count).Error
 	if count > 0 {
 		return nil, errs.New(errs.CodeConflict, "error.siteExists", "站点名或域名已存在")
+	}
+	port, err := validateSitePort(req.Port)
+	if err != nil {
+		return nil, err
+	}
+	// 非 80/443 端口需在宿主侧可分配（容器映射 / 防火墙落点），先预检再动任何副作用
+	if err := s.checkPortFree(ctx, port); err != nil {
+		return nil, err
 	}
 	if err := s.ensureNginx(ctx); err != nil {
 		return nil, err
@@ -1175,12 +1285,17 @@ func (s *SiteService) Create(ctx context.Context, req SiteCreateInput) (*model.S
 	}
 	site := &model.Site{
 		Name: req.Name, Type: req.Type, Domain: domain, Domains: extraJSON,
-		Port: req.Port, ProxyPass: req.ProxyPass, ProxyRules: rulesJSON,
+		Port: port, ProxyPass: req.ProxyPass, ProxyRules: rulesJSON,
 		IndexFiles: indexFiles, LogsEnabled: true, Enabled: true,
 		RuntimeID: req.RuntimeID, RuntimeContainer: runtimeContainer,
 		GroupID: req.GroupID, Remark: strings.TrimSpace(req.Remark), RunDir: req.RunDir,
 	}
 	if err := s.db.Create(site).Error; err != nil {
+		return nil, err
+	}
+	// 附加端口落点（映射/放行）失败不留半截站点：补偿回删记录后报错
+	if err := s.ReconcilePorts(ctx); err != nil {
+		_ = s.db.Delete(site)
 		return nil, err
 	}
 	if err := s.writeConf(ctx, site, confTemplate(site, false, parseWaf(site))); err != nil {

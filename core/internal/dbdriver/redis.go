@@ -3,6 +3,7 @@ package dbdriver
 import (
 	"context"
 	"fmt"
+	"strconv"
 	"strings"
 
 	"github.com/redis/go-redis/v9"
@@ -23,11 +24,19 @@ func (d *redisDriver) Ping(ctx context.Context) error {
 	return d.rdb.Ping(ctx).Err()
 }
 
-// ListDatabases Redis 以 16 个逻辑库呈现（0-15），大小为各库 key 数。
+// ListDatabases Redis 逻辑库列表（数量取 CONFIG GET databases，受限时回退 16）。
 func (d *redisDriver) ListDatabases(ctx context.Context) ([]DatabaseInfo, error) {
 	opts := d.rdb.Options()
+	total := 16
+	if cfg, err := d.rdb.ConfigGet(ctx, "databases").Result(); err == nil {
+		if v, ok := cfg["databases"]; ok {
+			if n, err := strconv.Atoi(v); err == nil && n > 0 && n <= 256 {
+				total = n
+			}
+		}
+	}
 	out := []DatabaseInfo{}
-	for i := 0; i < 16; i++ {
+	for i := 0; i < total; i++ {
 		db := redis.NewClient(&redis.Options{Addr: opts.Addr, Password: opts.Password, DB: i})
 		n, err := db.DBSize(ctx).Result()
 		_ = db.Close()
@@ -37,6 +46,21 @@ func (d *redisDriver) ListDatabases(ctx context.Context) ([]DatabaseInfo, error)
 		out = append(out, DatabaseInfo{Name: fmt.Sprintf("db%d", i), SizeMB: float64(n)})
 	}
 	return out, nil
+}
+
+// redisDBFromName "db3" → 3。
+func redisDBFromName(name string) (int, error) {
+	var idx int
+	if _, err := fmt.Sscanf(name, "db%d", &idx); err != nil || idx < 0 || idx > 255 {
+		return 0, errs.Wrap(errs.ErrBadRequest, "Redis 库名格式为 db0-dbN")
+	}
+	return idx, nil
+}
+
+// clientForDB 指定逻辑库的客户端（短连接）。
+func (d *redisDriver) clientForDB(idx int) *redis.Client {
+	opts := d.rdb.Options()
+	return redis.NewClient(&redis.Options{Addr: opts.Addr, Password: opts.Password, DB: idx})
 }
 
 // CreateDatabase Redis 无建库语义（逻辑库固定 0-15）。

@@ -23,6 +23,9 @@ const revisionKeepPerScope = 50
 // composeManagedDir 托管 compose 项目根目录；其下所有文件编辑均纳入版本快照。
 const composeManagedDir = "/opt/ypanel/compose/"
 
+// runtimeManagedDir 运行环境目录（B20）：php.ini / php-fpm.conf 等编辑纳入版本快照。
+const runtimeManagedDir = "/opt/ypanel/runtime/"
+
 // RevisionService 受管配置版本快照（M23）：面板写盘前自动快照旧内容，支持对比与回滚。
 // 语义：快照 = 每次面板保存前的盘上旧内容；当前内容永远以盘上为准（外部编辑会在下一次保存时被收进历史）。
 type RevisionService struct {
@@ -37,7 +40,8 @@ func NewRevisionService(db *gorm.DB, nodes *NodeService) *RevisionService {
 
 // ScopeFor 受管路径 → 版本 scope（node:path）；非受管路径返回空串。
 func ScopeFor(node, p string) string {
-	if p != "/etc/docker/daemon.json" && !strings.HasPrefix(p, composeManagedDir) {
+	managed := p == "/etc/docker/daemon.json" || strings.HasPrefix(p, composeManagedDir) || strings.HasPrefix(p, runtimeManagedDir)
+	if !managed {
 		return ""
 	}
 	return node + ":" + p

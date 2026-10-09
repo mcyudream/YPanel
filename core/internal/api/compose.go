@@ -1,9 +1,11 @@
 package api
 
 import (
+	"encoding/json"
 	"fmt"
-	"strings"
 	"net/http"
+	"strconv"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 
@@ -15,6 +17,8 @@ import (
 // ComposeAPI compose 项目接口（代理 agent）。
 type ComposeAPI struct {
 	Nodes *service.NodeService
+	Src2  *service.Src2ComposeService
+	Creds *service.GitCredService
 }
 
 func (c *ComposeAPI) client(ctx *gin.Context) *agentclient.Client {
@@ -22,9 +26,25 @@ func (c *ComposeAPI) client(ctx *gin.Context) *agentclient.Client {
 	return agentclient.New(node.BaseURL, node.Token)
 }
 
+func uintAt(s string) uint {
+	n, _ := strconv.ParseUint(strings.TrimSpace(s), 10, 64)
+	return uint(n)
+}
+
 // List GET /api/v1/compose/projects
 func (c *ComposeAPI) List(ctx *gin.Context) {
 	out, err := agentclient.GetJSON[[]dto.ComposeProject](c.client(ctx), ctx.Request.Context(), "/agent/v1/compose/projects")
+	if err != nil {
+		respErr(ctx, err)
+		return
+	}
+	respOK(ctx, out)
+}
+
+// Topology GET /api/v1/compose/topology?name=&dir=（M26 P1：项目服务拓扑）
+func (c *ComposeAPI) Topology(ctx *gin.Context) {
+	q := "?name=" + escape(ctx.Query("name")) + "&dir=" + escape(ctx.Query("dir"))
+	out, err := agentclient.GetJSON[dto.ComposeTopology](c.client(ctx), ctx.Request.Context(), "/agent/v1/compose/topology"+q)
 	if err != nil {
 		respErr(ctx, err)
 		return
@@ -147,6 +167,16 @@ func (c *ComposeAPI) AdoptCompose(ctx *gin.Context) {
 	respOK(ctx, gin.H{"adopted": name, "dir": target})
 }
 
+// ProjectDelete DELETE /api/v1/compose/projects/:name（down + 移除编排目录，含数据）
+func (c *ComposeAPI) ProjectDelete(ctx *gin.Context) {
+	if _, err := agentclient.DoJSON[struct{}, struct{}](c.client(ctx), ctx.Request.Context(), http.MethodDelete,
+		"/agent/v1/compose/projects/"+escape(ctx.Param("name")), nil); err != nil {
+		respErr(ctx, err)
+		return
+	}
+	respOK(ctx, struct{}{})
+}
+
 // ServiceAction POST /api/v1/compose/service-action {project, service, action}
 func (c *ComposeAPI) ServiceAction(ctx *gin.Context) {
 	req, ok := bind[struct {
@@ -165,4 +195,54 @@ func (c *ComposeAPI) ServiceAction(ctx *gin.Context) {
 		return
 	}
 	respOK(ctx, gin.H{"output": out.Output})
+}
+
+// Src2Templates GET /api/v1/compose/src2compose/templates（支持的语言栈）
+func (c *ComposeAPI) Src2Templates(ctx *gin.Context) {
+	respOK(ctx, service.SrcLangs)
+}
+
+// Src2PreviewStream GET /api/v1/compose/src2compose/preview/stream（SSE：分步进度 + 最终候选）
+func (c *ComposeAPI) Src2PreviewStream(ctx *gin.Context) {
+	req := &dto.Src2ComposePreviewReq{
+		GitURL:       ctx.Query("gitUrl"),
+		Branch:       ctx.Query("branch"),
+		CredentialID: uintAt(ctx.DefaultQuery("credentialId", "0")),
+	}
+	w := ctx.Writer
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("X-Accel-Buffering", "no")
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		respErr(ctx, errBadRequest("当前连接不支持流式响应"))
+		return
+	}
+	send := func(v gin.H) {
+		b, _ := json.Marshal(v)
+		_, _ = fmt.Fprintf(w, "data: %s\n\n", b)
+		flusher.Flush()
+	}
+	det, sugg, err := c.Src2.PreviewStream(ctx.Request.Context(), *req, func(text string) {
+		send(gin.H{"type": "log", "text": text})
+	})
+	if err != nil {
+		send(gin.H{"type": "error", "message": err.Error()})
+		return
+	}
+	send(gin.H{"type": "done", "commit": det.Commit, "suggestions": sugg})
+}
+
+// Src2Create POST /api/v1/compose/src2compose（创建构建任务）
+func (c *ComposeAPI) Src2Create(ctx *gin.Context) {
+	req, ok := bind[dto.Src2ComposeBuildReq](ctx)
+	if !ok {
+		return
+	}
+	out, err := c.Src2.Create(ctx.Request.Context(), *req)
+	if err != nil {
+		respErr(ctx, err)
+		return
+	}
+	respOK(ctx, out)
 }

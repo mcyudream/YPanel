@@ -158,3 +158,22 @@ func (d *mysqlDriver) DisableRemote(ctx context.Context) error {
 	_, err := d.db.ExecContext(ctx, "DROP USER IF EXISTS `remote`@`%`")
 	return err
 }
+
+// GrantDatabase 授权账号对指定库的全部权限（M32 安装外接数据库用）。
+func (d *mysqlDriver) GrantDatabase(ctx context.Context, database, user, host string) error {
+	if err := ValidateIdent(database); err != nil {
+		return err
+	}
+	if err := ValidateIdent(user); err != nil {
+		return err
+	}
+	if host == "" {
+		host = "%"
+	}
+	if err := ValidateHost(host); err != nil {
+		return err
+	}
+	// 标识符经白名单校验后字面量拼接（与 CreateUser 同范式）
+	_, err := d.db.ExecContext(ctx, fmt.Sprintf("GRANT ALL PRIVILEGES ON `%s`.* TO '%s'@'%s'", database, user, host))
+	return err
+}

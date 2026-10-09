@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"regexp"
+	"strings"
 	"sync"
 	"time"
 
@@ -18,12 +20,18 @@ import (
 	"github.com/ypanel/shared/errs"
 )
 
+// urlSafePattern cron curl 类型的 URL 白名单（http/https，无引号/分号等 shell 敏感字符）。
+var urlSafePattern = regexp.MustCompile(`^https?://[a-zA-Z0-9._~:/?#\[\]@!$&'()*+,;=%-]{1,500}$`)
+
 // Cron 计划任务调度器：core 侧调度，执行经 agent 受控 exec。
 type Cron struct {
-	db     *gorm.DB
-	nodes  *NodeService
-	SiteBk *SiteBackupService
-	DBSvc  *DatabaseService
+	db        *gorm.DB
+	nodes     *NodeService
+	SiteBk    *SiteBackupService
+	DBSvc     *DatabaseService
+	BackupSrv *BackupService       // 目录/compose 备份（M34）
+	Certs     *CertificateService  // 证书续期任务（M36）
+	Notif     *NotificationService // 任务失败站内/webhook 告警（M36）
 
 	mu      sync.Mutex
 	inner   *cron.Cron
@@ -121,7 +129,9 @@ func (c *Cron) RunTask(t *model.CronTask, trigger string) {
 	switch t.Type {
 	case "db_backup":
 		var payload struct {
-			DbId uint `json:"dbId"`
+			DbId             uint `json:"dbId"`
+			StorageAccountID uint `json:"storageAccountId"`
+			Keep             int  `json:"keep"`
 		}
 		_ = json.Unmarshal([]byte(t.Payload), &payload)
 		if c.DBSvc == nil {
@@ -129,11 +139,17 @@ func (c *Cron) RunTask(t *model.CronTask, trigger string) {
 			break
 		}
 		var res map[string]any
-		res, execErr = c.DBSvc.CreateBackup(context.Background(), payload.DbId)
+		res, execErr = c.DBSvc.CreateBackup(context.Background(), payload.DbId,
+			BackupUploadOpts{StorageAccountID: payload.StorageAccountID, Keep: payload.Keep})
 		output = fmt.Sprintf("备份完成: %v", res["file"])
+		if k, ok := res["remoteKey"]; ok {
+			output += fmt.Sprintf("（远端: %v）", k)
+		}
 	case "site_backup":
 		var payload struct {
-			SiteName string `json:"siteName"`
+			SiteName         string `json:"siteName"`
+			StorageAccountID uint   `json:"storageAccountId"`
+			Keep             int    `json:"keep"`
 		}
 		_ = json.Unmarshal([]byte(t.Payload), &payload)
 		if c.SiteBk == nil {
@@ -141,8 +157,103 @@ func (c *Cron) RunTask(t *model.CronTask, trigger string) {
 			break
 		}
 		var res map[string]any
-		res, execErr = c.SiteBk.Backup(context.Background(), payload.SiteName)
+		res, execErr = c.SiteBk.Backup(context.Background(), payload.SiteName,
+			BackupUploadOpts{StorageAccountID: payload.StorageAccountID, Keep: payload.Keep})
 		output = fmt.Sprintf("站点备份完成: %v", res["file"])
+		if k, ok := res["remoteKey"]; ok {
+			output += fmt.Sprintf("（远端: %v）", k)
+		}
+	case "dir_backup":
+		var payload struct {
+			SrcDir           string `json:"srcDir"`
+			Name             string `json:"name"`
+			StorageAccountID uint   `json:"storageAccountId"`
+			Keep             int    `json:"keep"`
+		}
+		_ = json.Unmarshal([]byte(t.Payload), &payload)
+		if c.BackupSrv == nil {
+			execErr = fmt.Errorf("目录备份服务未就绪")
+			break
+		}
+		var res map[string]any
+		res, execErr = c.BackupSrv.DirBackup(context.Background(), payload.SrcDir, payload.Name,
+			BackupUploadOpts{StorageAccountID: payload.StorageAccountID, Keep: payload.Keep})
+		output = fmt.Sprintf("目录备份完成: %v", res["file"])
+		if k, ok := res["remoteKey"]; ok {
+			output += fmt.Sprintf("（远端: %v）", k)
+		}
+	case "compose_backup":
+		var payload struct {
+			Project          string `json:"project"`
+			StorageAccountID uint   `json:"storageAccountId"`
+			Keep             int    `json:"keep"`
+		}
+		_ = json.Unmarshal([]byte(t.Payload), &payload)
+		if c.BackupSrv == nil {
+			execErr = fmt.Errorf("目录备份服务未就绪")
+			break
+		}
+		var res map[string]any
+		res, execErr = c.BackupSrv.ComposeBackup(context.Background(), payload.Project,
+			BackupUploadOpts{StorageAccountID: payload.StorageAccountID, Keep: payload.Keep})
+		output = fmt.Sprintf("编排备份完成: %v", res["file"])
+		if k, ok := res["remoteKey"]; ok {
+			output += fmt.Sprintf("（远端: %v）", k)
+		}
+	case "curl":
+		// M36：URL 探活（agent exec curl，逐 URL 输出状态码）
+		var payload struct {
+			Urls []string `json:"urls"`
+		}
+		_ = json.Unmarshal([]byte(t.Payload), &payload)
+		if len(payload.Urls) == 0 {
+			execErr = fmt.Errorf("URL 列表为空")
+			break
+		}
+		var parts []string
+		for _, u := range payload.Urls {
+			if !urlSafePattern.MatchString(u) {
+				execErr = fmt.Errorf("URL 不合法: %s", u)
+				break
+			}
+			parts = append(parts, fmt.Sprintf(`printf '%%s %%s\n' "$(curl -sS -o /dev/null -m 10 -w '%%{http_code}' '%s')" '%s'`, u, u))
+		}
+		if execErr == nil {
+			var res *dto.ExecResp
+			res, execErr = agentclient.DoJSON[dto.ExecReq, dto.ExecResp](ac, context.Background(),
+				"POST", "/agent/v1/exec", &dto.ExecReq{Command: strings.Join(parts, "; "), TimeoutSecs: t.TimeoutSecs})
+			if res != nil {
+				output, timedOut, exitFail = res.Output, res.TimedOut, res.ExitCode != 0
+			}
+		}
+	case "cut_website_log":
+		// M36：网站日志切割（ypanel-nginx 容器内轮转 + reopen）
+		var res *dto.ExecResp
+		res, execErr = agentclient.DoJSON[dto.ExecReq, dto.ExecResp](ac, context.Background(),
+			"POST", "/agent/v1/exec", &dto.ExecReq{Command: `docker exec ypanel-nginx sh -c 'cd /var/log/nginx 2>/dev/null || exit 0; d=$(date +%Y%m%d); for f in *.log; do [ -s "$f" ] && mv "$f" "$f.$d" && gzip -f "$f.$d"; done; nginx -s reopen 2>/dev/null || kill -USR1 1'`, TimeoutSecs: t.TimeoutSecs})
+		if res != nil {
+			output, timedOut, exitFail = "日志已轮转并 reopen", res.TimedOut, res.ExitCode != 0
+		}
+	case "clean":
+		// M36：系统清理（docker 三类 prune + /tmp 旧文件）
+		var res *dto.ExecResp
+		res, execErr = agentclient.DoJSON[dto.ExecReq, dto.ExecResp](ac, context.Background(),
+			"POST", "/agent/v1/exec", &dto.ExecReq{Command: `echo "== image prune"; docker image prune -f; echo "== container prune"; docker container prune -f; echo "== builder prune"; docker builder prune -f; echo "== /tmp"; find /tmp -type f -mtime +7 -delete 2>/dev/null; echo done`, TimeoutSecs: t.TimeoutSecs})
+		if res != nil {
+			output, timedOut, exitFail = res.Output, res.TimedOut, res.ExitCode != 0
+		}
+	case "cert_renew":
+		// M36：证书续期（复用证书库 Renew）
+		var payload struct {
+			CertId uint `json:"certId"`
+		}
+		_ = json.Unmarshal([]byte(t.Payload), &payload)
+		if c.Certs == nil {
+			execErr = fmt.Errorf("证书服务未就绪")
+			break
+		}
+		execErr = c.Certs.Renew(context.Background(), payload.CertId)
+		output = "证书续期完成"
 	case "container_op":
 		var payload struct {
 			Container string `json:"container"`
@@ -213,6 +324,11 @@ func (c *Cron) RunTask(t *model.CronTask, trigger string) {
 	}
 	if !logRow.Success {
 		slog.Warn("cron 任务执行失败", "task", t.Name, "trigger", trigger, "output", firstLine(logRow.Output))
+		// M36：失败告警（站内通知，随既有 webhook 渠道外发）
+		if c.Notif != nil {
+			c.Notif.Push("error", fmt.Sprintf("计划任务失败: %s", t.Name),
+				fmt.Sprintf("触发: %s\n原因: %s", trigger, firstLine(logRow.Output)))
+		}
 	}
 	// B7：任务事件推送（WS 总线）
 	typ := "success"

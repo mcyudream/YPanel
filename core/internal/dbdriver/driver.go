@@ -61,6 +61,11 @@ type Driver interface {
 	Close()
 }
 
+// RemoteStatusProvider 远程访问用户存在性检查（B3 配套回读）。
+type RemoteStatusProvider interface {
+	RemoteEnabled(ctx context.Context) (bool, error)
+}
+
 // New 按类型创建驱动。
 func New(dbType, host string, port int, user, password string) (Driver, error) {
 	switch dbType {

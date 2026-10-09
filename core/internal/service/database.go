@@ -2,7 +2,6 @@ package service
 
 import (
 	"context"
-	"log/slog"
 	"crypto/aes"
 	"crypto/cipher"
 	"crypto/rand"
@@ -10,9 +9,11 @@ import (
 	"encoding/base64"
 	"fmt"
 	"io"
+	"log/slog"
 	"path"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -36,10 +37,10 @@ var passwordPattern = regexp.MustCompile(`^[A-Za-z0-9_-]{8,64}$`)
 
 // 支持的数据库类型与默认配置。
 var dbDefaults = map[string]struct {
-	image    string
-	port     int
-	user     string
-	svcName  string
+	image   string
+	port    int
+	user    string
+	svcName string
 }{
 	"mysql":    {image: "mysql:8", port: 33061, user: "root", svcName: "mysql"},
 	"postgres": {image: "postgres:16", port: 35432, user: "postgres", svcName: "postgres"},
@@ -49,15 +50,26 @@ var dbDefaults = map[string]struct {
 
 // DatabaseService 数据库实例管理。
 type DatabaseService struct {
-	db    *gorm.DB
-	nodes *NodeService
-	aesKey []byte
+	db      *gorm.DB
+	nodes   *NodeService
+	tasks   *TaskService
+	aesKey  []byte
+	storage *StorageService // 可选：备份产物远程上传（M34）
+}
+
+// SetStorage 注入远程存储服务（main 装配，避免构造签名变更）。
+func (s *DatabaseService) SetStorage(st *StorageService) { s.storage = st }
+
+// BackupUploadOpts 备份上传选项（M34）。
+type BackupUploadOpts struct {
+	StorageAccountID uint // 0 = 仅本地
+	Keep             int  // 远端保留份数（>0 生效）
 }
 
 // NewDatabaseService 创建服务（加密密钥由 JWT 密钥派生）。
-func NewDatabaseService(db *gorm.DB, nodes *NodeService, jwtSecret string) *DatabaseService {
+func NewDatabaseService(db *gorm.DB, nodes *NodeService, tasks *TaskService, jwtSecret string) *DatabaseService {
 	sum := sha256.Sum256([]byte("ypanel-dbcred:" + jwtSecret))
-	return &DatabaseService{db: db, nodes: nodes, aesKey: sum[:]}
+	return &DatabaseService{db: db, nodes: nodes, tasks: tasks, aesKey: sum[:]}
 }
 
 // encryptPassword AES-256-GCM 加密。
@@ -279,8 +291,8 @@ func (s *DatabaseService) AddExternalInstance(ctx context.Context, name, dbType,
 	return inst, nil
 }
 
-// DeleteInstance 删除实例：down + 元数据删除（purge 时同时清理 compose 目录与备份）。
-func (s *DatabaseService) DeleteInstance(ctx context.Context, id uint, purge bool) error {
+// DeleteInstance 删除实例：down + 元数据删除（purgeData 清 compose 目录含数据；purgeBackups 清备份）。
+func (s *DatabaseService) DeleteInstance(ctx context.Context, id uint, purgeData bool, purgeBackups bool) error {
 	inst, err := s.ByID(id)
 	if err != nil {
 		return err
@@ -293,12 +305,16 @@ func (s *DatabaseService) DeleteInstance(ctx context.Context, id uint, purge boo
 	if err != nil {
 		return err
 	}
-	// down 失败不阻塞（容器可能已不存在）
-	_, _ = agentclient.DoJSON[dto.ComposeActionReq, map[string]string](ac, ctx, "POST", "/agent/v1/compose/down",
-		&dto.ComposeActionReq{Name: inst.ComposeProject})
-	if purge {
+	// down 失败不阻塞（容器可能已不存在）；商店接管来源的应用容器由商店卸载管线管理
+	if inst.Origin != "store" {
+		_, _ = agentclient.DoJSON[dto.ComposeActionReq, map[string]string](ac, ctx, "POST", "/agent/v1/compose/down",
+			&dto.ComposeActionReq{Name: inst.ComposeProject})
+	}
+	if purgeData && inst.Origin != "store" {
 		_, _ = agentclient.DoJSON[dto.FileDeleteReq, struct{}](ac, ctx, "POST", "/agent/v1/files/delete",
 			&dto.FileDeleteReq{Paths: []string{path.Join("/opt/ypanel/compose", inst.ComposeProject)}})
+	}
+	if purgeBackups {
 		_, _ = agentclient.DoJSON[dto.FileDeleteReq, struct{}](ac, ctx, "POST", "/agent/v1/files/delete",
 			&dto.FileDeleteReq{Paths: []string{path.Join(backupBaseDir, inst.Type, inst.Name)}})
 	}
@@ -358,7 +374,170 @@ func (s *DatabaseService) List(ctx context.Context) ([]map[string]any, error) {
 			"running":        running, "createdAt": r.CreatedAt,
 		})
 	}
+	// 商店已安装的数据库类应用，未接管则作为待接管条目展示
+	out = append(out, s.adoptableItems(runningMap)...)
 	return out, nil
+}
+
+// StartAutoAdopt 启动时扫描一次存量：商店已装、未纳管的数据库应用等就绪后自动接管。
+func (s *DatabaseService) StartAutoAdopt(ctx context.Context) {
+	go func() {
+		var installs []model.AppStoreInstall
+		if err := s.db.Where("key IN ?", []string{"mysql", "postgres", "redis", "mongo"}).Find(&installs).Error; err != nil {
+			return
+		}
+		for _, i := range installs {
+			var count int64
+			_ = s.db.Model(&model.DatabaseInstance{}).Where("compose_project = ?", i.ComposeProject).Count(&count).Error
+			if count > 0 {
+				continue
+			}
+			actx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+			if _, err := s.AdoptWithRetry(actx, i.ComposeProject, 6, 10*time.Second); err == nil {
+				slog.Info("商店数据库应用已自动接管", "project", i.ComposeProject, "type", i.Key)
+			}
+			cancel()
+		}
+	}()
+}
+
+// AdoptWithRetry 带重试的接管（容器初始化未就绪时 Ping 失败，等间隔重试直至上限）。
+func (s *DatabaseService) AdoptWithRetry(ctx context.Context, project string, attempts int, interval time.Duration) (*model.DatabaseInstance, error) {
+	var last error
+	for i := 0; i < attempts; i++ {
+		row, err := s.Adopt(ctx, project)
+		if err == nil {
+			return row, nil
+		}
+		last = err
+		select {
+		case <-ctx.Done():
+			return nil, last
+		case <-time.After(interval):
+		}
+	}
+	return nil, last
+}
+
+// dbServiceKeys 可接管的商店数据库应用 key。
+var dbServiceKeys = map[string]bool{"mysql": true, "postgres": true, "redis": true, "mongo": true}
+
+// adoptableItems 商店已装、尚未纳管的数据库应用（running 映射由调用方传入复用）。
+func (s *DatabaseService) adoptableItems(running map[string]bool) []map[string]any {
+	var installs []model.AppStoreInstall
+	if err := s.db.Where("key IN ?", []string{"mysql", "postgres", "redis", "mongo"}).Find(&installs).Error; err != nil {
+		return nil
+	}
+	out := []map[string]any{}
+	for _, i := range installs {
+		var count int64
+		_ = s.db.Model(&model.DatabaseInstance{}).Where("compose_project = ?", i.ComposeProject).Count(&count).Error
+		if count > 0 {
+			continue
+		}
+		out = append(out, map[string]any{
+			"id": 0, "name": i.Name, "type": i.Key, "origin": "store", "host": "127.0.0.1",
+			"port": 0, "user": "", "remark": "商店应用（待接管）",
+			"composeProject": i.ComposeProject, "running": running[i.ComposeProject],
+			"adoptable": true, "createdAt": i.CreatedAt,
+		})
+	}
+	return out
+}
+
+// Adopt 接管商店已安装的数据库应用：从应用 .env 解析凭据与端口，直连验证后入库纳管。
+func (s *DatabaseService) Adopt(ctx context.Context, project string) (*model.DatabaseInstance, error) {
+	var inst model.AppStoreInstall
+	if err := s.db.Where("compose_project = ?", project).First(&inst).Error; err != nil {
+		return nil, errs.New(errs.CodeNotFound, "error.installNotFound", "商店安装记录不存在")
+	}
+	if !dbServiceKeys[inst.Key] {
+		return nil, errs.Wrap(errs.ErrBadRequest, "该应用不是可接管的数据库类型: "+inst.Key)
+	}
+	var count int64
+	_ = s.db.Model(&model.DatabaseInstance{}).Where("compose_project = ? OR name = ?", project, inst.Name).Count(&count).Error
+	if count > 0 {
+		return nil, errs.New(errs.CodeConflict, "error.instanceExists", "该应用已接管或实例名冲突")
+	}
+	// 读应用 .env 解析凭据与宿主端口
+	ac, err := s.client()
+	if err != nil {
+		return nil, err
+	}
+	envOut, err := agentclient.GetJSON[dto.FileReadResp](ac, ctx, "/agent/v1/files/read?path="+backupDirEscape("/opt/ypanel/compose/"+project+"/.env"))
+	if err != nil {
+		return nil, errs.Wrap(errs.ErrNotFound, "读取应用参数失败（.env 不存在）")
+	}
+	env := map[string]string{}
+	for _, line := range strings.Split(envOut.Content, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		if k, v, ok := strings.Cut(line, "="); ok {
+			env[strings.TrimSpace(k)] = strings.TrimSpace(v)
+		}
+	}
+	pick := func(candidates ...string) string {
+		for _, c := range candidates {
+			if v := env[c]; v != "" {
+				return v
+			}
+		}
+		// 回退：任意 KEY 含 PASSWORD 的第一个
+		for k, v := range env {
+			if strings.Contains(strings.ToUpper(k), "PASSWORD") && v != "" {
+				return v
+			}
+		}
+		return ""
+	}
+	portPick := func() int {
+		for k, v := range env {
+			if strings.Contains(strings.ToUpper(k), "PORT") {
+				if n, err := strconv.Atoi(v); err == nil && n > 0 && n < 65536 {
+					return n
+				}
+			}
+		}
+		return 0
+	}
+	password := pick("PANEL_DB_ROOT_PASSWORD", "MYSQL_ROOT_PASSWORD", "POSTGRES_PASSWORD", "MONGO_INITDB_ROOT_PASSWORD", "PANEL_REDIS_PASSWORD", "REDIS_PASSWORD")
+	if password == "" {
+		return nil, errs.Wrap(errs.ErrBadRequest, "未能从应用参数中解析出密码，请改用「接入外部实例」手动填写")
+	}
+	port := portPick()
+	if port == 0 {
+		return nil, errs.Wrap(errs.ErrBadRequest, "未能从应用参数中解析出宿主端口")
+	}
+	name := inst.Name
+	if !namePatternDB.MatchString(name) {
+		name = "app-" + strings.ToLower(inst.Name)
+	}
+	enc, err := s.encryptPassword(password)
+	if err != nil {
+		return nil, err
+	}
+	row := &model.DatabaseInstance{
+		Name: name, Type: inst.Key, Origin: "container", Host: "127.0.0.1",
+		Port: port, RootUser: dbDefaults[inst.Key].user, PasswordEnc: enc,
+		ComposeProject: project, Remark: "商店应用接管",
+	}
+	// 连通性验证（容器映射在宿主 127.0.0.1:port）
+	drv, derr := dbdriver.New(row.Type, row.Host, row.Port, row.RootUser, password)
+	if derr == nil {
+		cctx, cancel := context.WithTimeout(ctx, 8*time.Second)
+		perr := drv.Ping(cctx)
+		cancel()
+		drv.Close()
+		if perr != nil {
+			return nil, errs.Wrap(errs.ErrAgentUnreach, "接管验证失败（实例未就绪或凭据不符）: "+perr.Error())
+		}
+	}
+	if err := s.db.Create(row).Error; err != nil {
+		return nil, err
+	}
+	return row, nil
 }
 
 // Reveal 连接信息（含解密密码）。
@@ -375,10 +554,19 @@ func (s *DatabaseService) Reveal(id uint) (map[string]any, error) {
 	if host == "" {
 		host = "127.0.0.1"
 	}
-	return map[string]any{
+	out := map[string]any{
 		"name": inst.Name, "type": inst.Type, "port": inst.Port,
 		"user": inst.RootUser, "password": pwd, "host": host, "origin": inst.Origin,
-	}, nil
+	}
+	// M32：合并容器/外部双视角端点（容器名:内部端口 供同网络容器使用；宿主内网 IP:映射端口 供外部访问）
+	if info, err := s.ConnectInfo(context.Background(), id); err == nil {
+		out["container"] = info.Container
+		out["innerPort"] = info.InnerPort
+		out["networks"] = info.Networks
+		out["lanIp"] = info.LanIP
+		out["mapPort"] = info.MapPort
+	}
+	return out, nil
 }
 
 // ByID 查实例。
@@ -461,6 +649,7 @@ func (s *DatabaseService) RemoteAccess(ctx context.Context, id uint, enable bool
 	if err != nil {
 		return nil, err
 	}
+	defer driver.Close()
 	pwd, err := s.decryptPassword(inst.PasswordEnc)
 	if err != nil {
 		return nil, err
@@ -474,6 +663,24 @@ func (s *DatabaseService) RemoteAccess(ctx context.Context, id uint, enable bool
 		return nil, err
 	}
 	return map[string]any{"enabled": enable, "user": "remote"}, nil
+}
+
+// RemoteAccessStatus 远程访问状态回读（remote 管理用户是否存在）。
+func (s *DatabaseService) RemoteAccessStatus(ctx context.Context, id uint) (bool, error) {
+	inst, err := s.ByID(id)
+	if err != nil {
+		return false, err
+	}
+	driver, err := s.driverFor(inst)
+	if err != nil {
+		return false, err
+	}
+	defer driver.Close()
+	sp, ok := driver.(dbdriver.RemoteStatusProvider)
+	if !ok {
+		return false, nil
+	}
+	return sp.RemoteEnabled(ctx)
 }
 
 func (s *DatabaseService) Users(ctx context.Context, id uint) ([]dbdriver.UserInfo, error) {
@@ -562,8 +769,8 @@ func (s *DatabaseService) BackupFileName(inst *model.DatabaseInstance) string {
 	return fmt.Sprintf("%s-%s.%s", inst.Name, time.Now().Format("20060102-150405"), ext[inst.Type])
 }
 
-// CreateBackup 执行备份（agent exec 调容器内工具，输出落宿主备份目录）。
-func (s *DatabaseService) CreateBackup(ctx context.Context, id uint) (map[string]any, error) {
+// CreateBackup 执行备份（agent exec 调容器内工具，输出落宿主备份目录；opts 可选远程上传）。
+func (s *DatabaseService) CreateBackup(ctx context.Context, id uint, opts ...BackupUploadOpts) (map[string]any, error) {
 	inst, err := s.ByID(id)
 	if err != nil {
 		return nil, err
@@ -589,46 +796,58 @@ func (s *DatabaseService) CreateBackup(ctx context.Context, id uint) (map[string
 	if host == "" {
 		host = "127.0.0.1"
 	}
+	// 密码只经 ExecReq.Env 注入 agent sh 环境（$YP_DB_PWD 引用），argv 无明文；
+	// 容器内经 stdin `read -r pw` 中转，mongo 走 tools --config 临时文件（用完即删）。
 	var cmd string
 	switch inst.Type {
 	case "mysql":
 		if inst.Origin == "external" {
-			cmd = fmt.Sprintf("sh -c 'command -v mysqldump >/dev/null || { echo \"本机缺少 mysqldump 客户端\"; exit 127; }; mysqldump -h %s -P %d -u%s -p\"%s\" --all-databases --single-transaction' > %s", host, inst.Port, inst.RootUser, pwd, target)
+			cmd = fmt.Sprintf("sh -c 'command -v mysqldump >/dev/null || { echo \"本机缺少 mysqldump 客户端\"; exit 127; }; MYSQL_PWD=\"$YP_DB_PWD\" mysqldump -h %s -P %d -u %s --all-databases --single-transaction' > %s", host, inst.Port, inst.RootUser, target)
 		} else {
-			cmd = fmt.Sprintf("docker exec %s sh -c 'mysqldump -uroot -p\"%s\" --all-databases --single-transaction' > %s", c, pwd, target)
+			cmd = fmt.Sprintf("printf '%%s\\n' \"$YP_DB_PWD\" | docker exec -i %s sh -c 'read -r pw; MYSQL_PWD=\"$pw\" mysqldump -uroot --all-databases --single-transaction' > %s", c, target)
 		}
 	case "postgres":
 		if inst.Origin == "external" {
-			cmd = fmt.Sprintf("sh -c 'command -v pg_dumpall >/dev/null || { echo \"本机缺少 pg_dumpall 客户端\"; exit 127; }; PGPASSWORD=\"%s\" pg_dumpall -h %s -p %d -U %s' > %s", pwd, host, inst.Port, inst.RootUser, target)
+			cmd = fmt.Sprintf("sh -c 'command -v pg_dumpall >/dev/null || { echo \"本机缺少 pg_dumpall 客户端\"; exit 127; }; PGPASSWORD=\"$YP_DB_PWD\" pg_dumpall -h %s -p %d -U %s' > %s", host, inst.Port, inst.RootUser, target)
 		} else {
 			cmd = fmt.Sprintf("docker exec %s pg_dumpall -U postgres > %s", c, target)
 		}
 	case "redis":
 		if inst.Origin == "external" {
-			cmd = fmt.Sprintf("sh -c 'command -v redis-cli >/dev/null || { echo \"本机缺少 redis-cli 客户端\"; exit 127; }; redis-cli -h %s -p %d -a \"%s\" --rdb %s' ", host, inst.Port, pwd, target)
+			cmd = fmt.Sprintf("sh -c 'command -v redis-cli >/dev/null || { echo \"本机缺少 redis-cli 客户端\"; exit 127; }; REDISCLI_AUTH=\"$YP_DB_PWD\" redis-cli -h %s -p %d --rdb %s'", host, inst.Port, target)
 		} else {
 			// SAVE 输出与告警均丢弃，避免污染 RDB 流
-			cmd = fmt.Sprintf("docker exec %s sh -c 'redis-cli -a \"%s\" SAVE >/dev/null 2>&1; cat /data/dump.rdb' > %s", c, pwd, target)
+			cmd = fmt.Sprintf("printf '%%s\\n' \"$YP_DB_PWD\" | docker exec -i %s sh -c 'read -r pw; REDISCLI_AUTH=\"$pw\" redis-cli SAVE >/dev/null 2>&1; cat /data/dump.rdb' > %s", c, target)
 		}
 	case "mongo":
+		// mongodump/mongorestore 无密码环境变量约定，统一走 --config 临时文件（umask 077 + 用完即删）
 		if inst.Origin == "external" {
-			cmd = fmt.Sprintf("sh -c 'command -v mongodump >/dev/null || { echo \"本机缺少 mongodump 客户端\"; exit 127; }; mongodump --archive --gzip --host %s --port %d -u %s -p \"%s\" --authenticationDatabase admin' > %s", host, inst.Port, inst.RootUser, pwd, target)
+			cmd = fmt.Sprintf("sh -c 'command -v mongodump >/dev/null || { echo \"本机缺少 mongodump 客户端\"; exit 127; }; cf=$(mktemp); printf \"password: %%s\\n\" \"$YP_DB_PWD\" > \"$cf\"; mongodump --archive --gzip --host %s --port %d -u %s --config \"$cf\" --authenticationDatabase admin; rc=$?; rm -f \"$cf\"; exit $rc' > %s", host, inst.Port, inst.RootUser, target)
 		} else {
-			cmd = fmt.Sprintf("docker exec %s sh -c 'mongodump --archive --gzip -u %s -p \"%s\" --authenticationDatabase admin' > %s", c, inst.RootUser, pwd, target)
+			cmd = fmt.Sprintf("printf '%%s\\n' \"$YP_DB_PWD\" | docker exec -i %s sh -c 'read -r pw; cf=$(mktemp); printf \"password: %%s\\n\" \"$pw\" > \"$cf\"; mongodump --archive --gzip -u %s --config \"$cf\" --authenticationDatabase admin; rc=$?; rm -f \"$cf\"; exit $rc' > %s", c, inst.RootUser, target)
 		}
 	}
 	if cmd == "" {
 		return nil, errs.Wrap(errs.ErrBadRequest, "不支持的备份类型: "+inst.Type)
 	}
 	out, err := agentclient.DoJSON[dto.ExecReq, dto.ExecResp](ac, ctx, "POST", "/agent/v1/exec",
-		&dto.ExecReq{Command: cmd, TimeoutSecs: 1800})
+		&dto.ExecReq{Command: cmd, TimeoutSecs: 1800, Env: map[string]string{"YP_DB_PWD": pwd}})
 	if err != nil {
 		return nil, errs.Wrap(errs.ErrBadRequest, "exec: "+err.Error())
 	}
 	if out.ExitCode != 0 || out.TimedOut {
 		return map[string]any{"output": out.Output}, errs.Wrapc(errs.CodeFileOpFailed, "备份执行失败: "+firstLine(out.Output))
 	}
-	return map[string]any{"file": file, "path": target, "output": out.Output}, nil
+	result := map[string]any{"file": file, "path": target, "output": out.Output}
+	// M34：可选远程上传（失败不影响本地产物，但按失败返回，注明本地成功）
+	if len(opts) > 0 && opts[0].StorageAccountID > 0 && s.storage != nil {
+		key, uerr := s.storage.UploadAgentFile(ctx, opts[0].StorageAccountID, "databases/"+inst.Type+"/"+inst.Name, target, opts[0].Keep)
+		if uerr != nil {
+			return result, errs.Wrapc(errs.CodeFileOpFailed, "本地备份成功，远端上传失败: "+uerr.Error())
+		}
+		result["remoteKey"] = key
+	}
+	return result, nil
 }
 
 // Backups 备份列表（扫目录）。
@@ -699,24 +918,24 @@ func (s *DatabaseService) Restore(ctx context.Context, id uint, file string) err
 		return err
 	}
 	src := path.Join(s.BackupDir(inst), file)
-	slog.Info("db restore", "file", file, "src", src, "len", len(cmd0Placeholder()))
 	c := inst.ComposeProject
 	host := inst.Host
 	if host == "" {
 		host = "127.0.0.1"
 	}
+	// 与备份同款安全模式：密码经 ExecReq.Env 注入；容器内经 stdin 首行 read 中转
+	//（restore 的 stdin 同时承载备份流，故用 { printf 密码; cat 文件; } 拼接）。
 	var cmd string
 	switch inst.Type {
 	case "mysql":
 		if inst.Origin == "external" {
-			cmd = fmt.Sprintf("sh -c 'command -v mysql >/dev/null || { echo \"本机缺少 mysql 客户端\"; exit 127; }; mysql -h %s -P %d -u%s -p\"%s\"' < %s", host, inst.Port, inst.RootUser, pwd, src)
+			cmd = fmt.Sprintf("sh -c 'command -v mysql >/dev/null || { echo \"本机缺少 mysql 客户端\"; exit 127; }; MYSQL_PWD=\"$YP_DB_PWD\" mysql -h %s -P %d -u %s' < %s", host, inst.Port, inst.RootUser, src)
 		} else {
-			cmd = fmt.Sprintf("docker exec -i %s sh -c 'mysql -uroot -p\"%s\"' < %s", c, pwd, src)
-			slog.Info("db restore cmd", "cmdLen", len(cmd), "cmdPrefix", cmd[:min(80, len(cmd))])
+			cmd = fmt.Sprintf("{ printf '%%s\\n' \"$YP_DB_PWD\"; cat %s; } | docker exec -i %s sh -c 'read -r pw; MYSQL_PWD=\"$pw\" mysql -uroot'", src, c)
 		}
 	case "postgres":
 		if inst.Origin == "external" {
-			cmd = fmt.Sprintf("sh -c 'command -v psql >/dev/null || { echo \"本机缺少 psql 客户端\"; exit 127; }; PGPASSWORD=\"%s\" psql -h %s -p %d -U %s' < %s", pwd, host, inst.Port, inst.RootUser, src)
+			cmd = fmt.Sprintf("sh -c 'command -v psql >/dev/null || { echo \"本机缺少 psql 客户端\"; exit 127; }; PGPASSWORD=\"$YP_DB_PWD\" psql -h %s -p %d -U %s' < %s", host, inst.Port, inst.RootUser, src)
 		} else {
 			cmd = fmt.Sprintf("docker exec -i %s psql -U postgres < %s", c, src)
 		}
@@ -726,16 +945,15 @@ func (s *DatabaseService) Restore(ctx context.Context, id uint, file string) err
 		}
 		// RDB 恢复：拷入后重启实例加载
 		cmd = fmt.Sprintf("docker cp %s %s:/data/dump.rdb && docker restart %s", src, c, c)
-		_ = pwd
 	case "mongo":
 		if inst.Origin == "external" {
-			cmd = fmt.Sprintf("sh -c 'command -v mongorestore >/dev/null || { echo \"本机缺少 mongorestore 客户端\"; exit 127; }; mongorestore --archive --gzip --host %s --port %d -u %s -p \"%s\" --authenticationDatabase admin --drop' < %s", host, inst.Port, inst.RootUser, pwd, src)
+			cmd = fmt.Sprintf("sh -c 'command -v mongorestore >/dev/null || { echo \"本机缺少 mongorestore 客户端\"; exit 127; }; cf=$(mktemp); printf \"password: %%s\\n\" \"$YP_DB_PWD\" > \"$cf\"; mongorestore --archive --gzip --host %s --port %d -u %s --config \"$cf\" --authenticationDatabase admin --drop; rc=$?; rm -f \"$cf\"; exit $rc' < %s", host, inst.Port, inst.RootUser, src)
 		} else {
-			cmd = fmt.Sprintf("docker exec -i %s sh -c 'mongorestore --archive --gzip -u %s -p \"%s\" --authenticationDatabase admin --drop' < %s", c, inst.RootUser, pwd, src)
+			cmd = fmt.Sprintf("{ printf '%%s\\n' \"$YP_DB_PWD\"; cat %s; } | docker exec -i %s sh -c 'read -r pw; cf=$(mktemp); printf \"password: %%s\\n\" \"$pw\" > \"$cf\"; mongorestore --archive --gzip --config \"$cf\" --authenticationDatabase admin --drop; rc=$?; rm -f \"$cf\"; exit $rc'", src, c)
 		}
 	}
 	out, err := agentclient.DoJSON[dto.ExecReq, dto.ExecResp](ac, ctx, "POST", "/agent/v1/exec",
-		&dto.ExecReq{Command: cmd, TimeoutSecs: 1800})
+		&dto.ExecReq{Command: cmd, TimeoutSecs: 1800, Env: map[string]string{"YP_DB_PWD": pwd}})
 	if err != nil {
 		return err
 	}
@@ -745,12 +963,33 @@ func (s *DatabaseService) Restore(ctx context.Context, id uint, file string) err
 	return nil
 }
 
+// audit 迁移等实例级写操作的审计（DBAdminService.audit 的实例侧对等物）。
+func (s *DatabaseService) audit(inst *model.DatabaseInstance, kind, target, detail string, success bool) {
+	entry := model.DatabaseAuditLog{
+		Username: "", InstanceID: inst.ID, InstanceName: inst.Name,
+		DbType: inst.Type, Kind: kind, Target: target, Detail: detail, Success: success,
+	}
+	_ = s.db.Create(&entry).Error
+}
+
+// ExecAgent 面板主机命令执行（密码经 env 注入，供导入/迁移通道复用）。
+func (s *DatabaseService) ExecAgent(ctx context.Context, cmd string, env map[string]string, timeoutSecs int) (dto.ExecResp, error) {
+	ac, err := s.client()
+	if err != nil {
+		return dto.ExecResp{}, err
+	}
+	res, err := agentclient.DoJSON[dto.ExecReq, dto.ExecResp](ac, ctx, "POST", "/agent/v1/exec",
+		&dto.ExecReq{Command: cmd, TimeoutSecs: timeoutSecs, Env: env})
+	if err != nil {
+		return dto.ExecResp{}, err
+	}
+	return *res, nil
+}
+
 // BackupDownloadURL 信息由 api 层组装（复用 files download 通道）。
 func (s *DatabaseService) BackupPath(inst *model.DatabaseInstance, file string) string {
 	return path.Join(s.BackupDir(inst), file)
 }
-
-func cmd0Placeholder() string { return "" }
 
 func projectsSafe(p *[]dto.ComposeProject) []dto.ComposeProject {
 	if p == nil {
@@ -760,3 +999,198 @@ func projectsSafe(p *[]dto.ComposeProject) []dto.ComposeProject {
 }
 
 func backupDirEscape(s string) string { return s }
+
+// ---- M32：连接信息双视角（容器网络 / 外部宿主） ----
+
+// DBEndpoint 数据库实例的容器访问视角端点。
+type DBEndpoint struct {
+	Container string `json:"container"` // 容器名（同网络容器用容器名直连）
+	InnerPort string `json:"innerPort"` // 容器内部端口（mysql 3306 / postgres 5432）
+	Networks  string `json:"networks"`  // 容器接入的网络（空格分隔）
+	LanIP     string `json:"lanIp"`     // 宿主内网 IP（外部/跨网络访问）
+	MapPort   string `json:"mapPort"`   // 宿主映射端口
+	RootUser  string `json:"rootUser"`
+	RootPass  string `json:"rootPass"`
+}
+
+// ConnectInfo 实例连接信息（含 root 凭据与容器/外部双视角端点）。
+// 容器视角：同网络容器用 container:innerPort；外部视角：lanIP:mapPort（host 为回环时 lan 即唯一可达路径）。
+func (s *DatabaseService) ConnectInfo(ctx context.Context, id uint) (*DBEndpoint, error) {
+	inst, err := s.ByID(id)
+	if err != nil {
+		return nil, err
+	}
+	pwd, err := s.decryptPassword(inst.PasswordEnc)
+	if err != nil {
+		return nil, err
+	}
+	out := &DBEndpoint{
+		RootUser: inst.RootUser,
+		RootPass: pwd,
+		LanIP:    inst.Host,
+		MapPort:  fmt.Sprint(inst.Port),
+	}
+	ac, err := s.client()
+	if err != nil {
+		return out, nil
+	}
+	inner := "3306"
+	if inst.Type == "postgres" {
+		inner = "5432"
+	}
+	// 容器定位三级兜底：compose 项目标签 → 实例名精确匹配 → 映射端口反查
+	//（外部接管实例无 compose 标签；容器名常与实例名一致；publish 端口唯一性最强）
+	locFilters := []string{}
+	if inst.ComposeProject != "" && inst.ComposeProject != "-" {
+		locFilters = append(locFilters, fmt.Sprintf(`--filter label=com.docker.compose.project=%s`, inst.ComposeProject))
+	}
+	locFilters = append(locFilters,
+		fmt.Sprintf(`[ -z "$c" ] && c=$(docker ps --filter name=^%s$ --format '{{.Names}}' | head -1);`, inst.Name),
+		fmt.Sprintf(`[ -z "$c" ] && c=$(docker ps --filter publish=%d --format '{{.Names}}' | head -1);`, inst.Port),
+	)
+	// 注意：filter 参数含空格不能进 for 词列表，逐级短路赋值
+	res, err := agentclient.DoJSON[dto.ExecReq, dto.ExecResp](ac, ctx, "POST", "/agent/v1/exec",
+		&dto.ExecReq{Command: fmt.Sprintf(
+			`c=""; %s echo "C=$c"; [ -n "$c" ] && docker inspect "$c" --format 'P={{range $k,$v := .Config.ExposedPorts}}{{$k}} {{end}}N={{range $k,$v := .NetworkSettings.Networks}}{{$k}} {{end}}'`,
+			strings.Join(locFilters, " ")), TimeoutSecs: 25})
+	if err == nil {
+		// P= 与 N= 在 inspect 输出的同一行（模板段拼接），用正则提取而非行前缀
+		if c := regexp.MustCompile(`C=(\S+)`).FindStringSubmatch(res.Output); len(c) > 1 {
+			out.Container = c[1]
+		}
+		if pv := regexp.MustCompile(`P=([^ \n]+)`).FindStringSubmatch(res.Output); len(pv) > 1 {
+			inner = strings.Split(pv[1], "/")[0]
+		}
+		if nv := regexp.MustCompile(`N=(.+)`).FindStringSubmatch(res.Output); len(nv) > 1 {
+			out.Networks = strings.TrimSpace(nv[1])
+		}
+	}
+	out.InnerPort = inner
+	// 外部视角：host 为回环（面板容器实例默认）时用宿主内网 IP，否则原样
+	if out.LanIP == "" || out.LanIP == "127.0.0.1" || out.LanIP == "localhost" || out.LanIP == "::1" {
+		if res, err := agentclient.DoJSON[dto.ExecReq, dto.ExecResp](ac, ctx, "POST", "/agent/v1/exec",
+			&dto.ExecReq{Command: "hostname -I | awk '{print $1}'", TimeoutSecs: 15}); err == nil {
+			if ip := strings.TrimSpace(res.Output); ip != "" {
+				out.LanIP = ip
+			}
+		}
+	}
+	return out, nil
+}
+
+// GrantUserDatabase 授权账号对指定库的全部权限（M32；仅 mysql/postgres 实例支持）。
+func (s *DatabaseService) GrantUserDatabase(ctx context.Context, instanceID uint, database, user, host string) error {
+	inst, err := s.ByID(instanceID)
+	if err != nil {
+		return err
+	}
+	drv, err := s.driverFor(inst)
+	if err != nil {
+		return err
+	}
+	defer drv.Close()
+	g, ok := drv.(dbdriver.DatabaseGranter)
+	if !ok {
+		return errs.Wrap(errs.ErrBadRequest, "该实例类型不支持库级授权")
+	}
+	return g.GrantDatabase(ctx, database, user, host)
+}
+
+// ---- M39：MySQL 管理深化（授权矩阵/参数/状态，经 MySQLAdmin 能力探测） ----
+
+func (s *DatabaseService) adminFor(inst *model.DatabaseInstance) (dbdriver.MySQLAdmin, func(), error) {
+	drv, err := s.driverFor(inst)
+	if err != nil {
+		return nil, func() {}, err
+	}
+	admin, ok := drv.(dbdriver.MySQLAdmin)
+	if !ok {
+		drv.Close()
+		return nil, func() {}, errs.Wrap(errs.ErrBadRequest, "该实例类型不支持（仅 MySQL 支持管理深化）")
+	}
+	return admin, func() { drv.Close() }, nil
+}
+
+// GrantMatrix 授权矩阵。
+func (s *DatabaseService) GrantMatrix(ctx context.Context, id uint, db string) ([]dbdriver.GrantRow, error) {
+	inst, err := s.ByID(id)
+	if err != nil {
+		return nil, err
+	}
+	admin, done, err := s.adminFor(inst)
+	if err != nil {
+		return nil, err
+	}
+	defer done()
+	return admin.GrantMatrix(ctx, db)
+}
+
+// GrantPrivs 授予/回收权限。
+func (s *DatabaseService) GrantPrivs(ctx context.Context, id uint, db, user, host string, privs []string, grant bool) error {
+	inst, err := s.ByID(id)
+	if err != nil {
+		return err
+	}
+	admin, done, err := s.adminFor(inst)
+	if err != nil {
+		return err
+	}
+	defer done()
+	if grant {
+		err = admin.GrantPrivs(ctx, db, user, host, privs, true)
+	} else {
+		err = admin.GrantPrivs(ctx, db, user, host, privs, false)
+	}
+	if err == nil {
+		s.audit(inst, "grant", db+"."+user+"@"+host, fmt.Sprintf("privs=%v grant=%v", privs, grant), true)
+	} else {
+		s.audit(inst, "grant", db+"."+user+"@"+host, err.Error(), false)
+	}
+	return err
+}
+
+// Variables 参数列表。
+func (s *DatabaseService) Variables(ctx context.Context, id uint, filter string) ([]dbdriver.KVPair, error) {
+	inst, err := s.ByID(id)
+	if err != nil {
+		return nil, err
+	}
+	admin, done, err := s.adminFor(inst)
+	if err != nil {
+		return nil, err
+	}
+	defer done()
+	return admin.Variables(ctx, filter)
+}
+
+// SetVariable 在线改参数。
+func (s *DatabaseService) SetVariable(ctx context.Context, id uint, name, value string) error {
+	inst, err := s.ByID(id)
+	if err != nil {
+		return err
+	}
+	admin, done, err := s.adminFor(inst)
+	if err != nil {
+		return err
+	}
+	defer done()
+	if err := admin.SetGlobalVariable(ctx, name, value); err != nil {
+		return err
+	}
+	s.audit(inst, "variable", name, "SET GLOBAL "+name+" = "+value, true)
+	return nil
+}
+
+// StatusStats 状态指标。
+func (s *DatabaseService) StatusStats(ctx context.Context, id uint) (map[string]float64, error) {
+	inst, err := s.ByID(id)
+	if err != nil {
+		return nil, err
+	}
+	admin, done, err := s.adminFor(inst)
+	if err != nil {
+		return nil, err
+	}
+	defer done()
+	return admin.StatusStats(ctx)
+}

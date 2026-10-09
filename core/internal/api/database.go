@@ -66,6 +66,22 @@ func (a *DatabaseAPI) CreateExternal(c *gin.Context) {
 	respOK(c, gin.H{"id": inst.ID, "name": inst.Name, "host": inst.Host, "port": inst.Port})
 }
 
+// Adopt POST /api/v1/database/instances/adopt（接管商店已装的数据库应用）
+func (a *DatabaseAPI) Adopt(c *gin.Context) {
+	req, ok := bind[struct {
+		Project string `json:"project" binding:"required"`
+	}](c)
+	if !ok {
+		return
+	}
+	inst, err := a.DBS.Adopt(c.Request.Context(), req.Project)
+	if err != nil {
+		respErr(c, err)
+		return
+	}
+	respOK(c, gin.H{"id": inst.ID, "name": inst.Name, "type": inst.Type, "port": inst.Port})
+}
+
 // Delete DELETE /api/v1/database/instances/:id?purge=
 func (a *DatabaseAPI) Delete(c *gin.Context) {
 	id, err := idParam(c)
@@ -73,7 +89,7 @@ func (a *DatabaseAPI) Delete(c *gin.Context) {
 		respErr(c, err)
 		return
 	}
-	if err := a.DBS.DeleteInstance(c.Request.Context(), id, c.DefaultQuery("purge", "false") == "true"); err != nil {
+	if err := a.DBS.DeleteInstance(c.Request.Context(), id, c.DefaultQuery("data", "false") == "true", c.DefaultQuery("backups", "false") == "true"); err != nil {
 		respErr(c, err)
 		return
 	}
@@ -236,7 +252,21 @@ func (a *DatabaseAPI) ChangeUserPassword(c *gin.Context) {
 	respOK(c, struct{}{})
 }
 
-// Backups GET /api/v1/database/instances/:id/backups
+// RemoteAccessStatus GET /api/v1/database/instances/:id/remote
+func (a *DatabaseAPI) RemoteAccessStatus(c *gin.Context) {
+	id, err := strconv.ParseUint(c.Param("id"), 10, 64)
+	if err != nil || id == 0 {
+		respErr(c, errBadRequest("实例 ID 不合法"))
+		return
+	}
+	enabled, err := a.DBS.RemoteAccessStatus(c.Request.Context(), uint(id))
+	if err != nil {
+		respErr(c, err)
+		return
+	}
+	respOK(c, gin.H{"enabled": enabled})
+}
+
 // RemoteAccess POST /api/v1/database/instances/:id/remote {enable}（B3）
 func (a *DatabaseAPI) RemoteAccess(c *gin.Context) {
 	id, err := strconv.ParseUint(c.Param("id"), 10, 64)
@@ -258,6 +288,28 @@ func (a *DatabaseAPI) RemoteAccess(c *gin.Context) {
 	respOK(c, out)
 }
 
+// BackupImport POST /api/v1/database/instances/:id/backups/import {filename, content(base64)}
+func (a *DatabaseAPI) BackupImport(c *gin.Context) {
+	id, err := idParam(c)
+	if err != nil {
+		respErr(c, err)
+		return
+	}
+	req, ok := bind[struct {
+		Filename string `json:"filename" binding:"required"`
+		Content  string `json:"content" binding:"required"`
+	}](c)
+	if !ok {
+		return
+	}
+	out, err := a.DBS.ImportBackup(c.Request.Context(), id, c.GetString(middleware.CtxUsername), req.Filename, req.Content)
+	if err != nil {
+		respErr(c, err)
+		return
+	}
+	respOK(c, out)
+}
+
 func (a *DatabaseAPI) Backups(c *gin.Context) {
 	id, err := idParam(c)
 	if err != nil {
@@ -272,14 +324,24 @@ func (a *DatabaseAPI) Backups(c *gin.Context) {
 	respOK(c, out)
 }
 
-// CreateBackup POST /api/v1/database/instances/:id/backups
+// CreateBackup POST /api/v1/database/instances/:id/backups（body 可选 {storageAccountId,keep}）
 func (a *DatabaseAPI) CreateBackup(c *gin.Context) {
 	id, err := idParam(c)
 	if err != nil {
 		respErr(c, err)
 		return
 	}
-	out, err := a.DBS.CreateBackup(c.Request.Context(), id)
+	var opts service.BackupUploadOpts
+	if c.Request.ContentLength > 0 {
+		var req struct {
+			StorageAccountId uint `json:"storageAccountId"`
+			Keep             int  `json:"keep"`
+		}
+		if berr := c.ShouldBindJSON(&req); berr == nil {
+			opts = service.BackupUploadOpts{StorageAccountID: req.StorageAccountId, Keep: req.Keep}
+		}
+	}
+	out, err := a.DBS.CreateBackup(c.Request.Context(), id, opts)
 	if err != nil {
 		respErr(c, err)
 		return
@@ -313,4 +375,96 @@ func (a *DatabaseAPI) RestoreBackup(c *gin.Context) {
 		return
 	}
 	respOK(c, struct{}{})
+}
+
+// ---- M39：MySQL 管理深化 ----
+
+// GrantMatrix GET /api/v1/database/instances/:id/privileges?db=
+func (a *DatabaseAPI) GrantMatrix(c *gin.Context) {
+	id, err := idParam(c)
+	if err != nil {
+		respErr(c, err)
+		return
+	}
+	out, err := a.DBS.GrantMatrix(c.Request.Context(), id, c.Query("db"))
+	if err != nil {
+		respErr(c, err)
+		return
+	}
+	respOK(c, out)
+}
+
+// SetPrivileges PUT /api/v1/database/instances/:id/privileges {db,user,host,privs,grant}
+func (a *DatabaseAPI) SetPrivileges(c *gin.Context) {
+	id, err := idParam(c)
+	if err != nil {
+		respErr(c, err)
+		return
+	}
+	req, ok := bind[struct {
+		DB    string   `json:"db" binding:"required"`
+		User  string   `json:"user" binding:"required"`
+		Host  string   `json:"host"`
+		Privs []string `json:"privs" binding:"required,min=1"`
+		Grant bool     `json:"grant"`
+	}](c)
+	if !ok {
+		return
+	}
+	if err := a.DBS.GrantPrivs(c.Request.Context(), id, req.DB, req.User, req.Host, req.Privs, req.Grant); err != nil {
+		respErr(c, err)
+		return
+	}
+	respOK(c, struct{}{})
+}
+
+// Variables GET /api/v1/database/instances/:id/variables?filter=
+func (a *DatabaseAPI) Variables(c *gin.Context) {
+	id, err := idParam(c)
+	if err != nil {
+		respErr(c, err)
+		return
+	}
+	out, err := a.DBS.Variables(c.Request.Context(), id, c.Query("filter"))
+	if err != nil {
+		respErr(c, err)
+		return
+	}
+	respOK(c, out)
+}
+
+// SetVariable PUT /api/v1/database/instances/:id/variables {name,value}
+func (a *DatabaseAPI) SetVariable(c *gin.Context) {
+	id, err := idParam(c)
+	if err != nil {
+		respErr(c, err)
+		return
+	}
+	req, ok := bind[struct {
+		Name  string `json:"name" binding:"required"`
+		Value string `json:"value" binding:"required"`
+	}](c)
+	if !ok {
+		return
+	}
+	if err := a.DBS.SetVariable(c.Request.Context(), id, req.Name, req.Value); err != nil {
+		respErr(c, err)
+		return
+	}
+	respOK(c, struct{}{})
+}
+
+// DBStatus GET /api/v1/database/instances/:id/status
+func (a *DatabaseAPI) DBStatus(c *gin.Context) {
+	id, err := idParam(c)
+	if err != nil {
+		respErr(c, err)
+		return
+	}
+	out, err := a.DBS.StatusStats(c.Request.Context(), id)
+	if err != nil {
+		respErr(c, err)
+		return
+	}
+	respOK(c, out)
 }

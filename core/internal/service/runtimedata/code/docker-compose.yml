@@ -1,0 +1,23 @@
+services:
+  app:
+    image: __IMAGE__
+    container_name: rt-__TYPE__-__NAME__
+    restart: unless-stopped
+    working_dir: /app
+    command: ["sh", "/run.sh"]
+    environment:
+      TZ: "__TZ__"
+      START_CMD: "__START_CMD__"
+      RUN_INSTALL: "__RUN_INSTALL__"
+      PKG_MGR: "__PKG_MGR__"
+    volumes:
+      - __CODE_DIR__:/app
+      - ./run.sh:/run.sh
+__EXTRA_VOLUMES__
+__PORTS__
+    networks:
+      - ypanel_default
+
+networks:
+  ypanel_default:
+    external: true

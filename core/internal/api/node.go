@@ -2,6 +2,7 @@ package api
 
 import (
 	"strings"
+	"time"
 
 	"github.com/gin-gonic/gin"
 
@@ -74,6 +75,48 @@ func (a *NodeAPI) Heartbeat(c *gin.Context) {
 		return
 	}
 	if err := a.Nodes.Heartbeat(name, token); err != nil {
+		respErr(c, err)
+		return
+	}
+	respOK(c, struct{}{})
+}
+
+// UpdateAsset PUT /api/v1/nodes/:id/asset（M43 服务器资产）
+func (a *NodeAPI) UpdateAsset(c *gin.Context) {
+	id, err := idParam(c)
+	if err != nil {
+		respErr(c, err)
+		return
+	}
+	req, ok := bind[struct {
+		ExpireDate     *string `json:"expireDate"`
+		MonthlyPrice   string  `json:"monthlyPrice"`
+		TrafficQuotaGB int     `json:"trafficQuotaGB"`
+		AssetRemark    string  `json:"assetRemark"`
+	}](c)
+	if !ok {
+		return
+	}
+	var t *time.Time
+	if req.ExpireDate != nil && *req.ExpireDate != "" {
+		parsed, perr := time.Parse("2006-01-02", *req.ExpireDate)
+		if perr != nil {
+			parsed, perr = time.Parse(time.RFC3339, *req.ExpireDate)
+		}
+		if perr != nil {
+			respErr(c, errBadRequest("到期日格式应为 YYYY-MM-DD"))
+			return
+		}
+		t = &parsed
+	}
+	if req.TrafficQuotaGB < 0 {
+		req.TrafficQuotaGB = 0
+	}
+	if len(req.MonthlyPrice) > 40 || len(req.AssetRemark) > 255 {
+		respErr(c, errBadRequest("价格 ≤40 字符、备注 ≤255 字符"))
+		return
+	}
+	if err := a.Nodes.UpdateAsset(uint(id), t, req.MonthlyPrice, req.TrafficQuotaGB, req.AssetRemark); err != nil {
 		respErr(c, err)
 		return
 	}

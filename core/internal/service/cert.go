@@ -176,14 +176,21 @@ func (s *CertificateService) List(ctx context.Context) ([]CertItem, error) {
 		}
 	}
 	out := make([]CertItem, 0, len(rows))
+	var changed []model.Certificate // 仅探测结果有变化的行回写（Save 空切片报 ErrEmptySlice，也避免每次开列表页全表写）
 	for i := range rows {
 		r := &rows[i]
+		before := *r
 		s.probe(ctx, r)
 		refreshCertStatus(r)
+		if certProbeChanged(&before, r) {
+			changed = append(changed, *r)
+		}
 		out = append(out, CertItem{Certificate: *r, Sites: bind[r.ID]})
 	}
-	if err := s.db.Save(rows).Error; err != nil {
-		return nil, err
+	if len(changed) > 0 {
+		if err := s.db.Save(changed).Error; err != nil {
+			return nil, err
+		}
 	}
 	return out, nil
 }
@@ -249,6 +256,17 @@ func refreshCertStatus(c *model.Certificate) {
 	default:
 		c.Status = "ok"
 	}
+}
+
+// certProbeChanged 判断探测/状态刷新是否改动了需落库的字段（NotAfter 为指针，按值比较）。
+func certProbeChanged(before, after *model.Certificate) bool {
+	if before.Status != after.Status || before.Issuer != after.Issuer {
+		return true
+	}
+	if (before.NotAfter == nil) != (after.NotAfter == nil) {
+		return true
+	}
+	return after.NotAfter != nil && !after.NotAfter.Equal(*before.NotAfter)
 }
 
 // Detail 证书详情（openssl -text 全文）。

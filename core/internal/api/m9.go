@@ -108,9 +108,19 @@ func (a *PanelBackupAPI) List(c *gin.Context) {
 	respOK(c, out)
 }
 
-// Create POST /api/v1/panel/backups
+// Create POST /api/v1/panel/backups（body 可选 {storageAccountId,keep}）
 func (a *PanelBackupAPI) Create(c *gin.Context) {
-	out, err := a.BP.Create(c.Request.Context())
+	var opts service.BackupUploadOpts
+	if c.Request.ContentLength > 0 {
+		var req struct {
+			StorageAccountId uint `json:"storageAccountId"`
+			Keep             int  `json:"keep"`
+		}
+		if berr := c.ShouldBindJSON(&req); berr == nil {
+			opts = service.BackupUploadOpts{StorageAccountID: req.StorageAccountId, Keep: req.Keep}
+		}
+	}
+	out, err := a.BP.Create(c.Request.Context(), opts)
 	if err != nil {
 		respErr(c, err)
 		return
@@ -158,5 +168,10 @@ func (a *AuditAPI) List(c *gin.Context) {
 // HistoryDB GET /api/v1/system/history/persisted?seconds=&node=（历史监控持久化查询，全节点）
 func (a *AuditAPI) History(c *gin.Context) {
 	seconds, _ := strconv.Atoi(c.DefaultQuery("seconds", "3600"))
+	// M37：超过原始保留期（30 天）自动切换小时聚合（MetricHourly，365 天）
+	if seconds > 30*24*3600 {
+		respOK(c, a.Hist.QueryHourly(c.Request.Context(), seconds, c.DefaultQuery("node", "local")))
+		return
+	}
 	respOK(c, a.Hist.Query(c.Request.Context(), seconds, c.DefaultQuery("node", "local")))
 }

@@ -141,3 +141,23 @@ func ValidateJail(jail string) error {
 	}
 	return nil
 }
+
+// FailedAttemptsMarked SSH 登录失败 IP 聚合（M49），并标记是否已被 fail2ban 封禁。
+func (s *SshGuardService) FailedAttemptsMarked(ctx context.Context, f2b *Fail2banService, limit int) ([]SshAttemptEntry, error) {
+	entries, err := s.FailedAttempts(ctx, limit)
+	if err != nil {
+		return nil, err
+	}
+	if f2b != nil {
+		if banned, n := f2b.jailBanned(ctx, "sshd"); n > 0 {
+			banSet := map[string]bool{}
+			for _, ip := range banned {
+				banSet[ip] = true
+			}
+			for i := range entries {
+				entries[i].Banned = banSet[entries[i].IP]
+			}
+		}
+	}
+	return entries, nil
+}

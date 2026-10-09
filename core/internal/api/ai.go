@@ -89,6 +89,7 @@ func (a *AIAPI) Chat(c *gin.Context) {
 	req, ok := bind[struct {
 		ProviderID uint                  `json:"providerId"`
 		Model      string                `json:"model"`
+		Mode       string                `json:"mode"`
 		Messages   []service.ChatMessage `json:"messages"`
 	}](c)
 	if !ok {
@@ -111,7 +112,7 @@ func (a *AIAPI) Chat(c *gin.Context) {
 		cp.Model = req.Model
 		provider = &cp
 	}
-	if err := a.AI.StreamAgentChat(c.Request.Context(), c.Writer, provider, req.Messages, c.Query("scene")); err != nil {
+	if err := a.AI.StreamAgentChat(c.Request.Context(), c.Writer, provider, req.Messages, c.Query("scene"), c.Query("focus"), req.Mode); err != nil {
 		c.SSEvent("error", gin.H{"message": err.Error()})
 	}
 }
@@ -135,6 +136,79 @@ func (a *AIAPI) SetToolFlag(c *gin.Context) {
 		return
 	}
 	respOK(c, a.AI.ListTools())
+}
+
+// ResolveAsk POST /api/v1/ai/ask/:id {approve}（危险操作确认回执）
+func (a *AIAPI) ResolveAsk(c *gin.Context) {
+	id := c.Param("id")
+	if id == "" {
+		respErr(c, errBadRequest("ask ID 不合法"))
+		return
+	}
+	req, ok := bind[struct {
+		Approve bool `json:"approve"`
+	}](c)
+	if !ok {
+		return
+	}
+	if !a.AI.ResolveAsk(id, req.Approve) {
+		respErr(c, errBadRequest("确认请求不存在或已超时"))
+		return
+	}
+	respOK(c, gin.H{"resolved": true})
+}
+
+// ResolveAskQuestion POST /api/v1/ai/ask-question/:id（交互提问回执）
+func (a *AIAPI) ResolveAskQuestion(c *gin.Context) {
+	id := c.Param("id")
+	if id == "" {
+		respErr(c, errBadRequest("提问 ID 不合法"))
+		return
+	}
+	// 前端提交的是答案对象数组（每题 header/selected/text），序列化后作为工具结果回给模型
+	req, ok := bind[struct {
+		Answers []map[string]any `json:"answers"`
+	}](c)
+	if !ok {
+		return
+	}
+	b, err := json.Marshal(req.Answers)
+	if err != nil {
+		respErr(c, errBadRequest("答案格式不合法"))
+		return
+	}
+	if !a.AI.ResolveQuestion(id, string(b)) {
+		respErr(c, errBadRequest("提问不存在或已取消"))
+		return
+	}
+	respOK(c, gin.H{"resolved": true})
+}
+
+// ListOperationLogs GET /api/v1/ai/oplogs（AI 操作审计，分页）
+func (a *AIAPI) ListOperationLogs(c *gin.Context) {
+	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
+	size, _ := strconv.Atoi(c.DefaultQuery("pageSize", "20"))
+	respOK(c, a.AI.ListOperationLogs(page, size))
+}
+
+// GetAskMode GET /api/v1/ai/tools/ask-mode
+func (a *AIAPI) GetAskMode(c *gin.Context) {
+	respOK(c, gin.H{"mode": a.AI.AskMode()})
+}
+
+// SetAskMode POST /api/v1/ai/tools/ask-mode {mode: strict|danger_only}
+func (a *AIAPI) SetAskMode(c *gin.Context) {
+	req, ok := bind[struct {
+		Mode string `json:"mode"`
+	}](c)
+	if !ok {
+		return
+	}
+	if err := a.AI.SetAskMode(req.Mode); err != nil {
+		respErr(c, err)
+		return
+	}
+	respOK(c, gin.H{"mode": a.AI.AskMode()})
 }
 
 // UploadSkillZip POST /api/v1/ai/skills/upload（multipart file）

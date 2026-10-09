@@ -70,6 +70,9 @@ func (a *AuthAPI) Login(c *gin.Context) {
 		respErr(c, err)
 		return
 	}
+
+	// M49：会话 cookie——安全入口门禁凭它放行已登录浏览器的根路径刷新/直达（HttpOnly，30 天）
+	c.SetCookie("yp_entry_ok", "1", 30*24*3600, "/", "", false, true)
 	respOK(c, dto.LoginResp{Token: token, ExpireAt: exp, User: userInfoOf(user)})
 }
 
@@ -85,6 +88,8 @@ func (a *AuthAPI) Me(c *gin.Context) {
 
 // Logout POST /api/v1/auth/logout（无状态 JWT：服务端无会话可销毁，前端丢弃 token）
 func (a *AuthAPI) Logout(c *gin.Context) {
+	// M49：同步清除入口会话 cookie——登出后该浏览器回到「必须走入口」状态
+	c.SetCookie("yp_entry_ok", "", -1, "/", "", false, true)
 	respOK(c, struct{}{})
 }
 
