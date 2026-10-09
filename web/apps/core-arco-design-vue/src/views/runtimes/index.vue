@@ -895,6 +895,9 @@ function removeBackup(file: string) {
     </FaPageHeader>
 
     <FaPageMain>
+      <div class="mb-3 flex justify-end">
+        <YdDockerNodeSelect />
+      </div>
       <div class="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
         <div v-for="r in runtimes" :key="r.id" class="rounded-lg border bg-background p-4">
           <div class="flex items-start justify-between">

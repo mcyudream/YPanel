@@ -110,6 +110,7 @@ type runtimeEnv struct {
 
 // RuntimeCreateInput 创建运行时入参。
 type RuntimeCreateInput struct {
+	NodeID      string        `json:"nodeId"` // M57 目标节点（空=local）
 	Name        string        `json:"name"`
 	Type        string        `json:"type"` // php（默认）/ node / python / java / go
 	Version     string        `json:"version"`
@@ -144,6 +145,18 @@ func (s *RuntimeService) WithNode(nodeId string) (*RuntimeService, error) {
 	cp := *s
 	cp.nodeClient = agentclient.New(node.BaseURL, node.Token)
 	return &cp, nil
+}
+
+// clientFor 节点客户端（空/local=本机；nodeClient 非空时短路返回副本绑定的客户端）。
+func (s *RuntimeService) clientFor(nodeId string) (*agentclient.Client, error) {
+	if s.nodeClient != nil {
+		return s.nodeClient, nil
+	}
+	node, err := s.nodes.ByID(nodeId)
+	if err != nil {
+		return nil, err
+	}
+	return agentclient.New(node.BaseURL, node.Token), nil
 }
 
 func (s *RuntimeService) client() (*agentclient.Client, error) {
@@ -291,6 +304,7 @@ func (s *RuntimeService) createPHP(ctx context.Context, in RuntimeCreateInput) (
 		Image:          fmt.Sprintf("%s/php-%s:%s", runtimeImagePrefix, in.Name, in.Version),
 		ContainerName:  "php-" + in.Name,
 		ComposeProject: "rt-php-" + in.Name,
+		NodeID:         normalizeNodeID(in.NodeID),
 		Status:         RuntimeStatusBuilding,
 		EnvJSON:        string(envBytes),
 		Remark:         truncStr(in.Remark, 255),
@@ -366,6 +380,7 @@ func (s *RuntimeService) createCode(ctx context.Context, in RuntimeCreateInput) 
 		CodeDir:        filepath.Clean(in.CodeDir),
 		ContainerName:  "rt-" + in.Type + "-" + in.Name,
 		ComposeProject: "rt-" + in.Type + "-" + in.Name,
+		NodeID:         normalizeNodeID(in.NodeID),
 		Status:         RuntimeStatusCreating,
 		EnvJSON:        string(envBytes),
 		Port:           joinHostPorts(in.Ports),
@@ -723,21 +738,29 @@ func (s *RuntimeService) List(ctx context.Context) ([]map[string]any, error) {
 	if err := s.db.Order("id").Find(&rows).Error; err != nil {
 		return nil, err
 	}
+	// M57：容器状态按实例归属节点分组查询（跨节点聚合）
 	stateMap := map[string]string{}
-	var names []string
+	byNode := map[string][]string{}
 	for i := range rows {
 		if rows[i].Origin == "container" {
-			names = append(names, containerNameOr(&rows[i]))
+			nid := normalizeNodeID(rows[i].NodeID)
+			byNode[nid] = append(byNode[nid], containerNameOr(&rows[i]))
 		}
 	}
-	if len(names) > 0 {
-		out, err := s.exec(ctx, 20, "docker inspect -f '{{.Name}}|{{.State.Status}}' %s 2>/dev/null || true", strings.Join(names, " "))
-		if err == nil {
-			for _, line := range strings.Split(out.Output, "\n") {
-				name, status, ok := strings.Cut(strings.TrimSpace(line), "|")
-				if ok {
-					stateMap[strings.TrimPrefix(name, "/")] = status
-				}
+	for nid, names := range byNode {
+		ac, err := s.clientFor(nid)
+		if err != nil {
+			continue
+		}
+		out, err := agentclient.DoJSON[dto.ExecReq, dto.ExecResp](ac, ctx, "POST", "/agent/v1/exec",
+			&dto.ExecReq{Command: fmt.Sprintf("docker inspect -f '{{.Name}}|{{.State.Status}}' %s 2>/dev/null || true", strings.Join(names, " ")), TimeoutSecs: 20})
+		if err != nil {
+			continue
+		}
+		for _, line := range strings.Split(out.Output, "\n") {
+			name, status, ok := strings.Cut(strings.TrimSpace(line), "|")
+			if ok {
+				stateMap[strings.TrimPrefix(name, "/")] = status
 			}
 		}
 	}
@@ -763,6 +786,7 @@ func (s *RuntimeService) List(ctx context.Context) ([]map[string]any, error) {
 		item := map[string]any{
 			"id": r.ID, "name": r.Name, "type": r.Type, "version": r.Version,
 			"origin": r.Origin, "fcgiAddr": r.FCGIAddr, "remark": r.Remark,
+			"nodeId": normalizeNodeID(r.NodeID),
 			"image": r.Image, "containerName": containerNameOr(r),
 			"composeProject": r.ComposeProject,
 			"status":         status, "message": r.Message,

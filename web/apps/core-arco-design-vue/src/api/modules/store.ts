@@ -1,5 +1,14 @@
 import api from '../index'
 
+// 应用图标展示地址。<img> 带不上 Authorization 头，本面板图标接口（相对路径）统一拼 ?token=
+// （与 auth 中间件的 query 兼容及 file.downloadURL 先例一致）；外部 http(s) 图标原样返回，避免向第三方带 token。
+export function appIconSrc(url: string | undefined | null) {
+  if (!url) return ''
+  if (/^https?:\/\//i.test(url)) return url
+  const token = useAppAccountStore().token
+  return url + (url.includes('?') ? '&' : '?') + `token=${encodeURIComponent(token)}`
+}
+
 export interface StoreFormValue { label: string, value: string }
 
 export interface StoreFormField {
@@ -144,7 +153,7 @@ export const storeApi = {
     const res = await api.get('api/v1/store/tags', { silent: true })
     return res.data as StoreTag[]
   },
-  iconUrl: (sourceId: number, key: string) => `api/v1/store/apps/${sourceId}/${encodeURIComponent(key)}/icon`,
+  iconUrl: (sourceId: number, key: string) => appIconSrc(`api/v1/store/apps/${sourceId}/${encodeURIComponent(key)}/icon`),
   sync: async (force = false) => {
     const res = await api.post(`api/v1/store/sync${force ? '?force=1' : ''}`, null, { timeout: 300000 })
     return res.data as Record<string, string>

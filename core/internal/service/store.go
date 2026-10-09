@@ -533,11 +533,13 @@ func (s *StoreService) syncYpManifest(src *model.AppStoreSource, raw []byte, loc
 			}
 		}
 		iconURL := a.Logo
-		if localRoot != "" {
-			iconURL = fmt.Sprintf("/api/v1/store/apps/%d/%s/icon", src.ID, a.ID) // 经图标接口读本地文件
-		} else if a.Logo != "" && !strings.HasPrefix(a.Logo, "http") {
-			iconURL = base + "/" + a.Logo
-		}
+		if a.Logo != "" && !strings.HasPrefix(a.Logo, "http") {
+			if localRoot != "" {
+				iconURL = fmt.Sprintf("/api/v1/store/apps/%d/%s/icon", src.ID, a.ID) // 经图标接口读本地文件
+			} else {
+				iconURL = base + "/" + a.Logo
+			}
+		} // logo 为空或 http 直链时保持原值：空走前端品牌图标降级，http 不经面板转发
 		versions := make([]StoreVersion, 0, len(a.Versions))
 		for _, v := range a.Versions {
 			if v.ID == "" || v.Package == "" {

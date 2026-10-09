@@ -95,6 +95,7 @@ type Src2ComposeService struct {
 	Nodes *NodeService
 	Tasks *TaskService
 	Creds *GitCredService
+	nodeClient *agentclient.Client // WithNode 绑定（M57）
 }
 
 // srcSuggestion preview 候选（lang/默认值已补全，向导直接可用）。

@@ -537,6 +537,13 @@
 - **来源**：2026-10-08，M33 日志中心字段侧栏（几何断言 aside 右缘 vs 输入框右缘验证）。
 
 
+### `<img>` 带不上 Authorization 头：authed 图标接口全裂图（HTTP 200 + JSON 401 的迷惑性）
+
+- **现象**：商店页 yp-git 源应用图标全部裂图/淡化，1p 源（存公网 URL）正常；Network 面板里图标请求是 **200**，响应体是 `{"code":401,...}` JSON——不看响应体根本不知道是 401。
+- **根因**：图标路由挂在 authed 组，`<img>` 标签只能发 GET、带不了 `Authorization: Bearer` 头（axios 拦截器注入不了 img 请求）；后端 abort 返回 HTTP 200 + 业务 401 JSON，浏览器解码图片失败触发 onerror。
+- **规避/解决**：auth 中间件本就兼容 `?token=`（WS/SSE/下载同款），图标 URL 统一经 api 模块助手拼 token（本例 `store.ts` 的 `appIconSrc()`：相对路径拼 `?token=`，外部 http(s) 原样返回——**千万别给第三方 CDN 的图标 URL 拼自家 token**）。渲染组件用 YdAppIcon（img 失败→品牌 logo→占位降级）而非裸 img。同类场景清单：`<img>`、`<audio>/<video>/<iframe>`、EventSource、window.open 下载——都不能带 header，一律 `?token=`。
+- **来源**：2026-10-10，商店图标裂图排查（core/internal/router/router.go 图标路由 + views/store）。
+
 ### 全站 i18n 键化的四件套模式（B26-full 落地沉淀）
 
 - **模式**：① 路由 `meta.title` 存 i18n key（`menu.*`），`generateTitle` 统一 `te()→t()`、无词条原样透传（中文标题/动态函数双兼容）；因菜单/面包屑/页签/document.title 全部经它渲染，语言切换**自动重渲染，无需任何 watch**（渲染读 locale ref 自带响应式）。② 设置类标题同法键化（`settings.ts` 的 `app.home.title: 'menu.overview'`——面包屑里藏的「主机概览」就是它）。③ 动态枚举文案用 `tr(\`域.key.${v}\`, v)`（不存在回落原值，后端新枚举不裸 key）；非组件模块（store/composables/ts 元数据表）统一 `import { i18n, tr } from '@/locales'` + **函数内求值**（模块顶层求值会固化语言）；元数据表的中文 label 改 getter 即时求值，消费方零改动。④ vue-i18n 消息里 `{ } @ |` 是语法字符，含这些字符的文案要转义（`@`→`{'@'}`）或改用命名参数传值；LogsQL/JSON 示例含裸 `{}` 的干脆留在代码里。

@@ -7,7 +7,7 @@ import dbApi, { type DbInstance } from '@/api/modules/database'
 import apiSystem from '@/api/modules/system'
 import { dockerExtApi } from '@/api/modules/dockerext'
 import api from '@/api'
-import { isPortField, storeApi, type StoreInstallInfo } from '@/api/modules/store'
+import { appIconSrc, isPortField, storeApi, type StoreInstallInfo } from '@/api/modules/store'
 import { taskApi } from '@/api/modules/task'
 import { useTaskCenterStore } from '@/store/modules/taskCenter'
 import { i18n, tr } from '@/locales'
@@ -824,12 +824,12 @@ function statusText(s: StoreSource) {
             class="flex flex-col rounded-lg border bg-background p-4 transition-shadow hover:shadow-md"
           >
             <div class="flex items-start gap-3">
-              <img
-                :src="info.iconUrl"
-                class="size-11 shrink-0 rounded-lg object-contain"
-                loading="lazy"
-                @error="($event.target as HTMLImageElement).style.opacity = '0.2'"
-              >
+              <YdAppIcon
+                :image="appIconSrc(info.iconUrl)"
+                :name="info.name"
+                :size="44"
+                class="mt-0.5 rounded-lg"
+              />
               <div class="min-w-0 flex-1">
                 <div class="flex flex-wrap items-center gap-1.5">
                   <span class="truncate font-medium">{{ info.name }}</span>
@@ -944,12 +944,12 @@ function statusText(s: StoreSource) {
             @click="openDetail(a)"
           >
             <div class="flex items-start gap-3">
-              <img
-                :src="a.iconUrl || storeApi.iconUrl(a.sourceId, a.key)"
-                class="size-10 shrink-0 rounded-lg object-contain"
-                loading="lazy"
-                @error="($event.target as HTMLImageElement).style.opacity = '0.2'"
-              >
+              <YdAppIcon
+                :image="a.iconUrl || storeApi.iconUrl(a.sourceId, a.key)"
+                :name="a.name"
+                :size="40"
+                class="mt-0.5 rounded-lg"
+              />
               <div class="min-w-0 flex-1">
                 <div class="flex items-center gap-1.5">
                   <span class="truncate font-medium">{{ a.name }}</span>
@@ -1039,11 +1039,12 @@ function statusText(s: StoreSource) {
     <FaDrawer v-model="detailVisible" :title="$t('store.detailTitle', { name: detailApp?.name || '' })" class="max-w-2xl!">
       <div v-if="detailApp" class="flex flex-col gap-4">
         <div class="flex items-start gap-4">
-          <img
-            :src="detailApp.iconUrl || storeApi.iconUrl(detailApp.sourceId, detailApp.key)"
-            class="size-16 shrink-0 rounded-xl border object-contain p-1"
-            @error="($event.target as HTMLImageElement).style.opacity = '0.2'"
-          >
+          <YdAppIcon
+            :image="detailApp.iconUrl || storeApi.iconUrl(detailApp.sourceId, detailApp.key)"
+            :name="detailApp.name"
+            :size="64"
+            class="rounded-xl border bg-background p-1"
+          />
           <div class="min-w-0 flex-1">
             <div class="flex flex-wrap items-center gap-2">
               <span class="text-lg font-medium">{{ detailApp.name }}</span>

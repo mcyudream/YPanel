@@ -24,7 +24,12 @@ type RuntimeAPI struct {
 
 // List GET /api/v1/runtimes
 func (a *RuntimeAPI) List(c *gin.Context) {
-	out, err := a.RT.List(c.Request.Context())
+	rt, nerr := a.RT.WithNode(c.Query("node"))
+	if nerr != nil {
+		respErr(c, nerr)
+		return
+	}
+	out, err := rt.List(c.Request.Context())
 	if err != nil {
 		respErr(c, err)
 		return
@@ -34,12 +39,17 @@ func (a *RuntimeAPI) List(c *gin.Context) {
 
 // Detail GET /api/v1/runtimes/:id
 func (a *RuntimeAPI) Detail(c *gin.Context) {
+	rt, nerr := a.RT.WithNode(c.Query("node"))
+	if nerr != nil {
+		respErr(c, nerr)
+		return
+	}
 	id, err := idParam(c)
 	if err != nil {
 		respErr(c, err)
 		return
 	}
-	row, err := a.RT.Detail(c.Request.Context(), id)
+	row, err := rt.Detail(c.Request.Context(), id)
 	if err != nil {
 		respErr(c, err)
 		return
@@ -49,11 +59,16 @@ func (a *RuntimeAPI) Detail(c *gin.Context) {
 
 // Create POST /api/v1/runtimes（任务化：模板渲染 → build → up）
 func (a *RuntimeAPI) Create(c *gin.Context) {
+	rt, nerr := a.RT.WithNode(c.Query("node"))
+	if nerr != nil {
+		respErr(c, nerr)
+		return
+	}
 	req, ok := bind[service.RuntimeCreateInput](c)
 	if !ok {
 		return
 	}
-	out, err := a.RT.Create(c.Request.Context(), *req)
+	out, err := rt.Create(c.Request.Context(), *req)
 	if err != nil {
 		respErr(c, err)
 		return
@@ -63,6 +78,11 @@ func (a *RuntimeAPI) Create(c *gin.Context) {
 
 // AttachExternal POST /api/v1/runtimes/external（接管本机 php-fpm）
 func (a *RuntimeAPI) AttachExternal(c *gin.Context) {
+	rt, nerr := a.RT.WithNode(c.Query("node"))
+	if nerr != nil {
+		respErr(c, nerr)
+		return
+	}
 	req, ok := bind[struct {
 		Name     string `json:"name" binding:"required"`
 		Version  string `json:"version"`
@@ -72,7 +92,7 @@ func (a *RuntimeAPI) AttachExternal(c *gin.Context) {
 	if !ok {
 		return
 	}
-	row, err := a.RT.AttachExternal(req.Name, req.Version, req.FCGIAddr, req.Remark)
+	row, err := rt.AttachExternal(req.Name, req.Version, req.FCGIAddr, req.Remark)
 	if err != nil {
 		respErr(c, err)
 		return
@@ -82,12 +102,17 @@ func (a *RuntimeAPI) AttachExternal(c *gin.Context) {
 
 // Delete DELETE /api/v1/runtimes/:id
 func (a *RuntimeAPI) Delete(c *gin.Context) {
+	rt, nerr := a.RT.WithNode(c.Query("node"))
+	if nerr != nil {
+		respErr(c, nerr)
+		return
+	}
 	id, err := idParam(c)
 	if err != nil {
 		respErr(c, err)
 		return
 	}
-	if err := a.RT.Delete(c.Request.Context(), id); err != nil {
+	if err := rt.Delete(c.Request.Context(), id); err != nil {
 		respErr(c, err)
 		return
 	}
@@ -112,17 +137,27 @@ func (a *RuntimeAPI) Operate(action string) gin.HandlerFunc {
 
 // PHPExtensionCatalog GET /api/v1/runtimes/php/catalog（创建向导用）
 func (a *RuntimeAPI) PHPExtensionCatalog(c *gin.Context) {
-	respOK(c, a.RT.PHPExtensionCatalog())
+	rt, nerr := a.RT.WithNode(c.Query("node"))
+	if nerr != nil {
+		respErr(c, nerr)
+		return
+	}
+	respOK(c, rt.PHPExtensionCatalog())
 }
 
 // PHPExtensions GET /api/v1/runtimes/php/extensions?id=
 func (a *RuntimeAPI) PHPExtensions(c *gin.Context) {
+	rt, nerr := a.RT.WithNode(c.Query("node"))
+	if nerr != nil {
+		respErr(c, nerr)
+		return
+	}
 	id, err := idQuery(c)
 	if err != nil {
 		respErr(c, err)
 		return
 	}
-	out, err := a.RT.PHPExtensions(c.Request.Context(), id)
+	out, err := rt.PHPExtensions(c.Request.Context(), id)
 	if err != nil {
 		respErr(c, err)
 		return
@@ -132,6 +167,11 @@ func (a *RuntimeAPI) PHPExtensions(c *gin.Context) {
 
 // PHPExtensionInstall POST /api/v1/runtimes/php/extensions/install {id, name}
 func (a *RuntimeAPI) PHPExtensionInstall(c *gin.Context) {
+	rt, nerr := a.RT.WithNode(c.Query("node"))
+	if nerr != nil {
+		respErr(c, nerr)
+		return
+	}
 	req, ok := bind[struct {
 		ID   uint   `json:"id" binding:"required"`
 		Name string `json:"name" binding:"required"`
@@ -139,7 +179,7 @@ func (a *RuntimeAPI) PHPExtensionInstall(c *gin.Context) {
 	if !ok {
 		return
 	}
-	out, err := a.RT.InstallPHPExtension(c.Request.Context(), req.ID, req.Name)
+	out, err := rt.InstallPHPExtension(c.Request.Context(), req.ID, req.Name)
 	if err != nil {
 		respErr(c, err)
 		return
@@ -149,6 +189,11 @@ func (a *RuntimeAPI) PHPExtensionInstall(c *gin.Context) {
 
 // PHPExtensionUninstall POST /api/v1/runtimes/php/extensions/uninstall {id, name}
 func (a *RuntimeAPI) PHPExtensionUninstall(c *gin.Context) {
+	rt, nerr := a.RT.WithNode(c.Query("node"))
+	if nerr != nil {
+		respErr(c, nerr)
+		return
+	}
 	req, ok := bind[struct {
 		ID   uint   `json:"id" binding:"required"`
 		Name string `json:"name" binding:"required"`
@@ -156,7 +201,7 @@ func (a *RuntimeAPI) PHPExtensionUninstall(c *gin.Context) {
 	if !ok {
 		return
 	}
-	out, err := a.RT.UninstallPHPExtension(c.Request.Context(), req.ID, req.Name)
+	out, err := rt.UninstallPHPExtension(c.Request.Context(), req.ID, req.Name)
 	if err != nil {
 		respErr(c, err)
 		return
@@ -166,12 +211,17 @@ func (a *RuntimeAPI) PHPExtensionUninstall(c *gin.Context) {
 
 // GetPHPConfig GET /api/v1/runtimes/php/config?id=
 func (a *RuntimeAPI) GetPHPConfig(c *gin.Context) {
+	rt, nerr := a.RT.WithNode(c.Query("node"))
+	if nerr != nil {
+		respErr(c, nerr)
+		return
+	}
 	id, err := idQuery(c)
 	if err != nil {
 		respErr(c, err)
 		return
 	}
-	out, err := a.RT.GetPHPConfig(c.Request.Context(), id)
+	out, err := rt.GetPHPConfig(c.Request.Context(), id)
 	if err != nil {
 		respErr(c, err)
 		return
@@ -181,6 +231,11 @@ func (a *RuntimeAPI) GetPHPConfig(c *gin.Context) {
 
 // UpdatePHPConfig POST /api/v1/runtimes/php/config
 func (a *RuntimeAPI) UpdatePHPConfig(c *gin.Context) {
+	rt, nerr := a.RT.WithNode(c.Query("node"))
+	if nerr != nil {
+		respErr(c, nerr)
+		return
+	}
 	id, err := idQuery(c)
 	if err != nil {
 		respErr(c, err)
@@ -190,7 +245,7 @@ func (a *RuntimeAPI) UpdatePHPConfig(c *gin.Context) {
 	if !ok {
 		return
 	}
-	if err := a.RT.UpdatePHPConfig(c.Request.Context(), id, *req); err != nil {
+	if err := rt.UpdatePHPConfig(c.Request.Context(), id, *req); err != nil {
 		respErr(c, err)
 		return
 	}
@@ -199,12 +254,17 @@ func (a *RuntimeAPI) UpdatePHPConfig(c *gin.Context) {
 
 // GetFPMConfig GET /api/v1/runtimes/php/fpm-config?id=
 func (a *RuntimeAPI) GetFPMConfig(c *gin.Context) {
+	rt, nerr := a.RT.WithNode(c.Query("node"))
+	if nerr != nil {
+		respErr(c, nerr)
+		return
+	}
 	id, err := idQuery(c)
 	if err != nil {
 		respErr(c, err)
 		return
 	}
-	out, err := a.RT.GetFPMConfig(c.Request.Context(), id)
+	out, err := rt.GetFPMConfig(c.Request.Context(), id)
 	if err != nil {
 		respErr(c, err)
 		return
@@ -214,6 +274,11 @@ func (a *RuntimeAPI) GetFPMConfig(c *gin.Context) {
 
 // UpdateFPMConfig POST /api/v1/runtimes/php/fpm-config {id, params}
 func (a *RuntimeAPI) UpdateFPMConfig(c *gin.Context) {
+	rt, nerr := a.RT.WithNode(c.Query("node"))
+	if nerr != nil {
+		respErr(c, nerr)
+		return
+	}
 	req, ok := bind[struct {
 		ID     uint              `json:"id" binding:"required"`
 		Params map[string]string `json:"params"`
@@ -221,7 +286,7 @@ func (a *RuntimeAPI) UpdateFPMConfig(c *gin.Context) {
 	if !ok {
 		return
 	}
-	if err := a.RT.UpdateFPMConfig(c.Request.Context(), req.ID, req.Params); err != nil {
+	if err := rt.UpdateFPMConfig(c.Request.Context(), req.ID, req.Params); err != nil {
 		respErr(c, err)
 		return
 	}
@@ -230,12 +295,17 @@ func (a *RuntimeAPI) UpdateFPMConfig(c *gin.Context) {
 
 // FPMStatus GET /api/v1/runtimes/php/fpm-status?id=
 func (a *RuntimeAPI) FPMStatus(c *gin.Context) {
+	rt, nerr := a.RT.WithNode(c.Query("node"))
+	if nerr != nil {
+		respErr(c, nerr)
+		return
+	}
 	id, err := idQuery(c)
 	if err != nil {
 		respErr(c, err)
 		return
 	}
-	out, err := a.RT.FPMStatus(c.Request.Context(), id)
+	out, err := rt.FPMStatus(c.Request.Context(), id)
 	if err != nil {
 		respErr(c, err)
 		return
@@ -245,12 +315,17 @@ func (a *RuntimeAPI) FPMStatus(c *gin.Context) {
 
 // NodeModules GET /api/v1/runtimes/node/modules?id=
 func (a *RuntimeAPI) NodeModules(c *gin.Context) {
+	rt, nerr := a.RT.WithNode(c.Query("node"))
+	if nerr != nil {
+		respErr(c, nerr)
+		return
+	}
 	id, err := idQuery(c)
 	if err != nil {
 		respErr(c, err)
 		return
 	}
-	out, err := a.RT.NodeModules(c.Request.Context(), id)
+	out, err := rt.NodeModules(c.Request.Context(), id)
 	if err != nil {
 		respErr(c, err)
 		return
@@ -260,6 +335,11 @@ func (a *RuntimeAPI) NodeModules(c *gin.Context) {
 
 // OperateNodeModule POST /api/v1/runtimes/node/modules/operate {id, operate, module, pkgManager}
 func (a *RuntimeAPI) OperateNodeModule(c *gin.Context) {
+	rt, nerr := a.RT.WithNode(c.Query("node"))
+	if nerr != nil {
+		respErr(c, nerr)
+		return
+	}
 	req, ok := bind[struct {
 		ID         uint   `json:"id" binding:"required"`
 		Operate    string `json:"operate" binding:"required"`
@@ -269,7 +349,7 @@ func (a *RuntimeAPI) OperateNodeModule(c *gin.Context) {
 	if !ok {
 		return
 	}
-	out, err := a.RT.OperateNodeModule(c.Request.Context(), req.ID, req.Operate, req.Module, req.PkgManager)
+	out, err := rt.OperateNodeModule(c.Request.Context(), req.ID, req.Operate, req.Module, req.PkgManager)
 	if err != nil {
 		respErr(c, err)
 		return
@@ -279,12 +359,17 @@ func (a *RuntimeAPI) OperateNodeModule(c *gin.Context) {
 
 // Rebuild POST /api/v1/runtimes/:id/rebuild（用当前面板模板重建镜像，保留用户配置）
 func (a *RuntimeAPI) Rebuild(c *gin.Context) {
+	rt, nerr := a.RT.WithNode(c.Query("node"))
+	if nerr != nil {
+		respErr(c, nerr)
+		return
+	}
 	id, err := idParam(c)
 	if err != nil {
 		respErr(c, err)
 		return
 	}
-	out, err := a.RT.Rebuild(c.Request.Context(), id)
+	out, err := rt.Rebuild(c.Request.Context(), id)
 	if err != nil {
 		respErr(c, err)
 		return
@@ -294,12 +379,17 @@ func (a *RuntimeAPI) Rebuild(c *gin.Context) {
 
 // SupervisorList GET /api/v1/runtimes/php/supervisor?id=
 func (a *RuntimeAPI) SupervisorList(c *gin.Context) {
+	rt, nerr := a.RT.WithNode(c.Query("node"))
+	if nerr != nil {
+		respErr(c, nerr)
+		return
+	}
 	id, err := idQuery(c)
 	if err != nil {
 		respErr(c, err)
 		return
 	}
-	out, err := a.RT.SupervisorList(c.Request.Context(), id)
+	out, err := rt.SupervisorList(c.Request.Context(), id)
 	if err != nil {
 		respErr(c, err)
 		return
@@ -309,6 +399,11 @@ func (a *RuntimeAPI) SupervisorList(c *gin.Context) {
 
 // SupervisorUpsert POST /api/v1/runtimes/php/supervisor {id, name, command, autoStart, autoRestart}
 func (a *RuntimeAPI) SupervisorUpsert(c *gin.Context) {
+	rt, nerr := a.RT.WithNode(c.Query("node"))
+	if nerr != nil {
+		respErr(c, nerr)
+		return
+	}
 	id, err := idQuery(c)
 	if err != nil {
 		respErr(c, err)
@@ -318,7 +413,7 @@ func (a *RuntimeAPI) SupervisorUpsert(c *gin.Context) {
 	if !ok {
 		return
 	}
-	if err := a.RT.SupervisorUpsert(c.Request.Context(), id, *req); err != nil {
+	if err := rt.SupervisorUpsert(c.Request.Context(), id, *req); err != nil {
 		respErr(c, err)
 		return
 	}
@@ -327,6 +422,11 @@ func (a *RuntimeAPI) SupervisorUpsert(c *gin.Context) {
 
 // SupervisorOperate POST /api/v1/runtimes/php/supervisor/operate {id, name, action}
 func (a *RuntimeAPI) SupervisorOperate(c *gin.Context) {
+	rt, nerr := a.RT.WithNode(c.Query("node"))
+	if nerr != nil {
+		respErr(c, nerr)
+		return
+	}
 	req, ok := bind[struct {
 		ID     uint   `json:"id" binding:"required"`
 		Name   string `json:"name" binding:"required"`
@@ -335,7 +435,7 @@ func (a *RuntimeAPI) SupervisorOperate(c *gin.Context) {
 	if !ok {
 		return
 	}
-	if err := a.RT.SupervisorOperate(c.Request.Context(), req.ID, req.Name, req.Action); err != nil {
+	if err := rt.SupervisorOperate(c.Request.Context(), req.ID, req.Name, req.Action); err != nil {
 		respErr(c, err)
 		return
 	}
@@ -344,12 +444,17 @@ func (a *RuntimeAPI) SupervisorOperate(c *gin.Context) {
 
 // SupervisorDelete DELETE /api/v1/runtimes/php/supervisor?id=&name=
 func (a *RuntimeAPI) SupervisorDelete(c *gin.Context) {
+	rt, nerr := a.RT.WithNode(c.Query("node"))
+	if nerr != nil {
+		respErr(c, nerr)
+		return
+	}
 	id, err := idQuery(c)
 	if err != nil {
 		respErr(c, err)
 		return
 	}
-	if err := a.RT.SupervisorDelete(c.Request.Context(), id, c.Query("name")); err != nil {
+	if err := rt.SupervisorDelete(c.Request.Context(), id, c.Query("name")); err != nil {
 		respErr(c, err)
 		return
 	}
@@ -358,12 +463,17 @@ func (a *RuntimeAPI) SupervisorDelete(c *gin.Context) {
 
 // SupervisorLog GET /api/v1/runtimes/php/supervisor/log?id=&name=
 func (a *RuntimeAPI) SupervisorLog(c *gin.Context) {
+	rt, nerr := a.RT.WithNode(c.Query("node"))
+	if nerr != nil {
+		respErr(c, nerr)
+		return
+	}
 	id, err := idQuery(c)
 	if err != nil {
 		respErr(c, err)
 		return
 	}
-	out, err := a.RT.SupervisorLog(c.Request.Context(), id, c.Query("name"))
+	out, err := rt.SupervisorLog(c.Request.Context(), id, c.Query("name"))
 	if err != nil {
 		respErr(c, err)
 		return
@@ -373,12 +483,17 @@ func (a *RuntimeAPI) SupervisorLog(c *gin.Context) {
 
 // SlowLog GET /api/v1/runtimes/php/slow-log?id=
 func (a *RuntimeAPI) SlowLog(c *gin.Context) {
+	rt, nerr := a.RT.WithNode(c.Query("node"))
+	if nerr != nil {
+		respErr(c, nerr)
+		return
+	}
 	id, err := idQuery(c)
 	if err != nil {
 		respErr(c, err)
 		return
 	}
-	out, err := a.RT.SlowLog(c.Request.Context(), id)
+	out, err := rt.SlowLog(c.Request.Context(), id)
 	if err != nil {
 		respErr(c, err)
 		return
@@ -388,13 +503,18 @@ func (a *RuntimeAPI) SlowLog(c *gin.Context) {
 
 // SlowLogClear POST /api/v1/runtimes/php/slow-log/clear {id}
 func (a *RuntimeAPI) SlowLogClear(c *gin.Context) {
+	rt, nerr := a.RT.WithNode(c.Query("node"))
+	if nerr != nil {
+		respErr(c, nerr)
+		return
+	}
 	req, ok := bind[struct {
 		ID uint `json:"id" binding:"required"`
 	}](c)
 	if !ok {
 		return
 	}
-	if err := a.RT.SlowLogClear(c.Request.Context(), req.ID); err != nil {
+	if err := rt.SlowLogClear(c.Request.Context(), req.ID); err != nil {
 		respErr(c, err)
 		return
 	}
@@ -403,12 +523,17 @@ func (a *RuntimeAPI) SlowLogClear(c *gin.Context) {
 
 // BackupList GET /api/v1/runtimes/:id/backups
 func (a *RuntimeAPI) BackupList(c *gin.Context) {
+	rt, nerr := a.RT.WithNode(c.Query("node"))
+	if nerr != nil {
+		respErr(c, nerr)
+		return
+	}
 	id, err := idParam(c)
 	if err != nil {
 		respErr(c, err)
 		return
 	}
-	out, err := a.RT.BackupList(c.Request.Context(), id)
+	out, err := rt.BackupList(c.Request.Context(), id)
 	if err != nil {
 		respErr(c, err)
 		return
@@ -418,12 +543,17 @@ func (a *RuntimeAPI) BackupList(c *gin.Context) {
 
 // BackupCreate POST /api/v1/runtimes/:id/backups
 func (a *RuntimeAPI) BackupCreate(c *gin.Context) {
+	rt, nerr := a.RT.WithNode(c.Query("node"))
+	if nerr != nil {
+		respErr(c, nerr)
+		return
+	}
 	id, err := idParam(c)
 	if err != nil {
 		respErr(c, err)
 		return
 	}
-	out, err := a.RT.BackupCreate(c.Request.Context(), id)
+	out, err := rt.BackupCreate(c.Request.Context(), id)
 	if err != nil {
 		respErr(c, err)
 		return
@@ -433,6 +563,11 @@ func (a *RuntimeAPI) BackupCreate(c *gin.Context) {
 
 // BackupRestore POST /api/v1/runtimes/:id/backups/restore {file}
 func (a *RuntimeAPI) BackupRestore(c *gin.Context) {
+	rt, nerr := a.RT.WithNode(c.Query("node"))
+	if nerr != nil {
+		respErr(c, nerr)
+		return
+	}
 	id, err := idParam(c)
 	if err != nil {
 		respErr(c, err)
@@ -444,7 +579,7 @@ func (a *RuntimeAPI) BackupRestore(c *gin.Context) {
 	if !ok {
 		return
 	}
-	out, err := a.RT.BackupRestore(c.Request.Context(), id, req.File)
+	out, err := rt.BackupRestore(c.Request.Context(), id, req.File)
 	if err != nil {
 		respErr(c, err)
 		return
@@ -454,12 +589,17 @@ func (a *RuntimeAPI) BackupRestore(c *gin.Context) {
 
 // BackupDelete DELETE /api/v1/runtimes/:id/backups?file=
 func (a *RuntimeAPI) BackupDelete(c *gin.Context) {
+	rt, nerr := a.RT.WithNode(c.Query("node"))
+	if nerr != nil {
+		respErr(c, nerr)
+		return
+	}
 	id, err := idParam(c)
 	if err != nil {
 		respErr(c, err)
 		return
 	}
-	if err := a.RT.BackupDelete(c.Request.Context(), id, c.Query("file")); err != nil {
+	if err := rt.BackupDelete(c.Request.Context(), id, c.Query("file")); err != nil {
 		respErr(c, err)
 		return
 	}
