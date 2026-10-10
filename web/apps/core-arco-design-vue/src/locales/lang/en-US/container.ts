@@ -271,7 +271,9 @@ export default {
     mirrorSaveHint: 'Saved by merging into /etc/docker/daemon.json and restarting Docker. Clear all and save to remove mirrors.',
     mirrorSaveTitle: 'Save registry mirrors',
     mirrorSaveConfirm: 'This merges into daemon.json and restarts Docker (containers keep running; the Docker API blips briefly). Save now?',
-    mirrorSaved: 'Mirrors saved and applied',
+    mirrorSubmitted: 'Configuration submitted; Docker is restarting to apply it — this view refreshes when done',
+    mirrorApplied: 'Docker restarted; registry mirrors applied',
+    mirrorApplyFailed: 'Failed to apply registry mirrors',
 
   },
   detail: {

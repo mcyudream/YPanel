@@ -62,7 +62,8 @@ func (a *DockerInstallAPI) GetMirrors(c *gin.Context) {
 	respOK(c, map[string]any{"mirrors": mirrors})
 }
 
-// SetMirrors POST /api/v1/docker/registry-mirrors {nodeId?, mirrors}（合并写 daemon.json + 重启 docker）
+// SetMirrors POST /api/v1/docker/registry-mirrors {nodeId?, mirrors}
+// 创建应用任务（合并写 daemon.json + 重启 docker，失败自动回滚），返回 {taskId} 由前端轮询。
 func (a *DockerInstallAPI) SetMirrors(c *gin.Context) {
 	req, ok := bind[struct {
 		NodeID  string   `json:"nodeId"`
@@ -71,7 +72,7 @@ func (a *DockerInstallAPI) SetMirrors(c *gin.Context) {
 	if !ok {
 		return
 	}
-	out, err := a.Svc.SetRegistryMirrors(c.Request.Context(), req.NodeID, req.Mirrors)
+	out, err := a.Svc.SetRegistryMirrorsAsync(c.Request.Context(), req.NodeID, req.Mirrors)
 	if err != nil {
 		respErr(c, err)
 		return

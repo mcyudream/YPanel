@@ -60,9 +60,10 @@ export const dockerInstallApi = {
     const res = await api.get('api/v1/docker/registry-mirrors', { silent: true })
     return res.data.mirrors as string[]
   },
-  // 保存加速器（服务端合并写 daemon.json + 重启 docker 生效；空数组=移除）
+  // 保存加速器：创建应用任务（合并写 daemon.json + 重启 docker；agent 侧失败自动回滚），
+  // 返回 taskId 由调用方轮询任务确认结果（重启可达分钟级，不再同步等待）
   setMirrors: async (mirrors: string[]) => {
     const res = await api.post('api/v1/docker/registry-mirrors', { mirrors })
-    return res.data as { mirrors: string[], message: string }
+    return res.data as { taskId: number }
   },
 }

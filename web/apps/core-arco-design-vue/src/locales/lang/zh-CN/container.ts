@@ -271,7 +271,9 @@ export default {
     mirrorSaveHint: '保存合并写入 /etc/docker/daemon.json 并重启 Docker 生效；清空全部后保存即移除加速器配置。',
     mirrorSaveTitle: '保存镜像加速器',
     mirrorSaveConfirm: '将合并写入 daemon.json 并重启 Docker（运行中容器不受影响，但 Docker API 会短暂中断），确认保存？',
-    mirrorSaved: '加速器已保存并生效',
+    mirrorSubmitted: '配置已提交，Docker 正在重启生效，完成后自动刷新',
+    mirrorApplied: 'Docker 已重启，镜像加速器配置生效',
+    mirrorApplyFailed: '镜像加速器配置应用失败',
 
   },
   detail: {

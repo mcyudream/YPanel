@@ -134,8 +134,19 @@ func (s *DockerExtService) Passthrough(ctx context.Context, path string) (json.R
 	return env.Data, nil
 }
 
-// postJSON 透传 POST JSON。
+// PostJSON 透传 POST JSON。
 func (s *DockerExtService) PostJSON(ctx context.Context, path string, body any) (json.RawMessage, error) {
+	return s.doJSON(ctx, http.MethodPost, path, body)
+}
+
+// PutJSON 透传 PUT JSON（agent 侧路由必须同样注册为 PUT；方法不匹配 Go mux 回 405 文本体）。
+func (s *DockerExtService) PutJSON(ctx context.Context, path string, body any) (json.RawMessage, error) {
+	return s.doJSON(ctx, http.MethodPut, path, body)
+}
+
+// doJSON 发 JSON 体并解 agent 信封。非 2xx 先按状态码拦截：404/405 的文本体直接解 JSON
+// 只会报误导性的 "invalid character ..."（M23 同族坑，见 docs/exp/go-backend.md）。
+func (s *DockerExtService) doJSON(ctx context.Context, method, path string, body any) (json.RawMessage, error) {
 	ac, err := s.client()
 	if err != nil {
 		return nil, err
@@ -144,7 +155,7 @@ func (s *DockerExtService) PostJSON(ctx context.Context, path string, body any) 
 	if body != nil {
 		_ = json.NewEncoder(&buf).Encode(body)
 	}
-	req, err := ac.NewRequest(ctx, http.MethodPost, path, &buf)
+	req, err := ac.NewRequest(ctx, method, path, &buf)
 	if err != nil {
 		return nil, err
 	}
@@ -154,6 +165,10 @@ func (s *DockerExtService) PostJSON(ctx context.Context, path string, body any) 
 		return nil, errs.Wrap(errs.ErrAgentUnreach, err.Error())
 	}
 	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		head, _ := io.ReadAll(io.LimitReader(resp.Body, 256))
+		return nil, errs.Wrap(errs.ErrAgentUnreach, fmt.Sprintf("agent HTTP %d: %s", resp.StatusCode, strings.TrimSpace(string(head))))
+	}
 	var env dto.Resp[json.RawMessage]
 	if err := json.NewDecoder(resp.Body).Decode(&env); err != nil {
 		return nil, err

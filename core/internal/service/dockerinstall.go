@@ -522,6 +522,34 @@ func (s *DockerInstallService) SetRegistryMirrors(ctx context.Context, nodeId st
 	return map[string]any{"mirrors": mirrors, "message": put.Message}, nil
 }
 
+// SetRegistryMirrorsAsync 创建「应用镜像加速器」任务（合并写 daemon.json + 重启 docker，agent 侧失败自动回滚）。
+// 立即返回 taskId：大机器重启可达分钟级，同步等待会被前端超时误报为失败，进度与结果由任务中心承载。
+func (s *DockerInstallService) SetRegistryMirrorsAsync(ctx context.Context, nodeId string, mirrors []string) (map[string]any, error) {
+	if err := validateMirrors(mirrors); err != nil {
+		return nil, err
+	}
+	nodeId = normalizeNodeID(nodeId)
+	node, err := s.nodes.ByID(nodeId)
+	if err != nil {
+		return nil, err
+	}
+	task, err := s.tasks.StartTask(TaskDockerMirror, "应用镜像加速器（"+node.Name+"）", nodeId, 20*time.Minute,
+		func(ctx context.Context, logf TaskLogf) error {
+			logf("info", "合并写入 daemon.json 并重启 docker（%d 个加速器）…", len(mirrors))
+			out, err := s.SetRegistryMirrors(ctx, nodeId, mirrors)
+			if err != nil {
+				return err
+			}
+			msg, _ := out["message"].(string)
+			logf("info", "%s", msg)
+			return nil
+		})
+	if err != nil {
+		return nil, err
+	}
+	return map[string]any{"taskId": task.ID}, nil
+}
+
 // validateMirrors 校验加速器地址白名单。
 func validateMirrors(mirrors []string) error {
 	for _, m := range mirrors {

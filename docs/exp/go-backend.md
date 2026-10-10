@@ -321,3 +321,17 @@
 - **根因**：脚本端点拦截写在 splitCrossHost 之前，只匹配裸 remainder；跨 host 形态解析后 remainder 已剥掉 ~h 段，但代码顺序上已被放过。
 - **规避/解决**：内嵌端点拦截统一放在「前缀/路径段解析全部完成之后、代理发起之前」，用最终 remainder 匹配；注入的 src 与解析规则同步设计（注入器拿到的 scriptURL 就是最终解析形态）。新增路径形态（~h 段这类）时，先过一遍所有内嵌端点的前缀匹配顺序。
 - **来源**：2026-10-10，M56 跨 host 注入验收（142 实测 src 带 ~h 段 404，拦截点后移一处修复）。
+
+### PostJSON 硬编码 POST 打 PUT 路由：405 文本体解 JSON 报 "invalid character 'M'"（daemon-config 重启按钮全坏）
+
+- **现象**：Docker 配置页「重启生效」按钮恒报「系统内部错误」，任何环境都可复现；core 日志 `api internal error err="invalid character 'M' looking for beginning of value"`，agent 侧无任何请求记录。同机的镜像源保存（`DoJSON` 显式传方法）却一切正常，极具迷惑性。
+- **根因**：`DockerExtService.PostJSON` 把方法硬编码为 `http.MethodPost`，而 agent 的 `PUT /agent/v1/docker/daemon-config` 只注册了 GET/PUT——Go 1.22 mux 对「路径匹配、方法不匹配」回 405，body 是纯文本 `Method Not Allowed`（M 开头）；PostJSON 又不像 `Passthrough` 那样先拦状态码，直接把文本体当 JSON 信封解，报出与 405 毫无关系的解码错误。M23 的 Passthrough 405 是同族坑的另一半（GET 打 POST 路由），本次是反方向（POST 打 PUT 路由）+ 缺状态码拦截。
+- **规避/解决**：① `PostJSON/PutJSON` 收敛到 `doJSON(method,…)`，非 2xx 先拦截并带 body 前 256 字节（与 agentclient.doResp 同范式）；② core 透传 agent 动作时方法必须与 agent 注册一致，新增「带 body 的透传」时 PostJSON/PutJSON 二选一核对 agent 侧注册方法；③ 看到 `invalid character 'X' looking for beginning of value` 且 X 恰是英文单词首字母，先 curl 目标端点看原始 body 再猜信封格式。
+- **来源**：2026-10-10，镜像源保存链路改造排障（core/internal/service/dockerx_ext.go PostJSON→doJSON+PutJSON；142 真机「重启按钮恒失败」追溯出与本次改动无关的存量 bug）。
+
+### 「写配置文件 + 重启服务」型接口的三件套：写前留底、失败回滚、journal 诊断；重启别在 HTTP 请求里同步等
+
+- **现象**：镜像源保存/daemon.json 生效都是「写 /etc/docker/daemon.json + systemctl restart docker」同步执行：① 大机器（容器多/数据库容器优雅停机慢）重启超前端 60s 超时，用户看到「失败」而 docker 实际在后台重启成功（142 实测 32 容器 22.9s，生产必超）；② 真失败时错误只有 systemctl 通用输出（"Job for docker.service failed..."），真实原因在 journal 里用户看不到；③ 写盘成功重启失败时坏配置留在盘上，dockerd 起不来全机容器趴窝。
+- **根因**：systemctl restart 在 agent HTTP handler 里同步 exec 且无上限（docker.io 的 TimeoutStop/StartUSec=infinity，可挂任意久）；写文件与重启之间没有恢复路径；错误信息止于 systemctl 表层。
+- **规避/解决**：① 重启类操作任务化——core 任务中心承载（StartTask + 独立 ctx + 20min 预算），HTTP 立即返回 taskId 前端轮询，彻底解耦前端超时；② agent 侧三件套：写前读原文件留底（含「原本不存在」分支）→ 重启失败取 `journalctl -u docker -n 30 --no-pager` 尾部拼进错误 → 自动回滚原配置并再次重启，恢复结果一并回报；③ systemctl 等待设上限（8min）且超时**不回滚**——超时只是客户端停止等待，systemd job 仍在后台继续，此时回滚会与进行中的重启互相踩踏，只报告「后台仍在继续」；④ dockerd 对 daemon.json 未知键会拒绝启动（`the following directives don't match any configuration option`），是验证回滚路径的安全注入点（坏配置→自动恢复，无残留）。
+- **来源**：2026-10-10，镜像源保存任务化 + agent daemon-config 加固（agent/server/daemon_handlers.go；142 真机双向验证：异步保存 0.06s 返回/任务 21s 成功，坏配置回滚 21.7s 恢复）。

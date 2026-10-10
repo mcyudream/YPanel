@@ -3,6 +3,7 @@ import apiFile from '@/api/modules/file'
 import { dockerExtApi } from '@/api/modules/dockerext'
 import { dockerInstallApi } from '@/api/modules/dockerinstall'
 import type { DockerPrecheck } from '@/api/modules/dockerinstall'
+import { taskApi } from '@/api/modules/task'
 import DockerInstallWizard from '../components/DockerInstallWizard.vue'
 import { dockerImgApi } from '@/api/modules/dockerenv'
 import { i18n } from '@/locales'
@@ -62,6 +63,43 @@ async function loadMirrors() {
   catch {}
 }
 
+// 保存走任务中心：重启可达分钟级，立即返回 taskId，轮询到终态再提示结果
+let mirrorTaskTimer: ReturnType<typeof setInterval> | null = null
+onUnmounted(() => {
+  if (mirrorTaskTimer) {
+    clearInterval(mirrorTaskTimer)
+  }
+})
+
+function pollMirrorTask(taskId: number) {
+  if (mirrorTaskTimer) {
+    clearInterval(mirrorTaskTimer)
+  }
+  mirrorTaskTimer = setInterval(async () => {
+    let t: Awaited<ReturnType<typeof taskApi.get>>
+    try {
+      t = await taskApi.get(taskId)
+    }
+    catch {
+      return // 单次轮询失败下一轮重试
+    }
+    if (t.status === 'running') {
+      return
+    }
+    clearInterval(mirrorTaskTimer!)
+    mirrorTaskTimer = null
+    savingMirrors.value = false
+    if (t.status === 'success') {
+      toast.success(i18n.global.t('container.settings.mirrorApplied'))
+      await loadMirrors()
+      loadEnv()
+    }
+    else {
+      toast.error(i18n.global.t('container.settings.mirrorApplyFailed'), { description: t.error })
+    }
+  }, 2000)
+}
+
 function saveMirrors() {
   const list = [...checkedMirrors.value]
   for (const part of customMirror.value.split(/[\s,]+/).map(x => x.trim()).filter(Boolean)) {
@@ -76,15 +114,13 @@ function saveMirrors() {
     onConfirm: async () => {
       savingMirrors.value = true
       try {
-        await dockerInstallApi.setMirrors(list)
-        toast.success(i18n.global.t('container.settings.mirrorSaved'))
-        await loadMirrors()
+        const { taskId } = await dockerInstallApi.setMirrors(list)
+        toast.info(i18n.global.t('container.settings.mirrorSubmitted'))
+        pollMirrorTask(taskId)
       }
       catch (e: any) {
-        toast.error(i18n.global.t('container.common.saveFailed'), { description: e?.message })
-      }
-      finally {
         savingMirrors.value = false
+        toast.error(i18n.global.t('container.common.saveFailed'), { description: e?.message })
       }
     },
   })

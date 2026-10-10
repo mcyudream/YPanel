@@ -520,7 +520,9 @@ func (a *DockerExtAPI) UpdateDaemonConfig(c *gin.Context) {
 		respErr(c, errBadRequest("daemon.json 不是合法 JSON"))
 		return
 	}
-	out, err := ext.PostJSON(c.Request.Context(), "/agent/v1/docker/daemon-config", map[string]string{"content": req.Content})
+	// agent 路由注册为 PUT（GET/PUT 同 handler），必须用 PUT 透传——
+	// POST 会被 Go mux 以 405 拒绝（历史上此处误用 PostJSON，用户重启按钮恒报系统内部错误）
+	out, err := ext.PutJSON(c.Request.Context(), "/agent/v1/docker/daemon-config", map[string]string{"content": req.Content})
 	if err != nil {
 		respErr(c, err)
 		return
