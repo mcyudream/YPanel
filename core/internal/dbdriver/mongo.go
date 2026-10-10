@@ -88,6 +88,24 @@ func (d *mongoDriver) CreateUser(ctx context.Context, name, host, password strin
 	return d.client.Database("admin").RunCommand(ctx, cmd).Err()
 }
 
+// CreateAppUser 在目标库创建应用账号（readWrite 限于该库）——商店纳管接入用，
+// 区别于 admin 库的 readWriteAnyDatabase 管理用户（权限过大不能交给应用）。
+// 用户已存在返回原始 mongo 错误（code 51003 UserAlreadyExists），由调用方换名重试。
+func (d *mongoDriver) CreateAppUser(ctx context.Context, database, name, password string) error {
+	if err := ValidateIdent(name); err != nil {
+		return err
+	}
+	if err := ValidateIdent(database); err != nil {
+		return err
+	}
+	cmd := bson.D{
+		{Key: "createUser", Value: name},
+		{Key: "pwd", Value: password},
+		{Key: "roles", Value: bson.A{bson.D{{Key: "role", Value: "readWrite"}, {Key: "db", Value: database}}}},
+	}
+	return d.client.Database(database).RunCommand(ctx, cmd).Err()
+}
+
 func (d *mongoDriver) DropUser(ctx context.Context, name, host string) error {
 	if err := ValidateIdent(name); err != nil {
 		return err

@@ -2117,8 +2117,11 @@ func dbFieldSetsOf(fields []StoreFormField, composeText string) []dbFieldSet {
 		seen[prefix] = true
 		kind := "sql"
 		stem := strings.TrimSuffix(strings.TrimPrefix(k, "PANEL_"), "_HOST")
-		if strings.Contains(stem, "REDIS") {
+		switch {
+		case strings.Contains(stem, "REDIS"):
 			kind = "redis"
+		case strings.Contains(stem, "MONGO"):
+			kind = "mongo"
 		}
 		fs := dbFieldSet{Host: k, Kind: kind}
 		if hasKey(keys, prefix+"PORT") {
@@ -2189,7 +2192,8 @@ func (s *StoreService) applyExternalDB(ctx context.Context, logf TaskLogf, ver S
 	var extraHosts []string
 	for _, fs := range sets {
 		var err error
-		if fs.Kind == "redis" {
+		switch fs.Kind {
+		case "redis":
 			if ext.RedisInstanceID == 0 {
 				continue
 			}
@@ -2198,16 +2202,25 @@ func (s *StoreService) applyExternalDB(ctx context.Context, logf TaskLogf, ver S
 				return nil, err
 			}
 			extraHosts = append(extraHosts, eh...)
-			continue
+		case "mongo":
+			if ext.InstanceID == 0 {
+				continue
+			}
+			var eh []string
+			if eh, err = s.applyExternalMongo(ctx, logf, ext, fs, in, params); err != nil {
+				return nil, err
+			}
+			extraHosts = append(extraHosts, eh...)
+		default:
+			if ext.InstanceID == 0 {
+				continue
+			}
+			var eh []string
+			if eh, err = s.applyExternalSQL(ctx, logf, ver, ext, fs, in, params); err != nil {
+				return nil, err
+			}
+			extraHosts = append(extraHosts, eh...)
 		}
-		if ext.InstanceID == 0 {
-			continue
-		}
-		var eh []string
-		if eh, err = s.applyExternalSQL(ctx, logf, ver, ext, fs, in, params); err != nil {
-			return nil, err
-		}
-		extraHosts = append(extraHosts, eh...)
 	}
 	return extraHosts, nil
 }
@@ -2248,6 +2261,12 @@ func (s *StoreService) dbEndpoint(ctx context.Context, logf TaskLogf, instanceID
 	return host, port, inst, extraHosts, nil
 }
 
+// dbIdentSanitize 应用 key 派生默认库/账号名的合法化（连字符等非法字符转下划线；
+// mongo/SQL 标识符均不接受连字符，应用 key 如 mongo-express 派生为 mongo_express）。
+func dbIdentSanitize(s string) string {
+	return strings.ToLower(regexp.MustCompile(`[^a-zA-Z0-9_]`).ReplaceAllString(strings.ReplaceAll(s, "-", "_"), "_"))
+}
+
 // applyExternalSQL SQL 类外接（mysql/postgres）：建库建号授权（幂等）→ PG 扩展 → 注入连接参数。
 func (s *StoreService) applyExternalSQL(ctx context.Context, logf TaskLogf, ver StoreVersion, ext *StoreExternalDB, fs dbFieldSet, in StoreInstallInput, params map[string]string) ([]string, error) {
 	host, port, inst, extraHosts, err := s.dbEndpoint(ctx, logf, ext.InstanceID, in)
@@ -2260,11 +2279,11 @@ func (s *StoreService) applyExternalSQL(ctx context.Context, logf TaskLogf, ver 
 
 	dbName := ext.Database
 	if dbName == "" {
-		dbName = in.Key
+		dbName = dbIdentSanitize(in.Key)
 	}
 	dbUser := ext.User
 	if dbUser == "" {
-		dbUser = in.Key + "_user"
+		dbUser = dbIdentSanitize(in.Key) + "_user"
 	}
 	dbPass := randomHex(12)
 
@@ -2387,6 +2406,71 @@ func (s *StoreService) applyExternalSQL(ctx context.Context, logf TaskLogf, ver 
 		params[fs.Password] = dbPass
 	}
 	logf("info", "已注入外接数据库参数（实例 %s，库 %s，账号 %s）", inst.Name, dbName, dbUser)
+	return extraHosts, nil
+}
+
+// applyExternalMongo MongoDB 外接：建库（占位集合，首写入即正式）→ 目标库建应用账号（readWrite 限该库，
+// 已存在自动换名重试）→ 注入连接参数。账号用最小权限应用号，不复用实例管理号。
+func (s *StoreService) applyExternalMongo(ctx context.Context, logf TaskLogf, ext *StoreExternalDB, fs dbFieldSet, in StoreInstallInput, params map[string]string) ([]string, error) {
+	host, port, inst, extraHosts, err := s.dbEndpoint(ctx, logf, ext.InstanceID, in)
+	if err != nil {
+		return nil, err
+	}
+	if inst.Type != "mongo" {
+		return nil, errs.Wrap(errs.ErrBadRequest, fmt.Sprintf("Mongo 键集需选择 MongoDB 实例，实例 %s 类型为 %s", inst.Name, inst.Type))
+	}
+
+	dbName := ext.Database
+	if dbName == "" {
+		dbName = dbIdentSanitize(in.Key)
+	}
+	dbUser := ext.User
+	if dbUser == "" {
+		dbUser = dbIdentSanitize(in.Key) + "_user"
+	}
+	dbPass := randomHex(12)
+
+	if ext.CreateIfMissing {
+		if err := s.dbs.CreateDatabase(ctx, ext.InstanceID, dbName, ""); err != nil {
+			return nil, errs.Wrapc(errs.CodeInternal, "创建数据库 "+dbName+" 失败: "+err.Error())
+		}
+		logf("info", "已在实例 %s 创建数据库 %s", inst.Name, dbName)
+		base := dbUser
+		for i := 2; i <= 50; i++ {
+			aerr := s.dbs.CreateAppUser(ctx, ext.InstanceID, dbName, dbUser, dbPass)
+			if aerr == nil {
+				logf("info", "已在实例 %s 的 %s 库创建应用账号 %s（readWrite）", inst.Name, dbName, dbUser)
+				break
+			}
+			if !strings.Contains(aerr.Error(), "51003") && !strings.Contains(aerr.Error(), "already") {
+				return nil, errs.Wrapc(errs.CodeInternal, "创建应用账号 "+dbUser+" 失败: "+aerr.Error())
+			}
+			if i == 50 {
+				return nil, errs.Wrapc(errs.CodeInternal, "应用账号 "+base+" 换名 50 次仍冲突")
+			}
+			dbUser = fmt.Sprintf("%s%d", base, i)
+			logf("info", "应用账号 %s 已存在，改用 %s", base, dbUser)
+		}
+	} else {
+		logf("info", "跳过建库建号（未勾选自动创建），请确保 %s/%s 已存在", dbName, dbUser)
+	}
+
+	if fs.Host != "" {
+		params[fs.Host] = host
+	}
+	if fs.Port != "" {
+		params[fs.Port] = port
+	}
+	if fs.Name != "" {
+		params[fs.Name] = dbName
+	}
+	if fs.User != "" {
+		params[fs.User] = dbUser
+	}
+	if fs.Password != "" {
+		params[fs.Password] = dbPass
+	}
+	logf("info", "已注入外接 MongoDB 参数（实例 %s，库 %s，账号 %s）", inst.Name, dbName, dbUser)
 	return extraHosts, nil
 }
 

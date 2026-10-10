@@ -248,6 +248,12 @@ function isDbManagedField(envKey?: string) {
   return false
 }
 
+// 数据库键集类型：mongo 键集只能配 mongo 实例，其余（mysql/pg）混列
+const dbKind = computed(() => {
+  const stem = (dbHostKey.value || '').toUpperCase().replace(/^PANEL_/, '').replace(/_HOST$/, '')
+  return /MONGO/.test(stem) ? 'mongo' : 'sql'
+})
+
 async function loadDBInstances() {
   if (dbInstances.value.length && redisInstances.value.length) {
     return
@@ -255,7 +261,7 @@ async function loadDBInstances() {
   try {
     const all = (await dbApi.list()) || []
     if (!dbInstances.value.length) {
-      dbInstances.value = all.filter(i => i.type === 'mysql' || i.type === 'postgres')
+      dbInstances.value = all.filter(i => dbKind.value === 'mongo' ? i.type === 'mongo' : (i.type === 'mysql' || i.type === 'postgres'))
     }
     if (!redisInstances.value.length) {
       redisInstances.value = all.filter(i => i.type === 'redis')

@@ -1178,6 +1178,30 @@ func (s *DatabaseService) GrantUserDatabase(ctx context.Context, instanceID uint
 	return g.GrantDatabase(ctx, database, user, host)
 }
 
+// CreateAppUser mongo 实例在目标库创建应用账号（readWrite 限于该库）——商店纳管接入用。
+// 用户已存在返回原始 mongo 错误，由调用方换名重试。
+func (s *DatabaseService) CreateAppUser(ctx context.Context, id uint, dbName, user, password string) error {
+	inst, err := s.ByID(id)
+	if err != nil {
+		return err
+	}
+	if inst.Type != "mongo" {
+		return errs.Wrap(errs.ErrBadRequest, "仅 MongoDB 实例支持创建应用账号")
+	}
+	drv, err := s.driverFor(inst)
+	if err != nil {
+		return err
+	}
+	defer drv.Close()
+	au, ok := drv.(interface {
+		CreateAppUser(ctx context.Context, database, name, password string) error
+	})
+	if !ok {
+		return errs.Wrap(errs.ErrBadRequest, "该实例驱动不支持创建应用账号")
+	}
+	return au.CreateAppUser(ctx, dbName, user, password)
+}
+
 // CreateExtensions 纳管 PG 实例在指定库批量创建扩展（幂等）——商店安装「建库建扩展」一键化的底层。
 func (s *DatabaseService) CreateExtensions(ctx context.Context, id uint, dbName string, exts []string) error {
 	inst, err := s.ByID(id)
