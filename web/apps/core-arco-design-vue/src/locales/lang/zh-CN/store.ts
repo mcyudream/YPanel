@@ -167,6 +167,7 @@ export default {
   nodeAll: '全部节点',
 
   installAgain: '再次安装',
+  dbManual: '手动填写数据库连接',
   prefillHint: '已沿用上次安装参数（可修改）；升级版本前请确认应用兼容性',
 
 }

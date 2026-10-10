@@ -215,6 +215,17 @@ const dbHostKey = computed(() => {
   return ''
 })
 
+// 数据库纳管模式下的字段前缀（如 DATABASE），这些原始字段由选择器接管注入
+const dbFieldPrefix = computed(() => (dbHostKey.value ? dbHostKey.value.replace(/_HOST$/, '') : ''))
+
+function isDbManagedField(envKey?: string) {
+  if (!dbFieldPrefix.value || dbSource.value !== 'external') {
+    return false
+  }
+  const k = (envKey || '').toUpperCase()
+  return k === dbFieldPrefix.value || k.startsWith(dbFieldPrefix.value + '_')
+}
+
 async function loadDBInstances() {
   if (dbInstances.value.length) {
     return
@@ -298,6 +309,11 @@ function applyInstallVersion(versions: StoreVersion[], versionId: string, prev?:
     }
   }
   installForm.value.params = params
+  // php 应用声明 database 时默认走纳管实例（自动建库注入）；compose 应用保持「应用自带」默认
+  if (installTarget.value?.kind === 'php' && dbHostKey.value) {
+    dbSource.value = 'external'
+    void loadDBInstances()
+  }
 }
 
 function stopInstallPolling() {
@@ -1201,7 +1217,7 @@ function statusText(s: StoreSource) {
               class="h-9 rounded-md border border-input bg-background px-2 text-sm outline-none"
               @change="dbSource === 'external' && loadDBInstances()"
             >
-              <option value="default">{{ $t('store.dbDefault') }}</option>
+              <option value="default">{{ installTarget?.kind === 'php' && dbHostKey ? $t('store.dbManual') : $t('store.dbDefault') }}</option>
               <option value="external">{{ $t('store.dbExternal') }}</option>
             </select>
             <div v-if="dbSource === 'external'" class="space-y-2 rounded-md border border-dashed p-2.5">
@@ -1230,7 +1246,7 @@ function statusText(s: StoreSource) {
               {{ f.default ? String(f.default) : $t('store.autoLinkService') }}{{ f.description ? `（${f.description}）` : '' }}
             </span>
           </div>
-          <div v-else class="flex items-center gap-3">
+          <div v-else-if="!isDbManagedField(f.envKey)" class="flex items-center gap-3">
             <span class="w-28 shrink-0 text-sm text-muted-foreground">
               {{ fieldLabel(f) }}<span v-if="f.required" class="text-red-500">*</span>
             </span>
