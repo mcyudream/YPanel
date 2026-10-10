@@ -659,3 +659,10 @@
 - **现象**：遮挡 IAB 里给 xterm textarea 派发 keydown、给 monaco 的 textarea 派发 beforeinput/input、`document.execCommand('insertText')`、`tab.cua.type` 真实输入——终端无回显、编辑器不变脏，全部静默无效（此前 exp 已知 CUA 不可靠，本条把「合成键盘事件」也证实无效）。
 - **规避/解决**：不与渲染层较劲，**后端取证**判定会话留存：面板里开终端 → SSH 到被管机 `ps -eo pid,etime,cmd | grep ypanel-bashrc`（agent PTY bash 带 `/tmp/ypanel-bashrc-*.sh` rcfile 特征），跨路由/最小化操作后同一 PID etime 持续增长 = 同一会话存活；关闭后 PID 消失 = WS 真断。配合前端 pinia state（tabs/terminalSessions）与 xterm DOM 计数双端断言。xterm 缓冲在遮挡窗口下 `.xterm-rows` 可能为空（渲染暂停），不能作为「会话丢了」的判据。
 - **来源**：2026-10-10，M57 跨路由会话留存验收（142 ps etime 前后对照实证留存与回收）。
+
+### `.env*` 被 gitignore 全忽略 + 运行时读 import.meta.env：本地构建一切正常、CI 正式版集体 undefined
+
+- **现象**：正式发布版（CI 构建）次侧栏顶部品牌名空白、登录页无品牌、浏览器标签页标题显示 `undefined`（App.vue 编译产物就是字面量 `` `${a(n.title)} - undefined` ``）；本地 `pnpm build` 后部署的构建却全部正常——环境差异极强，极易误判为「改了没生效」。
+- **根因**：`.gitignore` 的 `.env*` 规则把 `web/apps/core-arco-design-vue/.env.production` 等文件挡在仓库外，CI checkout 出来的仓库没有该文件，`import.meta.env.VITE_APP_TITLE` 编译期注入为 `undefined`；本地因文件存在而正常。同族：v0.9.11 的「启动遮罩 `%VITE_APP_TITLE%` 字面量」是 index.html 替换链路，本次是 JS 运行时读取链路，两处曾只修了一处（index.html 写死）。
+- **规避/解决**：① env 三件套（.env.development/.env.production/.env.test）gitignore 豁免入库（内容仅标题/API 前缀/构建开关，无敏感信息；`*.local` 个人文件仍忽略）；② 排查手法：解压发布二进制 grep 编译产物对照——`grep -ao "setup(e){let t=...,r=g(...)" ypanel` 看注入的是 `` `YPanel` `` 还是 `void 0`，本地 dist 同位置对比，一眼定位是构建环境差还是代码问题；③ 凡「本地正常、CI 翻车」先 diff 两边构建产物里同一组件的编译输出，再怀疑代码。
+- **来源**：2026-10-10，用户报正式版「品牌名依旧没有/标签页 undefined」（v0.9.12 二进制解剖实锤；v0.9.13 修复——env 三件套入库后 CI 产物验证 `ref('YPanel')`）。
