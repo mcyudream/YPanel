@@ -12,10 +12,36 @@ export interface NatRule {
   targetPort: number
   targetPortEnd: number
   iface: string
+  destIp: string
+  srcSpec: string
   enabled: boolean
   sort: number
   createdAt: string
   updatedAt: string
+}
+
+export interface NatExternalRule {
+  id: string
+  chain: string
+  family: 4 | 6
+  spec: string
+  source: 'manual' | 'docker' | 'firewalld' | 'ufw' | 'libvirt' | 'k8s' | 'custom'
+  proto: string
+  iface: string
+  destIp: string
+  dportStart: number
+  dportEnd: number
+  toIp: string
+  toPortStart: number
+  toPortEnd: number
+  comment: string
+  importable: boolean
+  reason: string
+}
+
+export interface NatExternalList {
+  available: boolean
+  rules: NatExternalRule[]
 }
 
 export interface NatInterface {
@@ -33,6 +59,16 @@ export interface NatPortOccupy {
 
 export interface NatSaveResult {
   rule: NatRule
+  warnings: string[]
+}
+
+export interface NatImportItem {
+  ruleId: string
+  name?: string
+}
+
+export interface NatImportResult {
+  rules: NatRule[]
   warnings: string[]
 }
 
@@ -63,5 +99,13 @@ export default {
   apply: async (nodeId: string) => {
     const res = await api.post('api/v1/nat/apply', { nodeId })
     return res.data as NatApplyResult
+  },
+  external: async (nodeId: string) => {
+    const res = await api.get('api/v1/nat/external', { params: { nodeId }, silent: true })
+    return res.data as NatExternalList
+  },
+  import: async (nodeId: string, items: NatImportItem[]) => {
+    const res = await api.post('api/v1/nat/import', { nodeId, items })
+    return res.data as NatImportResult
   },
 }

@@ -8,6 +8,7 @@ import { storeApi, type StoreAppItem, type StoreInstall } from '@/api/modules/st
 import SrcCreateWizard from '@/views/container/components/SrcCreateWizard.vue'
 import { i18n, tr } from '@/locales'
 import { useYwEmbed } from '@/views/desktop/embed'
+import FileEditorWorkspace from '@/views/file_management/editor/Workspace.vue'
 
 // 应用 tab（M23，开发者默认视角）：compose 项目 + 商店安装聚合为应用卡片（紧凑）。
 // 子容器（服务）通过「子容器」按钮在弹窗表格中查看与操作（电源下拉/日志/终端/详情）；
@@ -669,5 +670,6 @@ onBeforeUnmount(() => {
 
   </div>
     </FaPageMain>
+    <FileEditorWorkspace />
   </div>
 </template>

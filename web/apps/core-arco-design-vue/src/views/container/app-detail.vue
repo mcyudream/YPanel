@@ -7,6 +7,7 @@ import { storeApi, type StoreAppItem, type StoreInstall } from '@/api/modules/st
 import { i18n, tr } from '@/locales'
 import { computed } from 'vue'
 import { closestWindowId, useYwEmbed } from '@/views/desktop/embed'
+import FileEditorWorkspace from '@/views/file_management/editor/Workspace.vue'
 
 // 应用详情（M23）：服务列表 + 配置文件（工作台编辑 + 服务端版本历史）+ 项目容器。
 // 桌面工作台承载时经 props 传入（launchOptions），经典模式走路由参数
@@ -585,5 +586,6 @@ onBeforeUnmount(() => {
       </template>
     </FaModal>
 
+    <FileEditorWorkspace />
   </div>
 </template>

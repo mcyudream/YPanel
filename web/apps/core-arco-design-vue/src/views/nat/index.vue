@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import type { NatInterface, NatRule } from '@/api/modules/nat'
+import type { NatExternalRule, NatInterface, NatRule } from '@/api/modules/nat'
 import apiNat from '@/api/modules/nat'
 import nodeApi, { type NodeItem } from '@/api/modules/node'
 import { i18n } from '@/locales'
@@ -18,6 +18,7 @@ interface NatForm {
   targetPort: number | ''
   targetPortEnd: number | ''
   iface: string
+  destIp: string
   enabled: boolean
   sort: number
 }
@@ -27,7 +28,7 @@ function emptyForm(): NatForm {
     name: '', protocol: 'tcp', ipFamily: 4,
     listenPort: '', listenPortEnd: '',
     targetIp: '', targetPort: '', targetPortEnd: '',
-    iface: '', enabled: true, sort: 0,
+    iface: '', destIp: '', enabled: true, sort: 0,
   }
 }
 
@@ -45,6 +46,14 @@ const checking = ref(false)
 const checkResult = ref<{ ok: boolean, text: string } | null>(null)
 const applying = ref(false)
 const quickAddr = ref('')
+
+// M58 外部规则（只读 + 接管导入）
+const importRuleId = ref('')
+const importMode = computed(() => !!importRuleId.value)
+const extRules = ref<NatExternalRule[]>([])
+const extAvailable = ref(true)
+const extLoading = ref(false)
+const extScanned = ref(false)
 
 const nodeOptions = computed(() => nodes.value.map(n => ({
   label: `${n.name}${n.remote ? '' : i18n.global.t('nat.localNode')}${n.online ? '' : i18n.global.t('nat.offlineNode')}`,
@@ -108,6 +117,7 @@ async function loadIfaces() {
 
 function openCreate() {
   editingId.value = 0
+  importRuleId.value = ''
   form.value = emptyForm()
   checkResult.value = null
   quickAddr.value = ''
@@ -117,16 +127,84 @@ function openCreate() {
 
 function openEdit(r: NatRule) {
   editingId.value = r.id
+  importRuleId.value = ''
   form.value = {
     name: r.name, protocol: r.protocol, ipFamily: r.ipFamily,
     listenPort: r.listenPort, listenPortEnd: r.listenPortEnd || '',
     targetIp: r.targetIp, targetPort: r.targetPort, targetPortEnd: r.targetPortEnd || '',
-    iface: r.iface || '', enabled: r.enabled, sort: r.sort,
+    iface: r.iface || '', destIp: r.destIp || '', enabled: r.enabled, sort: r.sort,
   }
   checkResult.value = null
   quickAddr.value = ''
   modalVisible.value = true
   loadIfaces()
+}
+
+// M58 接管导入：字段预填自内核规则（导入模式仅名称可改，字段以后端探测结果为准）
+function openImport(er: NatExternalRule) {
+  editingId.value = 0
+  importRuleId.value = er.id
+  form.value = {
+    name: er.comment || `${i18n.global.t('nat.badgeTakeover')}-${er.dportStart}`,
+    protocol: er.proto === 'udp' ? 'udp' : 'tcp',
+    ipFamily: er.family,
+    listenPort: er.dportStart, listenPortEnd: er.dportEnd || '',
+    targetIp: er.toIp, targetPort: er.toPortStart, targetPortEnd: er.toPortEnd || '',
+    iface: er.iface || '', destIp: er.destIp || '', enabled: true, sort: 0,
+  }
+  checkResult.value = null
+  quickAddr.value = ''
+  modalVisible.value = true
+  loadIfaces()
+}
+
+async function loadExternals() {
+  extLoading.value = true
+  try {
+    const res = await apiNat.external(nodeId.value)
+    extRules.value = res?.rules || []
+    extAvailable.value = !!res?.available
+    extScanned.value = true
+  }
+  catch (e: any) {
+    useFaToast().error(i18n.global.t('nat.extLoadFailed'), { description: e?.message })
+  }
+  finally {
+    extLoading.value = false
+  }
+}
+
+function extSrcLabel(source: NatExternalRule['source']) {
+  const key = { manual: 'extSrcManual', docker: 'extSrcDocker', firewalld: 'extSrcFirewalld', ufw: 'extSrcUfw', libvirt: 'extSrcLibvirt', k8s: 'extSrcK8s', custom: 'extSrcCustom' }[source]
+  return key ? i18n.global.t(`nat.${key}`) : source
+}
+
+const extSrcClass: Record<NatExternalRule['source'], string> = {
+  manual: 'bg-amber-500/10 text-amber-600',
+  docker: 'bg-blue-500/10 text-blue-600',
+  firewalld: 'bg-purple-500/10 text-purple-600',
+  ufw: 'bg-purple-500/10 text-purple-600',
+  libvirt: 'bg-cyan-500/10 text-cyan-600',
+  k8s: 'bg-indigo-500/10 text-indigo-600',
+  custom: 'bg-muted text-muted-foreground',
+}
+
+function extMatchText(er: NatExternalRule) {
+  const parts: string[] = []
+  if (er.destIp) {
+    parts.push(`-d ${er.destIp}`)
+  }
+  if (er.iface) {
+    parts.push(`-i ${er.iface}`)
+  }
+  if (er.dportStart) {
+    parts.push(`:${fmtPort(er.dportStart, er.dportEnd)} /${er.proto || '?'}`)
+  }
+  return parts.join('  ') || er.spec
+}
+
+function extTargetText(er: NatExternalRule) {
+  return er.toIp ? `${er.toIp}:${fmtPort(er.toPortStart, er.toPortEnd)}` : '—'
 }
 
 // 表单端口数值化 + 基础校验（语义校验由后端权威执行）
@@ -140,10 +218,14 @@ function coercePorts() {
 }
 
 function formError(): string {
-  const { lp, lpe, tp, tpe } = coercePorts()
   if (!form.value.name.trim()) {
     return i18n.global.t('nat.requireName')
   }
+  // 接管导入模式：字段以后端探测结果为准，前端仅校验名称
+  if (importMode.value) {
+    return ''
+  }
+  const { lp, lpe, tp, tpe } = coercePorts()
   if (!Number.isInteger(lp) || lp < 1 || lp > 65535) {
     return i18n.global.t('nat.invalidListenPort')
   }
@@ -203,6 +285,24 @@ async function doSave() {
     useFaToast().warning(err)
     return
   }
+  // 接管导入：字段由后端按探测结果权威生成，仅回传名称
+  if (importMode.value) {
+    saving.value = true
+    try {
+      const res = await apiNat.import(nodeId.value, [{ ruleId: importRuleId.value, name: form.value.name.trim() }])
+      useFaToast().success(i18n.global.t('nat.extImported'))
+      toastWarnings(res?.warnings || [])
+      modalVisible.value = false
+      await Promise.all([load(), loadExternals()])
+    }
+    catch (e: any) {
+      useFaToast().error(i18n.global.t('nat.extImportFailed'), { description: e?.message })
+    }
+    finally {
+      saving.value = false
+    }
+    return
+  }
   const { lp, lpe, tp, tpe } = coercePorts()
   saving.value = true
   try {
@@ -218,6 +318,7 @@ async function doSave() {
       targetPort: tp,
       targetPortEnd: tpe,
       iface: form.value.iface,
+      destIp: form.value.destIp.trim(),
       enabled: form.value.enabled,
       sort: Number(form.value.sort) || 0,
     })
@@ -296,11 +397,15 @@ watch(() => form.value.ipFamily, () => {
   quickAddr.value = ''
 })
 
-watch(nodeId, load)
+watch(nodeId, () => {
+  load()
+  loadExternals()
+})
 
 onMounted(() => {
   loadNodes()
   load()
+  loadExternals()
 })
 </script>
 
@@ -352,7 +457,10 @@ onMounted(() => {
             </tr>
             <tr v-for="r in rules" :key="r.id" class="border-t hover:bg-accent/30">
               <td class="px-3 py-2">
-                <div class="font-medium">{{ r.name }}</div>
+                <div class="flex items-center gap-1.5">
+                  <span class="font-medium">{{ r.name }}</span>
+                  <span v-if="r.srcSpec" class="rounded-full bg-amber-500/10 px-2 py-0.5 text-xs text-amber-600" :title="r.srcSpec">{{ $t('nat.badgeTakeover') }}</span>
+                </div>
                 <div v-if="r.iface" class="font-mono text-xs text-muted-foreground">via {{ r.iface }}</div>
               </td>
               <td class="px-3 py-2">
@@ -398,9 +506,69 @@ onMounted(() => {
       <div class="mt-3 text-xs text-muted-foreground">
         {{ $t('nat.footNote') }}
       </div>
+
+      <!-- M58 本机已有规则：只读展示 + 主链手工 DNAT 接管导入 -->
+      <div class="mt-6 flex items-center justify-between gap-3">
+        <div class="min-w-0">
+          <div class="text-sm font-medium">{{ $t('nat.extTitle') }}</div>
+          <div class="mt-0.5 truncate text-xs text-muted-foreground">{{ $t('nat.extDesc') }}</div>
+        </div>
+        <FaButton variant="outline" size="sm" :loading="extLoading" @click="loadExternals">
+          <FaIcon name="i-lucide:radar" class="mr-1" /> {{ $t('nat.extScan') }}
+        </FaButton>
+      </div>
+      <div class="mt-2 overflow-x-auto rounded-lg border">
+        <table class="w-full text-sm">
+          <thead class="bg-muted/50 text-left text-xs text-muted-foreground">
+            <tr>
+              <th class="px-3 py-2">{{ $t('nat.extColSource') }}</th>
+              <th class="px-3 py-2">{{ $t('nat.extColChain') }}</th>
+              <th class="px-3 py-2">{{ $t('nat.extColMatch') }}</th>
+              <th class="px-3 py-2">{{ $t('nat.extColTarget') }}</th>
+              <th class="px-3 py-2">{{ $t('nat.extColStatus') }}</th>
+              <th class="px-3 py-2 text-right">{{ $t('common.operation') }}</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-if="!extRules.length">
+              <td colspan="6" class="px-3 py-8 text-center text-muted-foreground">
+                {{ extAvailable ? $t('nat.extNone') : $t('nat.extUnavailable') }}
+              </td>
+            </tr>
+            <tr v-for="er in extRules" :key="er.id" class="border-t hover:bg-accent/30" :title="er.spec">
+              <td class="px-3 py-2">
+                <span class="rounded-full px-2 py-0.5 text-xs" :class="extSrcClass[er.source]">{{ extSrcLabel(er.source) }}</span>
+              </td>
+              <td class="px-3 py-2 font-mono text-xs text-muted-foreground">
+                {{ er.chain }}
+              </td>
+              <td class="px-3 py-2 font-mono text-xs">
+                {{ extMatchText(er) }}
+              </td>
+              <td class="px-3 py-2 font-mono text-xs">
+                {{ extTargetText(er) }}
+              </td>
+              <td class="px-3 py-2">
+                <span
+                  v-if="er.importable"
+                  class="rounded-full bg-emerald-500/10 px-2 py-0.5 text-xs text-emerald-600"
+                >{{ $t('nat.extImportable') }}</span>
+                <span v-else class="rounded-full bg-muted px-2 py-0.5 text-xs text-muted-foreground" :title="er.reason">{{ $t('nat.extReadonly') }}</span>
+              </td>
+              <td class="px-3 py-2">
+                <div class="flex items-center justify-end gap-1">
+                  <FaButton v-if="er.importable" variant="outline" size="sm" @click="openImport(er)">
+                    <FaIcon name="i-lucide:import" class="mr-1" /> {{ $t('nat.extImport') }}
+                  </FaButton>
+                </div>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
     </FaPageMain>
 
-    <FaModal v-model="modalVisible" :title="editingId ? $t('nat.editRule') : $t('nat.createRule')" :destroy-on-close="true" class="lg:w-[560px]">
+    <FaModal v-model="modalVisible" :title="importMode ? $t('nat.extImport') : (editingId ? $t('nat.editRule') : $t('nat.createRule'))" :destroy-on-close="true" class="lg:w-[560px]">
       <div class="flex flex-col gap-3">
         <div class="flex items-center gap-3">
           <span class="w-24 shrink-0 text-sm text-muted-foreground">{{ $t('common.name') }}</span>
@@ -408,21 +576,21 @@ onMounted(() => {
         </div>
         <div class="flex items-center gap-3">
           <span class="w-24 shrink-0 text-sm text-muted-foreground">{{ $t('nat.protocol') }}</span>
-          <FaSelect v-model="form.protocol" :options="[{ label: 'TCP', value: 'tcp' }, { label: 'UDP', value: 'udp' }]" class="w-32" />
+          <FaSelect v-model="form.protocol" :options="[{ label: 'TCP', value: 'tcp' }, { label: 'UDP', value: 'udp' }]" class="w-32" :disabled="importMode" />
           <span class="ml-2 text-sm text-muted-foreground">{{ $t('nat.ipFamily') }}</span>
-          <FaSelect v-model="form.ipFamily" :options="[{ label: 'IPv4', value: 4 }, { label: 'IPv6', value: 6 }]" class="w-32" />
+          <FaSelect v-model="form.ipFamily" :options="[{ label: 'IPv4', value: 4 }, { label: 'IPv6', value: 6 }]" class="w-32" :disabled="importMode" />
         </div>
         <div class="flex items-center gap-3">
           <span class="w-24 shrink-0 text-sm text-muted-foreground">{{ $t('nat.listenPort') }}</span>
-          <FaInput v-model="form.listenPort" :placeholder="$t('nat.portStartPlaceholder')" class="w-36" />
+          <FaInput v-model="form.listenPort" :placeholder="$t('nat.portStartPlaceholder')" class="w-36" :disabled="importMode" />
           <span class="text-xs text-muted-foreground">{{ $t('nat.to') }}</span>
-          <FaInput v-model="form.listenPortEnd" :placeholder="$t('nat.portEndPlaceholder')" class="w-36" />
+          <FaInput v-model="form.listenPortEnd" :placeholder="$t('nat.portEndPlaceholder')" class="w-36" :disabled="importMode" />
         </div>
         <div class="flex items-center gap-3">
           <span class="w-24 shrink-0 text-sm text-muted-foreground">{{ $t('nat.targetIp') }}</span>
-          <FaInput v-model="form.targetIp" :placeholder="form.ipFamily === 4 ? $t('nat.targetIp4Placeholder') : $t('nat.targetIp6Placeholder')" class="flex-1" />
+          <FaInput v-model="form.targetIp" :placeholder="form.ipFamily === 4 ? $t('nat.targetIp4Placeholder') : $t('nat.targetIp6Placeholder')" class="flex-1" :disabled="importMode" />
           <FaSelect
-            v-if="localAddrOptions.length"
+            v-if="!importMode && localAddrOptions.length"
             v-model="quickAddr"
             :options="localAddrOptions"
             :placeholder="$t('nat.quickLocal')"
@@ -431,15 +599,22 @@ onMounted(() => {
         </div>
         <div class="flex items-center gap-3">
           <span class="w-24 shrink-0 text-sm text-muted-foreground">{{ $t('nat.targetPort') }}</span>
-          <FaInput v-model="form.targetPort" :placeholder="$t('nat.startPlaceholder')" class="w-36" />
+          <FaInput v-model="form.targetPort" :placeholder="$t('nat.startPlaceholder')" class="w-36" :disabled="importMode" />
           <span class="text-xs text-muted-foreground">{{ $t('nat.to') }}</span>
-          <FaInput v-model="form.targetPortEnd" :placeholder="$t('nat.portEndPlaceholder')" class="w-36" />
+          <FaInput v-model="form.targetPortEnd" :placeholder="$t('nat.portEndPlaceholder')" class="w-36" :disabled="importMode" />
+        </div>
+        <div class="flex items-center gap-3">
+          <span class="w-24 shrink-0 text-sm text-muted-foreground">{{ $t('nat.destMatch') }}</span>
+          <FaInput v-model="form.destIp" :placeholder="$t('nat.destMatchPh')" class="flex-1" :disabled="importMode" />
         </div>
         <div class="flex items-center gap-3">
           <span class="w-24 shrink-0 text-sm text-muted-foreground">{{ $t('nat.ifaceCol') }}</span>
-          <FaSelect v-model="form.iface" :options="ifaceOptions" class="flex-1" />
+          <FaSelect v-model="form.iface" :options="ifaceOptions" class="flex-1" :disabled="importMode" />
         </div>
-        <div class="flex items-center gap-3">
+        <div v-if="importMode" class="rounded-md bg-amber-500/10 px-3 py-2 text-xs text-amber-600">
+          {{ $t('nat.extImportTip') }}
+        </div>
+        <div v-else class="flex items-center gap-3">
           <span class="w-24 shrink-0 text-sm text-muted-foreground">{{ $t('nat.sortStatus') }}</span>
           <FaInput v-model="form.sort" placeholder="0" class="w-20" />
           <FaButton :variant="form.enabled ? 'default' : 'outline'" size="sm" @click="form.enabled = !form.enabled">
@@ -447,7 +622,7 @@ onMounted(() => {
           </FaButton>
           <span class="text-xs text-muted-foreground">{{ $t('nat.smallFirst') }}</span>
         </div>
-        <div class="flex items-center gap-3">
+        <div v-if="!importMode" class="flex items-center gap-3">
           <span class="w-24 shrink-0 text-sm text-muted-foreground">{{ $t('nat.portCheck') }}</span>
           <FaButton variant="outline" size="sm" :loading="checking" @click="doCheck">
             {{ $t('nat.checkBtn') }}
@@ -460,7 +635,7 @@ onMounted(() => {
           {{ $t('common.cancel') }}
         </FaButton>
         <FaButton :loading="saving" @click="doSave">
-          {{ editingId ? $t('nat.saveApply') : $t('nat.createApply') }}
+          {{ importMode ? $t('nat.extImport') : (editingId ? $t('nat.saveApply') : $t('nat.createApply')) }}
         </FaButton>
       </template>
     </FaModal>

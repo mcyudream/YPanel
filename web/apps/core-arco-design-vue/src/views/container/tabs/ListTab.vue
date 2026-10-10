@@ -10,6 +10,7 @@ import DockerInstallWizard from '../components/DockerInstallWizard.vue'
 import { i18n, tr } from '@/locales'
 import { useYwEmbed } from '@/views/desktop/embed'
 import { useVpnAccess } from '@/composables/useVpnAccess'
+import FileEditorWorkspace from '@/views/file_management/editor/Workspace.vue'
 
 // 容器列表（M23）：批量操作 / 状态与项目过滤 / 品牌 logo / 快速操作。
 const router = useRouter()
@@ -578,5 +579,6 @@ onBeforeUnmount(() => {
       :confirm-text="$t('common.delete')"
       @confirm="doDelete"
     />
+    <FileEditorWorkspace />
 </div>
 </template>

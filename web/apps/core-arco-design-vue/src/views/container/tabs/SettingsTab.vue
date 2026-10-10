@@ -7,6 +7,7 @@ import { taskApi } from '@/api/modules/task'
 import DockerInstallWizard from '../components/DockerInstallWizard.vue'
 import { dockerImgApi } from '@/api/modules/dockerenv'
 import { i18n } from '@/locales'
+import FileEditorWorkspace from '@/views/file_management/editor/Workspace.vue'
 
 // Docker 配置（M23）：daemon.json 统一走文件工作台编辑（保存自动存版本），此处负责重启生效与仓库管理。
 const toast = useFaToast()
@@ -393,5 +394,6 @@ function removeRegistry(reg: string) {
     <DockerInstallWizard v-model="installVisible" @installed="onInstalled" />
   </div>
     </FaPageMain>
+    <FileEditorWorkspace />
   </div>
 </template>

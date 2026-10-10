@@ -7,6 +7,7 @@ import LogViewer from './components/LogViewer.vue'
 import StatsCharts from './components/StatsCharts.vue'
 import { closestWindowId, useYwEmbed } from '@/views/desktop/embed'
 import { useVpnAccess } from '@/composables/useVpnAccess'
+import FileEditorWorkspace from '@/views/file_management/editor/Workspace.vue'
 
 defineOptions({
   name: 'ContainerDetail',
@@ -476,5 +477,6 @@ onBeforeUnmount(() => {
     <ContainerForm v-model="editVisible" mode="edit" :container-id="id" @saved="onSaved" />
 
     <!-- 文件工作台（容器模式弹窗） -->
+    <FileEditorWorkspace />
   </div>
 </template>

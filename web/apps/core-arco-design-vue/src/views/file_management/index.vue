@@ -9,6 +9,7 @@ import YdChmodDialog from '@/components/YdChmodDialog/index.vue'
 import YdDirPicker from '@/components/YdDirPicker/index.vue'
 import { useYwEmbed } from '@/views/desktop/embed'
 import { i18n } from '@/locales'
+import FileEditorWorkspace from '@/views/file_management/editor/Workspace.vue'
 
 defineOptions({
   name: 'FileManagementIndex',
@@ -1292,5 +1293,6 @@ onBeforeUnmount(() => {
       </template>
     </FaModal>
 
+    <FileEditorWorkspace />
   </div>
 </template>

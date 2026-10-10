@@ -666,3 +666,10 @@
 - **根因**：`.gitignore` 的 `.env*` 规则把 `web/apps/core-arco-design-vue/.env.production` 等文件挡在仓库外，CI checkout 出来的仓库没有该文件，`import.meta.env.VITE_APP_TITLE` 编译期注入为 `undefined`；本地因文件存在而正常。同族：v0.9.11 的「启动遮罩 `%VITE_APP_TITLE%` 字面量」是 index.html 替换链路，本次是 JS 运行时读取链路，两处曾只修了一处（index.html 写死）。
 - **规避/解决**：① env 三件套（.env.development/.env.production/.env.test）gitignore 豁免入库（内容仅标题/API 前缀/构建开关，无敏感信息；`*.local` 个人文件仍忽略）；② 排查手法：解压发布二进制 grep 编译产物对照——`grep -ao "setup(e){let t=...,r=g(...)" ypanel` 看注入的是 `` `YPanel` `` 还是 `void 0`，本地 dist 同位置对比，一眼定位是构建环境差还是代码问题；③ 凡「本地正常、CI 翻车」先 diff 两边构建产物里同一组件的编译输出，再怀疑代码。
 - **来源**：2026-10-10，用户报正式版「品牌名依旧没有/标签页 undefined」（v0.9.12 二进制解剖实锤；v0.9.13 修复——env 三件套入库后 CI 产物验证 `ref('YPanel')`）。
+
+### git add -A 并行卷入的「幽灵恢复」：git checkout -- 恢复到的是被污染的 HEAD，git status 干净≠改动还在
+
+- **现象**：本会话对 6 个页面文件做的删行改动（未提交）被并行会话以 git add -A 卷进其 commit；随后本会话 `git checkout -- <files>`「恢复」，git status 显示干净——但页面功能坏了（store.visible=true 而弹窗 DOM 不存在、零报错），因为 checkout 恢复到的是**已包含删除的新 HEAD**，删除被「合法化」。
+- **根因**：exp 既有条目「并行会话 git add -A 卷入未提交改动」的续集——被卷入后 HEAD 本身就是污染态；`git checkout --` 与 git status 都以 HEAD 为基准，对这种污染完全失明。
+- **规避/解决**：并行会话活跃期，「恢复某文件」不能依赖 `git checkout --`，恢复后必须**按内容断言**（grep 关键挂载/符号是否存在）而非看 git status；本例靠「store 状态对但组件树里遍历不到组件实例 → curl dev server 编译产物 grep 挂载 → 磁盘 grep 为 0」三级定位。修复=按锚点重新补齐 6 处挂载（Edit/python 逐文件 assert）。
+- **来源**：2026-10-10，M57 双实例反转后「文件管理的文件打不开」（用户报告，584c037 卷入删行所致）。
