@@ -51,10 +51,15 @@ fi
 echo "  release id: $RID"
 
 echo "[3/3] 上传附件…"
+FAIL=0
 for f in ypanel-linux-amd64.tar.gz ypanel-linux-arm64.tar.gz sha256sums.txt; do
-  curl -sS --max-time 600 --retry 1 -X POST "${API}/releases/${RID}/attach_files" \
+  RESP=$(curl -sS --max-time 600 --retry 1 -X POST "${API}/releases/${RID}/attach_files" \
     -F "access_token=${TOKEN}" \
-    -F "file=@${WORK}/${f}" | head -c 120
+    -F "file=@${WORK}/${f}")
+  echo "${RESP}" | head -c 120
   echo "  <- ${f}"
+  # 上传失败（如「附件配额」超限）必须中止——否则假报成功，Gitee 源自更新会 404
+  echo "${RESP}" | grep -q '"id"' || { echo "上传失败: ${f}" >&2; FAIL=1; }
 done
+[ "$FAIL" -eq 0 ] || { echo "Gitee 镜像未完成（见上方失败项）；仓库附件配额超限时删旧版本二进制腾位后重跑" >&2; exit 1; }
 echo "镜像完成: https://gitee.com/${REPO_GITEE}/releases/tag/${TAG}"
