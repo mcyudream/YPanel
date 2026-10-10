@@ -5,6 +5,7 @@
 import { computed, onMounted, ref, watch, nextTick } from 'vue'
 import { centralApi, historyApi } from '@/api/modules/logcenter'
 import type { CentralQueryItem, CentralStreamValue, LogSearchQueryItem, VLInstance } from '@/api/modules/logcenter'
+import { storeApi } from '@/api/modules/store'
 import echarts from '@/utils/echarts'
 import { i18n } from '@/locales'
 
@@ -47,6 +48,39 @@ async function loadStatus() {
   if (readyOn.value) {
     void reloadFields() // 状态就绪后加载字段切面（首次进入与刷新共用此路径）
     void loadRetention()
+  }
+}
+
+// ---- 一键接入：对未安装 VL 的在线节点，经商店安装 victoria-logs + vector（全默认参数，任务化） ----
+const LOG_STACK_KEYS = ['victoria-logs', 'vector'] as const
+const installingNodes = ref<string[]>([])
+
+function nodeInstallable(i: VLInstance) {
+  return i.online && !i.found
+}
+
+async function installStack(nodeId: string) {
+  if (installingNodes.value.includes(nodeId))
+    return
+  const t = i18n.global.t
+  installingNodes.value = [...installingNodes.value, nodeId]
+  try {
+    const sources = await storeApi.sources()
+    const src = sources.find(s => s.enabled) || sources[0]
+    if (!src)
+      throw new Error(t('logcenter.status.noSource'))
+    for (const key of LOG_STACK_KEYS) {
+      await storeApi.install({ sourceId: src.id, key, version: '', name: key, params: {}, nodeId })
+    }
+    useFaToast().success(t('logcenter.status.installQueued'))
+    // VL 容器启动 + agent 发现均有延迟，稍后自动刷新一次状态
+    setTimeout(() => { void loadStatus() }, 45_000)
+  }
+  catch (e: any) {
+    useFaToast().error(t('logcenter.status.installFail'), { description: e?.message })
+  }
+  finally {
+    installingNodes.value = installingNodes.value.filter(n => n !== nodeId)
   }
 }
 
@@ -624,13 +658,22 @@ onMounted(async () => {
           <li>{{ $t('logcenter.status.guide2a') }}<b class="text-foreground">{{ $t('logcenter.status.guide2Name') }}</b>{{ $t('logcenter.status.guide2b') }}</li>
           <li>{{ $t('logcenter.status.guide3') }}</li>
         </ol>
-        <div v-if="instances.length" class="mt-3 flex flex-wrap gap-1.5 text-xs">
-          <span
-            v-for="i in instances" :key="i.nodeId"
-            class="rounded-full px-2 py-0.5"
-            :class="i.online && i.found ? 'bg-emerald-500/10 text-emerald-600' : 'bg-muted text-muted-foreground'"
-            :title="i.error || (i.container ? `${i.container}:${i.port}` : '')"
-          >{{ i.nodeName }} · {{ i.online ? (i.found ? $t('logcenter.status.found') : (i.error || $t('logcenter.status.notInstalled'))) : $t('logcenter.status.offline') }}</span>
+        <div v-if="instances.length" class="mt-3 flex flex-wrap items-center gap-1.5 text-xs">
+          <template v-for="i in instances" :key="i.nodeId">
+            <span
+              class="rounded-full px-2 py-0.5"
+              :class="i.online && i.found ? 'bg-emerald-500/10 text-emerald-600' : 'bg-muted text-muted-foreground'"
+              :title="i.error || (i.container ? `${i.container}:${i.port}` : '')"
+            >{{ i.nodeName }} · {{ i.online ? (i.found ? $t('logcenter.status.found') : (i.error || $t('logcenter.status.notInstalled'))) : $t('logcenter.status.offline') }}</span>
+            <FaButton
+              v-if="nodeInstallable(i)"
+              variant="outline"
+              size="sm"
+              class="h-5 rounded-full px-2 text-xs"
+              :loading="installingNodes.includes(i.nodeId)"
+              @click="installStack(i.nodeId)"
+            >{{ $t('logcenter.status.install') }}</FaButton>
+          </template>
         </div>
       </div>
 

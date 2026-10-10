@@ -18,6 +18,10 @@ export default {
     offline: 'Offline',
     aggregating: 'Aggregating',
     connected: 'Connected',
+    install: 'Install',
+    installQueued: 'Install tasks queued (VictoriaLogs + Vector); track progress in Task Center — this page will auto-discover once done',
+    installFail: 'One-click install failed',
+    noSource: 'No usable store source (configure and enable one in the App Store first)',
   },
 
   retention: {

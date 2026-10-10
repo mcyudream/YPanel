@@ -18,6 +18,10 @@ export default {
     offline: '离线',
     aggregating: '聚合中',
     connected: '已接入',
+    install: '一键安装',
+    installQueued: '已发起安装任务（VictoriaLogs + Vector），进度见任务中心，安装完成后本页自动发现',
+    installFail: '一键安装失败',
+    noSource: '商店源不可用（请先在应用商店配置并启用源）',
   },
 
   retention: {

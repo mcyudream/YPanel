@@ -757,7 +757,21 @@ func (s *AIService) acFromCtx(ctx context.Context) (*agentclient.Client, error) 
 	if node, ok := ctx.Value(aiNodeCtxKey{}).(string); ok && node != "" {
 		n, err := s.nodes.ByID(node)
 		if err != nil || n == nil {
-			return nil, fmt.Errorf("节点不存在: %s", node)
+			// 名称兜底：模型可能传节点名而非 ID
+			found := ""
+			for _, row := range s.nodes.ListNodes() {
+				if fmt.Sprint(row["name"]) == node {
+					found = fmt.Sprint(row["id"])
+					break
+				}
+			}
+			if found == "" {
+				return nil, fmt.Errorf("节点不存在: %s", node)
+			}
+			n, err = s.nodes.ByID(found)
+			if err != nil || n == nil {
+				return nil, fmt.Errorf("节点不存在: %s", node)
+			}
 		}
 		return agentclient.New(n.BaseURL, n.Token), nil
 	}

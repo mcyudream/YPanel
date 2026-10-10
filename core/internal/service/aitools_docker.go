@@ -22,7 +22,7 @@ func (s *AIService) aiToolsContainers(ctx context.Context) []aiToolDef {
 				"sort": schEnum("排序字段", "name", "state", "image", "created"),
 				"order": schEnum("排序方向", "asc", "desc"), "page": schInt("页码，从 1 起"), "pageSize": schInt("每页条数，默认 20 上限 100"),
 			}),
-			Fn: func(_ context.Context, input string) (string, error) {
+			Fn: func(ctx context.Context, input string) (string, error) {
 				out, err := agentGetJSON[[]dto.ContainerItem](s, ctx, "/agent/v1/docker/containers")
 				if err != nil {
 					return "", err
@@ -61,13 +61,15 @@ func (s *AIService) aiToolsContainers(ctx context.Context) []aiToolDef {
 			Name: "inspect_container", Module: aiModContainers, Risk: aiRiskRead,
 			Desc: "查看容器详情（inspect 全量 JSON 截断）。input JSON：{\"name\":\"容器名或ID\"}",
 			Parameters: schObj(map[string]any{"name": schStr("容器名或 ID")}, "name"),
-			Fn: func(_ context.Context, input string) (string, error) {
+			Fn: func(ctx context.Context, input string) (string, error) {
 				p, err := parseToolArgs[struct {
+					Node string `json:"node"`
 					Name string `json:"name"`
 				}](input)
 				if err != nil {
 					return "", err
 				}
+				ctx = withAINode(ctx, p.Node)
 				if p.Name == "" {
 					return "", fmt.Errorf("缺少 name")
 				}
@@ -84,7 +86,7 @@ func (s *AIService) aiToolsContainers(ctx context.Context) []aiToolDef {
 			Parameters: schObj(map[string]any{
 				"name": schStr("容器名或 ID"), "tail": schInt("尾部行数，默认 200，上限 2000"),
 			}, "name"),
-			Fn: func(_ context.Context, input string) (string, error) {
+			Fn: func(ctx context.Context, input string) (string, error) {
 				p, err := parseToolArgs[struct {
 					Name string `json:"name"`
 					Tail int    `json:"tail"`
@@ -108,13 +110,15 @@ func (s *AIService) aiToolsContainers(ctx context.Context) []aiToolDef {
 			Name: "container_stats", Module: aiModContainers, Risk: aiRiskRead,
 			Desc: "查看容器实时资源占用（CPU/内存/网络 IO）。input JSON：{\"name\":\"容器名或ID\"}",
 			Parameters: schObj(map[string]any{"name": schStr("容器名或 ID")}, "name"),
-			Fn: func(_ context.Context, input string) (string, error) {
+			Fn: func(ctx context.Context, input string) (string, error) {
 				p, err := parseToolArgs[struct {
+					Node string `json:"node"`
 					Name string `json:"name"`
 				}](input)
 				if err != nil {
 					return "", err
 				}
+				ctx = withAINode(ctx, p.Node)
 				if p.Name == "" {
 					return "", fmt.Errorf("缺少 name")
 				}
@@ -129,6 +133,7 @@ func (s *AIService) aiToolsContainers(ctx context.Context) []aiToolDef {
 			Name: "create_container", Module: aiModContainers, Risk: aiRiskWrite,
 			Desc: "创建并启动容器。input JSON：{\"name\":\"容器名\",\"image\":\"镜像:tag\",\"ports\":[{\"hostPort\":8080,\"containerPort\":80,\"proto\":\"tcp\"}],\"mounts\":[\"/host/path:/container/path\"],\"env\":[\"KEY=value\"],\"restart\":\"unless-stopped\",\"network\":\"可选网络名\"}。至少 name+image；建议先 list_images 确认镜像存在（不存在先 pull_image）。",
 			Parameters: schObj(map[string]any{
+					"node": schStr("目标节点 ID（list_nodes 可查），默认 local"),
 				"name": schStr("容器名"), "image": schStr("镜像名:标签"),
 				"ports": schArr("端口映射", map[string]any{"type": "object", "properties": map[string]any{
 					"hostPort": schInt("宿主端口"), "containerPort": schInt("容器端口"), "proto": schEnum("协议", "tcp", "udp"),
@@ -138,15 +143,22 @@ func (s *AIService) aiToolsContainers(ctx context.Context) []aiToolDef {
 				"restart": schEnum("重启策略", "no", "always", "unless-stopped", "on-failure"),
 				"network": schStr("加入的网络名"),
 			}, "name", "image"),
-			Fn: func(_ context.Context, input string) (string, error) {
-				p, err := parseToolArgs[ExtContainerCreateReq](input)
+			Fn: func(ctx context.Context, input string) (string, error) {
+				p, err := parseToolArgs[struct {
+					ExtContainerCreateReq
+					Node string `json:"node"`
+				}](input)
 				if err != nil {
 					return "", err
+				}
+				dx, derr := s.dockerX.WithNode(p.Node)
+				if derr != nil {
+					return "", derr
 				}
 				if p.Name == "" || p.Image == "" {
 					return "", fmt.Errorf("name 与 image 必填")
 				}
-				id, err := s.dockerX.ContainerCreate(ctx, p)
+				id, err := dx.ContainerCreate(ctx, p.ExtContainerCreateReq)
 				if err != nil {
 					return "", err
 				}
@@ -159,7 +171,7 @@ func (s *AIService) aiToolsContainers(ctx context.Context) []aiToolDef {
 			Parameters: schObj(map[string]any{
 				"name": schStr("容器名或 ID"), "action": schEnum("操作", "start", "stop", "restart"),
 			}, "name", "action"),
-			Fn: func(_ context.Context, input string) (string, error) {
+			Fn: func(ctx context.Context, input string) (string, error) {
 				p, err := parseToolArgs[struct {
 					Name   string `json:"name"`
 					Action string `json:"action"`
@@ -183,7 +195,7 @@ func (s *AIService) aiToolsContainers(ctx context.Context) []aiToolDef {
 			Parameters: schObj(map[string]any{
 				"name": schStr("容器名或 ID"), "force": schBool("运行中也强制删除"),
 			}, "name"),
-			Fn: func(_ context.Context, input string) (string, error) {
+			Fn: func(ctx context.Context, input string) (string, error) {
 				p, err := parseToolArgs[struct {
 					Name  string `json:"name"`
 					Force bool   `json:"force"`
@@ -200,9 +212,20 @@ func (s *AIService) aiToolsContainers(ctx context.Context) []aiToolDef {
 		{
 			Name: "containers_prune", Module: aiModContainers, Risk: aiRiskDanger,
 			Desc: "清理全部已停止的容器（不可恢复，会先向用户确认）。input 传 {}。",
-			Parameters: schObj(map[string]any{}),
-			Fn: func(_ context.Context, _ string) (string, error) {
-				out, err := s.dockerX.ContainersPrune(ctx)
+			Parameters: schObj(map[string]any{"node": schStr("目标节点 ID（list_nodes 可查），默认 local"),}),
+			Fn: func(ctx context.Context, input string) (string, error) {
+				p, err := parseToolArgs[struct {
+					Node string `json:"node"`
+				}](input)
+				if err != nil {
+					return "", err
+				}
+				dx, derr := s.dockerX.WithNode(p.Node)
+				if derr != nil {
+					return "", derr
+				}
+
+				out, err := dx.ContainersPrune(ctx)
 				if err != nil {
 					return "", err
 				}
@@ -219,9 +242,10 @@ func (s *AIService) aiToolsImages(ctx context.Context) []aiToolDef {
 			Name: "list_images", Module: aiModImages, Risk: aiRiskRead,
 			Desc: "列出本机 Docker 镜像（分页/搜索）。input 可选 JSON：{\"search\":\"名称关键词\",\"page\":1,\"pageSize\":20}。返回 {total,page,pageSize,items}。",
 			Parameters: schObj(map[string]any{
+					"node": schStr("目标节点 ID（list_nodes 可查），默认 local"),
 				"search": schStr("镜像名关键词"), "page": schInt("页码"), "pageSize": schInt("每页条数"),
 			}),
-			Fn: func(_ context.Context, input string) (string, error) {
+			Fn: func(ctx context.Context, input string) (string, error) {
 				raw, err := s.dockerX.Passthrough(ctx, "/agent/v1/docker/images")
 				if err != nil {
 					return "", err
@@ -245,17 +269,22 @@ func (s *AIService) aiToolsImages(ctx context.Context) []aiToolDef {
 			Name: "pull_image", Module: aiModImages, Risk: aiRiskWrite,
 			Desc: "拉取镜像（下载需要时间与磁盘空间，会先向用户确认）。input JSON：{\"ref\":\"nginx:latest\"}",
 			Parameters: schObj(map[string]any{"ref": schStr("镜像名:标签")}, "ref"),
-			Fn: func(_ context.Context, input string) (string, error) {
+			Fn: func(ctx context.Context, input string) (string, error) {
 				p, err := parseToolArgs[struct {
+					Node string `json:"node"`
 					Ref string `json:"ref"`
 				}](input)
 				if err != nil {
 					return "", err
 				}
+				dx, derr := s.dockerX.WithNode(p.Node)
+				if derr != nil {
+					return "", derr
+				}
 				if p.Ref == "" {
 					return "", fmt.Errorf("缺少 ref")
 				}
-				out, err := s.dockerX.ImagePull(ctx, p.Ref)
+				out, err := dx.ImagePull(ctx, p.Ref)
 				if err != nil {
 					return "", err
 				}
@@ -266,17 +295,23 @@ func (s *AIService) aiToolsImages(ctx context.Context) []aiToolDef {
 			Name: "remove_image", Module: aiModImages, Risk: aiRiskDanger,
 			Desc: "删除镜像（会先向用户确认）。input JSON：{\"id\":\"镜像ID或完整引用名\",\"force\":false}。id 建议传 list_images 返回的 ID（sha256/短 ID），带斜杠的引用名（如 louislam/uptime-kuma:1）亦可",
 			Parameters: schObj(map[string]any{
+					"node": schStr("目标节点 ID（list_nodes 可查），默认 local"),
 				"id": schStr("镜像 ID 或名称"), "force": schBool("被容器引用时强制删除"),
 			}, "id"),
-			Fn: func(_ context.Context, input string) (string, error) {
+			Fn: func(ctx context.Context, input string) (string, error) {
 				p, err := parseToolArgs[struct {
+					Node string `json:"node"`
 					ID    string `json:"id"`
 					Force bool   `json:"force"`
 				}](input)
 				if err != nil {
 					return "", err
 				}
-				if err := s.dockerX.ImageRemove(ctx, p.ID, p.Force); err != nil {
+				dx, derr := s.dockerX.WithNode(p.Node)
+				if derr != nil {
+					return "", derr
+				}
+				if err := dx.ImageRemove(ctx, p.ID, p.Force); err != nil {
 					return "", err
 				}
 				return "已删除镜像: " + p.ID, nil
@@ -285,9 +320,20 @@ func (s *AIService) aiToolsImages(ctx context.Context) []aiToolDef {
 		{
 			Name: "images_prune", Module: aiModImages, Risk: aiRiskDanger,
 			Desc: "清理全部悬空（未被标签引用的）镜像（会先向用户确认）。input 传 {}。",
-			Parameters: schObj(map[string]any{}),
-			Fn: func(_ context.Context, _ string) (string, error) {
-				out, err := s.dockerX.PassthroughPost(ctx, "/agent/v1/docker/images/prune")
+			Parameters: schObj(map[string]any{"node": schStr("目标节点 ID（list_nodes 可查），默认 local"),}),
+			Fn: func(ctx context.Context, input string) (string, error) {
+				p, err := parseToolArgs[struct {
+					Node string `json:"node"`
+				}](input)
+				if err != nil {
+					return "", err
+				}
+				dx, derr := s.dockerX.WithNode(p.Node)
+				if derr != nil {
+					return "", derr
+				}
+
+				out, err := dx.PassthroughPost(ctx, "/agent/v1/docker/images/prune")
 				if err != nil {
 					return "", err
 				}
@@ -303,8 +349,15 @@ func (s *AIService) aiToolsNetworks(ctx context.Context) []aiToolDef {
 		{
 			Name: "list_networks", Module: aiModNetworks, Risk: aiRiskRead,
 			Desc: "列出 Docker 网络。input 传 {}。",
-			Parameters: schObj(map[string]any{}),
-			Fn: func(_ context.Context, _ string) (string, error) {
+			Parameters: schObj(map[string]any{"node": schStr("目标节点 ID（list_nodes 可查），默认 local"),}),
+			Fn: func(ctx context.Context, input string) (string, error) {
+				p, err := parseToolArgs[struct {
+					Node string `json:"node"`
+				}](input)
+				if err != nil {
+					return "", err
+				}
+				ctx = withAINode(ctx, p.Node)
 				raw, err := s.dockerX.Passthrough(ctx, "/agent/v1/docker/networks")
 				if err != nil {
 					return "", err
@@ -316,20 +369,26 @@ func (s *AIService) aiToolsNetworks(ctx context.Context) []aiToolDef {
 			Name: "create_network", Module: aiModNetworks, Risk: aiRiskWrite,
 			Desc: "创建 Docker 网络。input JSON：{\"name\":\"网络名\",\"driver\":\"bridge\"}",
 			Parameters: schObj(map[string]any{
+					"node": schStr("目标节点 ID（list_nodes 可查），默认 local"),
 				"name": schStr("网络名"), "driver": schEnum("驱动", "bridge", "overlay", "macvlan", "host"),
 			}, "name"),
-			Fn: func(_ context.Context, input string) (string, error) {
+			Fn: func(ctx context.Context, input string) (string, error) {
 				p, err := parseToolArgs[struct {
+					Node string `json:"node"`
 					Name   string `json:"name"`
 					Driver string `json:"driver"`
 				}](input)
 				if err != nil {
 					return "", err
 				}
+				dx, derr := s.dockerX.WithNode(p.Node)
+				if derr != nil {
+					return "", derr
+				}
 				if p.Name == "" {
 					return "", fmt.Errorf("缺少 name")
 				}
-				if err := s.dockerX.NetworkCreate(ctx, p.Name, p.Driver); err != nil {
+				if err := dx.NetworkCreate(ctx, p.Name, p.Driver); err != nil {
 					return "", err
 				}
 				return "已创建网络: " + p.Name, nil
@@ -339,14 +398,19 @@ func (s *AIService) aiToolsNetworks(ctx context.Context) []aiToolDef {
 			Name: "remove_network", Module: aiModNetworks, Risk: aiRiskDanger,
 			Desc: "删除 Docker 网络（内置网络不可删，会先向用户确认）。input JSON：{\"name\":\"网络名\"}",
 			Parameters: schObj(map[string]any{"name": schStr("网络名")}, "name"),
-			Fn: func(_ context.Context, input string) (string, error) {
+			Fn: func(ctx context.Context, input string) (string, error) {
 				p, err := parseToolArgs[struct {
+					Node string `json:"node"`
 					Name string `json:"name"`
 				}](input)
 				if err != nil {
 					return "", err
 				}
-				if err := s.dockerX.NetworkRemove(ctx, p.Name); err != nil {
+				dx, derr := s.dockerX.WithNode(p.Node)
+				if derr != nil {
+					return "", derr
+				}
+				if err := dx.NetworkRemove(ctx, p.Name); err != nil {
 					return "", err
 				}
 				return "已删除网络: " + p.Name, nil
@@ -361,8 +425,15 @@ func (s *AIService) aiToolsVolumes(ctx context.Context) []aiToolDef {
 		{
 			Name: "list_volumes", Module: aiModVolumes, Risk: aiRiskRead,
 			Desc: "列出 Docker 存储卷。input 传 {}。",
-			Parameters: schObj(map[string]any{}),
-			Fn: func(_ context.Context, _ string) (string, error) {
+			Parameters: schObj(map[string]any{"node": schStr("目标节点 ID（list_nodes 可查），默认 local"),}),
+			Fn: func(ctx context.Context, input string) (string, error) {
+				p, err := parseToolArgs[struct {
+					Node string `json:"node"`
+				}](input)
+				if err != nil {
+					return "", err
+				}
+				ctx = withAINode(ctx, p.Node)
 				raw, err := s.dockerX.Passthrough(ctx, "/agent/v1/docker/volumes")
 				if err != nil {
 					return "", err
@@ -374,14 +445,19 @@ func (s *AIService) aiToolsVolumes(ctx context.Context) []aiToolDef {
 			Name: "create_volume", Module: aiModVolumes, Risk: aiRiskWrite,
 			Desc: "创建 Docker 存储卷。input JSON：{\"name\":\"卷名\"}",
 			Parameters: schObj(map[string]any{"name": schStr("卷名")}, "name"),
-			Fn: func(_ context.Context, input string) (string, error) {
+			Fn: func(ctx context.Context, input string) (string, error) {
 				p, err := parseToolArgs[struct {
+					Node string `json:"node"`
 					Name string `json:"name"`
 				}](input)
 				if err != nil {
 					return "", err
 				}
-				if err := s.dockerX.VolumeCreate(ctx, p.Name); err != nil {
+				dx, derr := s.dockerX.WithNode(p.Node)
+				if derr != nil {
+					return "", derr
+				}
+				if err := dx.VolumeCreate(ctx, p.Name); err != nil {
 					return "", err
 				}
 				return "已创建卷: " + p.Name, nil
@@ -391,14 +467,19 @@ func (s *AIService) aiToolsVolumes(ctx context.Context) []aiToolDef {
 			Name: "remove_volume", Module: aiModVolumes, Risk: aiRiskDanger,
 			Desc: "删除存储卷（卷内数据不可恢复，会先向用户确认）。input JSON：{\"name\":\"卷名\"}",
 			Parameters: schObj(map[string]any{"name": schStr("卷名")}, "name"),
-			Fn: func(_ context.Context, input string) (string, error) {
+			Fn: func(ctx context.Context, input string) (string, error) {
 				p, err := parseToolArgs[struct {
+					Node string `json:"node"`
 					Name string `json:"name"`
 				}](input)
 				if err != nil {
 					return "", err
 				}
-				if err := s.dockerX.VolumeRemove(ctx, p.Name); err != nil {
+				dx, derr := s.dockerX.WithNode(p.Node)
+				if derr != nil {
+					return "", derr
+				}
+				if err := dx.VolumeRemove(ctx, p.Name); err != nil {
 					return "", err
 				}
 				return "已删除卷: " + p.Name, nil
@@ -407,9 +488,20 @@ func (s *AIService) aiToolsVolumes(ctx context.Context) []aiToolDef {
 		{
 			Name: "volumes_prune", Module: aiModVolumes, Risk: aiRiskDanger,
 			Desc: "清理全部未被容器引用的存储卷（数据不可恢复，会先向用户确认）。input 传 {}。",
-			Parameters: schObj(map[string]any{}),
-			Fn: func(_ context.Context, _ string) (string, error) {
-				out, err := s.dockerX.PassthroughPost(ctx, "/agent/v1/docker/volumes/prune")
+			Parameters: schObj(map[string]any{"node": schStr("目标节点 ID（list_nodes 可查），默认 local"),}),
+			Fn: func(ctx context.Context, input string) (string, error) {
+				p, err := parseToolArgs[struct {
+					Node string `json:"node"`
+				}](input)
+				if err != nil {
+					return "", err
+				}
+				dx, derr := s.dockerX.WithNode(p.Node)
+				if derr != nil {
+					return "", derr
+				}
+
+				out, err := dx.PassthroughPost(ctx, "/agent/v1/docker/volumes/prune")
 				if err != nil {
 					return "", err
 				}

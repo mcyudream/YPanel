@@ -417,6 +417,7 @@ func (s *AIService) aiToolsStoreExtra(ctx context.Context) []aiToolDef {
 				p, err := parseToolArgs[struct {
 					Project string `json:"project"`
 					Action  string `json:"action"`
+					Node    string `json:"node"`
 				}](input)
 				if err != nil {
 					return "", err
@@ -426,7 +427,7 @@ func (s *AIService) aiToolsStoreExtra(ctx context.Context) []aiToolDef {
 				default:
 					return "", fmt.Errorf("不支持的操作: %s", p.Action)
 				}
-				if err := s.store.InstalledAction(ctx, p.Project, p.Action, ""); err != nil {
+				if err := s.store.InstalledAction(ctx, p.Project, p.Action, p.Node); err != nil {
 					return "", err
 				}
 				return fmt.Sprintf("已对 %s 执行 %s", p.Project, p.Action), nil
@@ -435,15 +436,16 @@ func (s *AIService) aiToolsStoreExtra(ctx context.Context) []aiToolDef {
 		{
 			Name: "read_app_env", Module: aiModStore, Risk: aiRiskRead,
 			Desc: "读取已安装应用的 .env 环境变量（含数据库密码等，密码类值界面打码）。input JSON：{\"project\":\"app-blog\"}",
-			Parameters: schObj(map[string]any{"project": schStr("应用项目名")}, "project"),
-			Fn: func(_ context.Context, input string) (string, error) {
+			Parameters: schObj(map[string]any{"project": schStr("应用项目名"), "node": schStr("目标节点，默认 local")}, "project", "node"),
+			Fn: func(ctx context.Context, input string) (string, error) {
 				p, err := parseToolArgs[struct {
 					Project string `json:"project"`
+					Node    string `json:"node"`
 				}](input)
 				if err != nil {
 					return "", err
 				}
-				out, err := s.store.InstallEnv(ctx, p.Project, "")
+				out, err := s.store.InstallEnv(ctx, p.Project, p.Node)
 				if err != nil {
 					return "", err
 				}
@@ -455,11 +457,13 @@ func (s *AIService) aiToolsStoreExtra(ctx context.Context) []aiToolDef {
 			Desc: "保存已安装应用的 .env 并重建容器生效（KEY=VALUE 每行一条；改错会导致应用起不来，会先向用户确认）。input JSON：{\"project\":\"app-blog\",\"content\":\"KEY=VALUE\\nKEY2=VALUE2\"}",
 			Parameters: schObj(map[string]any{
 				"project": schStr("应用项目名"), "content": schStr("完整 .env 内容（KEY=VALUE 每行一条）"),
-			}, "project", "content"),
-			Fn: func(_ context.Context, input string) (string, error) {
+				"node": schStr("目标节点，默认 local"),
+			}, "project", "content", "node"),
+			Fn: func(ctx context.Context, input string) (string, error) {
 				p, err := parseToolArgs[struct {
 					Project string `json:"project"`
 					Content string `json:"content"`
+					Node    string `json:"node"`
 				}](input)
 				if err != nil {
 					return "", err
@@ -467,7 +471,7 @@ func (s *AIService) aiToolsStoreExtra(ctx context.Context) []aiToolDef {
 				if strings.TrimSpace(p.Content) == "" {
 					return "", fmt.Errorf("content 为空")
 				}
-				if err := s.store.SaveInstallEnv(ctx, p.Project, "", p.Content); err != nil {
+				if err := s.store.SaveInstallEnv(ctx, p.Project, p.Node, p.Content); err != nil {
 					return "", err
 				}
 				return fmt.Sprintf("%s 的 .env 已保存并触发重建生效", p.Project), nil
