@@ -511,11 +511,11 @@ async function doSetOwner(uid: number) {
   }
   try {
     await storeApi.setOwner(ownerTarget.value.composeProject, uid)
-    useFaToast().success(i18n.global.t('owner.saved'))
+    useFaToast().success(i18n.global.t('common.owner.saved'))
     await loadInstalled()
   }
   catch (e: any) {
-    useFaToast().error(i18n.global.t('owner.saveFailed'), { description: e?.message })
+    useFaToast().error(i18n.global.t('common.owner.saveFailed'), { description: e?.message })
   }
 }
 
@@ -919,7 +919,7 @@ function statusText(s: StoreSource) {
               </FaButton>
               <FaButton size="sm" variant="outline" @click="openParams(info)">{{ $t('store.params') }}</FaButton>
               <FaButton size="sm" variant="outline" @click="openLogs(info)">{{ $t('store.logs') }}</FaButton>
-              <FaButton size="sm" variant="outline" :title="$t('owner.title')" @click="openOwner(info)">{{ $t('owner.short') }}</FaButton>
+              <FaButton size="sm" variant="outline" :title="$t('common.owner.title')" @click="openOwner(info)">{{ $t('common.owner.short') }}</FaButton>
               <FaButton size="sm" variant="outline" class="ml-auto text-red-500!" @click="uninstall(info.composeProject, info)">
                 {{ $t('store.uninstall') }}
               </FaButton>
@@ -1512,7 +1512,7 @@ function statusText(s: StoreSource) {
     <!-- M54-P3 属主分配 -->
     <YdOwnerDialog
       v-model="ownerVisible"
-      :title="$t('owner.storeTitle', { name: ownerTarget?.composeProject || '' })"
+      :title="$t('common.owner.storeTitle', { name: ownerTarget?.composeProject || '' })"
       :current-owner-id="ownerTarget?.ownerId ?? 0"
       @confirm="doSetOwner"
     />

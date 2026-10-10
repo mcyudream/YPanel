@@ -58,8 +58,8 @@ function onPick(uid: number) {
   modal.confirm({
     title: props.title,
     content: uid === 0
-      ? i18n.global.t('owner.toPublicConfirm')
-      : i18n.global.t('owner.toUserConfirm', { name: ownerName(uid) }),
+      ? i18n.global.t('common.owner.toPublicConfirm')
+      : i18n.global.t('common.owner.toUserConfirm', { name: ownerName(uid) }),
     onConfirm: async () => {
       emit('confirm', uid)
       visible.value = false
@@ -81,8 +81,8 @@ function onPick(uid: number) {
           @click="onPick(0)"
         >
           <FaIcon name="i-lucide:globe" class="text-muted-foreground" />
-          {{ $t('owner.public') }}
-          <span v-if="picked === 0" class="ml-auto text-xs text-primary">{{ $t('owner.current') }}</span>
+          {{ $t('common.owner.public') }}
+          <span v-if="picked === 0" class="ml-auto text-xs text-primary">{{ $t('common.owner.current') }}</span>
         </button>
         <button
           v-for="u in users"
@@ -94,7 +94,7 @@ function onPick(uid: number) {
           <FaIcon name="i-lucide:user" class="text-muted-foreground" />
           {{ u.nickname || u.username }}
           <span class="font-mono text-xs text-muted-foreground">{{ u.username }}</span>
-          <span v-if="picked === u.id" class="ml-auto text-xs text-primary">{{ $t('owner.current') }}</span>
+          <span v-if="picked === u.id" class="ml-auto text-xs text-primary">{{ $t('common.owner.current') }}</span>
         </button>
       </template>
     </div>

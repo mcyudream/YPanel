@@ -31,11 +31,11 @@ async function doSetOwner(uid: number) {
   }
   try {
     await apiDb.setOwner(ownerTarget.value.id, uid)
-    useFaToast().success(i18n.global.t('owner.saved'))
+    useFaToast().success(i18n.global.t('common.owner.saved'))
     load()
   }
   catch (e: any) {
-    useFaToast().error(i18n.global.t('owner.saveFailed'), { description: e?.message })
+    useFaToast().error(i18n.global.t('common.owner.saveFailed'), { description: e?.message })
   }
 }
 const loading = ref(false)
@@ -818,8 +818,8 @@ onBeforeUnmount(() => {
             <FaButton variant="ghost" size="sm" @click="showConn(inst)">
               {{ $t('database.conn.title') }}
             </FaButton>
-            <FaButton variant="ghost" size="sm" :title="$t('owner.title')" @click="openOwner(inst)">
-              {{ $t('owner.short') }}
+            <FaButton variant="ghost" size="sm" :title="$t('common.owner.title')" @click="openOwner(inst)">
+              {{ $t('common.owner.short') }}
             </FaButton>
             <FaButton variant="ghost" size="sm" class="ml-auto text-red-500!" @click="remove(inst)">
               {{ inst.origin === 'external' ? $t('database.actions.release') : $t('common.delete') }}
@@ -1249,7 +1249,7 @@ onBeforeUnmount(() => {
     <!-- M54-P3 属主分配 -->
     <YdOwnerDialog
       v-model="ownerVisible"
-      :title="$t('owner.dbTitle', { name: ownerTarget?.name || '' })"
+      :title="$t('common.owner.dbTitle', { name: ownerTarget?.name || '' })"
       :current-owner-id="ownerTarget?.ownerId ?? 0"
       @confirm="doSetOwner"
     />

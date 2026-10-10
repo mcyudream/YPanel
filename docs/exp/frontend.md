@@ -550,6 +550,7 @@
 - **校验**：语言包校验脚本用 esbuild transformSync 加载 TS 词条做 zh/en 键集比对与引用完整性扫描——**注意词条对象顶层没有域名层**（域名在文件名），扫描器必须给键补 `域名.` 前缀，否则 4000+ 假 MISSING / 结构比对假阴性。
 - **补充（2026-10-09 M54 真机）**：向某域追加词条时锚点不能选「文件里第一个同名行」——`deleteConfirm` 在 user/role/backups 三域都有，正则取首个匹配把 6 个角色页词条插进了 backups 域，页面渲染成裸 key（`manage.role.allNodes` 原样显示，即「中英文混合」观感）。规避：锚点正则必须限定域上下文（如 `
   role: \{.*?deleteConfirm` 带 re.S），或插完后断言「引用键 ∈ 所属域对象」。裸 key 渲染 = vue-i18n 缺键回落 key 本身，排查先 grep 语言文件里 key 的实际落点域。
+- **补充（2026-10-10 M54 复现）**：裸 key 的另一变体是**调用方漏写域名前缀**——owner 段定义在 `common.ts` 里（实际路径 `common.owner.*`），4 个调用方 18 处全写成 `t('owner.*')`，属主弹窗标题/选项/确认文案整窗裸 key。写码时组件内 `common.loading`/`common.cancel` 用对了、新增段却漏前缀，说明「同文件里既有键的写法」不会自动约束新键；新增词条后应对该段 grep 一遍引用路径是否带域前缀。
 - **验收手法**：浏览器 `localStorage.setItem('ypanel.locale','en-US') + reload` 直接进 EN 态；单 cell 批量 `location.hash` 导航 + body.innerText 断言（IAB evaluate 上限 ~32s，一批 ≤14 页）；剩余中文区分「数据」（供应商名/站点名/探针名等后端内容）与「UI」，只有后者是缺陷。
 - **来源**：2026-10-08，B26-full 全站双语（14 个迁移批次、34 域 3555 对键、vue-tsc/生产构建/双语言走查全绿）。
 
