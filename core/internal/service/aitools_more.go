@@ -4,12 +4,9 @@ package service
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
-	"strings"
 
 	"github.com/ypanel/core/internal/model"
-	"github.com/ypanel/shared/dto"
 )
 
 // aiToolsMonitor 监控告警模块。
@@ -81,7 +78,7 @@ func (s *AIService) aiToolsMonitor(ctx context.Context) []aiToolDef {
 				}
 				out := make([]pt, 0, len(rows))
 				for _, r := range rows {
-					out = append(out, pt{Time: r.CreatedAt.Format("15:04"), CPU: r.CPU, Mem: r.Mem})
+					out = append(out, pt{Time: r.At.Format("15:04"), CPU: r.Cpu, Mem: r.Mem})
 				}
 				if len(out) > 60 {
 					out = out[len(out)-60:]

@@ -89,6 +89,12 @@ type AIService struct {
 	store     *StoreService
 	f2b       *Fail2banService
 	src2      *Src2ComposeService
+	alert     *AlertService
+	hist      *HistoryRecorder
+	notif     *NotificationService
+	panelBk   *PanelBackupService
+	su        *SelfUpdateService
+	vpn       *VPNService
 	pendingAsks sync.Map // askID → *aiAskRequest（等待用户确认的危险操作）
 	pendingQuestions sync.Map // questionID → *aiQuestionRequest（等待用户回答的交互提问）
 }
@@ -112,6 +118,12 @@ type AIDeps struct {
 	Store    *StoreService
 	F2B      *Fail2banService
 	Src2     *Src2ComposeService
+	Alert    *AlertService
+	Hist     *HistoryRecorder
+	Notif    *NotificationService
+	PanelBK  *PanelBackupService
+	SU       *SelfUpdateService
+	VPN      *VPNService
 }
 
 // NewAIService 创建。
@@ -122,6 +134,7 @@ func NewAIService(db *gorm.DB, deps AIDeps) *AIService {
 		sites: deps.Sites, certs: deps.Certs, runtimes: deps.Runtimes, dockerX: deps.DockerX,
 		fw: deps.FW, nat: deps.NAT, hosts: deps.Hosts, dns: deps.DNS, cron: deps.Cron,
 		store: deps.Store, f2b: deps.F2B, src2: deps.Src2,
+		alert: deps.Alert, hist: deps.Hist, notif: deps.Notif, panelBk: deps.PanelBK, su: deps.SU, vpn: deps.VPN,
 		pendingAsks: sync.Map{},
 	}
 }
@@ -562,6 +575,8 @@ const (
 	aiModStore      = "store"
 	aiModSrcBuild   = "srcbuild"
 	aiModDiag       = "diagnostics"
+	aiModMonitor    = "monitor_alert"
+	aiModPanel      = "panel_ops"
 	aiModAI         = "panel_ai"
 )
 
@@ -591,6 +606,8 @@ var aiModuleRegistry = []aiModule{
 	{aiModStore, "应用商店", "按需求检索应用（如博客/图床/网盘/数据库）、查看应用详情与安装参数、一键安装/卸载、查看已装应用与升级状态"},
 	{aiModSrcBuild, "源码构建", "从 git 仓库预检语言栈与构建参数，创建源码构建部署任务（自动生成 compose 并构建跑通）"},
 	{aiModDiag, "诊断排查", "端口监听检查、HTTP 探测、DNS 解析验证、systemd 服务日志(journalctl)、从 URL 下载文件到服务器"},
+	{aiModMonitor, "监控告警", "告警规则查询与创建、历史监控指标查询（CPU/内存趋势）、面板通知、登录审计日志"},
+	{aiModPanel, "面板运维", "面板备份创建/查询/删除、检查面板更新与执行升级"},
 	{aiModAI, "AI 自身", "长期记忆沉淀与知识库深读（常驻工具，无需加载）"},
 }
 
@@ -623,6 +640,8 @@ func sceneAIModules(path string) []string {
 		return []string{aiModDB}
 	case strings.HasPrefix(path, "/tools"):
 		return []string{aiModTasks}
+	case strings.HasPrefix(path, "/manage") || strings.HasPrefix(path, "/monitor"):
+		return []string{aiModMonitor, aiModNetSec}
 	case strings.HasPrefix(path, "/system"):
 		return []string{aiModFiles, aiModProc, aiModNetSec}
 	}
@@ -916,6 +935,14 @@ func (s *AIService) aiToolsAll(ctx context.Context) []aiToolDef {
 	defs = append(defs, s.aiToolsStore(ctx)...)
 	defs = append(defs, s.aiToolsSrcBuild(ctx)...)
 	defs = append(defs, s.aiToolsDiag(ctx)...)
+	defs = append(defs, s.aiToolsMonitor(ctx)...)
+	defs = append(defs, s.aiToolsPanelOps(ctx)...)
+	defs = append(defs, s.aiToolsDBInstances(ctx)...)
+	defs = append(defs, s.aiToolsContainerExtra(ctx)...)
+	defs = append(defs, s.aiToolsSiteDomains(ctx)...)
+	defs = append(defs, s.aiToolsRuntimeExtra(ctx)...)
+	defs = append(defs, s.aiToolsStoreExtra(ctx)...)
+	defs = append(defs, s.aiToolsVPN(ctx)...)
 	defs = append(defs, s.aiToolsPanelAI(ctx)...)
 	for i := range defs {
 		fn := defs[i].Fn

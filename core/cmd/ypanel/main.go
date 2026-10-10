@@ -142,12 +142,6 @@ func run(ctx context.Context, cfg *config.Config) error {
 	hostsSvc := service.NewHostsService(gdb, nodes)
 	credSvc := service.NewGitCredService(gdb)
 	src2Svc := &service.Src2ComposeService{Nodes: nodes, Tasks: taskSvc, Creds: credSvc}
-	logCentralSvc := service.NewLogCentralService(gdb, settings, nodes)
-	alertSvc.SetLogCentral(logCentralSvc) // P3 日志量告警：VL 聚合计数（metric=log 规则）
-	// M51：桌面工作台内网浏览器——会话式反代网关（第二端口）
-	webgwSvc := service.NewWebGwService(ctx, settings)
-	webgwSvc.SetSelfEntry(cfg.Port, secSvc.SafeEntry) // 经网关浏览面板自身时补安全入口
-	webgwSvc.SetNodes(nodes)
 	// M31：AI 工具治理升级——全量服务依赖装配（原 126 行 aiSvc 创建移至此处，确保全部依赖就绪）
 	aiSvc := service.NewAIService(gdb, service.AIDeps{
 		Nodes: nodes, DBSvc: dbSvc, DBAdmin: dbAdminSvc, Settings: settings,
@@ -155,7 +149,15 @@ func run(ctx context.Context, cfg *config.Config) error {
 		Sites:  siteSvc, Certs: certSvc, Runtimes: rtSvc, DockerX: dockerExtSvc,
 		FW: fwSvc, NAT: natSvc, Hosts: hostsSvc, DNS: dnsSvc, Cron: cronSvc,
 		Store: storeSvc, F2B: f2bSvc, Src2: src2Svc,
+		Alert: alertSvc, Hist: histSvc, Notif: notifSvc,
+		PanelBK: service.NewPanelBackupService(nodes), SU: suSvc, VPN: vpnSvc,
 	})
+	logCentralSvc := service.NewLogCentralService(gdb, settings, nodes)
+	alertSvc.SetLogCentral(logCentralSvc) // P3 日志量告警：VL 聚合计数（metric=log 规则）
+	// M51：桌面工作台内网浏览器——会话式反代网关（第二端口）
+	webgwSvc := service.NewWebGwService(ctx, settings)
+	webgwSvc.SetSelfEntry(cfg.Port, secSvc.SafeEntry) // 经网关浏览面板自身时补安全入口
+	webgwSvc.SetNodes(nodes)
 	// M41：MCP 对外开放（复用 AI 注册表 read 工具）
 	mcpSvc := service.NewMCPService(gdb, aiSvc, settings)
 	snapSvc := service.NewSnapshotService(gdb, nodes, panelBkSvc, settings)

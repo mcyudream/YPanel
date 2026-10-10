@@ -443,7 +443,7 @@ func (s *AIService) aiToolsStoreExtra(ctx context.Context) []aiToolDef {
 				if err != nil {
 					return "", err
 				}
-				out, err := s.store.InstallEnv(ctx, p.Project)
+				out, err := s.store.InstallEnv(ctx, p.Project, "")
 				if err != nil {
 					return "", err
 				}
@@ -467,7 +467,7 @@ func (s *AIService) aiToolsStoreExtra(ctx context.Context) []aiToolDef {
 				if strings.TrimSpace(p.Content) == "" {
 					return "", fmt.Errorf("content 为空")
 				}
-				if err := s.store.SaveInstallEnv(ctx, p.Project, p.Content); err != nil {
+				if err := s.store.SaveInstallEnv(ctx, p.Project, "", p.Content); err != nil {
 					return "", err
 				}
 				return fmt.Sprintf("%s 的 .env 已保存并触发重建生效", p.Project), nil
