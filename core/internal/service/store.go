@@ -918,9 +918,10 @@ type StoreInstallInput struct {
 	OwnerID uint `json:"-"` // M54-P3 创建归属（assigned 调用者 → 自己；all → 公共），由 API 层填
 }
 
-// StoreExternalDB 安装时外接数据库实例选项。
+// StoreExternalDB 安装时外接数据库实例选项（SQL 与 Redis 可并存——双键集应用如 harbor 各选各的实例）。
 type StoreExternalDB struct {
-	InstanceID      uint     `json:"instanceId" binding:"required"`
+	InstanceID      uint     `json:"instanceId"`      // SQL 实例（mysql/postgres）；0 = SQL 用应用自带/手填
+	RedisInstanceID uint     `json:"redisInstanceId"` // Redis 实例；0 = Redis 用应用自带/手填
 	Database        string   `json:"database"`        // 目标库名；空 = 应用 key
 	User            string   `json:"user"`            // 应用账号名；空 = <key>_user
 	CreateIfMissing bool     `json:"createIfMissing"` // 库/账号不存在时自动创建
@@ -930,6 +931,7 @@ type StoreExternalDB struct {
 // dbFieldSet 应用包数据库参数键集（由 formFields 识别）。
 type dbFieldSet struct {
 	Host, Port, Name, User, Password string
+	Kind                             string // sql（mysql/postgres，可建库建号）/ redis（只注入连接参数）
 }
 
 var networkNamePattern = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$`)
@@ -1393,10 +1395,80 @@ func (s *StoreService) deployCompose(ctx context.Context, logf TaskLogf, app mod
 	if perr := s.prePullImages(ctx, logf, ac, dir, project); perr != nil {
 		return strings.Join(logs, "\n"), perr
 	}
+	// init 服务先行（如 harbor prepare）：compose up 在命令开始的项目解析阶段就读取 env_file 内容，
+	// init 服务运行时才生成的配置（common/config/*/env 等）在全量 up 时还是空占位——先跑完 init
+	// 生成配置，再全量 up，其余服务才能带真实 env_file 创建。失败即中止（配置生成不出来装了也是坏的）。
+	composeText := ""
+	if res, rerr := agentclient.GetJSON[dto.FileReadResp](ac, ctx, "/agent/v1/files/read?path="+escapeURL2(dir+"/docker-compose.yml")); rerr == nil && res != nil {
+		composeText = res.Content
+	}
+	if inits := composeInitServices(composeText); len(inits) > 0 {
+		for _, svc := range inits {
+			if err := step(fmt.Sprintf("初始化服务 %s", svc), fmt.Sprintf("cd %s && docker compose -p %s up -d %s", dir, project, svc), 120); err != nil {
+				return strings.Join(logs, "\n"), err
+			}
+			deadline := time.Now().Add(10 * time.Minute)
+			for {
+				out, oerr := agentclient.DoJSON[dto.ExecReq, dto.ExecResp](ac, ctx, "POST", "/agent/v1/exec",
+					&dto.ExecReq{Command: fmt.Sprintf("cd %s && docker compose -p %s ps %s --format json --all 2>/dev/null | head -1", dir, project, svc), TimeoutSecs: 30})
+				body := strings.TrimSpace(out.Output)
+				if oerr == nil && out.ExitCode == 0 && body != "" && strings.Contains(body, `"ExitCode"`) {
+					var st struct {
+						State    string `json:"State"`
+						ExitCode int    `json:"ExitCode"`
+					}
+					if json.Unmarshal([]byte(body), &st) == nil && st.State == "exited" {
+						if st.ExitCode != 0 {
+							detail := ""
+							if lg, lerr := agentclient.DoJSON[dto.ExecReq, dto.ExecResp](ac, ctx, "POST", "/agent/v1/exec",
+								&dto.ExecReq{Command: fmt.Sprintf("cd %s && docker compose -p %s logs %s 2>&1 | tail -20", dir, project, svc), TimeoutSecs: 30}); lerr == nil {
+								detail = lastLine(tail(lg.Output, 600))
+							}
+							return strings.Join(logs, "\n"), errs.Wrapc(errs.CodeInternal, fmt.Sprintf("初始化服务 %s 失败（exit %d）: %s", svc, st.ExitCode, detail))
+						}
+						logs = append(logs, fmt.Sprintf("初始化服务 %s ✓", svc))
+						logf("info", "初始化服务 %s 已完成（配置已生成）", svc)
+						break
+					}
+				}
+				if time.Now().After(deadline) {
+					return strings.Join(logs, "\n"), errs.Wrapc(errs.CodeInternal, fmt.Sprintf("初始化服务 %s 超时（10 分钟未退出）", svc))
+				}
+				select {
+				case <-ctx.Done():
+					return strings.Join(logs, "\n"), ctx.Err()
+				case <-time.After(3 * time.Second):
+				}
+			}
+		}
+	}
 	if err := step("compose up", fmt.Sprintf("cd %s && docker compose -p %s up -d", dir, project), 600); err != nil {
 		return strings.Join(logs, "\n"), err
 	}
 	return strings.Join(logs, "\n"), nil
+}
+
+// composeInitServices 识别 compose 里的 init 服务（restart: "no"——一次性配置生成器，
+// 其运行时写出的 env_file/bind 挂载内容供其余服务创建时读取，必须先于全量 up 跑完）。
+func composeInitServices(composeText string) []string {
+	if composeText == "" {
+		return nil
+	}
+	re := regexp.MustCompile(`(?m)^  ([A-Za-z0-9_-]+):\s*$`)
+	noRe := regexp.MustCompile(`(?m)^\s+restart:\s*(?:"no"|'no'|no)\s*$`)
+	var inits []string
+	locations := re.FindAllStringSubmatchIndex(composeText, -1)
+	for i, loc := range locations {
+		end := len(composeText)
+		if i+1 < len(locations) {
+			end = locations[i+1][2] - 2 // 回退到上一服务行首
+		}
+		block := composeText[loc[2]:end]
+		if noRe.MatchString(block) {
+			inits = append(inits, composeText[loc[2]:loc[3]])
+		}
+	}
+	return inits
 }
 
 // prePullImages compose 依赖镜像预拉取：`compose config --images` 解析清单（不支持时回退 grep image: 行，
@@ -2013,14 +2085,16 @@ func escapeURL2(s string) string {
 // ---- M32：安装外接数据库实例 ----
 
 var (
-	dbFieldHostStem = regexp.MustCompile(`(DB|MYSQL|SQL|MONGO|DATABASE|MARIA)`)
+	dbFieldHostStem = regexp.MustCompile(`(DB|MYSQL|SQL|MONGO|DATABASE|MARIA|REDIS)`)
 	dbFieldHostRe   = regexp.MustCompile(`^[A-Z0-9_]*HOST$`)
+	// dbFieldSQLStem SQL 类词干（建库建号授权）；REDIS 词干为 redis 键集（只注入连接参数）。
+	dbFieldSQLStem = regexp.MustCompile(`(DB|MYSQL|SQL|MONGO|DATABASE|MARIA)`)
 )
 
-// dbFieldSetOf 从 formFields 与 compose 模板变量引用（${VAR}）的并集识别数据库参数键集
-// （*_HOST 结尾且含 DB/SQL 等词干，同前缀推导 PORT/NAME/USER/PASSWORD）。
-// 1Panel 包的 PANEL_DB_HOST/PORT 常为模板引用而非表单字段（系统按所选数据库自动注入），必须扫模板。
-func dbFieldSetOf(fields []StoreFormField, composeText string) *dbFieldSet {
+// dbFieldSetsOf 从 formFields 与 compose 模板变量引用（${VAR}）的并集识别**全部**数据库参数键集
+// （*_HOST 结尾且含 DB/SQL/REDIS 等词干，同前缀推导 PORT/NAME/USER/PASSWORD）。
+// 应用可能同时有 SQL 与 Redis 键集（如 harbor 的 HARBOR_DB_* + HARBOR_REDIS_*），分别对应不同实例。
+func dbFieldSetsOf(fields []StoreFormField, composeText string) []dbFieldSet {
 	keys := make([]string, 0, len(fields))
 	for _, f := range fields {
 		if f.EnvKey != "" {
@@ -2030,12 +2104,23 @@ func dbFieldSetOf(fields []StoreFormField, composeText string) *dbFieldSet {
 	for _, m := range regexp.MustCompile(`\$\{([A-Z0-9_]+)\}`).FindAllStringSubmatch(composeText, -1) {
 		keys = append(keys, m[1])
 	}
+	seen := map[string]bool{}
+	sets := make([]dbFieldSet, 0, 2)
 	for _, k := range keys {
 		if !dbFieldHostRe.MatchString(k) || !dbFieldHostStem.MatchString(strings.TrimSuffix(strings.TrimPrefix(k, "PANEL_"), "_HOST")) {
 			continue
 		}
 		prefix := strings.TrimSuffix(k, "HOST")
-		fs := &dbFieldSet{Host: k}
+		if seen[prefix] {
+			continue
+		}
+		seen[prefix] = true
+		kind := "sql"
+		stem := strings.TrimSuffix(strings.TrimPrefix(k, "PANEL_"), "_HOST")
+		if strings.Contains(stem, "REDIS") {
+			kind = "redis"
+		}
+		fs := dbFieldSet{Host: k, Kind: kind}
 		if hasKey(keys, prefix+"PORT") {
 			fs.Port = prefix + "PORT"
 		}
@@ -2058,9 +2143,9 @@ func dbFieldSetOf(fields []StoreFormField, composeText string) *dbFieldSet {
 				break
 			}
 		}
-		return fs
+		sets = append(sets, fs)
 	}
-	return nil
+	return sets
 }
 
 func hasKey(keys []string, k string) bool {
@@ -2087,24 +2172,90 @@ func mergedPGExtensions(declared, extra []string) []string {
 	return out
 }
 
-// applyExternalDB 外接实例落地：reveal 凭据 → 按需建库建号（幂等）→ 注入连接参数。
+// applyExternalDB 外接实例落地：识别全部键集（SQL/Redis 可并存）→ SQL 建库建号授权、Redis 只取凭据 → 注入连接参数。
 // 返回应用容器需要追加的 extra_hosts（同节点不同网络时为 host-gateway 解析条目，空表示无需）。
 func (s *StoreService) applyExternalDB(ctx context.Context, logf TaskLogf, ver StoreVersion, in StoreInstallInput, params map[string]string, composeText string) ([]string, error) {
 	ext := in.ExternalDB
-	fs := dbFieldSetOf(ver.FormFields, composeText)
-	if fs == nil || fs.Host == "" {
+	if ext == nil {
+		return nil, nil
+	}
+	sets := dbFieldSetsOf(ver.FormFields, composeText)
+	if len(sets) == 0 {
+		if ext.InstanceID == 0 && ext.RedisInstanceID == 0 {
+			return nil, nil // 无键集且未选实例：无外接意图，放行
+		}
 		return nil, errs.Wrap(errs.ErrBadRequest, "未识别到数据库连接参数（*_HOST）")
 	}
-	inst, err := s.dbs.ByID(ext.InstanceID)
+	var extraHosts []string
+	for _, fs := range sets {
+		var err error
+		if fs.Kind == "redis" {
+			if ext.RedisInstanceID == 0 {
+				continue
+			}
+			var eh []string
+			if eh, err = s.applyExternalRedis(ctx, logf, ext.RedisInstanceID, fs, in, params); err != nil {
+				return nil, err
+			}
+			extraHosts = append(extraHosts, eh...)
+			continue
+		}
+		if ext.InstanceID == 0 {
+			continue
+		}
+		var eh []string
+		if eh, err = s.applyExternalSQL(ctx, logf, ver, ext, fs, in, params); err != nil {
+			return nil, err
+		}
+		extraHosts = append(extraHosts, eh...)
+	}
+	return extraHosts, nil
+}
+
+// dbEndpoint 外接实例连接地址（M32/M55 三层策略）：同节点时应用容器内不搬宿主 IP——
+// ① 同一容器网络用「容器名:内部端口」docker DNS 直连；② 同节点不同网络用「host.docker.internal:映射端口」
+// 代指（调用方注入 extra_hosts host-gateway 解析；host 网络模式应用直接回环）；③ 跨节点或外部远端实例才搬 IP:端口。
+func (s *StoreService) dbEndpoint(ctx context.Context, logf TaskLogf, instanceID uint, in StoreInstallInput) (host, port string, inst *model.DatabaseInstance, extraHosts []string, err error) {
+	inst, err = s.dbs.ByID(instanceID)
+	if err != nil {
+		return "", "", nil, nil, err
+	}
+	info, err := s.dbs.ConnectInfo(ctx, instanceID)
+	if err != nil {
+		return "", "", nil, nil, errs.Wrapc(errs.CodeInternal, "读取实例连接信息失败: "+err.Error())
+	}
+	appNet := in.Network
+	if appNet == "" {
+		appNet = PanelNetwork
+	}
+	// M55 跨节点：docker 网络跨节点隔离，同节点才有 ①②；外部实例 host 为远端 IP 的视为跨机
+	sameNode := normalizeNodeID(in.NodeID) == "local" && instanceOnLocalHost(inst)
+	host, port = info.LanIP, info.MapPort
+	switch {
+	case sameNode && info.Container != "" && netListHas(info.Networks, appNet):
+		host, port = info.Container, info.InnerPort
+		logf("info", "实例容器与应用同在 %s 网络，连接地址使用 %s:%s（容器名直连）", appNet, host, port)
+	case sameNode && appNet == "host":
+		host = "127.0.0.1" // host 网络应用即宿主网络栈，回环直达映射端口
+		logf("info", "应用为 host 网络模式，连接地址使用 127.0.0.1:%s", port)
+	case sameNode:
+		host = "host.docker.internal"
+		extraHosts = append(extraHosts, HostGatewayExtraHost)
+		logf("info", "实例与应用同节点不同网络，连接地址使用 %s:%s（host 代指，已注入 host-gateway 解析）", host, port)
+	default:
+		logf("info", "实例与应用跨节点或为外部远端实例，连接地址使用 %s:%s", host, port)
+	}
+	return host, port, inst, extraHosts, nil
+}
+
+// applyExternalSQL SQL 类外接（mysql/postgres）：建库建号授权（幂等）→ PG 扩展 → 注入连接参数。
+func (s *StoreService) applyExternalSQL(ctx context.Context, logf TaskLogf, ver StoreVersion, ext *StoreExternalDB, fs dbFieldSet, in StoreInstallInput, params map[string]string) ([]string, error) {
+	host, port, inst, extraHosts, err := s.dbEndpoint(ctx, logf, ext.InstanceID, in)
 	if err != nil {
 		return nil, err
 	}
 	if inst.Type != "mysql" && inst.Type != "postgres" {
 		return nil, errs.Wrap(errs.ErrBadRequest, fmt.Sprintf("暂仅支持 mysql/postgres 实例外接，实例类型: %s", inst.Type))
-	}
-	info, err := s.dbs.ConnectInfo(ctx, ext.InstanceID)
-	if err != nil {
-		return nil, errs.Wrapc(errs.CodeInternal, "读取实例连接信息失败: "+err.Error())
 	}
 
 	dbName := ext.Database
@@ -2220,36 +2371,6 @@ func (s *StoreService) applyExternalDB(ctx context.Context, logf TaskLogf, ver S
 		}
 	}
 
-	// 连接地址策略（M32/M55，三层）：同节点时应用容器内不搬宿主 IP——
-	// ① 同一容器网络（实例容器接入应用所在网络）用「容器名:内部端口」docker DNS 直连；
-	// ② 同节点不同网络用「host.docker.internal:映射端口」代指（安装时自动注入 extra_hosts
-	//    host-gateway 解析，配置里零 IP，宿主换 IP 无需改应用配置；host 网络模式应用直接回环）；
-	// ③ 跨节点（或外部远端实例）才搬 IP:端口。实例凭据里的回环地址在应用容器内指向容器自身，必须改写。
-	appNet := in.Network
-	if appNet == "" {
-		appNet = PanelNetwork
-	}
-	// M55 跨节点：docker 网络跨节点隔离，同节点才有 ①②；外部实例 host 为远端 IP 的视为跨机
-	sameNode := normalizeNodeID(in.NodeID) == "local" && instanceOnLocalHost(inst)
-	host := info.LanIP
-	port := info.MapPort
-	var extraHosts []string
-	switch {
-	case sameNode && info.Container != "" && netListHas(info.Networks, appNet):
-		host = info.Container
-		port = info.InnerPort
-		logf("info", "实例容器与应用同在 %s 网络，连接地址使用 %s:%s（容器名直连）", appNet, host, port)
-	case sameNode && appNet == "host":
-		host = "127.0.0.1" // host 网络应用即宿主网络栈，回环直达映射端口
-		logf("info", "应用为 host 网络模式，连接地址使用 127.0.0.1:%s", port)
-	case sameNode:
-		host = "host.docker.internal"
-		extraHosts = append(extraHosts, HostGatewayExtraHost)
-		logf("info", "实例与应用同节点不同网络，连接地址使用 %s:%s（host 代指，已注入 host-gateway 解析）", host, port)
-	default:
-		logf("info", "实例与应用跨节点或为外部远端实例，连接地址使用 %s:%s", host, port)
-	}
-
 	if fs.Host != "" {
 		params[fs.Host] = host
 	}
@@ -2266,6 +2387,34 @@ func (s *StoreService) applyExternalDB(ctx context.Context, logf TaskLogf, ver S
 		params[fs.Password] = dbPass
 	}
 	logf("info", "已注入外接数据库参数（实例 %s，库 %s，账号 %s）", inst.Name, dbName, dbUser)
+	return extraHosts, nil
+}
+
+// applyExternalRedis Redis 外接（无建库建号语义）：reveal 实例密码 → 注入地址/端口/密码。
+func (s *StoreService) applyExternalRedis(ctx context.Context, logf TaskLogf, instanceID uint, fs dbFieldSet, in StoreInstallInput, params map[string]string) ([]string, error) {
+	host, port, inst, extraHosts, err := s.dbEndpoint(ctx, logf, instanceID, in)
+	if err != nil {
+		return nil, err
+	}
+	if inst.Type != "redis" {
+		return nil, errs.Wrap(errs.ErrBadRequest, fmt.Sprintf("Redis 键集需选择 Redis 实例，实例 %s 类型为 %s", inst.Name, inst.Type))
+	}
+	pwd := ""
+	if rv, rerr := s.dbs.Reveal(instanceID); rerr == nil {
+		if v, ok := rv["password"].(string); ok {
+			pwd = v
+		}
+	}
+	if fs.Host != "" {
+		params[fs.Host] = host
+	}
+	if fs.Port != "" {
+		params[fs.Port] = port
+	}
+	if fs.Password != "" {
+		params[fs.Password] = pwd
+	}
+	logf("info", "已注入外接 Redis 参数（实例 %s，%s:%s）", inst.Name, host, port)
 	return extraHosts, nil
 }
 

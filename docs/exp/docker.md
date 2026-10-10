@@ -71,8 +71,8 @@
 ### 商店应用 compose 的 env_file 变量未注入容器（Config.Env 只有 PATH）：force-recreate 重建即愈
 
 - **现象**：Harbor 重装后 core 反复 FATAL `failed to initialize cache: cache type  is not supported`（注意两个空格——type 为空串），jobservice/nginx 跟着崩溃循环；`docker inspect <core> .Config.Env` 只有 PATH 一项——compose `env_file`（prepare 生成的 ./common/config/core/env，含 _REDIS_URL_CORE）完全没注入。Harbor 2.15 core 的 cache type 取自 `_REDIS_URL_HARBOR`（缺省回退 `_REDIS_URL_CORE`）URL 的 scheme，env 缺失 → scheme 空串 → FATAL。库表 0 张（migrate 也没跑）。
-- **根因**：首轮 `docker compose up` 创建容器时 env_file 内容未进入容器定义（prepare 产物与 compose 解析时点的竞态，具体机制未深究）；容器创建后 compose 不会因 env_file 变化自动重建。
-- **规避/解决**：装完发现服务因"配置为空"类错误崩溃循环时，先 `docker inspect <c> --format '{{len .Config.Env}}'` 对比 env_file 期望项数；不一致直接 `cd <compose目录> && docker compose up -d --force-recreate` 按当前文件重建，一步恢复（142 harbor 重装实测：recreate 前 core env=1 项 PATH + 49 表 0 张，recreate 后 47 项 + 全家 healthy + 49 表齐）。
+- **根因**：**compose v2 在 up 命令开始的项目解析（project load）阶段就读取 env_file 内容**，不是容器创建时——首轮 up 时 init 服务（如 harbor prepare，restart: "no"）还没跑，env 文件是空占位（打包时为过 compose 校验而放），其余服务全部按「空 env_file」创建容器定义；prepare 完成后写入真实配置为时已晚。**必现、与竞态无关**（2026-10-11 harbor 两次重装均复现后定位，推翻此前「竞态」猜测）。容器创建后 compose 也不会因 env_file 变化自动重建。
+- **规避/解决**：①已踩现场：`docker inspect <c> --format '{{len .Config.Env}}'` 对比 env_file 期望项数，不一致直接 `cd <compose目录> && docker compose up -d --force-recreate` 一步恢复（142 harbor 实测 recreate 前 core env=1 项 PATH，recreate 后 47 项 + 全家 healthy）；②根治（2026-10-11 已实现）：面板安装流程 **init 服务先行**——deployCompose 在全量 up 前识别 compose 里 `restart: "no"` 的服务（composeInitServices），逐个 `docker compose up -d <svc>` 并轮询至 exited、ExitCode=0（失败取 logs 尾部中止安装），之后全量 up 时 env_file 已是真实内容，首轮即正常（142 harbor 重装实测 core 首轮 healthy，无需再 recreate）。
 - **来源**：2026-10-10，142 扩盘后恢复容器排障（app-harbor-test 重装 2.15.4）。
 
 ### syslog logging driver 用服务名做 syslog-address 是自举死锁：该服务自己永远起不来

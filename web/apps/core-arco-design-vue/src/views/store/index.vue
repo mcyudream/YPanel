@@ -203,6 +203,9 @@ const dbSource = ref<'default' | 'external'>('default')
 const installPrefilled = ref(false)
 const dbInstances = ref<DbInstance[]>([])
 const dbTarget = ref<{ instanceId: number, database: string, user: string, createIfMissing: boolean }>({ instanceId: 0, database: '', user: '', createIfMissing: true })
+const redisSource = ref<'default' | 'external'>('default')
+const redisInstances = ref<DbInstance[]>([])
+const redisTarget = ref<{ instanceId: number }>({ instanceId: 0 })
 
 const dbHostKey = computed(() => {
   for (const f of installFields.value) {
@@ -215,23 +218,48 @@ const dbHostKey = computed(() => {
   return ''
 })
 
+// Redis 键集独立于 SQL 键集（如 harbor 的 HARBOR_REDIS_*），可选纳管 Redis 实例自动注入地址/端口/密码
+const redisHostKey = computed(() => {
+  for (const f of installFields.value) {
+    const k = (f.envKey || '').toUpperCase()
+    if (k.endsWith('_HOST') && /REDIS/.test(k.replace(/^PANEL_/, '').replace(/_HOST$/, ''))) {
+      return f.envKey
+    }
+  }
+  return ''
+})
+
 // 数据库纳管模式下的字段前缀（如 DATABASE），这些原始字段由选择器接管注入
 const dbFieldPrefix = computed(() => (dbHostKey.value ? dbHostKey.value.replace(/_HOST$/, '') : ''))
+const redisFieldPrefix = computed(() => (redisHostKey.value ? redisHostKey.value.replace(/_HOST$/, '') : ''))
 
 function isDbManagedField(envKey?: string) {
-  if (!dbFieldPrefix.value || dbSource.value !== 'external') {
-    return false
-  }
   const k = (envKey || '').toUpperCase()
-  return k === dbFieldPrefix.value || k.startsWith(dbFieldPrefix.value + '_')
+  if (dbFieldPrefix.value && dbSource.value === 'external') {
+    if (k === dbFieldPrefix.value || k.startsWith(dbFieldPrefix.value + '_')) {
+      return true
+    }
+  }
+  if (redisFieldPrefix.value && redisSource.value === 'external') {
+    if (k === redisFieldPrefix.value || k.startsWith(redisFieldPrefix.value + '_')) {
+      return true
+    }
+  }
+  return false
 }
 
 async function loadDBInstances() {
-  if (dbInstances.value.length) {
+  if (dbInstances.value.length && redisInstances.value.length) {
     return
   }
   try {
-    dbInstances.value = ((await dbApi.list()) || []).filter(i => i.type === 'mysql' || i.type === 'postgres')
+    const all = (await dbApi.list()) || []
+    if (!dbInstances.value.length) {
+      dbInstances.value = all.filter(i => i.type === 'mysql' || i.type === 'postgres')
+    }
+    if (!redisInstances.value.length) {
+      redisInstances.value = all.filter(i => i.type === 'redis')
+    }
   }
   catch {}
 }
@@ -292,6 +320,8 @@ function applyInstallVersion(versions: StoreVersion[], versionId: string, prev?:
   installFields.value = (target.formFields || []).filter(f => f.envKey)
   dbSource.value = 'default'
   dbTarget.value = { instanceId: 0, database: '', user: '', createIfMissing: true }
+  redisSource.value = 'default'
+  redisTarget.value = { instanceId: 0 }
   const params: Record<string, string> = {}
   for (const f of installFields.value) {
     params[f.envKey] = fieldDefault(f)
@@ -418,12 +448,14 @@ async function doInstall() {
       timezone: installTZ.value ? installTZValue.value : '',
       extraHosts: installHosts.value.filter(h => h.host && h.ip).map(h => `${h.host}:${h.ip}`),
       mountHostsFile: installMountHosts.value,
-      externalDB: dbSource.value === 'external' && dbTarget.value.instanceId
+      externalDB: (dbSource.value === 'external' && dbTarget.value.instanceId)
+        || (redisSource.value === 'external' && redisTarget.value.instanceId)
         ? {
-            instanceId: dbTarget.value.instanceId,
+            instanceId: dbSource.value === 'external' ? dbTarget.value.instanceId : 0,
             database: dbTarget.value.database || undefined,
             user: dbTarget.value.user || undefined,
             createIfMissing: dbTarget.value.createIfMissing,
+            redisInstanceId: redisSource.value === 'external' ? redisTarget.value.instanceId : 0,
           }
         : undefined,
     })
@@ -1233,6 +1265,26 @@ function statusText(s: StoreSource) {
                 {{ $t('store.dbAutoCreate') }}
               </label>
             </div>
+          </div>
+        </div>
+        <div v-if="redisHostKey" class="flex items-start gap-3">
+          <span class="w-28 shrink-0 pt-2 text-sm text-muted-foreground">Redis</span>
+          <div class="flex min-w-0 flex-1 flex-col gap-2">
+            <YdSelect
+              v-model="redisSource"
+              :options="[
+                { label: $t('store.redisDefault'), value: 'default' },
+                { label: $t('store.redisExternal'), value: 'external' },
+              ]"
+              button-class="w-full"
+              @update:model-value="redisSource === 'external' && loadDBInstances()"
+            />
+            <YdSelect
+              v-if="redisSource === 'external'"
+              v-model="redisTarget.instanceId"
+              :options="[{ label: $t('store.redisPick'), value: 0, disabled: true }, ...redisInstances.map(i => ({ label: `${i.name}（:${i.port}）`, value: i.id }))]"
+              button-class="w-full"
+            />
           </div>
         </div>
         <template v-for="f in installFields" :key="f.envKey">

@@ -200,7 +200,7 @@ export const storeApi = {
   },
   saveInstallEnv: (project: string, content: string) =>
     api.put(`api/v1/store/installed/${encodeURIComponent(project)}/env`, { content }, { timeout: 300000 }),
-  install: async (data: { sourceId: number, key: string, version: string, name: string, params: Record<string, string>, domain?: string, nodeId?: string, network?: string, createNetwork?: boolean, timezone?: string, extraHosts?: string[], mountHostsFile?: boolean, externalDB?: { instanceId: number, database?: string, user?: string, createIfMissing?: boolean } }) => {
+  install: async (data: { sourceId: number, key: string, version: string, name: string, params: Record<string, string>, domain?: string, nodeId?: string, network?: string, createNetwork?: boolean, timezone?: string, extraHosts?: string[], mountHostsFile?: boolean, externalDB?: { instanceId: number, database?: string, user?: string, createIfMissing?: boolean, redisInstanceId?: number } }) => {
     const res = await api.post('api/v1/store/install', data, { timeout: 60000 })
     return res.data as { taskId: number, project: string }
   },
