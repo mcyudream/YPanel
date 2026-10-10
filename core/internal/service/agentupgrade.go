@@ -105,9 +105,17 @@ func (s *SelfUpdateService) UpgradeAgentTask(nodeId, source string) (map[string]
 
 // runAgentUpgrade 任务体：下载校验 → 推送 → detached 切换 → 心跳确认。
 func (s *SelfUpdateService) runAgentUpgrade(ctx context.Context, logf TaskLogf, nodeId, source string) error {
-	// 1) 取 Release 资产（tar 内含 ypagent，与面板同包）
+	// 1) 取 Release 资产（tar 内含 ypagent，与面板同包）；所选源不可达自动回落另一源
 	logf("info", "[1/5] 获取最新 Release（源：%s）…", source)
 	rel := release.FetchLatestRelease(ctx, source)
+	if !rel.Reachable || rel.AssetURL == "" {
+		other := "github"
+		if source == "github" {
+			other = "gitee"
+		}
+		logf("info", "%s 源不可达（%s），回落 %s 源…", source, rel.Error, other)
+		rel = release.FetchLatestRelease(ctx, other)
+	}
 	if !rel.Reachable || rel.AssetURL == "" {
 		return fmt.Errorf("Release 不可用: %s", rel.Error)
 	}
@@ -126,12 +134,32 @@ func (s *SelfUpdateService) runAgentUpgrade(ctx context.Context, logf TaskLogf, 
 	// 保留 Release 资产原始文件名（sha256sums.txt 条目按文件名匹配，写死名会对不上）
 	assetName := rel.AssetURL[strings.LastIndex(rel.AssetURL, "/")+1:]
 	tarPath := filepath.Join(tmpDir, assetName)
-	if err := httpDownload(ctx, rel.AssetURL, tarPath); err != nil {
+	plog := NewProgressLogger(logf, 2*time.Second)
+	var lastDone int64
+	last := time.Now()
+	dlStart := last
+	err = httpDownload(ctx, rel.AssetURL, tarPath, func(done, total int64) {
+		span := time.Since(last).Seconds()
+		if span <= 0 || done < lastDone {
+			return
+		}
+		speed := float64(done-lastDone) / span / 1048576
+		if total > 0 {
+			plog("下载中 %.1f/%.1f MB（%.1f MB/s，%.0f%%）", float64(done)/1048576, float64(total)/1048576, speed, float64(done)/float64(total)*100)
+		} else {
+			plog("已下载 %.1f MB（%.1f MB/s）", float64(done)/1048576, speed)
+		}
+		lastDone, last = done, time.Now()
+	})
+	if err != nil {
 		return fmt.Errorf("下载失败: %w", err)
+	}
+	if fi, ferr := os.Stat(tarPath); ferr == nil {
+		logf("info", "下载完成 %.1f MB（用时 %s）", float64(fi.Size())/1048576, time.Since(dlStart).Round(time.Second))
 	}
 	if rel.SumURL != "" {
 		sumPath := filepath.Join(tmpDir, "sha256sums.txt")
-		if err := httpDownload(ctx, rel.SumURL, sumPath); err == nil {
+		if err := httpDownload(ctx, rel.SumURL, sumPath, nil); err == nil {
 			if err := verifySha256File(tarPath, sumPath); err != nil {
 				return fmt.Errorf("sha256 校验失败: %w", err)
 			}
@@ -196,8 +224,9 @@ echo YPOK
 	return nil
 }
 
-// httpDownload 下载 URL 到文件（域名白名单由调用方负责）。
-func httpDownload(ctx context.Context, url, dst string) error {
+// httpDownload 下载 URL 到文件（域名白名单由调用方负责）；onProgress 非空时每约 2 秒回调
+// 一次已下载/总字节数（速度与百分比展示由调用方计算，Content-Length 未知时 total 为 -1/0）。
+func httpDownload(ctx context.Context, url, dst string, onProgress func(done, total int64)) error {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		return err
@@ -215,8 +244,28 @@ func httpDownload(ctx context.Context, url, dst string) error {
 		return err
 	}
 	defer func() { _ = f.Close() }()
-	_, err = io.Copy(f, resp.Body)
-	return err
+	var done int64
+	last := time.Now()
+	buf := make([]byte, 64*1024)
+	for {
+		n, rerr := resp.Body.Read(buf)
+		if n > 0 {
+			if _, werr := f.Write(buf[:n]); werr != nil {
+				return werr
+			}
+			done += int64(n)
+			if onProgress != nil && time.Since(last) >= 2*time.Second {
+				onProgress(done, resp.ContentLength)
+				last = time.Now()
+			}
+		}
+		if rerr == io.EOF {
+			return nil
+		}
+		if rerr != nil {
+			return rerr
+		}
+	}
 }
 
 // verifySha256File 按 sha256sums.txt 校验文件（行格式：<hex>  <name>，取首行匹配文件名的）。

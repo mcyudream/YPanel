@@ -24,7 +24,7 @@ export default {
   },
   remove: (id: string) => api.delete(`api/v1/nodes/${id}`),
   // M54 节点 agent 更新：一键更新（任务化，返回 taskId）
-  upgradeAgent: async (id: string, source: 'github' | 'gitee' = 'github') => {
+  upgradeAgent: async (id: string, source: 'github' | 'gitee' = 'gitee') => {
     const res = await api.post(`api/v1/nodes/${id}/upgrade-agent`, { source }, { timeout: 600000 })
     return res.data as { taskId: number }
   },
@@ -45,7 +45,7 @@ export const nodeAssetApi = {
     const res = await api.get(`api/v1/nodes/agent-update/check?node=${encodeURIComponent(nodeId)}`, { silent: true })
     return res.data as { nodeId: string, agentVersion: string, latest?: string, updatable: boolean, reason?: string }
   },
-  upgradeAgent: async (id: string, source: 'github' | 'gitee' = 'github') => {
+  upgradeAgent: async (id: string, source: 'github' | 'gitee' = 'gitee') => {
     const res = await api.post(`api/v1/nodes/${id}/upgrade-agent`, { source }, { timeout: 600000 })
     return res.data as { taskId: number }
   },
