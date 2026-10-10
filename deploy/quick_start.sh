@@ -202,20 +202,21 @@ resolve_asset() {
   [ -z "$resp" ] && err "无法从 Gitee/GitHub 获取最新版本信息（检查网络或用 --version 指定）"
   ASSET_TAR=$(printf '%s' "$resp" | grep -o '"browser_download_url":[[:space:]]*"[^"]*ypanel-linux-'"${PKG_ARCH}"'\.tar\.gz"' | head -1 | sed 's/.*"\(https[^"]*\)"/\1/')
   ASSET_SUM=$(printf '%s' "$resp" | grep -o '"browser_download_url":[[:space:]]*"[^"]*sha256sums\.txt"' | head -1 | sed 's/.*"\(https[^"]*\)"/\1/')
+  # Gitee Release 常缺大文件附件（CI runner 出口对 gitee 上传受限，附件由本地镜像脚本补传）：
+  # 资产不完整时回退 GitHub API 解析（GitHub Release 资产恒完整）
+  if { [ -z "$ASSET_TAR" ] || [ -z "$ASSET_SUM" ]; } && [ "$SOURCE" != "github" ]; then
+    warn "Gitee Release 资产不完整，回退 GitHub 源解析"
+    resp=$(curl -fsSL --connect-timeout 8 "https://api.github.com/repos/${REPO_GITHUB}/releases/latest" 2>/dev/null || true)
+    [ -z "$resp" ] && err "Release 资产不完整且 GitHub 不可达（缺 ypanel-linux-${PKG_ARCH}.tar.gz 或 sha256sums.txt）"
+    ASSET_TAR=$(printf '%s' "$resp" | grep -o '"browser_download_url":[[:space:]]*"[^"]*ypanel-linux-'"${PKG_ARCH}"'\.tar\.gz"' | head -1 | sed 's/.*"\(https[^"]*\)"/\1/')
+    ASSET_SUM=$(printf '%s' "$resp" | grep -o '"browser_download_url":[[:space:]]*"[^"]*sha256sums\.txt"' | head -1 | sed 's/.*"\(https[^"]*\)"/\1/')
+  fi
   [ -n "$ASSET_TAR" ] && [ -n "$ASSET_SUM" ] || err "Release 资产不完整（缺 ypanel-linux-${PKG_ARCH}.tar.gz 或 sha256sums.txt）"
 }
 
 resolve_asset
-# auto 模式经 GitHub API 解析出的地址在 github 域，统一回写 gitee 域（gitee 附件支持 releases/download 直链）
-if [ "$SOURCE" != "github" ]; then
-  case "$ASSET_TAR" in
-    https://gitee.com/*) ;;
-    *)
-      ASSET_TAR="${ASSET_TAR/https:\/\/github.com\/${REPO_GITHUB}\//https:\/\/gitee.com\/${REPO_GITEE}\/}"
-      ASSET_SUM="${ASSET_SUM/https:\/\/github.com\/${REPO_GITHUB}\//https:\/\/gitee.com\/${REPO_GITEE}\/}"
-      ;;
-  esac
-fi
+# auto 模式不再把 GitHub 直链改写为 gitee 域：gitee Release 附件可能缺大文件（镜像脚本未补传时
+# 缺失即 404）。需要国内加速时用 --source gitee 显式指定，并确保附件已由 deploy/mirror-release.sh 补全。
 
 # ---- 可选：安装 Docker（与面板「容器→一键安装」同一套源清单） ----
 install_docker() {
