@@ -162,3 +162,9 @@
 - **根因**：`urllib.request.Request(url, data, headers)` 在 `data=None` 且未显式传 `method=` 时按 data 推断方法，一律发 **GET**——POST/DELETE 调用实际全变成了 GET，落到 NoRoute。同理 `curl -X POST` 与 urllib 行为差异要分清。
 - **规避/解决**：Python 测试脚本构造 Request 一律显式 `method=method`；E2E 见到 NoRoute 404 先用 `curl -X POST` 直打同 URL 对照（142 本机 curl 立刻成功即暴露脚本问题），再怀疑服务端。另：iptables `-S` 对 `-d a.b.c.d` 恒显示为 `a.b.c.d/32`，断言字符串按显示形态写。
 - **来源**：2026-10-10，M58 NAT 接管 142 真机 E2E（假阴性 5 项，修正脚本后 20/20）。
+
+### 磁盘保护压停容器后的标准恢复序：扩容 → 一键恢复 → 竞态补拉，容器不会全自愈
+
+- **现象**：低水位触发保护后，unless-stopped 容器被停+改写重启策略（防复活）；处于触发态时**新起的容器也会被周期巡检压停**。恢复磁盘后按快照「一键恢复」拉起容器，仍有一批立刻变 Exited——restore 拉起与恢复前最后一个压制周期竞态，且 restore 只跑一次不会重试；触发后才装的容器（如磁盘满期间装的商店应用）不在快照里，永远没人拉。
+- **规避/解决**：恢复三步：① 扩容/清盘使余量回到阈值上（等一个巡检周期确认 `diskguard/status` 各节点 `triggered:false`、事件 restored_at 已写）；② 面板磁盘保护页一键恢复（按快照还原重启策略并 start）；③ 补拉：`docker ps -a` 里仍 Exited 的面板管理容器（`app-*`/`db-acc-*`，排除一次性 init 容器与已卸载残留）手动 `docker start`——快照还原过策略，start 一次即可长期自起。触发态未解除时**不要**急着 start 容器（会被再压停一轮）。
+- **来源**：2026-10-10，142 扩盘 24G→48G 后恢复全量容器实战（restore started 名单内半数被竞态停掉需补拉）。

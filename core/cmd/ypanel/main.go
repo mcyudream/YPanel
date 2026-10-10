@@ -126,10 +126,10 @@ func run(ctx context.Context, cfg *config.Config) error {
 	if entry, generated, err := secSvc.EnsureSafeEntry(); err == nil && generated {
 		slog.Info("安全入口已自动生成（强制策略）", "entry", "/"+entry)
 	}
-	alertSvc := service.NewAlertService(gdb, nodes, notifSvc, settings)
-	alertSvc.Start(ctx)
 	probeSvc := service.NewProbeService(gdb, nodes, notifSvc)
 	probeSvc.Start(ctx)
+	alertSvc := service.NewAlertService(gdb, nodes, notifSvc, settings)
+	alertSvc.Start(ctx)
 	histSvc := service.NewHistoryRecorder(gdb, nodes)
 	histSvc.Start(ctx)
 	// M55 磁盘空间保护：低水位自动停容器强制清理（配置走 SettingService，事件落库）
@@ -141,6 +141,8 @@ func run(ctx context.Context, cfg *config.Config) error {
 	dnsSvc := service.NewDnsService(gdb, nodes, settings)
 	hostsSvc := service.NewHostsService(gdb, nodes)
 	credSvc := service.NewGitCredService(gdb)
+	nginxSvc := service.NewNginxService(nodes)
+	logCentralSvc := service.NewLogCentralService(gdb, settings, nodes)
 	src2Svc := &service.Src2ComposeService{Nodes: nodes, Tasks: taskSvc, Creds: credSvc}
 	// M31：AI 工具治理升级——全量服务依赖装配（原 126 行 aiSvc 创建移至此处，确保全部依赖就绪）
 	aiSvc := service.NewAIService(gdb, service.AIDeps{
@@ -150,9 +152,10 @@ func run(ctx context.Context, cfg *config.Config) error {
 		FW: fwSvc, NAT: natSvc, Hosts: hostsSvc, DNS: dnsSvc, Cron: cronSvc,
 		Store: storeSvc, F2B: f2bSvc, Src2: src2Svc,
 		Alert: alertSvc, Hist: histSvc, Notif: notifSvc,
-		PanelBK: service.NewPanelBackupService(nodes), SU: suSvc, VPN: vpnSvc,
+		PanelBK: panelBkSvc, SU: suSvc, VPN: vpnSvc,
+		LogC: logCentralSvc, Rev: revSvc,
+		Nginx: nginxSvc, Probe: probeSvc, Creds: credSvc,
 	})
-	logCentralSvc := service.NewLogCentralService(gdb, settings, nodes)
 	alertSvc.SetLogCentral(logCentralSvc) // P3 日志量告警：VL 聚合计数（metric=log 规则）
 	// M51：桌面工作台内网浏览器——会话式反代网关（第二端口）
 	webgwSvc := service.NewWebGwService(ctx, settings)
@@ -163,7 +166,6 @@ func run(ctx context.Context, cfg *config.Config) error {
 	snapSvc := service.NewSnapshotService(gdb, nodes, panelBkSvc, settings)
 	sysSnapSvc := service.NewSystemSnapshotService(nodes, taskSvc, dbSvc, gdb, panelBkSvc)
 	ftpSvc := service.NewFtpService(nodes)
-	nginxSvc := service.NewNginxService(nodes)
 	sshGSvc := service.NewSshGuardService(nodes)
 	panelBkSvc.SetPruneFn(func(keep int) int { n, _ := snapSvc.Prune(context.Background(), "local", keep); return n })
 	mcpOpSvc := service.NewMCPOperationService(gdb)

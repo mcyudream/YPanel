@@ -67,3 +67,17 @@
 - **坑三：agent 写的实例编排文件名是 `compose.yaml` 不是 `docker-compose.yml`**——`/opt/ypanel/compose/<项目>/compose.yaml`，按后者的路径找文件会扑空（商店应用的则是 `docker-compose.yml`，两套命名并存）。
 - **附带**：安装向导「自定义 hosts」校验正则 `extraHostPattern` 只认 `域名:IP`，`host.docker.internal:host-gateway` 过不了——host-gateway 条目只能代码内注入（applyExternalDB 返回 extraHosts，合并进 override hosts 列表，去重）；php 应用跑共享运行时容器，host-gateway 注入对象是**运行时容器**而非应用（新建运行时模板已自带，复用的存量缺时 `EnsureHostGateway` 补写 compose 并 up -d 重建，站点闪断数秒）。
 - **来源**：2026-10-10 外接 DB 连接地址三层策略（core/internal/service/store.go / database.go / runtime.go；142 真机存量 5 实例补接）
+
+### 商店应用 compose 的 env_file 变量未注入容器（Config.Env 只有 PATH）：force-recreate 重建即愈
+
+- **现象**：Harbor 重装后 core 反复 FATAL `failed to initialize cache: cache type  is not supported`（注意两个空格——type 为空串），jobservice/nginx 跟着崩溃循环；`docker inspect <core> .Config.Env` 只有 PATH 一项——compose `env_file`（prepare 生成的 ./common/config/core/env，含 _REDIS_URL_CORE）完全没注入。Harbor 2.15 core 的 cache type 取自 `_REDIS_URL_HARBOR`（缺省回退 `_REDIS_URL_CORE`）URL 的 scheme，env 缺失 → scheme 空串 → FATAL。库表 0 张（migrate 也没跑）。
+- **根因**：首轮 `docker compose up` 创建容器时 env_file 内容未进入容器定义（prepare 产物与 compose 解析时点的竞态，具体机制未深究）；容器创建后 compose 不会因 env_file 变化自动重建。
+- **规避/解决**：装完发现服务因"配置为空"类错误崩溃循环时，先 `docker inspect <c> --format '{{len .Config.Env}}'` 对比 env_file 期望项数；不一致直接 `cd <compose目录> && docker compose up -d --force-recreate` 按当前文件重建，一步恢复（142 harbor 重装实测：recreate 前 core env=1 项 PATH + 49 表 0 张，recreate 后 47 项 + 全家 healthy + 49 表齐）。
+- **来源**：2026-10-10，142 扩盘后恢复容器排障（app-harbor-test 重装 2.15.4）。
+
+### syslog logging driver 用服务名做 syslog-address 是自举死锁：该服务自己永远起不来
+
+- **现象**：容器 `docker start` 报 `failed to initialize logging driver: dial tcp: lookup log on 127.0.0.53:53: server misbehaving`，且被它依赖的一串服务连锁 Created/崩溃循环。
+- **根因**：老版 Harbor 包给全部服务（**包括 log 服务自己**）配了 `logging: driver: syslog, options: syslog-address: tcp://log:10514`——syslog driver 在容器启动时初始化并解析地址，log 服务自己还没运行、compose DNS 里没有 `log`，解析失败直接挡死 start（连不上的 connect refused 只告警不挡，DNS 解析失败才挡）；其他服务在 log 停机期重启也会撞上。1Panel 官方用 `127.0.0.1:1514`+端口映射（IP 字面量可解析、连接失败异步重试）就是绕这个。
+- **规避/解决**：日志服务端容器自己**不要**配 syslog driver（用默认 json-file），只有采集客户端配；新版包已整体移除 syslog。历史残留容器 LogConfig 固化不可改，只能按新 compose `--force-recreate` 重建，或直接换新版包重装。
+- **来源**：2026-10-10，142 磁盘保护停机→恢复时 app-harbor-test 老包 db/log 容器永远起不来（同日已用新版包重装消除）。
