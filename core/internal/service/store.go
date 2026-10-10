@@ -134,6 +134,7 @@ type ypApps struct {
 	SourceURL    string     `json:"sourceUrl"` // 开源社区
 	Document     string     `json:"document"`  // 文档
 	ReverseProxy string     `json:"reverseProxy"`
+	AdminUI      *ypAdminUI `json:"adminUI"`
 	Versions     []ypVerion `json:"versions"`
 }
 
@@ -143,6 +144,13 @@ type ypVerion struct {
 	ReleaseNotes string      `json:"releaseNotes"`
 	Env          []ypEnvItem `json:"env"`
 	Ports        []ypPortDef `json:"ports"`
+}
+
+// ypAdminUI 内网管理界面声明：安装后注册到桌面工作台，点击经内网浏览器（gw 会话式反代）打开。
+type ypAdminUI struct {
+	Port string `json:"port"` // 端口 envKey（安装后从参数取实际映射端口）
+	Path string `json:"path"` // 管理界面路径（默认 /）
+	Name string `json:"name"` // 桌面图标显示名（缺省应用名）
 }
 
 type ypEnvItem struct {
@@ -596,11 +604,18 @@ func (s *StoreService) syncYpManifest(src *model.AppStoreSource, raw []byte, loc
 		if len(versions) == 0 {
 			continue
 		}
+			adminUIJSON := ""
+		if a.AdminUI != nil {
+			if b, merr := json.Marshal(a.AdminUI); merr == nil {
+				adminUIJSON = string(b)
+			}
+		}
 		rows = append(rows, model.AppStoreApp{
 			Key: a.ID, Name: a.Name, Title: a.Name,
 			Description: truncStr(a.Description, 500), ReadMe: readme,
 			IconURL: iconURL, Tags: a.Category, Kind: kind, Author: a.Author,
 			Arch: strings.Join(a.Arch, ","), ReverseProxy: a.ReverseProxy,
+			AdminUIJSON: adminUIJSON,
 			Website: truncStr(a.Website, 500), SourceURL: truncStr(a.SourceURL, 500), Document: truncStr(a.Document, 500),
 			VersionsJSON: marshalJSON(versions), LatestVersion: latestVersionOf(versions),
 		})
@@ -1568,6 +1583,13 @@ type StoreInstallInfo struct {
 	OwnerID        uint              `json:"ownerId"` // M54-P3 数据范围属主（0=公共）
 	CreatedAt      time.Time         `json:"createdAt"`
 	NodeID string `json:"nodeId"`
+	AdminUI *StoreAdminUI `json:"adminUI,omitempty"` // 内网管理界面（桌面注册用，URL 指向本机映射端口）
+}
+
+// StoreAdminUI 已装应用的内网管理界面信息。
+type StoreAdminUI struct {
+	Name string `json:"name"`
+	URL  string `json:"url"`
 }
 
 // InstalledDetailed 已安装详情聚合（含 compose 运行状态、应用元数据与安装参数）。
@@ -1579,7 +1601,7 @@ func (s *StoreService) InstalledDetailed(ctx context.Context) ([]StoreInstallInf
 	}
 	// 应用元数据（icon/名称/最新版本）
 	type appMeta struct {
-		name, icon, latest string
+		name, icon, latest, adminUI string
 	}
 	metas := map[string]appMeta{}
 	for _, i := range installs {
@@ -1588,8 +1610,8 @@ func (s *StoreService) InstalledDetailed(ctx context.Context) ([]StoreInstallInf
 			continue
 		}
 		var a model.AppStoreApp
-		if err := s.db.Select("name", "icon_url", "latest_version").Where("source_id = ? AND key = ?", i.SourceID, i.Key).First(&a).Error; err == nil {
-			metas[mk] = appMeta{name: a.Name, icon: a.IconURL, latest: a.LatestVersion}
+		if err := s.db.Select("name", "icon_url", "latest_version", "admin_ui_json").Where("source_id = ? AND key = ?", i.SourceID, i.Key).First(&a).Error; err == nil {
+			metas[mk] = appMeta{name: a.Name, icon: a.IconURL, latest: a.LatestVersion, adminUI: a.AdminUIJSON}
 		}
 	}
 	// compose 运行状态（M55：按节点分组路由查询）
@@ -1641,6 +1663,26 @@ func (s *StoreService) InstalledDetailed(ctx context.Context) ([]StoreInstallInf
 			}
 		}
 		sort.Ints(info.Ports)
+		if m, ok := metas[fmt.Sprintf("%d/%s", i.SourceID, i.Key)]; ok && m.adminUI != "" {
+			var ui struct {
+				Port string `json:"port"`
+				Path string `json:"path"`
+				Name string `json:"name"`
+			}
+			if json.Unmarshal([]byte(m.adminUI), &ui) == nil && ui.Port != "" {
+				if port := params[ui.Port]; port != "" {
+					path := ui.Path
+					if path == "" {
+						path = "/"
+					}
+					name := ui.Name
+					if name == "" {
+						name = info.AppName
+					}
+					info.AdminUI = &StoreAdminUI{Name: name, URL: fmt.Sprintf("http://127.0.0.1:%s%s", port, path)}
+				}
+			}
+		}
 		out = append(out, info)
 	}
 	return out, nil

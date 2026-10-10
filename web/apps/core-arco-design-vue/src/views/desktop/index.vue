@@ -23,11 +23,14 @@ import {
   useWebOS,
   WebOSProvider,
 } from '@yudream/yudream-webos-vue'
-import { useWindowsStore } from '@yudream/yudream-webos-arco'
-import { computed, markRaw, onBeforeUnmount, onMounted, provide, ref, watch } from 'vue'
+import { useAppsStore, useWindowsStore } from '@yudream/yudream-webos-arco'
+import { computed, defineComponent, h, markRaw, onBeforeUnmount, onMounted, provide, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { i18n } from '@/locales'
 import ContainerAppDetailApp from './apps/ContainerAppDetailApp.vue'
+import YdWebBrowser from '@/components/YdWebBrowser/index.vue'
+import { appIconSrc, storeApi } from '@/api/modules/store'
+
 import ContainerDetailApp from './apps/ContainerDetailApp.vue'
 import FileApp from './apps/FileApp.vue'
 import NodeDetailApp from './apps/NodeDetailApp.vue'
@@ -56,6 +59,7 @@ const registry = useAppRegistry()
 const { setSystemMenus } = useMenuBar()
 const theme = useSystemSettings()
 const os = useWebOS()
+const appsStore = useAppsStore()
 
 // AI 焦点窗口感知：记录最近聚焦的工作窗口（AI/设置除外），供智能窗对话注入场景上下文
 watch(() => windowsStore.focusedId, (id) => {
@@ -248,6 +252,57 @@ function onDockFileDrop({ appId, dataTransfer }: { appId: string, dataTransfer: 
 for (const app of [...ypanelApps, ...launcherApps, ...(isAdminAccount ? manageApps : []), ...detailApps, settingsApp, textEditorApp]) {
   registry.register(app)
 }
+
+// P3 商店应用桌面注册：已安装且声明 adminUI 的管理工具 → 桌面/启动台图标，点击经内网浏览器（gw 会话式反代）打开管理界面
+const storeDesktopApps = new Map<string, { url: string }>()
+async function refreshStoreDesktopApps() {
+  try {
+    const infos = await storeApi.installed()
+    const wanted = new Map<string, { name: string, icon: string, url: string }>()
+    for (const it of infos) {
+      if (!it.adminUI?.url) continue
+      wanted.set(`store-${it.composeProject}`, {
+        name: it.adminUI.name || it.appName || it.name,
+        icon: appIconSrc(it.iconUrl),
+        url: it.adminUI.url,
+      })
+    }
+    for (const [id, def] of wanted) {
+      if (storeDesktopApps.has(id)) continue
+      const url = def.url
+      appsStore.register({
+        id,
+        name: def.name,
+        icon: def.icon,
+        component: defineComponent({
+          name: 'StoreWebUIApp',
+          setup() {
+            return () => h(YdWebBrowser, { url })
+          },
+        }),
+        singleton: true,
+        defaultSize: { width: 1100, height: 720 },
+      })
+      storeDesktopApps.set(id, { url })
+    }
+    // 卸载/声明移除：注销应用并清理桌面残留图标
+    for (const id of [...storeDesktopApps.keys()]) {
+      if (!wanted.has(id)) {
+        appsStore.unregister(id)
+        storeDesktopApps.delete(id)
+        for (const item of os.desktop.list()) {
+          if (item.type === 'app' && item.refId === id) {
+            os.desktop.remove(item.id)
+          }
+        }
+      }
+    }
+  }
+  catch (e) {
+    console.warn('商店应用桌面注册失败', e)
+  }
+}
+void refreshStoreDesktopApps()
 /** M44：桌面布局导出/导入（服务器侧备份，跨浏览器/重装恢复） */
 const settingsApiLayout = () => import('@/api/modules/settings')
 

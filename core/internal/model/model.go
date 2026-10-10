@@ -140,6 +140,7 @@ type AppStoreApp struct {
 	Arch          string    `gorm:"size:64" json:"arch"` // 逗号分隔 amd64,arm64
 	VersionsJSON  string    `gorm:"type:text" json:"versionsJson"`
 	ReverseProxy  string    `gorm:"size:255" json:"reverseProxy"` // 一键反代声明的端口 env key（空=不支持）
+	AdminUIJSON   string    `gorm:"type:text" json:"adminUI"`     // 内网管理界面声明 JSON（port envKey/path/name；安装后注册到桌面，经内网浏览器打开）
 	Website       string    `gorm:"size:512" json:"website"`      // 官网地址
 	SourceURL     string    `gorm:"size:512" json:"sourceUrl"`    // 开源社区地址（github 等）
 	Document      string    `gorm:"size:512" json:"document"`     // 文档地址

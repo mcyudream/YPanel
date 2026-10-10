@@ -90,6 +90,7 @@ export interface StoreInstallInfo {
   createdAt: string
   ownerId: number
 	  nodeId?: string
+  adminUI?: { name: string, url: string }
 }
 
 export interface StoreAppItem extends StoreApp {
