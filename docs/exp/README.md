@@ -31,3 +31,4 @@
 - [frontend.md](./frontend.md) — fa 基座对接真实后端、vue-tsc 假性 TS6133、MSYS 路径转换、xterm 排障、lucide 图标名漂移
 - [deploy.md](./deploy.md) — Text file busy、纯 Go SQLite 交叉编译、敏感信息解析、systemd 排障、robocopy /MIR 方向与 dist 锁定处置
 - [logging.md](./logging.md) — LogsQL v2 语法（\|=/\~ 已废）、stream_field_values 必带 query、vector 自排日志、VL/Vector 镜像 tag 速记
+- [browser-automation.md](./browser-automation.md) — Edge headless 截图绝对路径、CDP 403 与挂死自愈、重启风暴反模式、ffmpeg 多输出抽帧坑、142 面板会话互踢、SPA locator click 超时走 dom_cua/坐标
