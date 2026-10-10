@@ -57,6 +57,24 @@ async function loadF2b() {
   }
 }
 
+// ---- fail2ban 一键安装 ----
+const f2bInstalling = ref(false)
+
+async function installF2b() {
+  f2bInstalling.value = true
+  toast.info(i18n.global.t('tools.brute.f2bInstalling'), { duration: 3000 })
+  try {
+    f2b.value = await fail2banApi.install()
+    toast.success(i18n.global.t('tools.brute.f2bInstallDone'))
+  }
+  catch (e: any) {
+    toast.error(i18n.global.t('tools.brute.f2bInstallFail'), { description: e?.message })
+  }
+  finally {
+    f2bInstalling.value = false
+  }
+}
+
 async function unbanIp(jail: string, ip: string) {
   unbanning.value = `${jail}:${ip}`
   try {
@@ -132,8 +150,11 @@ onMounted(() => {
               {{ $t('common.refresh') }}
             </FaButton>
           </div>
-          <div v-if="f2b && !f2b.available" class="text-xs text-muted-foreground mt-2">
-            {{ f2b.hint }}
+          <div v-if="f2b && !f2b.available" class="mt-2 flex gap-2 items-center">
+            <span class="text-xs text-muted-foreground">{{ f2b.hint }}</span>
+            <FaButton variant="outline" size="sm" class="ml-auto" :loading="f2bInstalling" @click="installF2b">
+              {{ $t('tools.brute.f2bInstall') }}
+            </FaButton>
           </div>
           <div v-if="f2b?.jails?.length" class="mt-3 space-y-2">
             <div v-for="j in f2b.jails" :key="j.name" class="text-xs px-3 py-2 border rounded-md">

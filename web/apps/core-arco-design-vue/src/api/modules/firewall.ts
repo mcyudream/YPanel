@@ -26,6 +26,7 @@ export const fail2banApi = {
     const res = await hnapi.get('api/v1/fail2ban/status', { silent: true })
     return res.data as { available: boolean, hint?: string, jails?: Fail2banJail[] }
   },
+  install: async () => hnapi.post('api/v1/fail2ban/install'),
   unban: (jail: string, ip: string) => hnapi.post('api/v1/fail2ban/unban', { jail, ip }),
   ban: (jail: string, ip: string) => hnapi.post('api/v1/fail2ban/ban', { jail, ip }),
 }

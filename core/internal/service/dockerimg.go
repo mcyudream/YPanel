@@ -66,7 +66,7 @@ func (s *DockerImgService) execRun(ctx context.Context, cmd string, timeout int)
 		return "", err
 	}
 	if out.ExitCode != 0 || out.TimedOut {
-		return out.Output, errs.Wrapc(errs.CodeFileOpFailed, "执行失败: "+firstLine(tail(out.Output, 1200)))
+		return out.Output, errs.Wrapc(errs.CodeFileOpFailed, "执行失败: "+lastLine(tail(out.Output, 1200)))
 	}
 	return out.Output, nil
 }
@@ -102,7 +102,7 @@ func (s *DockerImgService) Build(ctx context.Context, contextDir, dockerfile, ta
 	out, err := s.execRun(ctx, cmd, 1800)
 	if err != nil {
 		return map[string]any{"logFile": logFile, "output": out},
-			errs.Wrapc(errs.CodeFileOpFailed, fmt.Sprintf("构建失败（完整日志: %s）: %s", logFile, firstLine(tail(out, 400))))
+			errs.Wrapc(errs.CodeFileOpFailed, fmt.Sprintf("构建失败（完整日志: %s）: %s", logFile, lastLine(tail(out, 400))))
 	}
 	return map[string]any{"tag": tag, "logFile": logFile}, nil
 }

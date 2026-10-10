@@ -26,6 +26,21 @@ func (a *Fail2banAPI) Status(c *gin.Context) {
 	respOK(c, out)
 }
 
+// Install POST /api/v1/fail2ban/install（一键安装：apt/dnf/yum 多通道 + enable --now）。
+func (a *Fail2banAPI) Install(c *gin.Context) {
+	f2b, err := a.F2B.WithNode(c.Query("nodeId"))
+	if err != nil {
+		respErr(c, err)
+		return
+	}
+	out, err := f2b.Install(c.Request.Context())
+	if err != nil {
+		respErr(c, err)
+		return
+	}
+	respOK(c, out)
+}
+
 // Unban POST /api/v1/fail2ban/unban {jail, ip}
 func (a *Fail2banAPI) Unban(c *gin.Context) {
 	f2b, err := a.F2B.WithNode(c.Query("nodeId"))

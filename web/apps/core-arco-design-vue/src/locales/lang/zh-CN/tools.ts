@@ -116,5 +116,9 @@ export default {
     unbanned: '已解封 {ip}',
     unbanFail: '解封失败',
     noJails: '暂无激活的 jail',
+    f2bInstall: '一键安装',
+    f2bInstalling: '正在安装（首次需刷新软件源，约 1~3 分钟）…',
+    f2bInstallDone: 'fail2ban 已安装并启动',
+    f2bInstallFail: '安装失败',
   },
 }

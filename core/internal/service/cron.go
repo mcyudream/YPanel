@@ -377,3 +377,13 @@ func firstLine(s string) string {
 	}
 	return s
 }
+
+// lastLine 取最后一个非空行（错误摘要用：命令报错行通常在输出末尾，
+// 且不会被 tail 的「…[截断]」前缀行污染——firstLine(tail()) 组合会取到该前缀字面量）。
+func lastLine(s string) string {
+	s = strings.TrimRight(s, " \t\r\n")
+	if i := strings.LastIndex(s, "\n"); i >= 0 {
+		return s[i+1:]
+	}
+	return s
+}

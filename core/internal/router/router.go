@@ -499,6 +499,7 @@ func Setup(d *Deps) (*gin.Engine, error) {
 				authed.POST("/firewall/disable", pm("tool:firewall"), fwAPI.SetEnabled(false))
 
 				admin.GET("/fail2ban/status", pm("tool:bruteforce"), f2bAPI.Status)
+				admin.POST("/fail2ban/install", pm("tool:bruteforce"), f2bAPI.Install)
 				admin.POST("/fail2ban/unban", pm("tool:bruteforce"), f2bAPI.Unban)
 				admin.POST("/fail2ban/ban", pm("tool:bruteforce"), f2bAPI.Ban)
 

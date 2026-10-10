@@ -148,7 +148,7 @@ fi`, sshdConfFile, sshdConfFile, content, sshdConfFile, sshdConfFile)
 		return err
 	}
 	if !strings.Contains(out, "SSH_SET_OK") {
-		return errs.Wrapc(errs.CodeFileOpFailed, "sshd 校验未通过，已回滚: "+firstLine(tail(out, 300)))
+		return errs.Wrapc(errs.CodeFileOpFailed, "sshd 校验未通过，已回滚: "+lastLine(tail(out, 300)))
 	}
 	return nil
 }
@@ -374,7 +374,7 @@ cat "/root/.ssh/$YP_NAME.pub"`, keyType, bits)
 		return nil, errs.Wrap(errs.ErrBadRequest, "同名密钥已存在")
 	}
 	if code != 0 || !strings.Contains(out, "KEY_GEN_OK") {
-		return nil, errs.Wrapc(errs.CodeFileOpFailed, "生成密钥失败: "+firstLine(tail(out, 200)))
+		return nil, errs.Wrapc(errs.CodeFileOpFailed, "生成密钥失败: "+lastLine(tail(out, 200)))
 	}
 	k, pub := parseGenerateOutput(name, out)
 	if pub != "" {
@@ -432,7 +432,7 @@ ssh-keygen -lf "/root/.ssh/$YP_NAME.pub" 2>/dev/null`
 	case code == 3 || strings.Contains(out, "KEY_INVALID"):
 		return nil, errs.Wrap(errs.ErrBadRequest, "公钥格式不合法（ssh-keygen 校验未通过）")
 	case code != 0:
-		return nil, errs.Wrapc(errs.CodeFileOpFailed, "导入失败: "+firstLine(tail(out, 200)))
+		return nil, errs.Wrapc(errs.CodeFileOpFailed, "导入失败: "+lastLine(tail(out, 200)))
 	}
 	k := SshPubKey{Name: name, PublicKey: publicKey}
 	for _, line := range strings.Split(out, "\n") {
@@ -493,7 +493,7 @@ echo DEPLOY_OK`
 		return "", err
 	}
 	if code != 0 {
-		return "", errs.Wrapc(errs.CodeFileOpFailed, "分发失败: "+firstLine(tail(out, 200)))
+		return "", errs.Wrapc(errs.CodeFileOpFailed, "分发失败: "+lastLine(tail(out, 200)))
 	}
 	if strings.Contains(out, "DEPLOY_EXISTS") {
 		return "exists", nil
@@ -530,7 +530,7 @@ echo REVOKE_OK`
 		return "", err
 	}
 	if code != 0 {
-		return "", errs.Wrapc(errs.CodeFileOpFailed, "撤下失败: "+firstLine(tail(out, 200)))
+		return "", errs.Wrapc(errs.CodeFileOpFailed, "撤下失败: "+lastLine(tail(out, 200)))
 	}
 	if strings.Contains(out, "REVOKE_ABSENT") {
 		return "absent", nil

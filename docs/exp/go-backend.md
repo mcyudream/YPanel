@@ -335,3 +335,17 @@
 - **根因**：systemctl restart 在 agent HTTP handler 里同步 exec 且无上限（docker.io 的 TimeoutStop/StartUSec=infinity，可挂任意久）；写文件与重启之间没有恢复路径；错误信息止于 systemctl 表层。
 - **规避/解决**：① 重启类操作任务化——core 任务中心承载（StartTask + 独立 ctx + 20min 预算），HTTP 立即返回 taskId 前端轮询，彻底解耦前端超时；② agent 侧三件套：写前读原文件留底（含「原本不存在」分支）→ 重启失败取 `journalctl -u docker -n 30 --no-pager` 尾部拼进错误 → 自动回滚原配置并再次重启，恢复结果一并回报；③ systemctl 等待设上限（8min）且超时**不回滚**——超时只是客户端停止等待，systemd job 仍在后台继续，此时回滚会与进行中的重启互相踩踏，只报告「后台仍在继续」；④ dockerd 对 daemon.json 未知键会拒绝启动（`the following directives don't match any configuration option`），是验证回滚路径的安全注入点（坏配置→自动恢复，无残留）。
 - **来源**：2026-10-10，镜像源保存任务化 + agent daemon-config 加固（agent/server/daemon_handlers.go；142 真机双向验证：异步保存 0.06s 返回/任务 21s 成功，坏配置回滚 21.7s 恢复）。
+
+### firstLine(tail(out, N)) 组合必然吞掉真实报错：tail 的「…[截断]」前缀行被 firstLine 取走
+
+- **现象**：FTP 安装失败报错永远是「安装失败（仅支持 apt 系发行版）: …[截断]」——用户看到的「错误详情」就是这四个字加省略号，任何环境、任何失败原因都一样，无法排障。SSH 密钥分发/导入、Docker 镜像构建等同构报错全部同病。
+- **根因**：`tail(s, n)` 对超长输出加前缀 `"…[截断]\n"` 再取尾部 N 字符；`firstLine` 恰好取第一行——输出一超 N，报错里就只剩「…[截断]」这个字面量。另外命令侧 `apt-get install … 2>&1 | tail -3` 管道退出码取自 tail（恒 0），失败也会继续走 `&&` 链，错误只能靠末尾标记兜底。
+- **规避/解决**：错误摘要用 `lastLine(tail(out, N))`（新增辅助，取最后一个非空行）——报错行几乎都在输出末尾（如 apt 的 `E: Unable to locate package xxx`），且天然跳过 tail 前缀行；全仓 9 处（ftp×2/sshguard×5/dockerimg×2）已替换。命令侧不要靠管道截断输出还指望退出码，用 `command -v xxx` 装后回读验证代替。
+- **来源**：2026-10-10，FTP/fail2ban 一键安装排障（core/internal/service/{ftp,sshguard,dockerimg}.go；用户截图「…[截断]」实为该 bug 而非 UI 截断）。
+
+### 一键安装类命令（apt 系）缺 apt-get update：新机/空 lists 必报 Unable to locate package
+
+- **现象**：Ubuntu 节点点「安装 vsftpd」失败，报错却是误导性的「仅支持 apt 系发行版」——发行版明明就是 apt 系。新装 Ubuntu 或 lists 被清/过期的机器必现。
+- **根因**：安装命令写死 `apt-get install -y vsftpd` 没有 `apt-get update`（对比 nginx.go 的安装有 `-qq update`）；apt 在 lists 为空时不知道任何候选包。失败后统一兜底文案把真实原因盖掉了。
+- **规避/解决**：① apt 通道固定 `apt-get update -qq && apt-get install -y -qq <pkg>`；② 多通道用 `command -v apt-get/dnf/yum` 分支（dnf/yum 前置 `install -y epel-release` 的场景注意 fail2ban 在 EPEL）；③ 装后 `command -v <bin>` 回读验证再 `systemctl enable --now`，失败按输出末行报错并区分「无包管理器/源不可用」；④ 勿把失败一律归因为「发行版不支持」。修复后 142 实测：卸载 vsftpd + 清空 /var/lib/apt/lists 后面板安装 30s 自愈成功。
+- **来源**：2026-10-10，FTP/fail2ban 一键安装修复（core/internal/service/ftp.go、fail2ban.go；用户线上 Ubuntu 节点安装失败追溯）。

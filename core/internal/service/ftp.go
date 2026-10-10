@@ -101,14 +101,29 @@ func (s *FtpService) Status(ctx context.Context) (map[string]any, error) {
 	return st, nil
 }
 
-// Install 安装 vsftpd（Ubuntu/Debian apt；失败给出发行版提示）。
+// Install 安装 vsftpd（apt/dnf/yum 多通道；apt 先刷新索引——新机 lists 为空时直接
+// install 会报 Unable to locate package；装后以 command -v 回读验证，不依赖管道
+// 退出码（`| tail` 会吞掉 apt 的失败退出码）。
 func (s *FtpService) Install(ctx context.Context) (map[string]any, error) {
-	out, err := s.exec(ctx, `export DEBIAN_FRONTEND=noninteractive; apt-get install -y vsftpd 2>&1 | tail -3 && systemctl enable --now vsftpd && echo FTP_INSTALL_OK`, 600)
+	out, err := s.exec(ctx, `export DEBIAN_FRONTEND=noninteractive; `+
+		`if command -v apt-get >/dev/null 2>&1; then apt-get update -qq && apt-get install -y -qq vsftpd; `+
+		`elif command -v dnf >/dev/null 2>&1; then dnf install -y vsftpd; `+
+		`elif command -v yum >/dev/null 2>&1; then yum install -y vsftpd; `+
+		`else echo FTP_NO_PKG_MGR; fi; `+
+		`if command -v vsftpd >/dev/null 2>&1; then systemctl enable --now vsftpd && echo FTP_INSTALL_OK; `+
+		`else echo FTP_INSTALL_MISSING; fi`, 600)
 	if err != nil {
 		return nil, err
 	}
 	if !strings.Contains(out, "FTP_INSTALL_OK") {
-		return nil, errs.Wrapc(errs.CodeFileOpFailed, "安装失败（仅支持 apt 系发行版）: "+firstLine(tail(out, 300)))
+		msg := "安装失败: " + lastLine(tail(out, 300))
+		switch {
+		case strings.Contains(out, "FTP_NO_PKG_MGR"):
+			msg = "安装失败：未识别到 apt/dnf/yum 包管理器，暂不支持该发行版"
+		case strings.Contains(out, "FTP_INSTALL_MISSING"):
+			msg = "安装失败（软件源不可用或安装未成功）: " + lastLine(tail(out, 300))
+		}
+		return nil, errs.Wrapc(errs.CodeFileOpFailed, msg)
 	}
 	return s.Status(ctx)
 }
@@ -189,7 +204,7 @@ fi`
 		return err
 	}
 	if !strings.Contains(out, "FTP_CONF_OK") {
-		return errs.Wrapc(errs.CodeFileOpFailed, "重启 vsftpd 失败，已回滚: "+firstLine(tail(out, 300)))
+		return errs.Wrapc(errs.CodeFileOpFailed, "重启 vsftpd 失败，已回滚: "+lastLine(tail(out, 300)))
 	}
 	return nil
 }

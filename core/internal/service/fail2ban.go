@@ -59,6 +59,46 @@ func (s *Fail2banService) exec(ctx context.Context, args string) (string, int, e
 	return out.Output, out.ExitCode, nil
 }
 
+// execShell 执行任意 shell 命令（安装类操作用）。
+func (s *Fail2banService) execShell(ctx context.Context, cmd string, timeout int) (string, error) {
+	ac, err := s.client()
+	if err != nil {
+		return "", err
+	}
+	out, err := agentclient.DoJSON[dto.ExecReq, dto.ExecResp](ac, ctx, "POST", "/agent/v1/exec",
+		&dto.ExecReq{Command: cmd, TimeoutSecs: timeout})
+	if err != nil {
+		return "", err
+	}
+	return out.Output, nil
+}
+
+// Install 安装 fail2ban（apt/dnf/yum 多通道；RHEL 系经 EPEL；apt 先刷新索引，
+// 装后以 command -v 回读验证，失败携带真实输出末行）。
+func (s *Fail2banService) Install(ctx context.Context) (map[string]any, error) {
+	out, err := s.execShell(ctx, `export DEBIAN_FRONTEND=noninteractive; `+
+		`if command -v apt-get >/dev/null 2>&1; then apt-get update -qq && apt-get install -y -qq fail2ban; `+
+		`elif command -v dnf >/dev/null 2>&1; then dnf install -y epel-release && dnf install -y fail2ban; `+
+		`elif command -v yum >/dev/null 2>&1; then yum install -y epel-release && yum install -y fail2ban; `+
+		`else echo F2B_NO_PKG_MGR; fi; `+
+		`if command -v fail2ban-client >/dev/null 2>&1; then systemctl enable --now fail2ban && echo F2B_INSTALL_OK; `+
+		`else echo F2B_INSTALL_MISSING; fi`, 600)
+	if err != nil {
+		return nil, err
+	}
+	if !strings.Contains(out, "F2B_INSTALL_OK") {
+		msg := "安装失败: " + lastLine(tail(out, 300))
+		switch {
+		case strings.Contains(out, "F2B_NO_PKG_MGR"):
+			msg = "安装失败：未识别到 apt/dnf/yum 包管理器，暂不支持该发行版"
+		case strings.Contains(out, "F2B_INSTALL_MISSING"):
+			msg = "安装失败（软件源不可用或安装未成功，RHEL 系需 EPEL 可达）: " + lastLine(tail(out, 300))
+		}
+		return nil, errs.Wrapc(errs.CodeFileOpFailed, msg)
+	}
+	return s.Status(ctx)
+}
+
 // Status jail 列表与封禁情况。
 func (s *Fail2banService) Status(ctx context.Context) (map[string]any, error) {
 	out, code, err := s.exec(ctx, "status")
@@ -66,7 +106,7 @@ func (s *Fail2banService) Status(ctx context.Context) (map[string]any, error) {
 		return nil, err
 	}
 	if code != 0 {
-		return map[string]any{"available": false, "hint": "目标机未安装/未运行 fail2ban（apt install fail2ban && systemctl enable --now fail2ban）"}, nil
+		return map[string]any{"available": false, "hint": "目标机未安装/未运行 fail2ban，可在本页一键安装"}, nil
 	}
 	available := true
 	jails := []map[string]any{}

@@ -116,5 +116,9 @@ export default {
     unbanned: 'Unbanned {ip}',
     unbanFail: 'Unban failed',
     noJails: 'No active jails',
+    f2bInstall: 'Install',
+    f2bInstalling: 'Installing (refreshes package sources first, ~1-3 min)…',
+    f2bInstallDone: 'fail2ban installed and started',
+    f2bInstallFail: 'Install failed',
   },
 }
