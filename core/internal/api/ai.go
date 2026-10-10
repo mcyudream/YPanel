@@ -19,9 +19,15 @@ import (
 	"github.com/ypanel/shared/dto"
 )
 
-// callerCtx 将当前请求的授权上下文注入下游 ctx（AI 工具 / MCP 链路的权限校验依据）。
-// authed 路由上权限集必已注入；空集视为无任何权限（拒绝闭合）。
+// callerCtx 下游工具链路的授权 ctx：auth 中间件已在请求 ctx 注入完整 Caller
+// （权限集 + 节点范围 + 数据范围，超管 AllNodes=true），此处只透传；
+// 曾在此重建 Caller 丢失节点范围导致超管被「无节点权限」误拒（M33 修复）。
 func callerCtx(c *gin.Context) context.Context {
+	if caller, ok := rbac.CallerFrom(c.Request.Context()); ok {
+		_ = caller
+		return c.Request.Context()
+	}
+	// 兜底（无 auth 中间件的链路）：仅按权限集构建，节点范围闭合拒绝
 	set, _ := c.Get(middleware.CtxPerms)
 	permSet, _ := set.(map[string]struct{})
 	if permSet == nil {

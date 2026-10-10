@@ -249,13 +249,9 @@ var aiModulePerm = map[string][2]string{
 	"mcp":               {"mcp:manage", "mcp:manage"},
 }
 
-// CheckTool 校验调用者是否可执行该模块该风险级的工具（含节点范围：args.node/nodeId，缺省 local）。
-// ctx 未携带调用者信息时放行（面板内部链路）；拒绝时返回可向模型透出的错误。
-func CheckTool(ctx context.Context, module, risk, args string) error {
-	caller, ok := CallerFrom(ctx)
-	if !ok {
-		return nil
-	}
+// ToolPerm 工具模块 → 权限点（read 取读点，其余取写点；未知模块回落 ai:use/ai:admin）。
+// 供工具清单注入期过滤（无权限的工具直接不提供）与执行期闸共用。
+func ToolPerm(module, risk string) string {
 	key, known := aiModulePerm[module]
 	perm := key[1]
 	if risk == "read" {
@@ -267,6 +263,17 @@ func CheckTool(ctx context.Context, module, risk, args string) error {
 			perm = "ai:admin"
 		}
 	}
+	return perm
+}
+
+// CheckTool 校验调用者是否可执行该模块该风险级的工具（含节点范围：args.node/nodeId，缺省 local）。
+// ctx 未携带调用者信息时放行（面板内部链路）；拒绝时返回可向模型透出的错误。
+func CheckTool(ctx context.Context, module, risk, args string) error {
+	caller, ok := CallerFrom(ctx)
+	if !ok {
+		return nil
+	}
+	perm := ToolPerm(module, risk)
 	if !Match(caller.PermSet, perm) {
 		return fmt.Errorf("当前账号权限不足（缺少 %s），已拒绝执行该工具", perm)
 	}

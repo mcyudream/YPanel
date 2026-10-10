@@ -1071,6 +1071,17 @@ func (s *AIService) toolDefsFor(ctx context.Context, scenePath string, expanded 
 		}
 		defs = readonly
 	}
+	// 权限注入期过滤（M33）：调用者无对应权限点的工具直接不提供（而非执行时拒绝）；
+	// 节点范围依赖具体入参，仍在执行期闸校验
+	if caller, ok := rbac.CallerFrom(ctx); ok {
+		allowed := defs[:0]
+		for _, d := range defs {
+			if rbac.Match(caller.PermSet, rbac.ToolPerm(d.Module, d.Risk)) {
+				allowed = append(allowed, d)
+			}
+		}
+		defs = allowed
+	}
 	return defs
 }
 
