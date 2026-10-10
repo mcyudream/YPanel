@@ -740,9 +740,33 @@ func (s *AIService) acLocal() (*agentclient.Client, error) {
 	return agentclient.New(node.BaseURL, node.Token), nil
 }
 
+// aiNodeCtxKey 工具入参声明的目标节点（ctx 注入，helper 层统一消费）。
+type aiNodeCtxKey struct{}
+
+// withAINode 将工具入参的 node 字段注入 ctx（该次工具执行的所有 agent 调用打到目标节点）。
+func withAINode(ctx context.Context, node string) context.Context {
+	node = strings.TrimSpace(node)
+	if node == "" || node == "local" {
+		return ctx
+	}
+	return context.WithValue(ctx, aiNodeCtxKey{}, node)
+}
+
+// acFromCtx 工具 helper 的节点解析：ctx 携带目标节点用之（子节点 agent），否则 local。
+func (s *AIService) acFromCtx(ctx context.Context) (*agentclient.Client, error) {
+	if node, ok := ctx.Value(aiNodeCtxKey{}).(string); ok && node != "" {
+		n, err := s.nodes.ByID(node)
+		if err != nil || n == nil {
+			return nil, fmt.Errorf("节点不存在: %s", node)
+		}
+		return agentclient.New(n.BaseURL, n.Token), nil
+	}
+	return s.acLocal()
+}
+
 // hostExec 经 agent 通道在主机执行 shell（默认 120s 超时）。
 func (s *AIService) hostExec(ctx context.Context, command string) (string, error) {
-	ac, err := s.acLocal()
+	ac, err := s.acFromCtx(ctx)
 	if err != nil {
 		return "", err
 	}
@@ -763,7 +787,7 @@ func (s *AIService) hostExec(ctx context.Context, command string) (string, error
 
 // agentGetJSON 调 agent JSON 接口（包级泛型函数：Go 方法不允许类型参数）。
 func agentGetJSON[T any](s *AIService, ctx context.Context, path string) (*T, error) {
-	ac, err := s.acLocal()
+	ac, err := s.acFromCtx(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -772,7 +796,7 @@ func agentGetJSON[T any](s *AIService, ctx context.Context, path string) (*T, er
 
 // agentPostJSON 调 agent JSON 接口（POST）。
 func agentPostJSON[Req any, Resp any](s *AIService, ctx context.Context, path string, body *Req) (*Resp, error) {
-	ac, err := s.acLocal()
+	ac, err := s.acFromCtx(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -781,7 +805,7 @@ func agentPostJSON[Req any, Resp any](s *AIService, ctx context.Context, path st
 
 // agentText 调 agent 文本响应端点（容器/compose 日志等非信封端点）。
 func (s *AIService) agentText(ctx context.Context, path string) (string, error) {
-	ac, err := s.acLocal()
+	ac, err := s.acFromCtx(ctx)
 	if err != nil {
 		return "", err
 	}
@@ -813,7 +837,7 @@ func (s *AIService) hostExecTimeout(ctx context.Context, command string, timeout
 	if timeoutSecs < 1 || timeoutSecs > 300 {
 		timeoutSecs = 120
 	}
-	ac, err := s.acLocal()
+	ac, err := s.acFromCtx(ctx)
 	if err != nil {
 		return "", err
 	}

@@ -15,9 +15,18 @@ func (s *AIService) aiToolsSystem(ctx context.Context) []aiToolDef {
 	return []aiToolDef{
 		{
 			Name: "get_overview", Module: aiModSystem, Risk: aiRiskRead,
-			Desc: "获取服务器实时概览：CPU/内存/磁盘/负载/网络速率。input 传 {}。",
-			Parameters: schObj(map[string]any{}),
-			Fn: func(_ context.Context, _ string) (string, error) {
+			Desc: "获取服务器实时概览：CPU/内存/磁盘/负载/网络速率。input JSON：{\"node\":\"节点 ID 可选，默认 local\"}。",
+			Parameters: schObj(map[string]any{
+				"node": schStr("目标节点 ID，默认 local"),
+			}),
+			Fn: func(ctx context.Context, input string) (string, error) {
+				p, err := parseToolArgs[struct {
+					Node string `json:"node"`
+				}](input)
+				if err != nil {
+					return "", err
+				}
+				ctx = withAINode(ctx, p.Node)
 				ov, err := agentGetJSON[dto.SystemOverview](s, ctx, "/agent/v1/sysinfo/overview")
 				if err != nil {
 					return "", err
@@ -34,12 +43,13 @@ func (s *AIService) aiToolsSystem(ctx context.Context) []aiToolDef {
 			Name: "get_disk_usage", Module: aiModSystem, Risk: aiRiskRead,
 			Desc: "分析磁盘目录占用（usage tree，用于定位大文件/目录）。input JSON：{\"path\":\"/\",\"depth\":2}（path 默认 /，depth 默认 2）",
 			Parameters: schObj(map[string]any{
-				"path": schStr("起始目录绝对路径"), "depth": schInt("展开层级，默认 2"),
+				"path": schStr("起始目录绝对路径"), "depth": schInt("展开层级，默认 2"), "node": schStr("目标节点 ID（list_nodes 可查），默认 local"),
 			}),
 			Fn: func(_ context.Context, input string) (string, error) {
 				p, err := parseToolArgs[struct {
 					Path  string `json:"path"`
 					Depth int    `json:"depth"`
+					Node  string `json:"node"`
 				}](input)
 				if err != nil {
 					return "", err
@@ -53,6 +63,7 @@ func (s *AIService) aiToolsSystem(ctx context.Context) []aiToolDef {
 				if p.Depth > 4 {
 					p.Depth = 4
 				}
+				ctx = withAINode(ctx, p.Node)
 				raw, err := agentGetJSON[json.RawMessage](s, ctx, fmt.Sprintf("/agent/v1/disk/usage?path=%s&depth=%d", p.Path, p.Depth))
 				if err != nil {
 					return "", err
@@ -86,11 +97,13 @@ func (s *AIService) aiToolsProc(ctx context.Context) []aiToolDef {
 			Name: "list_processes", Module: aiModProc, Risk: aiRiskRead,
 			Desc: "列出主机进程（按 CPU/内存排序取头部）。input 可选 JSON：{\"sort\":\"cpu|mem\",\"order\":\"desc\",\"limit\":30,\"search\":\"进程名关键词\"}",
 			Parameters: schObj(map[string]any{
+				"node": schStr("目标节点 ID，默认 local"),
 				"sort": schEnum("排序字段", "cpu", "mem"), "order": schEnum("方向", "asc", "desc"),
 				"limit": schInt("条数上限，默认 30"), "search": schStr("进程名/命令行关键词"),
 			}),
 			Fn: func(_ context.Context, input string) (string, error) {
 				p, err := parseToolArgs[struct {
+					Node   string `json:"node"`
 					Sort   string `json:"sort"`
 					Order  string `json:"order"`
 					Limit  int    `json:"limit"`
@@ -111,6 +124,7 @@ func (s *AIService) aiToolsProc(ctx context.Context) []aiToolDef {
 				if p.Limit > 200 {
 					p.Limit = 200
 				}
+				ctx = withAINode(ctx, p.Node)
 				out, err := agentGetJSON[[]dto.ProcessItem](s, ctx, fmt.Sprintf("/agent/v1/processes?sort=%s&order=%s&limit=%d", p.Sort, p.Order, p.Limit))
 				if err != nil {
 					return "", err
@@ -131,14 +145,16 @@ func (s *AIService) aiToolsProc(ctx context.Context) []aiToolDef {
 		{
 			Name: "list_services", Module: aiModProc, Risk: aiRiskRead,
 			Desc: "列出 systemd 服务（加载/活动状态）。input 可选 JSON：{\"search\":\"服务名关键词\"}",
-			Parameters: schObj(map[string]any{"search": schStr("服务名关键词")}),
+			Parameters: schObj(map[string]any{"search": schStr("服务名关键词"), "node": schStr("目标节点，默认 local")}),
 			Fn: func(_ context.Context, input string) (string, error) {
 				p, err := parseToolArgs[struct {
 					Search string `json:"search"`
+					Node   string `json:"node"`
 				}](input)
 				if err != nil {
 					return "", err
 				}
+				ctx = withAINode(ctx, p.Node)
 				out, err := agentGetJSON[[]dto.ServiceItem](s, ctx, "/agent/v1/services")
 				if err != nil {
 					return "", err
@@ -159,14 +175,16 @@ func (s *AIService) aiToolsProc(ctx context.Context) []aiToolDef {
 		{
 			Name: "kill_process", Module: aiModProc, Risk: aiRiskDanger,
 			Desc: "终止进程（SIGKILL，可能造成服务中断/数据丢失，会先向用户确认）。input JSON：{\"pid\":1234}",
-			Parameters: schObj(map[string]any{"pid": schInt("进程 PID")}, "pid"),
+			Parameters: schObj(map[string]any{"pid": schInt("进程 PID"), "node": schStr("目标节点，默认 local")}, "pid", "node"),
 			Fn: func(_ context.Context, input string) (string, error) {
 				p, err := parseToolArgs[struct {
-					Pid int32 `json:"pid"`
+					Pid  int32  `json:"pid"`
+					Node string `json:"node"`
 				}](input)
 				if err != nil {
 					return "", err
 				}
+				ctx = withAINode(ctx, p.Node)
 				if p.Pid <= 1 {
 					return "", fmt.Errorf("拒绝终止 PID %d（系统关键进程）", p.Pid)
 				}
@@ -186,15 +204,18 @@ func (s *AIService) aiToolsProc(ctx context.Context) []aiToolDef {
 			Desc: "对 systemd 服务执行 start/stop/restart（stop/restart 会中断该服务，会先向用户确认）。input JSON：{\"name\":\"服务名\",\"action\":\"start|stop|restart\"}",
 			Parameters: schObj(map[string]any{
 				"name": schStr("服务名（如 nginx）"), "action": schEnum("操作", "start", "stop", "restart"),
-			}, "name", "action"),
+				"node": schStr("目标节点，默认 local"),
+			}, "name", "action", "node"),
 			Fn: func(_ context.Context, input string) (string, error) {
 				p, err := parseToolArgs[struct {
 					Name   string `json:"name"`
 					Action string `json:"action"`
+					Node   string `json:"node"`
 				}](input)
 				if err != nil {
 					return "", err
 				}
+				ctx = withAINode(ctx, p.Node)
 				if p.Action != "start" && p.Action != "stop" && p.Action != "restart" {
 					return "", fmt.Errorf("不支持的操作: %s", p.Action)
 				}

@@ -29,12 +29,13 @@ func (s *AIService) aiToolsDiag(ctx context.Context) []aiToolDef {
 			Name: "check_port", Module: aiModDiag, Risk: aiRiskRead,
 			Desc: "检查端口监听状态（哪些进程在监听该端口，tcp/udp）。input JSON：{\"port\":8080,\"proto\":\"tcp\"}",
 			Parameters: schObj(map[string]any{
-				"port": schInt("端口号"), "proto": schEnum("协议", "tcp", "udp"),
-			}, "port"),
-			Fn: func(_ context.Context, input string) (string, error) {
+				"port": schInt("端口号"), "proto": schEnum("协议", "tcp", "udp"), "node": schStr("目标节点，默认 local"),
+			}, "port", "node"),
+			Fn: func(ctx context.Context, input string) (string, error) {
 				p, err := parseToolArgs[struct {
 					Port  int    `json:"port"`
 					Proto string `json:"proto"`
+					Node  string `json:"node"`
 				}](input)
 				if err != nil {
 					return "", err
@@ -45,6 +46,7 @@ func (s *AIService) aiToolsDiag(ctx context.Context) []aiToolDef {
 				if p.Proto != "udp" {
 					p.Proto = "tcp"
 				}
+				ctx = withAINode(ctx, p.Node)
 				flag := "-tlnp"
 				if p.Proto == "udp" {
 					flag = "-ulnp"
@@ -56,12 +58,13 @@ func (s *AIService) aiToolsDiag(ctx context.Context) []aiToolDef {
 			Name: "http_probe", Module: aiModDiag, Risk: aiRiskRead,
 			Desc: "HTTP 探测：请求 URL 返回状态码与耗时（用于验证服务连通性，支持本机/内网地址）。input JSON：{\"url\":\"http://127.0.0.1:8080/health\",\"timeout\":5}",
 			Parameters: schObj(map[string]any{
-				"url": schStr("完整 URL（http/https）"), "timeout": schInt("超时秒数，默认 5"),
-			}, "url"),
-			Fn: func(_ context.Context, input string) (string, error) {
+				"url": schStr("完整 URL（http/https）"), "timeout": schInt("超时秒数，默认 5"), "node": schStr("目标节点，默认 local"),
+			}, "url", "node"),
+			Fn: func(ctx context.Context, input string) (string, error) {
 				p, err := parseToolArgs[struct {
 					URL     string `json:"url"`
 					Timeout int    `json:"timeout"`
+					Node    string `json:"node"`
 				}](input)
 				if err != nil {
 					return "", err
@@ -72,16 +75,18 @@ func (s *AIService) aiToolsDiag(ctx context.Context) []aiToolDef {
 				if p.Timeout < 1 || p.Timeout > 30 {
 					p.Timeout = 5
 				}
+				ctx = withAINode(ctx, p.Node)
 				return s.hostExec(ctx, fmt.Sprintf("curl -sS -m %d -o /dev/null -w 'HTTP %%{http_code}, %%{time_total}s' %s", p.Timeout, shellQuote(p.URL)))
 			},
 		},
 		{
 			Name: "dns_resolve", Module: aiModDiag, Risk: aiRiskRead,
 			Desc: "DNS 解析验证：解析域名返回 IP（验证 hosts/内网 DNS 是否生效）。input JSON：{\"domain\":\"nas.internal\"}",
-			Parameters: schObj(map[string]any{"domain": schStr("域名")}, "domain"),
-			Fn: func(_ context.Context, input string) (string, error) {
+			Parameters: schObj(map[string]any{"domain": schStr("域名"), "node": schStr("目标节点，默认 local")}, "domain", "node"),
+			Fn: func(ctx context.Context, input string) (string, error) {
 				p, err := parseToolArgs[struct {
 					Domain string `json:"domain"`
+					Node   string `json:"node"`
 				}](input)
 				if err != nil {
 					return "", err
@@ -89,6 +94,7 @@ func (s *AIService) aiToolsDiag(ctx context.Context) []aiToolDef {
 				if !diagDomainPattern.MatchString(p.Domain) {
 					return "", fmt.Errorf("域名不合法")
 				}
+				ctx = withAINode(ctx, p.Node)
 				return s.hostExec(ctx, "getent hosts "+shellQuote(p.Domain)+" || nslookup "+shellQuote(p.Domain)+" 2>&1 | tail -4")
 			},
 		},
@@ -97,11 +103,13 @@ func (s *AIService) aiToolsDiag(ctx context.Context) []aiToolDef {
 			Desc: "查看 systemd 服务日志尾部（服务排障第一入口；配合 list_services 找服务名）。input JSON：{\"unit\":\"nginx\",\"lines\":100}",
 			Parameters: schObj(map[string]any{
 				"unit": schStr("服务单元名（如 nginx / ypanel，@结尾实例如 ssh@）"), "lines": schInt("尾部行数，默认 100"),
+				"node": schStr("目标节点，默认 local"),
 			}, "unit"),
-			Fn: func(_ context.Context, input string) (string, error) {
+			Fn: func(ctx context.Context, input string) (string, error) {
 				p, err := parseToolArgs[struct {
 					Unit  string `json:"unit"`
 					Lines int    `json:"lines"`
+					Node  string `json:"node"`
 				}](input)
 				if err != nil {
 					return "", err
@@ -115,6 +123,7 @@ func (s *AIService) aiToolsDiag(ctx context.Context) []aiToolDef {
 				if p.Lines > 500 {
 					p.Lines = 500
 				}
+				ctx = withAINode(ctx, p.Node)
 				return s.hostExec(ctx, fmt.Sprintf("journalctl -u %s -n %d --no-pager", shellQuote(p.Unit), p.Lines))
 			},
 		},
@@ -122,12 +131,13 @@ func (s *AIService) aiToolsDiag(ctx context.Context) []aiToolDef {
 			Name: "download_file", Module: aiModDiag, Risk: aiRiskWrite,
 			Desc: "从 URL 下载文件到服务器（部署脚本/安装包等，会先向用户确认）。input JSON：{\"url\":\"https://...\",\"path\":\"/opt/down/pkg.tar.gz\"}",
 			Parameters: schObj(map[string]any{
-				"url": schStr("下载地址（http/https）"), "path": schStr("保存绝对路径"),
-			}, "url", "path"),
-			Fn: func(_ context.Context, input string) (string, error) {
+				"url": schStr("下载地址（http/https）"), "path": schStr("保存绝对路径"), "node": schStr("目标节点，默认 local"),
+			}, "url", "path", "node"),
+			Fn: func(ctx context.Context, input string) (string, error) {
 				p, err := parseToolArgs[struct {
 					URL  string `json:"url"`
 					Path string `json:"path"`
+					Node string `json:"node"`
 				}](input)
 				if err != nil {
 					return "", err
@@ -135,6 +145,7 @@ func (s *AIService) aiToolsDiag(ctx context.Context) []aiToolDef {
 				if !diagURLPattern.MatchString(p.URL) || !diagPathPattern.MatchString(p.Path) {
 					return "", fmt.Errorf("url 或 path 不合法")
 				}
+				ctx = withAINode(ctx, p.Node)
 				out, err := s.hostExec(ctx, fmt.Sprintf("curl -fsSL -m 300 --create-dirs -o %s %s && ls -la %s", shellQuote(p.Path), shellQuote(p.URL), shellQuote(p.Path)))
 				if err != nil {
 					return "", err
@@ -146,7 +157,7 @@ func (s *AIService) aiToolsDiag(ctx context.Context) []aiToolDef {
 			Name: "list_fail2ban", Module: aiModNetSec, Risk: aiRiskRead,
 			Desc: "查看 fail2ban 状态与封禁列表（各 jail 的当前封禁 IP）。input 传 {}。",
 			Parameters: schObj(map[string]any{}),
-			Fn: func(_ context.Context, _ string) (string, error) {
+			Fn: func(ctx context.Context, _ string) (string, error) {
 				out, err := s.f2b.Status(ctx)
 				if err != nil {
 					return "", err
@@ -160,7 +171,7 @@ func (s *AIService) aiToolsDiag(ctx context.Context) []aiToolDef {
 			Parameters: schObj(map[string]any{
 				"jail": schStr("jail 名（list_fail2ban 可查）"), "ip": schStr("要封禁的 IP"),
 			}, "jail", "ip"),
-			Fn: func(_ context.Context, input string) (string, error) {
+			Fn: func(ctx context.Context, input string) (string, error) {
 				p, err := parseToolArgs[struct {
 					Jail string `json:"jail"`
 					IP   string `json:"ip"`
@@ -183,7 +194,7 @@ func (s *AIService) aiToolsDiag(ctx context.Context) []aiToolDef {
 			Parameters: schObj(map[string]any{
 				"jail": schStr("jail 名"), "ip": schStr("要解封的 IP"),
 			}, "jail", "ip"),
-			Fn: func(_ context.Context, input string) (string, error) {
+			Fn: func(ctx context.Context, input string) (string, error) {
 				p, err := parseToolArgs[struct {
 					Jail string `json:"jail"`
 					IP   string `json:"ip"`
