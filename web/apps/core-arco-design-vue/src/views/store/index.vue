@@ -200,6 +200,7 @@ const installTZValue = ref('Asia/Shanghai')
 const installMountHosts = ref(false)
 // M32：外接数据库实例（识别到 *_HOST 数据库参数时提供「使用已有实例」选择）
 const dbSource = ref<'default' | 'external'>('default')
+const installPrefilled = ref(false)
 const dbInstances = ref<DbInstance[]>([])
 const dbTarget = ref<{ instanceId: number, database: string, user: string, createIfMissing: boolean }>({ instanceId: 0, database: '', user: '', createIfMissing: true })
 
@@ -271,7 +272,7 @@ function fieldLabel(f: { label: Record<string, string>, envKey?: string }) {
   return f.label?.zh || f.label?.en || f.envKey || ''
 }
 
-function applyInstallVersion(versions: StoreVersion[], versionId: string) {
+function applyInstallVersion(versions: StoreVersion[], versionId: string, prev?: StoreInstallInfo) {
   const target = versions.find(v => v.id === versionId) || versions[0]
   if (!target) {
     return
@@ -283,6 +284,18 @@ function applyInstallVersion(versions: StoreVersion[], versionId: string) {
   const params: Record<string, string> = {}
   for (const f of installFields.value) {
     params[f.envKey] = fieldDefault(f)
+  }
+  // P3 重装沿用参数：同应用已装实例的上次参数覆盖默认值（字段仍可编辑）
+  installPrefilled.value = !!prev
+  if (prev && prev.name) {
+    installForm.value.name = prev.name
+  }
+  if (prev) {
+    for (const [k, v] of Object.entries(prev.params || {})) {
+      if (k in params && v) {
+        params[k] = v
+      }
+    }
   }
   installForm.value.params = params
 }
@@ -331,7 +344,7 @@ async function loadNetworks() {
   catch {}
 }
 
-function openInstall(item: StoreAppItem, versionId = '') {
+async function openInstall(item: StoreAppItem, versionId = '') {
   installTarget.value = item
   installProxyEnv.value = item.reverseProxy
   netSel.value = 'ypanel_default'
@@ -344,17 +357,25 @@ function openInstall(item: StoreAppItem, versionId = '') {
   installForm.value = { version: versionId || item.latestVersion || '', name: item.key, domain: '', params: {} }
   installTaskId.value = 0
   installTask.value = null
+  // P3 重装沿用参数：确保已装列表就绪，取同应用已装实例（默认 tab 下 installedInfos 为空需补拉）
+  if (!installedInfos.value.length) {
+    try {
+      await loadInstalled()
+    }
+    catch {}
+  }
+  const prevInstall = installedInfos.value.find(i => i.sourceId === item.sourceId && i.key === item.key)
   // 优先复用详情抽屉已加载的版本；否则异步拉取
   if (detailApp.value?.sourceId === item.sourceId && detailApp.value?.key === item.key && detailVersions.value.length) {
     installVersions.value = detailVersions.value
-    applyInstallVersion(detailVersions.value, installForm.value.version)
+    applyInstallVersion(detailVersions.value, installForm.value.version, prevInstall)
   }
   else {
     installVersions.value = []
     installFields.value = []
     storeApi.get(item.sourceId, item.key).then((out) => {
       installVersions.value = out.versions
-      applyInstallVersion(out.versions, installForm.value.version)
+      applyInstallVersion(out.versions, installForm.value.version, prevInstall)
     }).catch(() => {})
   }
   installVisible.value = true
@@ -1168,6 +1189,9 @@ function statusText(s: StoreSource) {
           <select v-model="installForm.version" class="h-9 flex-1 rounded-md border border-input bg-background px-2 text-sm outline-none">
             <option v-for="v in installVersions" :key="v.id" :value="v.id">{{ v.name || v.id }}</option>
           </select>
+        </div>
+        <div v-if="installPrefilled" class="-mt-1 text-xs text-muted-foreground">
+          {{ $t('store.prefillHint') }}
         </div>
         <div v-if="dbHostKey" class="flex items-start gap-3">
           <span class="w-28 shrink-0 pt-2 text-sm text-muted-foreground">{{ $t('store.database') }}</span>

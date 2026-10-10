@@ -40,8 +40,12 @@ type phpAppManifest struct {
 		Engine string `json:"engine"` // mysql / pg（声明后向导出现「数据库」下拉：应用自带或纳管实例自动建库）
 		Create bool   `json:"create"`
 	} `json:"database"`
-	Install  []string `json:"install"`  // 安装命令序列（运行时容器内、站点目录下执行）
-	Source   string   `json:"source"`   // 包内源码目录（相对 package，默认 source/）
+	Upgrade struct {
+		Commands []string `json:"commands"` // 版本变更时执行的升级命令（缺省回落 install 命令）
+		Backup   bool     `json:"backup"`   // 升级/重装前备份站点目录到 /opt/ypanel/backups/php/
+	} `json:"upgrade"`
+	Install   []string `json:"install"`  // 安装命令序列（运行时容器内、站点目录下执行）
+	Source    string   `json:"source"`   // 包内源码目录（相对 package，默认 source/）
 	SourceURL string  `json:"sourceUrl"` // 远端源码包（zip/tar.gz 直链，优先于包内 source/；如发行版 zip 放 Gitee/GitHub Release 资产）
 }
 
@@ -122,12 +126,21 @@ func phpExtSuperset(envJSON string, required []string) bool {
 // runInstallPHP php 应用安装主体（异步任务闭包）。
 func (s *StoreService) runInstallPHP(ctx context.Context, logf TaskLogf, app model.AppStoreApp, ver StoreVersion, in StoreInstallInput, project string, params map[string]string) error {
 	nodeId := normalizeNodeID(in.NodeID)
+	ac, err := s.clientFor(in.NodeID)
+	if err != nil {
+		return err
+	}
 
-	// 重装场景：移除同名旧站点（配置与源码随后重建）
+	// 重装/升级判定：已有同名安装记录即重装；版本变更且声明了 upgrade.commands 时走升级命令
+	var oldInstall model.AppStoreInstall
+	hasOld := s.db.Where("compose_project = ? AND node_id = ?", project, nodeId).First(&oldInstall).Error == nil
+	isUpgrade := hasOld && oldInstall.Version != ver.ID
+
+	// 重装场景：移除同名旧站点记录——站点目录文件保留（.env/storage 等用户数据随目录存续，源码原位覆盖）
 	var oldSite model.Site
 	if err := s.db.Where("name = ?", project).First(&oldSite).Error; err == nil {
-		logf("info", "已移除同名旧站点（重装）")
-		if err := s.sites.Delete(ctx, oldSite.ID, SiteDeleteOptions{PurgeFiles: true}); err != nil {
+		logf("info", "已移除同名旧站点记录（重装，站点目录数据保留）")
+		if err := s.sites.Delete(ctx, oldSite.ID, SiteDeleteOptions{PurgeFiles: false}); err != nil {
 			return errs.Wrapc(errs.CodeFileOpFailed, "移除旧站点失败: "+err.Error())
 		}
 	}
@@ -141,6 +154,24 @@ func (s *StoreService) runInstallPHP(ctx context.Context, logf TaskLogf, app mod
 	mf, err := loadPHPManifest(filepath.Join(pkgDir, "app.json"))
 	if err != nil {
 		return errs.Wrapc(errs.CodeFileOpFailed, "读取应用清单失败: "+err.Error())
+	}
+
+	// 1.5 备份钩子：应用声明 upgrade.backup 且为重装时，先打包站点目录（含 .env/storage/材质等全部数据）
+	if hasOld && mf.Upgrade.Backup {
+		backupDir := "/opt/ypanel/backups/php"
+		backupFile := fmt.Sprintf("%s/%s-%s-%s.tgz", backupDir, project, ver.ID, time.Now().Format("20060102150405"))
+		bout, berr := agentclient.DoJSON[dto.ExecReq, dto.ExecResp](ac, ctx, "POST", "/agent/v1/exec",
+			&dto.ExecReq{Command: fmt.Sprintf("mkdir -p %s && tar czf %s -C /opt/ypanel/nginx/www/sites %s", backupDir, backupFile, project), TimeoutSecs: 600})
+		if berr != nil || bout.ExitCode != 0 {
+			detail := ""
+			if berr != nil {
+				detail = berr.Error()
+			} else {
+				detail = tailOutput(bout.Output, 300)
+			}
+			return errs.Wrapc(errs.CodeFileOpFailed, "站点备份失败（已中止升级，数据未动）: "+detail)
+		}
+		logf("info", "站点已备份 → %s", backupFile)
 	}
 
 	// 2. PHP 版本与必需扩展
@@ -259,10 +290,6 @@ func (s *StoreService) runInstallPHP(ctx context.Context, logf TaskLogf, app mod
 	logf("info", "站点已创建：%s（%s:%d）", site.Name, params["SITE_DOMAIN"], port)
 
 	// 5. 源码落盘：站点根 /opt/ypanel/nginx/www/sites/<name>/（nginx 与 php 容器共享挂载 /var/www）
-	ac, err := s.clientFor(in.NodeID)
-	if err != nil {
-		return err
-	}
 	siteDir := "/opt/ypanel/nginx/www/sites/" + project
 	srcURL := strings.TrimSpace(mf.SourceURL)
 	usesPkg := srcURL == "" // 无远端/资产声明时使用包内 source/ 目录
@@ -375,8 +402,13 @@ fi`, siteDir)
 		logf("warn", "站点目录属主调整失败（Web 向导可能无法写入配置）")
 	}
 
-	// 6. 应用安装命令（运行时容器内、站点目录下逐条执行）
-	for _, cmd := range mf.Install {
+	// 6. 应用安装/升级命令（运行时容器内、站点目录下逐条执行）
+	cmds := mf.Install
+	if isUpgrade && len(mf.Upgrade.Commands) > 0 {
+		cmds = mf.Upgrade.Commands
+		logf("info", "检测到版本变更（%s → %s），执行升级命令", oldInstall.Version, ver.ID)
+	}
+	for _, cmd := range cmds {
 		full := fmt.Sprintf("docker exec %s sh -c 'cd /var/www/sites/%s && %s'", rt.ContainerName, project, cmd)
 		out, oerr := agentclient.DoJSON[dto.ExecReq, dto.ExecResp](ac, ctx, "POST", "/agent/v1/exec",
 			&dto.ExecReq{Command: full, TimeoutSecs: 600})
