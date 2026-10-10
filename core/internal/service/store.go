@@ -18,7 +18,6 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
-	"net"
 	"net/http"
 	"os"
 	"os/exec"
@@ -1594,7 +1593,6 @@ type StoreAdminUI struct {
 
 // InstalledDetailed 已安装详情聚合（含 compose 运行状态、应用元数据与安装参数）。
 func (s *StoreService) InstalledDetailed(ctx context.Context, reqHost string) ([]StoreInstallInfo, error) {
-	reqHostname := requestHostname(reqHost)
 	installs := s.Installed()
 	installs = ownerFilterInstalls(ctx, installs)
 	if len(installs) == 0 {
@@ -1680,8 +1678,7 @@ func (s *StoreService) InstalledDetailed(ctx context.Context, reqHost string) ([
 					if name == "" {
 						name = info.AppName
 					}
-					// 地址面向「当前访问面板的浏览器」：host 用请求 hostname，用户浏览器与桌面窗口均可直达
-					info.AdminUI = &StoreAdminUI{Name: name, URL: fmt.Sprintf("http://%s:%s%s", reqHostname, port, path)}
+					info.AdminUI = &StoreAdminUI{Name: name, URL: fmt.Sprintf("http://127.0.0.1:%s%s", port, path)}
 				}
 			}
 		}
@@ -1692,16 +1689,6 @@ func (s *StoreService) InstalledDetailed(ctx context.Context, reqHost string) ([
 
 // InstalledAction 已安装应用操作：start / stop / restart / rebuild。
 // requestHostname 从请求 Host 头提取主机名（去端口；空回退 127.0.0.1）。
-func requestHostname(host string) string {
-	if h, _, err := net.SplitHostPort(host); err == nil && h != "" {
-		return h
-	}
-	if host != "" && !strings.Contains(host, ":") {
-		return host
-	}
-	return "127.0.0.1"
-}
-
 // InstalledAction 已安装应用操作：start / stop / restart / rebuild。
 func (s *StoreService) InstalledAction(ctx context.Context, project, action, nodeId string) error {
 	if !storeAppNamePattern.MatchString(strings.TrimPrefix(project, "app-")) {
