@@ -494,6 +494,8 @@ type NatForwardRule struct {
 	TargetPort    int       `gorm:"not null" json:"targetPort"`
 	TargetPortEnd int       `gorm:"not null;default:0" json:"targetPortEnd"` // 0 = 单端口
 	Iface         string    `gorm:"size:32" json:"iface"`                    // 空 = 所有网卡
+	DestIP        string    `gorm:"size:64" json:"destIp"`                   // 目标地址匹配（内核 -d，M58）；空 = 不限，仅单 IP
+	SrcSpec       string    `gorm:"size:255" json:"srcSpec"`                 // 接管来源原文 "<chain>|<spec>"（M58）；空 = 面板原生，非空时 apply 追加幂等摘除段
 	Enabled       bool      `gorm:"not null;default:true" json:"enabled"`
 	Sort          int       `gorm:"not null;default:0" json:"sort"`
 	CreatedAt     time.Time `json:"createdAt"`

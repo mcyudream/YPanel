@@ -38,6 +38,7 @@ func (a *NatForwardAPI) Save(c *gin.Context) {
 		TargetPort    int    `json:"targetPort"`
 		TargetPortEnd int    `json:"targetPortEnd"`
 		Iface         string `json:"iface"`
+		DestIP        string `json:"destIp"`
 		Enabled       *bool  `json:"enabled"`
 		Sort          int    `json:"sort"`
 	}](c)
@@ -52,7 +53,7 @@ func (a *NatForwardAPI) Save(c *gin.Context) {
 		ID: req.ID, NodeID: req.NodeID, Name: req.Name, Protocol: req.Protocol,
 		IPFamily: req.IPFamily, ListenPort: req.ListenPort, ListenPortEnd: req.ListenPortEnd,
 		TargetIP: req.TargetIP, TargetPort: req.TargetPort, TargetPortEnd: req.TargetPortEnd,
-		Iface: req.Iface, Enabled: enabled, Sort: req.Sort,
+		Iface: req.Iface, DestIP: req.DestIP, Enabled: enabled, Sort: req.Sort,
 	}
 	saved, warnings, err := a.NF.Save(c.Request.Context(), row)
 	if err != nil {
@@ -141,4 +142,38 @@ func (a *NatForwardAPI) Apply(c *gin.Context) {
 		return
 	}
 	respOK(c, gin.H{"warnings": warnings})
+}
+
+// External GET /api/v1/nat/external?nodeId=（M58 外部规则只读清单）。
+func (a *NatForwardAPI) External(c *gin.Context) {
+	res, err := a.NF.GetExternal(c.Request.Context(), c.Query("nodeId"))
+	if err != nil {
+		respErr(c, err)
+		return
+	}
+	respOK(c, res)
+}
+
+// Import POST /api/v1/nat/import（M58 接管导入：转面板记录 + apply 摘除原规则）。
+func (a *NatForwardAPI) Import(c *gin.Context) {
+	req, ok := bind[struct {
+		NodeID string `json:"nodeId" binding:"required"`
+		Items  []struct {
+			RuleID string `json:"ruleId" binding:"required"`
+			Name   string `json:"name"`
+		} `json:"items" binding:"required,min=1,dive"`
+	}](c)
+	if !ok {
+		return
+	}
+	items := make([]service.NatImportItem, 0, len(req.Items))
+	for _, it := range req.Items {
+		items = append(items, service.NatImportItem{RuleID: it.RuleID, Name: it.Name})
+	}
+	rows, warnings, err := a.NF.Import(c.Request.Context(), req.NodeID, items)
+	if err != nil {
+		respErr(c, err)
+		return
+	}
+	respOK(c, gin.H{"rules": rows, "warnings": warnings})
 }

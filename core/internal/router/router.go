@@ -512,6 +512,9 @@ func Setup(d *Deps) (*gin.Engine, error) {
 				admin.GET("/nat/interfaces", pm("tool:nat"), natAPI.Interfaces)
 				admin.POST("/nat/check-port", pm("tool:nat"), natAPI.CheckPort)
 				admin.POST("/nat/apply", pm("tool:nat"), natAPI.Apply)
+				// M58 外部规则只读清单 + 接管导入（导入端点与 /nat/:id 段不同形，走 /nat/import 避免通配冲突）
+				admin.GET("/nat/external", pm("tool:nat"), natAPI.External)
+				admin.POST("/nat/import", pm("tool:nat"), natAPI.Import)
 
 				// M27 内网 DNS（dnsmasq 页面自管部署）
 				admin.GET("/dns/overview", pm("tool:dns"), dnsAPI.Overview)

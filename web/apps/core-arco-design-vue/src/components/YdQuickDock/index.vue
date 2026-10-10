@@ -2,11 +2,14 @@
 // YdQuickDock：全局快速工作台浮层（M57）——右缘贴边按钮 + 滑入面板（文件树/编辑器/终端三合一）。
 // 挂在 App.vue（RouterView 之外）：切路由不卸载；首次打开才挂载内容（everOpened），
 // 最小化仅 v-show 隐藏（终端 WS 跨路由留存），关闭走 store.closeAll() 全量断开。
-import Workspace from '@/views/file_management/editor/Workspace.vue'
+import WorkspaceContent from '@/views/file_management/editor/WorkspaceContent.vue'
 
 defineOptions({ name: 'YdQuickDock' })
 
-const store = useFileEditorStore()
+// 独立 store 实例（与页面内文件编辑弹窗的 fileEditor store 互不影响），
+// 并 provide 给子树：WorkspaceContent 及其内部组件经 useFileEditorStore() 解析到本实例。
+const store = useFileEditorDockStore()
+provideFileEditorStore(store)
 
 // ---- 面板宽度（vw）：左缘把手拖拽调整，localStorage 持久化 ----
 const DOCK_W_KEY = 'ypanel-quickdock-width'
@@ -78,7 +81,7 @@ const hasSessions = computed(() => Object.keys(store.tabs).length > 0 || store.t
           :title="$t('components.ydQuickDock.resizeTip')"
           @pointerdown="onHandleDown"
         />
-        <Workspace />
+        <WorkspaceContent />
       </section>
     </template>
   </div>

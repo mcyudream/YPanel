@@ -13,7 +13,7 @@ func view(id uint, proto, iface string, lp, lpe int, ip string, tp, tpe int) nat
 
 // 单端口 v4：dport 冒号、to-destination 冒号、注释、链挂载。
 func TestBuildNatApplyScriptSingleV4(t *testing.T) {
-	script := buildNatApplyScript("iptables", 4, []natRenderView{view(7, "tcp", "", 8080, 0, "10.0.0.5", 80, 0)}, []string{"192.168.1.10"})
+	script := buildNatApplyScript("iptables", 4, []natRenderView{view(7, "tcp", "", 8080, 0, "10.0.0.5", 80, 0)}, []string{"192.168.1.10"}, nil)
 	for _, want := range []string{
 		"-N YPANEL_FWD",
 		"-C PREROUTING -j YPANEL_FWD 2>/dev/null || $IPT -t nat -I PREROUTING 1 -j YPANEL_FWD",
@@ -39,11 +39,11 @@ func TestBuildNatApplyScriptSingleV4(t *testing.T) {
 
 // 本机目标（回环 / 本机地址）不追加 MASQUERADE。
 func TestBuildNatApplyScriptNoMasqForLocal(t *testing.T) {
-	loopback := buildNatApplyScript("iptables", 4, []natRenderView{view(1, "tcp", "", 18022, 0, "127.0.0.1", 22, 0)}, nil)
+	loopback := buildNatApplyScript("iptables", 4, []natRenderView{view(1, "tcp", "", 18022, 0, "127.0.0.1", 22, 0)}, nil, nil)
 	if strings.Contains(loopback, "MASQUERADE") {
 		t.Fatalf("回环目标不应有 MASQUERADE:\n%s", loopback)
 	}
-	local := buildNatApplyScript("iptables", 4, []natRenderView{view(2, "tcp", "", 18022, 0, "192.168.1.10", 22, 0)}, []string{"192.168.1.10", "10.8.0.1"})
+	local := buildNatApplyScript("iptables", 4, []natRenderView{view(2, "tcp", "", 18022, 0, "192.168.1.10", 22, 0)}, []string{"192.168.1.10", "10.8.0.1"}, nil)
 	if strings.Contains(local, "MASQUERADE") {
 		t.Fatalf("本机地址目标不应有 MASQUERADE:\n%s", local)
 	}
@@ -51,7 +51,7 @@ func TestBuildNatApplyScriptNoMasqForLocal(t *testing.T) {
 
 // 范围→同尺寸范围：dport 冒号、to-destination 短横线（iptables 语法差异，真机踩坑点）。
 func TestBuildNatApplyScriptRange(t *testing.T) {
-	script := buildNatApplyScript("iptables", 4, []natRenderView{view(3, "udp", "eth0", 8000, 8007, "10.0.0.9", 9000, 9007)}, nil)
+	script := buildNatApplyScript("iptables", 4, []natRenderView{view(3, "udp", "eth0", 8000, 8007, "10.0.0.9", 9000, 9007)}, nil, nil)
 	if !strings.Contains(script, "--dport 8000:8007") {
 		t.Fatalf("dport 范围应为冒号语法:\n%s", script)
 	}
@@ -68,7 +68,7 @@ func TestBuildNatApplyScriptRange(t *testing.T) {
 
 // v6：ip6tables + [addr]:port + v6 转发开关；v6 目标必须纯 v6 地址（无冒号判断由校验层保证）。
 func TestBuildNatApplyScriptV6(t *testing.T) {
-	script := buildNatApplyScript("ip6tables", 6, []natRenderView{view(9, "tcp", "", 8443, 0, "fd00::5", 443, 0)}, []string{"fd11::1"})
+	script := buildNatApplyScript("ip6tables", 6, []natRenderView{view(9, "tcp", "", 8443, 0, "fd00::5", 443, 0)}, []string{"fd11::1"}, nil)
 	if !strings.Contains(script, "command -v ip6tables") {
 		t.Fatal("v6 应使用 ip6tables")
 	}
@@ -88,7 +88,7 @@ func TestBuildNatApplyScriptV6(t *testing.T) {
 
 // 失败语义：脚本内单条规则失败要带 id 定位。
 func TestBuildNatApplyScriptErrorMarker(t *testing.T) {
-	script := buildNatApplyScript("iptables", 4, []natRenderView{view(5, "tcp", "", 80, 0, "10.0.0.1", 80, 0)}, nil)
+	script := buildNatApplyScript("iptables", 4, []natRenderView{view(5, "tcp", "", 80, 0, "10.0.0.1", 80, 0)}, nil, nil)
 	if !strings.Contains(script, "YPERR:规则 #5 应用失败") {
 		t.Fatal("缺少规则级失败标记")
 	}

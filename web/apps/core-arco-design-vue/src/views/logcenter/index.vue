@@ -59,18 +59,28 @@ function nodeInstallable(i: VLInstance) {
   return i.online && !i.found
 }
 
+// 在商店应用列表中定位应用所在源：VL/vector 为 YPanel 收录版（默认参数对接面板 VL），
+// 同名应用存在于多个源时优先非 1Panel 源
+async function resolveSourceId(key: string): Promise<number> {
+  const t = i18n.global.t
+  const [sources, list] = await Promise.all([storeApi.sources(), storeApi.list({ search: key })])
+  const srcTypeOf = (id: number) => sources.find(s => s.id === id)?.type || ''
+  const found = (list.items || []).filter(i => i.key === key)
+    .sort((a, b) => Number(srcTypeOf(a.sourceId) === 'onepanel') - Number(srcTypeOf(b.sourceId) === 'onepanel'))
+  if (!found[0])
+    throw new Error(t('logcenter.status.appNotFound'))
+  return found[0].sourceId
+}
+
 async function installStack(nodeId: string) {
   if (installingNodes.value.includes(nodeId))
     return
   const t = i18n.global.t
   installingNodes.value = [...installingNodes.value, nodeId]
   try {
-    const sources = await storeApi.sources()
-    const src = sources.find(s => s.enabled) || sources[0]
-    if (!src)
-      throw new Error(t('logcenter.status.noSource'))
-    for (const key of LOG_STACK_KEYS) {
-      await storeApi.install({ sourceId: src.id, key, version: '', name: key, params: {}, nodeId })
+    const sourceIds = await Promise.all(LOG_STACK_KEYS.map(key => resolveSourceId(key)))
+    for (let i = 0; i < LOG_STACK_KEYS.length; i++) {
+      await storeApi.install({ sourceId: sourceIds[i], key: LOG_STACK_KEYS[i], version: '', name: LOG_STACK_KEYS[i], params: {}, nodeId })
     }
     useFaToast().success(t('logcenter.status.installQueued'))
     // VL 容器启动 + agent 发现均有延迟，稍后自动刷新一次状态

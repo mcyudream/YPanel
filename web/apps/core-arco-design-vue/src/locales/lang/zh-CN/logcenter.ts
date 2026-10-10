@@ -22,6 +22,7 @@ export default {
     installQueued: '已发起安装任务（VictoriaLogs + Vector），进度见任务中心，安装完成后本页自动发现',
     installFail: '一键安装失败',
     noSource: '商店源不可用（请先在应用商店配置并启用源）',
+    appNotFound: '商店中未找到 VictoriaLogs/Vector 应用（请先同步 YPanel 应用源）',
   },
 
   retention: {

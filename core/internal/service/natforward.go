@@ -106,6 +106,21 @@ func natValidateRule(r *model.NatForwardRule) error {
 	if r.Iface != "" && !natIfacePattern.MatchString(r.Iface) {
 		return natBadReq("入站网卡名不合法")
 	}
+	// DestIP 目标地址匹配（内核 -d）：空 = 不限；仅单 IP 且与地址族匹配
+	r.DestIP = strings.TrimSpace(r.DestIP)
+	if r.DestIP != "" {
+		dip := net.ParseIP(r.DestIP)
+		if dip == nil {
+			return natBadReq("目标地址匹配仅支持单个 IP")
+		}
+		if r.IPFamily == 4 && dip.To4() == nil {
+			return natBadReq("目标地址匹配与 IP 族不匹配（应为 IPv4）")
+		}
+		if r.IPFamily == 6 && dip.To4() != nil {
+			return natBadReq("目标地址匹配与 IP 族不匹配（应为纯 IPv6 地址）")
+		}
+		r.DestIP = dip.String()
+	}
 	return nil
 }
 
@@ -143,6 +158,7 @@ type natRenderView struct {
 	ID       uint
 	Protocol string
 	Iface    string
+	DestIP   string // 内核 -d 目标地址匹配，空 = 不限
 	Listen   [2]int // 起始/结束（结束 0 = 单端口）
 	TargetIP string
 	Target   [2]int
@@ -190,8 +206,9 @@ func natInList(list []string, v string) bool {
 }
 
 // buildNatApplyScript 渲染单个地址族的整链重建脚本（幂等）。
-// bin 为 iptables / ip6tables；localAddrs 是目标机本机地址集，用于回程 MASQUERADE 判定。
-func buildNatApplyScript(bin string, family int, rules []natRenderView, localAddrs []string) string {
+// bin 为 iptables / ip6tables；localAddrs 是目标机本机地址集，用于回程 MASQUERADE 判定；
+// removals 是接管规则的内核原规则摘除清单（M58），在全部渲染成功之后执行——渲染失败原规则分毫未动。
+func buildNatApplyScript(bin string, family int, rules []natRenderView, localAddrs []string, removals []natRemovalSpec) string {
 	var b strings.Builder
 	b.WriteString("set -e\n")
 	fmt.Fprintf(&b, "command -v %s >/dev/null 2>&1 || { echo 'YPERR:%s 命令不存在或权限不足'; exit 64; }\n", bin, bin)
@@ -210,6 +227,9 @@ func buildNatApplyScript(bin string, family int, rules []natRenderView, localAdd
 		if r.Iface != "" {
 			dn.WriteString(fmt.Sprintf(" -i '%s'", r.Iface))
 		}
+		if r.DestIP != "" {
+			dn.WriteString(fmt.Sprintf(" -d '%s'", r.DestIP))
+		}
 		dn.WriteString(fmt.Sprintf(" --dport %s -m comment --comment '%s' -j DNAT --to-destination '%s'",
 			natDportSpec(r.Listen), comment, natTargetAddr(r.TargetIP, r.Target, family)))
 		fmt.Fprintf(&b, "if ! _o=$(%s 2>&1); then echo 'YPERR:规则 #%d 应用失败: '$_o; exit 65; fi\n", dn.String(), r.ID)
@@ -218,6 +238,7 @@ func buildNatApplyScript(bin string, family int, rules []natRenderView, localAdd
 				natChainPost, r.Protocol, r.TargetIP, natDportSpec(r.Target), comment, r.ID)
 		}
 	}
+	b.WriteString(buildNatRemovalSection(removals))
 	// 转发开关：为 0 时运行时开启并告警（不持久化，持久化属宿主机运维范畴）
 	if family == 4 {
 		b.WriteString("ipf=$(cat /proc/sys/net/ipv4/ip_forward 2>/dev/null || echo 1)\n")
@@ -225,6 +246,109 @@ func buildNatApplyScript(bin string, family int, rules []natRenderView, localAdd
 	} else {
 		b.WriteString("ipf=$(cat /proc/sys/net/ipv6/conf/all/forwarding 2>/dev/null || echo 1)\n")
 		b.WriteString("if [ \"$ipf\" != '1' ]; then sysctl -w net.ipv6.conf.all.forwarding=1 >/dev/null && echo 'YPWARN:net.ipv6.conf.all.forwarding 已运行时开启（重启后失效，请在宿主机持久化）' || { echo 'YPERR:无法开启 net.ipv6.conf.all.forwarding'; exit 66; }; fi\n")
+	}
+	b.WriteString("echo YPOK\n")
+	return b.String()
+}
+
+// natRemovalSpec 接管规则的原内核规则摘除项（spec 为 -S 输出原文，已过白名单）。
+type natRemovalSpec struct {
+	Chain  string
+	Spec   string
+	RuleID uint
+}
+
+// natSpecPattern 外部 spec 白名单：仅允许出现在 iptables -S 输出中的安全字符，
+// 杜绝 $ ` " ' ; & | ( ) < > 等可被 shell 解释的字符混进摘除命令（引号经 natShellSpec 单独处理）。
+var natSpecPattern = regexp.MustCompile(`^[a-zA-Z0-9 !:.,/=\[\]@%+_-]+$`)
+
+// natChainPattern 内核链名白名单（iptables 链名 ≤28 字符）。
+var natChainPattern = regexp.MustCompile(`^[a-zA-Z0-9_-]{1,28}$`)
+
+// natCommentSafePattern --comment 内容安全字符：禁 shell 元字符与一切引号（将以单引号嵌入命令）。
+var natCommentSafePattern = regexp.MustCompile(`^[^"'` + "`" + `$;&|<>()\\\n\r]*$`)
+
+// natShellSpec 将 -S 输出的 spec 转为可安全嵌入 sh -c 的参数串：
+// --comment "x y" 段单独校验内容后重写为单引号形式，其余文本过严格白名单。
+// 任一段不安全返回 false（该规则不可导入/不可摘除）。
+func natShellSpec(spec string) (string, bool) {
+	var b strings.Builder
+	rest := spec
+	for {
+		loc := natCommentRe.FindStringIndex(rest)
+		if loc == nil {
+			break
+		}
+		if !natSpecPattern.MatchString(rest[:loc[0]]) {
+			return "", false
+		}
+		b.WriteString(rest[:loc[0]])
+		m := natCommentRe.FindStringSubmatch(rest)
+		content := ""
+		for _, g := range m[1:] {
+			if g != "" {
+				content = g
+				break
+			}
+		}
+		if !natCommentSafePattern.MatchString(content) {
+			return "", false
+		}
+		b.WriteString("--comment '" + content + "'")
+		rest = rest[loc[1]:]
+	}
+	if !natSpecPattern.MatchString(rest) {
+		return "", false
+	}
+	b.WriteString(rest)
+	return strings.Join(strings.Fields(b.String()), " "), true
+}
+
+// natSplitSrcSpec 拆分接管来源 "<chain>|<spec>"：链名校验 + 结构校验；
+// spec 文本的安全化在命令生成处经 natShellSpec 单独执行。
+func natSplitSrcSpec(src string) (chain, spec string, ok bool) {
+	i := strings.Index(src, "|")
+	if i <= 0 || i == len(src)-1 {
+		return "", "", false
+	}
+	chain, spec = src[:i], src[i+1:]
+	if !natChainPattern.MatchString(chain) {
+		return "", "", false
+	}
+	return chain, spec, true
+}
+
+// buildNatRemovalSection 接管摘除段：逐条 -C 守卫的幂等 -D（重复规则上限 5 份，防死循环）。
+// 原规则已不存在时 -C 失败整段跳过，天然幂等；不论面板规则启用与否都摘除（停用 ≠ 还原原规则）。
+func buildNatRemovalSection(removals []natRemovalSpec) string {
+	var b strings.Builder
+	for _, rm := range removals {
+		fmt.Fprintf(&b, "_n=0; while [ $_n -lt 5 ] && $IPT -t nat -C %s %s 2>/dev/null; do $IPT -t nat -D %s %s || { echo 'YPERR:规则 #%d 原规则摘除失败'; exit 67; }; _n=$((_n+1)); done\n",
+			rm.Chain, rm.Spec, rm.Chain, rm.Spec, rm.RuleID)
+	}
+	return b.String()
+}
+
+// buildNatRestoreScript 导入失败回滚用的原规则还原脚本（尽力而为，逐条 ! -C → -A，失败仅告警不中断）。
+func buildNatRestoreScript(bin string, family int, rules []*model.NatForwardRule) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "command -v %s >/dev/null 2>&1 || exit 0\n", bin)
+	b.WriteString("IPT=" + bin + "\n")
+	for _, r := range rules {
+		if r.IPFamily != family || r.SrcSpec == "" {
+			continue
+		}
+		chain, spec, ok := natSplitSrcSpec(r.SrcSpec)
+		if !ok {
+			continue
+		}
+		ss, ok := natShellSpec(spec)
+		if !ok {
+			slog.Warn("NAT 接管来源 spec 含不安全字符，跳过还原", "rule", r.ID)
+			continue
+		}
+		fmt.Fprintf(&b, "if ! $IPT -t nat -C %s %s 2>/dev/null; then if ! _o=$($IPT -t nat -A %s %s 2>&1); then echo 'YPWARN:原规则还原失败: '$_o; fi; fi\n",
+			chain, ss, chain, ss)
 	}
 	b.WriteString("echo YPOK\n")
 	return b.String()
@@ -249,7 +373,7 @@ func natEnabledViews(rules []model.NatForwardRule, family int) []natRenderView {
 			continue
 		}
 		views = append(views, natRenderView{
-			ID: r.ID, Protocol: r.Protocol, Iface: r.Iface,
+			ID: r.ID, Protocol: r.Protocol, Iface: r.Iface, DestIP: r.DestIP,
 			Listen:   [2]int{r.ListenPort, r.ListenPortEnd},
 			TargetIP: r.TargetIP,
 			Target:   [2]int{r.TargetPort, r.TargetPortEnd},
@@ -475,9 +599,27 @@ func (s *NatForwardService) applyNodeLocked(ctx context.Context, nodeId string) 
 	}{{4, "iptables"}, {6, "ip6tables"}} {
 		// 仅启用态规则渲染进内核链；停用/全删后走容忍式冲刷清除残留
 		views := natEnabledViews(rules, fb.family)
-		script := buildNatApplyScript(fb.bin, fb.family, views, localAddrs)
-		if len(views) == 0 {
-			// 该族无启用规则：容忍式冲刷（命令缺失/链不存在均静默跳过，不建链不探测硬失败）
+		// 接管摘除清单：本节点该地址族全部 SrcSpec 记录（不论启用状态）；spec 过 shell 化校验
+		removals := []natRemovalSpec{}
+		for _, r := range rules {
+			if r.IPFamily != fb.family || r.SrcSpec == "" {
+				continue
+			}
+			ch, sp, ok := natSplitSrcSpec(r.SrcSpec)
+			if !ok {
+				slog.Warn("NAT 接管来源 spec 结构非法，跳过摘除", "rule", r.ID)
+				continue
+			}
+			ss, ok := natShellSpec(sp)
+			if !ok {
+				slog.Warn("NAT 接管来源 spec 含不安全字符，跳过摘除", "rule", r.ID)
+				continue
+			}
+			removals = append(removals, natRemovalSpec{Chain: ch, Spec: ss, RuleID: r.ID})
+		}
+		script := buildNatApplyScript(fb.bin, fb.family, views, localAddrs, removals)
+		if len(views) == 0 && len(removals) == 0 {
+			// 该族无启用规则且无待摘除接管规则：容忍式冲刷（命令缺失/链不存在均静默跳过，不建链不探测硬失败）
 			script = buildNatFlushScript(fb.bin)
 		}
 		out, code, err := s.exec(ctx, nodeId, script, 60)
@@ -548,7 +690,7 @@ func (s *NatForwardService) Save(ctx context.Context, r *model.NatForwardRule) (
 			"node_id": r.NodeID, "name": r.Name, "protocol": r.Protocol, "ip_family": r.IPFamily,
 			"listen_port": r.ListenPort, "listen_port_end": r.ListenPortEnd,
 			"target_ip": r.TargetIP, "target_port": r.TargetPort, "target_port_end": r.TargetPortEnd,
-			"iface": r.Iface, "enabled": r.Enabled, "sort": r.Sort,
+			"iface": r.Iface, "dest_ip": r.DestIP, "enabled": r.Enabled, "sort": r.Sort,
 		}).Error; err != nil {
 			return nil, nil, err
 		}

@@ -1,8 +1,12 @@
-// 文件编辑工作台 store：编辑器组/tab/monaco model 注册表/布局偏好。
+// 文件编辑工作台 store 工厂：编辑器组/tab/monaco model 注册表/布局偏好。
 // monaco 命名空间与 model 不进响应式系统（避免 Proxy 化导致性能问题）。
+// 经典面板（页面弹窗）与 M57 全局浮层（YdQuickDock）各持一个独立实例——状态/会话互不影响；
+// 实例解析见文件尾部的 provide/inject 作用域（浮层子树经 provideFileEditorStore 拿到 dock 实例）。
 import type * as Monaco from 'monaco-editor'
+import type { InjectionKey } from 'vue'
 import type { MonacoNamespace } from '@/utils/monacoLoader'
 import { defineStore } from 'pinia'
+import { inject, provide } from 'vue'
 import apiFile from '@/api/modules/file'
 import apiCFile from '@/api/modules/cfile'
 import apiNode from '@/api/modules/node'
@@ -86,9 +90,8 @@ function loadLayout(): FileEditorLayout {
 }
 
 // —— 非响应式注册表 ——
+// monaco 命名空间全局共享；model/editor 注册表在 fileEditorSetup 工厂内按实例隔离。
 let monaco: MonacoNamespace | null = null
-const modelRegistry = new Map<string, Monaco.editor.ITextModel>()
-const editorRegistry = new Map<number, Monaco.editor.IStandaloneCodeEditor>()
 
 async function ensureMonaco(): Promise<MonacoNamespace> {
   if (!monaco) {
@@ -97,7 +100,10 @@ async function ensureMonaco(): Promise<MonacoNamespace> {
   return monaco
 }
 
-export const useFileEditorStore = defineStore('fileEditor', () => {
+function fileEditorSetup(instanceTag: string) {
+  const modelRegistry = new Map<string, Monaco.editor.ITextModel>()
+  const editorRegistry = new Map<number, Monaco.editor.IStandaloneCodeEditor>()
+
   // ---- 弹窗与节点 ----
   const visible = ref(false)
   /** 面板动画结束（可见后 350ms 兜底）后置 true：monaco 等需要真实容器尺寸的子组件此时才挂载 */
@@ -224,7 +230,7 @@ export const useFileEditorStore = defineStore('fileEditor', () => {
       const m = await ensureMonaco()
       let model = modelRegistry.get(id)
       if (!model) {
-        const uri = m.Uri.parse(`ypanel:///${cid ? `c-${cid}` : nodeId}${path}`)
+        const uri = m.Uri.parse(`ypanel:///${instanceTag ? `${instanceTag}.` : ''}${cid ? `c-${cid}` : nodeId}${path}`)
         model = m.editor.getModel(uri) ?? m.editor.createModel(text, lang, uri)
         modelRegistry.set(id, model)
         // 受管配置（compose/daemon.json）编辑时防抖刷新诊断 marker
@@ -615,7 +621,31 @@ export const useFileEditorStore = defineStore('fileEditor', () => {
     registerEditor,
     runActiveAction,
   }
-})
+}
+
+const useFileEditorStoreRaw = defineStore('fileEditor', () => fileEditorSetup(''))
+const useFileEditorDockStoreRaw = defineStore('fileEditorDock', () => fileEditorSetup('dock'))
+
+export type FileEditorStoreInstance = ReturnType<typeof useFileEditorStoreRaw>
+
+/** dock 实例经 provide 注入子树：M20 组件在浮层内解析到 dock 实例，页面/其它场景解析到经典实例 */
+const DockStoreKey: InjectionKey<FileEditorStoreInstance> = Symbol('fileEditor:dock-store')
+
+export function useFileEditorStore(): FileEditorStoreInstance {
+  const injected = inject(DockStoreKey, null)
+  return injected ?? useFileEditorStoreRaw()
+}
+
+/** M57 全局浮层专用：独立于页面弹窗的 store 实例（配合 provideFileEditorStore 供子树解析） */
+export function useFileEditorDockStore(): FileEditorStoreInstance {
+  // 两实例结构完全一致，仅 pinia Store 泛型里的 id 字面量不同（"fileEditorDock" vs "fileEditor"）
+  return useFileEditorDockStoreRaw() as unknown as FileEditorStoreInstance
+}
+
+/** 在浮层组件 setup 中调用，使其子树内的 useFileEditorStore() 解析到 dock 实例 */
+export function provideFileEditorStore(store: FileEditorStoreInstance) {
+  provide(DockStoreKey, store)
+}
 
 function errMsg(e: unknown) {
   if (e && typeof e === 'object' && 'message' in e && typeof (e as { message: unknown }).message === 'string') {

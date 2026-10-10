@@ -22,6 +22,7 @@ export default {
     installQueued: 'Install tasks queued (VictoriaLogs + Vector); track progress in Task Center — this page will auto-discover once done',
     installFail: 'One-click install failed',
     noSource: 'No usable store source (configure and enable one in the App Store first)',
+    appNotFound: 'VictoriaLogs/Vector not found in the store (sync the YPanel app source first)',
   },
 
   retention: {

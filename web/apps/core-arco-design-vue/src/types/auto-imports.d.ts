@@ -63,6 +63,7 @@ declare global {
   const onUpdated: typeof import('vue').onUpdated
   const onWatcherCleanup: typeof import('vue').onWatcherCleanup
   const provide: typeof import('vue').provide
+  const provideFileEditorStore: typeof import('../store/modules/fileEditor').provideFileEditorStore
   const pushFileHistory: typeof import('../composables/useFileHistory').pushFileHistory
   const reactive: typeof import('vue').reactive
   const readonly: typeof import('vue').readonly
@@ -101,6 +102,7 @@ declare global {
   const useFaImagePreview: typeof import('@fantastic-admin/components').useFaImagePreview
   const useFaModal: typeof import('@fantastic-admin/components').useFaModal
   const useFaToast: typeof import('@fantastic-admin/components').useFaToast
+  const useFileEditorDockStore: typeof import('../store/modules/fileEditor').useFileEditorDockStore
   const useFileEditorStore: typeof import('../store/modules/fileEditor').useFileEditorStore
   const useHtmlDark: typeof import('../composables/useHtmlDark').useHtmlDark
   const useId: typeof import('vue').useId
@@ -127,7 +129,7 @@ declare global {
   export type { Component, Slot, Slots, ComponentPublicInstance, ComputedRef, DirectiveBinding, ExtractDefaultPropTypes, ExtractPropTypes, ExtractPublicPropTypes, InjectionKey, PropType, Ref, ShallowRef, MaybeRef, MaybeRefOrGetter, VNode, WritableComputedRef } from 'vue'
   import('vue')
   // @ts-ignore
-  export type { FileEditorTab, FileEditorGroup, FileEditorLayout, FileEditorCursor } from '../store/modules/fileEditor'
+  export type { FileEditorTab, FileEditorGroup, FileEditorLayout, FileEditorCursor, FileEditorStoreInstance } from '../store/modules/fileEditor'
   import('../store/modules/fileEditor')
   // @ts-ignore
   export type { AiChatStep, AiKnowledgeRef, AiChatMessage, AiSegment, AiSceneData } from '../composables/useAiChat'
