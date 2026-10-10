@@ -18,6 +18,12 @@ import (
 const (
 	GithubLatestURL = "https://api.github.com/repos/mcyudream/YPanel/releases/latest"
 	GiteeLatestURL  = "https://gitee.com/api/v5/repos/mcyudream/ypanel/releases/latest"
+	// GiteeLatestPageURL latest 页（非 API，无匿名限额）：302 的 Location 直接携带最新 tag——
+	// Gitee 匿名 API 限额低（按 IP），生产服务器跑 CLI/面板检查几次就可能 403 造成「Gitee 不可达」假象，
+	// API 失败时用它兜底探测。
+	GiteeLatestPageURL = "https://gitee.com/mcyudream/ypanel/releases/latest"
+	GiteeRepoBase      = "https://gitee.com/mcyudream/ypanel"
+	GithubRepoBase     = "https://github.com/mcyudream/YPanel"
 )
 
 // OnlineRelease 单一源的最新 Release 信息。
@@ -48,7 +54,20 @@ type releasePayload struct {
 }
 
 // FetchLatestRelease 拉取单源最新 Release 并挑出当前架构资产。
+// Gitee 分支在 API 失败（匿名限流/超时）时回退 latest 页 302 探测（tag 从 Location 提取，
+// 资产 URL 按等价形式拼接），保证国内源检查几乎不误报。
 func FetchLatestRelease(ctx context.Context, source string) OnlineRelease {
+	out := fetchViaAPI(ctx, source)
+	if !out.Reachable && source == "gitee" {
+		if probed := giteeProbeViaRedirect(ctx); probed != nil {
+			probed.Error = strings.TrimSpace("API: " + out.Error + "；" + probed.Error)
+			return *probed
+		}
+	}
+	return out
+}
+
+func fetchViaAPI(ctx context.Context, source string) OnlineRelease {
 	out := OnlineRelease{Source: source}
 	url := GithubLatestURL
 	if source == "gitee" {
@@ -97,20 +116,78 @@ func FetchLatestRelease(ctx context.Context, source string) OnlineRelease {
 	return out
 }
 
+// giteeProbeViaRedirect latest 页 302 探测（HTTP 200/302 均取 Location；无 API 限额）。
+func giteeProbeViaRedirect(ctx context.Context) *OnlineRelease {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, GiteeLatestPageURL, nil)
+	if err != nil {
+		return nil
+	}
+	client := &http.Client{Timeout: 12 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error {
+		return http.ErrUseLastResponse // 不跟随，从 Location 拿 tag
+	}}
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil
+	}
+	defer func() { _ = resp.Body.Close() }()
+	loc := resp.Header.Get("Location")
+	prefix := GiteeRepoBase + "/releases/tag/"
+	if loc == "" || !strings.HasPrefix(loc, prefix) {
+		return nil
+	}
+	tag := normalizeTag(strings.TrimPrefix(loc, prefix))
+	if tag == "" {
+		return nil
+	}
+	asset := "ypanel-linux-" + runtime.GOARCH + ".tar.gz"
+	base := GiteeRepoBase + "/releases/download/" + tag + "/"
+	return &OnlineRelease{
+		Source: "gitee", Reachable: true, Version: tag, Name: "YPanel " + tag,
+		AssetURL: base + asset, SumURL: base + "sha256sums.txt",
+		Error: "已从 latest 页 302 兜底解析（Gitee API 匿名限额，资产大小未知）",
+	}
+}
+
+// FallbackAssetURL 双源互备：解析资产 URL 的 tag 与文件名，拼出对端源等价 URL
+// （Gitee 下载超时切 GitHub、反之亦然；解析失败返回空）。
+func FallbackAssetURL(assetURL string) string {
+	for _, pair := range [][2]string{{GiteeRepoBase + "/releases/download/", GithubRepoBase + "/releases/download/"}} {
+		from, to := pair[0], pair[1]
+		if strings.HasPrefix(assetURL, from) {
+			return to + strings.TrimPrefix(assetURL, from)
+		}
+		if strings.HasPrefix(assetURL, to) {
+			return from + strings.TrimPrefix(assetURL, to)
+		}
+	}
+	return ""
+}
+
 // DownloadScript 构造在线下载脚本（curl 重试下载 → sha256 校验 → 解包到更新通道目录，
 // 产出 ypanel 与 ypagent 两个二进制，调用方按需取用）。
-func DownloadScript(channelDir, goarch, assetURL, sumURL string) string {
+// fallbackURL 非空时主源下载失败自动切换对端源等价 URL 重试（Gitee 超时切 GitHub、反之亦然）。
+func DownloadScript(channelDir, goarch, assetURL, sumURL, fallbackURL string) string {
+	primary := fmt.Sprintf("curl -fSL --retry 2 --connect-timeout 10 -o ypanel-linux-%s.tar.gz '%s'", goarch, assetURL)
+	if fallbackURL != "" && fallbackURL != assetURL {
+		primary += fmt.Sprintf(" || { echo '[ypanel] 主源超时/失败，切换备用源…'; curl -fSL --retry 2 --connect-timeout 10 -o ypanel-linux-%s.tar.gz '%s'; }", goarch, fallbackURL)
+	}
+	sumFallback := ""
+	if fallbackURL != "" && fallbackURL != assetURL {
+		if alt := FallbackAssetURL(sumURL); alt != "" {
+			sumFallback = fmt.Sprintf(" || curl -fSL --retry 2 --connect-timeout 10 -o sha256sums.txt '%s'", alt)
+		}
+	}
 	return fmt.Sprintf(`set -e
 cd %s
-curl -fSL --retry 2 --connect-timeout 10 -o ypanel-linux-%s.tar.gz '%s'
-if curl -fSL --retry 2 --connect-timeout 10 -o sha256sums.txt '%s' 2>/dev/null; then
+%s
+if curl -fSL --retry 2 --connect-timeout 10 -o sha256sums.txt '%s' 2>/dev/null %s; then
   sha256sum -c sha256sums.txt --ignore-missing || { rm -f sha256sums.txt ypanel-linux-%s.tar.gz; echo YPSUMFAIL; exit 1; }
   rm -f sha256sums.txt
 fi
 tar -xzf ypanel-linux-%s.tar.gz -C %s
 rm -f ypanel-linux-%s.tar.gz
 echo YPDLOK
-`, channelDir, goarch, assetURL, sumURL, goarch, goarch, channelDir, goarch)
+`, channelDir, primary, sumURL, sumFallback, goarch, goarch, channelDir, goarch)
 }
 
 // ApplyScript 构造应用更新脚本（备份→替换→systemctl restart，detached 执行）。

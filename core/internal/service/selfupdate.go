@@ -225,7 +225,7 @@ func (s *SelfUpdateService) Upgrade(ctx context.Context, source string) (map[str
 	if err != nil {
 		return nil, err
 	}
-	script := release.DownloadScript(UpdateChannelDir, runtime.GOARCH, rel.AssetURL, rel.SumURL)
+	script := release.DownloadScript(UpdateChannelDir, runtime.GOARCH, rel.AssetURL, rel.SumURL, release.FallbackAssetURL(rel.AssetURL))
 	out, err := agentclient.DoJSON[dto.ExecReq, dto.ExecResp](ac, ctx, "POST", "/agent/v1/exec",
 		&dto.ExecReq{Command: script, TimeoutSecs: updateTimeoutSecs})
 	if err != nil {

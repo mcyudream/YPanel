@@ -334,7 +334,7 @@ func cliUpdate(cfg *config.Config, rest []string) {
 	if err := os.MkdirAll(service.UpdateChannelDir, 0o755); err != nil {
 		fail(err.Error())
 	}
-	dl := exec.CommandContext(ctx, "sh", "-c", release.DownloadScript(service.UpdateChannelDir, runtime.GOARCH, rel.AssetURL, rel.SumURL))
+	dl := exec.CommandContext(ctx, "sh", "-c", release.DownloadScript(service.UpdateChannelDir, runtime.GOARCH, rel.AssetURL, rel.SumURL, release.FallbackAssetURL(rel.AssetURL)))
 	dl.Stdout = os.Stdout
 	dl.Stderr = os.Stderr
 	if err := dl.Run(); err != nil {
