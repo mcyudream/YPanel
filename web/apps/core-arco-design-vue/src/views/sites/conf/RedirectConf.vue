@@ -66,12 +66,17 @@ onMounted(load)
       </div>
       <div>
         <div class="mb-1 text-sm font-medium">{{ $t('sites.conf.redirect.code') }}</div>
-        <select v-model.number="edit.code" class="h-9 w-full rounded-md border bg-background px-2 text-sm outline-none md:w-64">
-          <option :value="301">{{ $t('sites.conf.redirect.code301') }}</option>
-          <option :value="302">{{ $t('sites.conf.redirect.code302') }}</option>
-          <option :value="307">{{ $t('sites.conf.redirect.code307') }}</option>
-          <option :value="308">{{ $t('sites.conf.redirect.code308') }}</option>
-        </select>
+        <YdSelect
+          v-model="edit.code"
+          :options="[
+            { label: $t('sites.conf.redirect.code301'), value: 301 },
+            { label: $t('sites.conf.redirect.code302'), value: 302 },
+            { label: $t('sites.conf.redirect.code307'), value: 307 },
+            { label: $t('sites.conf.redirect.code308'), value: 308 },
+          ]"
+          size="default"
+          button-class="w-full md:w-64"
+        />
       </div>
     </div>
 

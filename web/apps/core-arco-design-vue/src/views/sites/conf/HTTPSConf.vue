@@ -40,6 +40,14 @@ const httpModeOptions = computed(() => [
   { v: 'deny', label: i18n.global.t('sites.conf.https.modeDeny') },
 ])
 
+const certOptions = computed(() => [
+  { label: i18n.global.t('sites.conf.https.pickCert'), value: 0, disabled: true },
+  ...certs.value.map(c => ({
+    label: `${c.domain}${c.altDomains?.length ? ` (+${c.altDomains.length})` : ''} · ${c.issuer || c.provider}`,
+    value: c.id,
+  })),
+])
+
 function applyConf(c: SiteHTTPSConf) {
   conf.value = c
   selCertId.value = c.certId || 0
@@ -185,12 +193,13 @@ onMounted(load)
       <p class="mb-3 text-xs text-muted-foreground">
         {{ $t('sites.conf.https.certSourceDesc', { domain: site.domain }) }}
       </p>
-      <select v-model.number="selCertId" class="h-9 w-96 rounded-md border bg-background px-2 text-sm outline-none focus:border-primary">
-        <option :value="0" disabled>{{ $t('sites.conf.https.pickCert') }}</option>
-        <option v-for="c in certs" :key="c.id" :value="c.id">
-          {{ c.domain }}{{ c.altDomains?.length ? ` (+${c.altDomains.length})` : '' }} · {{ c.issuer || c.provider }}
-        </option>
-      </select>
+      <YdSelect
+        v-model="selCertId"
+        :options="certOptions"
+        :placeholder="$t('sites.conf.https.pickCert')"
+        size="default"
+        button-class="w-96"
+      />
       <div v-if="selCert" class="mt-2 flex items-center gap-3 text-xs text-muted-foreground">
         <span>{{ $t('sites.conf.https.issuer', { org: selCert.issuer || '—' }) }}</span>
         <span v-if="selCert.notAfter">{{ $t('sites.conf.https.expires') }}
@@ -202,9 +211,12 @@ onMounted(load)
 
     <div class="rounded-lg border p-4">
       <div class="mb-3 text-sm font-medium">{{ $t('sites.conf.https.httpOptions') }}</div>
-      <select v-model="httpMode" class="h-9 w-96 rounded-md border bg-background px-2 text-sm outline-none focus:border-primary">
-        <option v-for="o in httpModeOptions" :key="o.v" :value="o.v">{{ o.label }}</option>
-      </select>
+      <YdSelect
+        v-model="httpMode"
+        :options="httpModeOptions.map(o => ({ label: o.label, value: o.v }))"
+        size="default"
+        button-class="w-96"
+      />
       <div class="mt-4 space-y-3">
         <label class="flex cursor-pointer items-center gap-2 text-sm">
           <input v-model="http2" type="checkbox"> HTTP/2

@@ -535,11 +535,15 @@ onBeforeUnmount(() => {
         >
           {{ sortDir === 'asc' ? '↑' : '↓' }}
         </button>
-        <select v-model.number="pageSize" class="h-[26px] rounded-md border border-input bg-background px-1 text-xs outline-none" @change="page && (page.skip = 0, load())">
-          <option :value="25">{{ $t('dbadmin.mongo.perPage', { n: 25 }) }}</option>
-          <option :value="50">{{ $t('dbadmin.mongo.perPage', { n: 50 }) }}</option>
-          <option :value="100">{{ $t('dbadmin.mongo.perPage', { n: 100 }) }}</option>
-        </select>
+        <YdSelect
+          v-model="pageSize"
+          :options="[
+            { label: $t('dbadmin.mongo.perPage', { n: 25 }), value: 25 },
+            { label: $t('dbadmin.mongo.perPage', { n: 50 }), value: 50 },
+            { label: $t('dbadmin.mongo.perPage', { n: 100 }), value: 100 },
+          ]"
+          @update:model-value="page && (page.skip = 0, load())"
+        />
         <FaButton size="sm" :loading="loading" @click="page && (page.skip = 0, load())">{{ $t('dbadmin.mongo.query') }}</FaButton>
         <span class="flex-1" />
         <div class="flex items-center rounded-md border p-0.5">

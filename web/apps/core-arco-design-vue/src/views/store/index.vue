@@ -1193,18 +1193,15 @@ function statusText(s: StoreSource) {
         </div>
         <div class="flex items-center gap-3">
           <span class="w-28 shrink-0 text-sm text-muted-foreground">{{ $t('nodes.targetNode') }}</span>
-          <select v-model="installNode" class="h-9 min-w-0 flex-1 rounded-md border border-input bg-background px-2 text-sm outline-none">
-            <option value="">{{ $t('nodes.localPanel') }}</option>
-            <option v-for="n in onlineNodes.filter(x => x.id !== 'local')" :key="n.id" :value="n.id">
-              {{ n.name }}（{{ n.arch || 'linux' }}）
-            </option>
-          </select>
+          <YdSelect
+            v-model="installNode"
+            :options="[{ label: $t('nodes.localPanel'), value: '' }, ...onlineNodes.filter(x => x.id !== 'local').map(n => ({ label: `${n.name}（${n.arch || 'linux'}）`, value: n.id }))]"
+            button-class="min-w-0 flex-1"
+          />
         </div>
         <div class="flex items-center gap-3">
           <span class="w-28 shrink-0 text-sm text-muted-foreground">{{ $t('store.version') }}</span>
-          <select v-model="installForm.version" class="h-9 flex-1 rounded-md border border-input bg-background px-2 text-sm outline-none">
-            <option v-for="v in installVersions" :key="v.id" :value="v.id">{{ v.name || v.id }}</option>
-          </select>
+          <YdSelect v-model="installForm.version" :options="installVersions.map(v => ({ label: v.name || v.id, value: v.id }))" button-class="flex-1" />
         </div>
         <div v-if="installPrefilled" class="-mt-1 text-xs text-muted-foreground">
           {{ $t('store.prefillHint') }}
@@ -1212,21 +1209,21 @@ function statusText(s: StoreSource) {
         <div v-if="dbHostKey" class="flex items-start gap-3">
           <span class="w-28 shrink-0 pt-2 text-sm text-muted-foreground">{{ $t('store.database') }}</span>
           <div class="flex min-w-0 flex-1 flex-col gap-2">
-            <select
+            <YdSelect
               v-model="dbSource"
-              class="h-9 rounded-md border border-input bg-background px-2 text-sm outline-none"
-              @change="dbSource === 'external' && loadDBInstances()"
-            >
-              <option value="default">{{ installTarget?.kind === 'php' && dbHostKey ? $t('store.dbManual') : $t('store.dbDefault') }}</option>
-              <option value="external">{{ $t('store.dbExternal') }}</option>
-            </select>
+              :options="[
+                { label: installTarget?.kind === 'php' && dbHostKey ? $t('store.dbManual') : $t('store.dbDefault'), value: 'default' },
+                { label: $t('store.dbExternal'), value: 'external' },
+              ]"
+              button-class="w-full"
+              @update:model-value="dbSource === 'external' && loadDBInstances()"
+            />
             <div v-if="dbSource === 'external'" class="space-y-2 rounded-md border border-dashed p-2.5">
-              <select v-model.number="dbTarget.instanceId" class="h-9 w-full rounded-md border border-input bg-background px-2 text-sm outline-none">
-                <option :value="0" disabled>{{ $t('store.dbPickInstance') }}</option>
-                <option v-for="i in dbInstances" :key="i.id" :value="i.id">
-                  {{ i.name }}（{{ i.type }} :{{ i.port }}）
-                </option>
-              </select>
+              <YdSelect
+                v-model="dbTarget.instanceId"
+                :options="[{ label: $t('store.dbPickInstance'), value: 0, disabled: true }, ...dbInstances.map(i => ({ label: `${i.name}（${i.type} :${i.port}）`, value: i.id }))]"
+                button-class="w-full"
+              />
               <div class="flex gap-2">
                 <FaInput v-model="dbTarget.database" :placeholder="$t('store.dbNamePh')" class="flex-1" />
                 <FaInput v-model="dbTarget.user" :placeholder="$t('store.dbUserPh')" class="flex-1" />
@@ -1251,14 +1248,13 @@ function statusText(s: StoreSource) {
               {{ fieldLabel(f) }}<span v-if="f.required" class="text-red-500">*</span>
             </span>
             <!-- 枚举：下拉选择 -->
-            <select
+            <YdSelect
               v-if="f.type === 'select' && f.values?.length"
               v-model="installForm.params[f.envKey]"
+              :options="f.values.map(o => ({ label: o.label || o.value, value: o.value }))"
               :disabled="!fieldIsEditable(f)"
-              class="h-9 flex-1 rounded-md border border-input bg-background px-2 text-sm outline-none"
-            >
-              <option v-for="o in f.values" :key="o.value" :value="o.value">{{ o.label || o.value }}</option>
-            </select>
+              button-class="flex-1"
+            />
             <!-- 密码 / 端口：输入 + 随机 -->
             <div v-else class="flex flex-1 items-center gap-1.5">
               <FaInput
@@ -1297,14 +1293,16 @@ function statusText(s: StoreSource) {
           <div class="flex items-center gap-3">
             <span class="w-28 shrink-0 text-sm text-muted-foreground">{{ $t('store.network') }}</span>
             <div class="flex flex-1 items-center gap-2">
-              <select v-model="netSel" class="h-9 min-w-0 flex-1 rounded-md border border-input bg-background px-2 text-sm outline-none">
-                <option value="ypanel_default">{{ $t('store.netYpanel') }}</option>
-                <option value="host">{{ $t('store.netHost') }}</option>
-                <option v-for="n in dockerNets.filter(x => x.name !== 'ypanel_default' && x.name !== 'host' && x.name !== 'bridge' && x.name !== 'none' && !x.name.startsWith('br-'))" :key="n.name" :value="n.name">
-                  {{ n.name }}{{ $t('store.netExisting') }}
-                </option>
-                <option value="__create__">{{ $t('store.netCreate') }}</option>
-              </select>
+              <YdSelect
+                v-model="netSel"
+                :options="[
+                  { label: $t('store.netYpanel'), value: 'ypanel_default' },
+                  { label: $t('store.netHost'), value: 'host' },
+                  ...dockerNets.filter(x => !['ypanel_default', 'host', 'bridge', 'none'].includes(x.name) && !x.name.startsWith('br-')).map(n => ({ label: n.name + $t('store.netExisting'), value: n.name })),
+                  { label: $t('store.netCreate'), value: '__create__' },
+                ]"
+                button-class="min-w-0 flex-1"
+              />
               <FaInput
                 v-if="netSel === '__create__'"
                 v-model="netNew"
@@ -1473,11 +1471,16 @@ function statusText(s: StoreSource) {
         </div>
         <div class="flex items-center gap-3">
           <span class="w-20 shrink-0 text-sm text-muted-foreground">{{ $t('common.type') }}</span>
-          <select v-model="sourceForm.type" :disabled="!!sourceEditing?.builtin" class="h-9 flex-1 rounded-md border border-input bg-background px-2 text-sm outline-none">
-            <option value="yp-git">{{ $t('store.srcTypeYpGit') }}</option>
-            <option value="yp-url">{{ $t('store.srcTypeYpUrl') }}</option>
-            <option value="onepanel">{{ $t('store.srcTypeOnepanel') }}</option>
-          </select>
+          <YdSelect
+            v-model="sourceForm.type"
+            :options="[
+              { label: $t('store.srcTypeYpGit'), value: 'yp-git' },
+              { label: $t('store.srcTypeYpUrl'), value: 'yp-url' },
+              { label: $t('store.srcTypeOnepanel'), value: 'onepanel' },
+            ]"
+            :disabled="!!sourceEditing?.builtin"
+            button-class="flex-1"
+          />
         </div>
         <div class="flex items-center gap-3">
           <span class="w-20 shrink-0 text-sm text-muted-foreground">{{ $t('store.address') }}</span>

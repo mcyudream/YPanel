@@ -282,9 +282,12 @@ onMounted(() => {
       <div class="flex flex-col gap-3">
         <div class="flex items-center gap-3">
           <span class="w-20 shrink-0 text-sm text-muted-foreground">jail</span>
-          <select v-model="banForm.jail" class="h-9 flex-1 rounded-md border border-input bg-background px-2 text-sm outline-none">
-            <option v-for="j in f2b?.jails || []" :key="j.name" :value="j.name">{{ j.name }}</option>
-          </select>
+          <YdSelect
+            v-model="banForm.jail"
+            :options="(f2b?.jails || []).map(j => ({ label: j.name, value: j.name }))"
+            size="default"
+            button-class="flex-1"
+          />
         </div>
         <div class="flex items-center gap-3">
           <span class="w-20 shrink-0 text-sm text-muted-foreground">IP</span>
@@ -300,10 +303,7 @@ onMounted(() => {
     <FaModal v-model="allowVisible" :title="$t('firewall.allowPort')" :destroy-on-close="true">
       <div class="flex items-center gap-3">
         <FaInput v-model="allowForm.port" :placeholder="$t('firewall.allowPortPlaceholder')" class="w-40" />
-        <select v-model="allowForm.proto" class="h-9 rounded-md border border-input bg-background px-2 text-sm outline-none">
-          <option value="tcp">tcp</option>
-          <option value="udp">udp</option>
-        </select>
+        <YdSelect v-model="allowForm.proto" :options="['tcp', 'udp']" size="default" />
       </div>
       <template #footer>
         <FaButton variant="outline" @click="allowVisible = false">{{ $t('common.cancel') }}</FaButton>

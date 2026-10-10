@@ -219,10 +219,15 @@ onActivated(loadProviders)
         </div>
         <div class="flex items-center gap-3">
           <span class="w-24 shrink-0 text-muted-foreground">{{ $t('ai.providers.apiType') }}</span>
-          <select v-model="provForm.apiType" class="h-9 flex-1 rounded-md border bg-background px-2 outline-none">
-            <option value="openai">{{ $t('ai.providers.apiTypeOpenai') }}</option>
-            <option value="anthropic">{{ $t('ai.providers.apiTypeAnthropic') }}</option>
-          </select>
+          <YdSelect
+            v-model="provForm.apiType"
+            :options="[
+              { label: $t('ai.providers.apiTypeOpenai'), value: 'openai' },
+              { label: $t('ai.providers.apiTypeAnthropic'), value: 'anthropic' },
+            ]"
+            size="default"
+            button-class="flex-1"
+          />
         </div>
         <div class="flex items-center gap-3">
           <span class="w-24 shrink-0 text-muted-foreground">{{ $t('ai.providers.baseURL') }}</span>

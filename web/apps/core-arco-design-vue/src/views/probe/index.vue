@@ -404,24 +404,28 @@ onBeforeUnmount(() => {
         <div class="flex items-center gap-3">
           <span class="w-20 shrink-0 text-sm text-muted-foreground">{{ $t('monitor.probe.target') }}</span>
           <template v-if="form.targetType === 'site'">
-            <select v-model="form.targetRef" class="h-9 flex-1 rounded-md border border-input bg-background px-2 text-sm outline-none">
-              <option value="" disabled>
-                {{ $t('monitor.probe.selectSite') }}
-              </option>
-              <option v-for="s in sites" :key="s.name" :value="s.name">
-                {{ s.name }}{{ s.domain ? `（${s.domain}）` : '' }}
-              </option>
-            </select>
+            <YdSelect
+              v-model="form.targetRef"
+              :placeholder="$t('monitor.probe.selectSite')"
+              :options="[
+                { label: $t('monitor.probe.selectSite'), value: '', disabled: true },
+                ...sites.map(s => ({ label: s.domain ? `${s.name}（${s.domain}）` : s.name, value: s.name })),
+              ]"
+              size="default"
+              button-class="flex-1"
+            />
           </template>
           <template v-else-if="form.targetType === 'container'">
-            <select v-model="form.targetRef" class="h-9 flex-1 rounded-md border border-input bg-background px-2 text-sm outline-none">
-              <option value="" disabled>
-                {{ $t('monitor.probe.selectContainer') }}
-              </option>
-              <option v-for="c in containers" :key="c.id" :value="c.name">
-                {{ c.name }}（{{ c.state }}）
-              </option>
-            </select>
+            <YdSelect
+              v-model="form.targetRef"
+              :placeholder="$t('monitor.probe.selectContainer')"
+              :options="[
+                { label: $t('monitor.probe.selectContainer'), value: '', disabled: true },
+                ...containers.map(c => ({ label: `${c.name}（${c.state}）`, value: c.name })),
+              ]"
+              size="default"
+              button-class="flex-1"
+            />
           </template>
           <template v-else-if="form.targetType === 'http'">
             <FaInput v-model="form.targetRef" placeholder="https://example.com/health" class="flex-1" />
@@ -434,11 +438,7 @@ onBeforeUnmount(() => {
         <template v-if="form.targetType === 'http' || form.targetType === 'site'">
           <div class="flex items-center gap-3">
             <span class="w-20 shrink-0 text-sm text-muted-foreground">{{ $t('monitor.probe.methodExpect') }}</span>
-            <select v-model="form.method" class="h-9 w-24 rounded-md border border-input bg-background px-2 text-sm outline-none">
-              <option>GET</option>
-              <option>HEAD</option>
-              <option>POST</option>
-            </select>
+            <YdSelect v-model="form.method" :options="['GET', 'HEAD', 'POST']" size="default" button-class="w-24" />
             <FaInput v-model="form.expectStatus" :placeholder="$t('monitor.probe.expectStatusPlaceholder')" class="flex-1" />
           </div>
           <div class="flex items-center gap-3">

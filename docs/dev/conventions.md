@@ -67,6 +67,7 @@ ypanel/
 - 基于 fantastic-admin（**仅 Arco 变体** `apps/core-arco-design-vue`，其余 UI 变体一律删除不引入）的目录与命名惯例；业务模块放 `src/modules/`，桌面工作台放 `src/workbench/`
 - **组件强约束**：
   - 只使用 fa 封装组件（`fa-` 前缀），**禁止直接使用裸 Arco Design Vue 组件**（禁止 `<a-button>` 等直写）
+  - **禁止使用原生 `<select>`**（含弹窗/表单内）：原生下拉展开层是浏览器 UI，不可主题化且位置脱管——一律用 `YdSelect`（FaDropdown 封装，drop-in 支持 options/v-model）；存量替换与规则见 eslint `vue/no-restricted-html-elements`
   - fa 缺失的组件以 `yd-` 前缀封装（`YdXxx`），保持 fa 视觉风格与交互效果（主题变量、圆角、阴影、动效一致）；`yd-` 组件集中在 `src/components/`（或 `src/ui/`），全局注册
   - 封装 `yd-` 组件时允许在组件内部使用 Arco 原语，但必须包成完整语义组件，不向外暴露 Arco API
 - 双模式共用同一套 API store（Pinia）与路由权限；模式切换不刷新页面、状态不丢失
@@ -74,14 +75,35 @@ ypanel/
 - API 层统一封装（错误处理、token 刷新、WS 重连）；禁止组件内裸 fetch
 - 类型完备：API 请求/响应均有 TS 类型，与后端 shared/ 的 dto 对齐（后续考虑代码生成）
 
-## 5. Git 规范
+## 5. 商店应用约定
+
+应用打包规范以商店仓库 `YPanel-AppStore/README.md` 为准；扩展可用性实测矩阵见 `docs/dev/php-runtime-extensions.md`。
+
+### 5.1 数据库需求声明与纳管接入
+
+应用需要数据库时**必须按标准键集声明**，安装向导才会出现「数据库」下拉（应用自带 / 使用纳管实例自动建库建号注入）：
+
+- **键集命名**（compose 应用在 `versions[].env`、php 应用由 app.json `database` 声明合成）：`<前缀>_HOST` 必备，前缀词干须含 `DB|DATABASE|SQL|MYSQL|MARIA|MONGO` 之一（如 `DATABASE_HOST`、`MYSQL_HOST`），其余按 `<前缀>_PORT/_NAME/_USER/_PASSWORD` 推导。**不遵守命名的声明不会触发下拉**（前端 dbHostKey 与后端 dbFieldSetOf 双端同规则检测）。
+- **接管行为**：向导选中纳管实例后，同前缀的原始连接字段（地址/端口/库名/用户/密码）从表单**隐藏接管**，由 `applyExternalDB` 自动建库建号授权并注入连接参数（同网络容器名直连，否则宿主 IP+映射端口）；「应用自带」时原始字段照常显示。
+- **默认值**：compose 应用默认「应用自带」；php 应用（app.json `database.create: true`）默认「纳管实例」。
+- 应用自带数据库的 compose 应用（如 element-skin）：内置服务密码字段用 `random: true` 自动随机，不走纳管下拉。
+
+### 5.2 php 站点 nginx 模板
+
+php 站点 fastcgi 段**必须显式包含** `fastcgi_param CONTENT_TYPE $content_type;` 与 `fastcgi_param CONTENT_LENGTH $content_length;`——nginx 的 `fastcgi_params` 文件不含这两条（在 fastcgi.conf 里），缺失会导致 **PHP 收不到任何 POST body**（GET 正常，极难察觉）。修改 conf 后存量站点需重新生成或 sed 补行 + reload。
+
+### 5.3 PHP 应用类型（kind: php）
+
+重装语义=站点目录原位保留 + 源码覆盖（.env/storage 不丢）；app.json `upgrade.backup=true` 时重装前自动 tar 站点目录（备份失败即中止），`upgrade.commands` 在版本变更时替代 install 命令执行。
+
+## 6. Git 规范
 
 - 分支：`main` 稳定；功能分支 `feat/xxx`，修复 `fix/xxx`
 - 提交信息：中文，格式 `类型: 描述`（feat/fix/docs/refactor/chore），如 `feat: 容器列表接口`
 - 禁止提交：`docs/local.md`、`reference/`、`.env*`、构建产物、真实凭证
 - 提交前自查：无调试日志、无注释掉的死代码、无 TODO 无主的临时代码
 
-## 6. 文档与计划
+## 7. 文档与计划
 
 - 新模块开发前：docs/plan/ 下先有计划（目标/工作项/验收标准），经确认后动工
 - 计划完成后在计划文档标注状态；长期结论沉淀回 docs/ 或 docs/dev/

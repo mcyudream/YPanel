@@ -244,17 +244,11 @@ async function apply() {
       <!-- 属主 -->
       <div class="grid grid-cols-[3.5rem_1fr] items-center gap-x-3 gap-y-2">
         <span class="text-muted-foreground">{{ $t('components.ydChmodDialog.user') }}</span>
-        <select v-if="!isContainer" v-model="ownerSel" class="h-8 rounded-md border bg-background px-2 text-sm outline-none">
-          <option :value="UNCHANGED">{{ $t('components.ydChmodDialog.unchanged') }}</option>
-          <option v-for="u in owners.users" :key="u.id" :value="u.name">{{ $t('components.ydChmodDialog.ownerEntry', { name: u.name, id: u.id }) }}</option>
-        </select>
+        <YdSelect v-if="!isContainer" v-model="ownerSel" size="sm" :options="[{ label: $t('components.ydChmodDialog.unchanged'), value: UNCHANGED }, ...owners.users.map(u => ({ label: $t('components.ydChmodDialog.ownerEntry', { name: u.name, id: u.id }), value: u.name }))]" button-class="w-full" />
         <FaInput v-else v-model="ownerSel" :placeholder="$t('components.ydChmodDialog.ownerInputPlaceholder')" class="w-full" />
 
         <span class="text-muted-foreground">{{ $t('components.ydChmodDialog.group') }}</span>
-        <select v-if="!isContainer" v-model="groupSel" class="h-8 rounded-md border bg-background px-2 text-sm outline-none">
-          <option :value="UNCHANGED">{{ $t('components.ydChmodDialog.unchanged') }}</option>
-          <option v-for="g in owners.groups" :key="g.id" :value="g.name">{{ $t('components.ydChmodDialog.ownerEntry', { name: g.name, id: g.id }) }}</option>
-        </select>
+        <YdSelect v-if="!isContainer" v-model="groupSel" size="sm" :options="[{ label: $t('components.ydChmodDialog.unchanged'), value: UNCHANGED }, ...owners.groups.map(g => ({ label: $t('components.ydChmodDialog.ownerEntry', { name: g.name, id: g.id }), value: g.name }))]" button-class="w-full" />
         <FaInput v-else v-model="groupSel" :placeholder="$t('components.ydChmodDialog.groupInputPlaceholder')" class="w-full" />
       </div>
 

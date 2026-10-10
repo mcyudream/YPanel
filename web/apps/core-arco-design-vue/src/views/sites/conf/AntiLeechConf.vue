@@ -81,10 +81,7 @@ onMounted(load)
         </label>
         <label class="flex items-center gap-2">
           {{ $t('sites.conf.antileech.returnCode') }}
-          <select v-model.number="edit.returnCode" class="h-8 rounded-md border bg-background px-2 text-sm outline-none">
-            <option :value="403">403</option>
-            <option :value="404">404</option>
-          </select>
+          <YdSelect v-model="edit.returnCode" :options="[403, 404]" />
         </label>
       </div>
     </div>

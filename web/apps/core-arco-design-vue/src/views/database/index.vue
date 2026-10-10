@@ -253,6 +253,14 @@ function openMigrate() {
   mOpen.value = true
 }
 
+// 迁移目标下拉：禁用占位项（value 0）+ 同类型其它实例
+const migrateTargetOptions = computed(() => [
+  { label: i18n.global.t('database.migrate.selectPlaceholder'), value: 0, disabled: true },
+  ...instances.value
+    .filter(x => x.type === active.value?.type && x.id !== active.value?.id)
+    .map(i => ({ label: `${i.name}（${i.origin === 'external' ? i18n.global.t('database.originShort.external') : i18n.global.t('database.origin.container')}）`, value: i.id })),
+])
+
 async function doPreview() {
   if (!active.value || !mTarget.value) {
     toast.warning(i18n.global.t('database.migrate.selectTarget'))
@@ -1143,11 +1151,7 @@ onBeforeUnmount(() => {
         </div>
         <div v-if="active?.type === 'mysql'" class="flex items-center gap-3">
           <span class="w-20 shrink-0 text-sm text-muted-foreground">{{ $t('database.charset') }}</span>
-          <select v-model="dbForm.charset" class="h-9 flex-1 rounded-md border border-input bg-background px-2 text-sm outline-none">
-            <option value="utf8mb4">utf8mb4</option>
-            <option value="utf8mb3">utf8mb3</option>
-            <option value="ascii">ascii</option>
-          </select>
+          <YdSelect v-model="dbForm.charset" button-class="flex-1" :options="['utf8mb4', 'utf8mb3', 'ascii']" />
         </div>
       </div>
       <template #footer>
@@ -1194,15 +1198,7 @@ onBeforeUnmount(() => {
       </div>
       <div class="flex items-center gap-2">
         <label class="w-20 text-right text-xs">{{ $t('database.migrate.target') }}</label>
-        <select
-          v-model.number="mTarget"
-          class="flex-1 rounded border border-input bg-background px-2 py-1 text-xs outline-none focus:ring-1 focus:ring-primary"
-        >
-          <option :value="0" disabled>{{ $t('database.migrate.selectPlaceholder') }}</option>
-          <option v-for="i in instances.filter(x => x.type === active?.type && x.id !== active?.id)" :key="i.id" :value="i.id">
-            {{ i.name }}（{{ i.origin === 'external' ? $t('database.originShort.external') : $t('database.origin.container') }}）
-          </option>
-        </select>
+        <YdSelect v-model="mTarget" button-class="flex-1" :options="migrateTargetOptions" />
         <FaButton variant="outline" size="sm" :loading="mLoading" :disabled="!mTarget" @click="doPreview">{{ $t('database.migrate.preview') }}</FaButton>
       </div>
       <div v-if="mPreview?.compatible" class="rounded border p-2">
@@ -1234,9 +1230,7 @@ onBeforeUnmount(() => {
       <div class="flex flex-col gap-3">
         <div class="flex items-center gap-2">
           <span class="text-sm text-muted-foreground">{{ $t('database.database') }}</span>
-          <select v-model="privDB" class="h-8 rounded-md border bg-background px-2 text-sm outline-none focus:border-primary" @change="loadMatrix">
-            <option v-for="d in privDBs" :key="d" :value="d">{{ d }}</option>
-          </select>
+          <YdSelect v-model="privDB" :options="privDBs" @update:model-value="loadMatrix" />
           <span class="ml-auto text-xs text-muted-foreground">{{ $t('database.priv.hint') }}</span>
         </div>
         <div class="flex flex-wrap gap-2">

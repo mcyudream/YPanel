@@ -52,20 +52,16 @@ async function copy() {
 <template>
   <div class="flex flex-col gap-2">
     <div class="flex flex-wrap items-center gap-2">
-      <select v-model.number="expandLevel" class="h-8 rounded-md border bg-background px-2 text-xs outline-none" :title="$t('components.ydJsonViewer.defaultExpandLevel')">
-        <option :value="1">
-          {{ $t('components.ydJsonViewer.expandN', { n: 1 }) }}
-        </option>
-        <option :value="2">
-          {{ $t('components.ydJsonViewer.expandN', { n: 2 }) }}
-        </option>
-        <option :value="3">
-          {{ $t('components.ydJsonViewer.expandN', { n: 3 }) }}
-        </option>
-        <option :value="99">
-          {{ $t('components.ydJsonViewer.expandAllOption') }}
-        </option>
-      </select>
+      <YdSelect
+        v-model="expandLevel"
+        :options="[
+          { label: $t('components.ydJsonViewer.expandN', { n: 1 }), value: 1 },
+          { label: $t('components.ydJsonViewer.expandN', { n: 2 }), value: 2 },
+          { label: $t('components.ydJsonViewer.expandN', { n: 3 }), value: 3 },
+          { label: $t('components.ydJsonViewer.expandAllOption'), value: 99 },
+        ]"
+        :title="$t('components.ydJsonViewer.defaultExpandLevel')"
+      />
       <FaButton variant="outline" size="sm" @click="expandAll">
         {{ $t('components.ydJsonViewer.expandAllBtn') }}
       </FaButton>

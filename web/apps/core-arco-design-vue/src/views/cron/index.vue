@@ -457,27 +457,34 @@ async function runScript(s: ScriptItem) {
         </div>
         <div class="flex items-center gap-3">
           <span class="w-24 shrink-0 text-sm text-muted-foreground">{{ $t('cron.taskType') }}</span>
-          <select v-model="form.type" class="h-9 flex-1 rounded-md border bg-background px-2 text-sm outline-none focus:border-primary">
-            <option value="shell">{{ $t('cron.typeShell') }}</option>
-            <option value="db_backup">{{ $t('cron.typeDbBackup') }}</option>
-            <option value="site_backup">{{ $t('cron.typeSiteBackup') }}</option>
-            <option value="dir_backup">{{ $t('cron.typeDirBackup') }}</option>
-            <option value="compose_backup">{{ $t('cron.typeComposeBackup') }}</option>
-            <option value="curl">{{ $t('cron.typeCurl') }}</option>
-            <option value="cut_website_log">{{ $t('cron.typeCutLog') }}</option>
-            <option value="clean">{{ $t('cron.typeClean') }}</option>
-            <option value="cert_renew">{{ $t('cron.typeCertRenew') }}</option>
-            <option value="container_op">{{ $t('cron.typeContainerOp') }}</option>
-            <option value="script">{{ $t('cron.typeScript') }}</option>
-          </select>
+          <YdSelect
+            v-model="form.type"
+            :options="[
+              { label: $t('cron.typeShell'), value: 'shell' },
+              { label: $t('cron.typeDbBackup'), value: 'db_backup' },
+              { label: $t('cron.typeSiteBackup'), value: 'site_backup' },
+              { label: $t('cron.typeDirBackup'), value: 'dir_backup' },
+              { label: $t('cron.typeComposeBackup'), value: 'compose_backup' },
+              { label: $t('cron.typeCurl'), value: 'curl' },
+              { label: $t('cron.typeCutLog'), value: 'cut_website_log' },
+              { label: $t('cron.typeClean'), value: 'clean' },
+              { label: $t('cron.typeCertRenew'), value: 'cert_renew' },
+              { label: $t('cron.typeContainerOp'), value: 'container_op' },
+              { label: $t('cron.typeScript'), value: 'script' },
+            ]"
+            size="default"
+            button-class="flex-1"
+          />
         </div>
         <div v-if="form.type === 'shell'" class="flex items-start gap-3">
           <span class="w-24 shrink-0 text-sm text-muted-foreground">{{ $t('cron.command') }}
         <span class="text-sm text-muted-foreground">{{ $t('nodes.targetNode') }}</span>
-        <select v-if="form.type === 'shell' || form.type === 'script'" v-model="form.nodeId" class="h-9 rounded-md border border-input bg-background px-2 text-sm outline-none">
-          <option value="">{{ $t('nodes.localPanel') }}</option>
-          <option v-for="n in cronNodes.filter(x => x.id !== 'local')" :key="n.id" :value="n.id">{{ n.name }}</option>
-        </select></span>
+        <YdSelect
+          v-if="form.type === 'shell' || form.type === 'script'"
+          v-model="form.nodeId"
+          :options="[{ label: $t('nodes.localPanel'), value: '' }, ...cronNodes.filter(x => x.id !== 'local').map(n => ({ label: n.name, value: n.id }))]"
+          size="default"
+        /></span>
           <textarea
             v-model="form.command"
             class="h-24 w-full flex-1 resize-y rounded-md border border-input bg-background p-2 font-mono text-[13px] outline-none focus:ring-1 focus:ring-primary"

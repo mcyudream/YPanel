@@ -73,11 +73,16 @@ onMounted(() => {
 
     <div class="rounded-lg border p-4">
       <div class="mb-1 text-sm font-medium">{{ $t('sites.conf.loadbalance.strategy') }}</div>
-      <select v-model="edit.strategy" class="mb-4 h-9 rounded-md border bg-background px-2 text-sm outline-none md:w-64">
-        <option value="round-robin">{{ $t('sites.conf.loadbalance.stratRR') }}</option>
-        <option value="least_conn">{{ $t('sites.conf.loadbalance.stratLC') }}</option>
-        <option value="ip_hash">{{ $t('sites.conf.loadbalance.stratIPHash') }}</option>
-      </select>
+      <YdSelect
+        v-model="edit.strategy"
+        :options="[
+          { label: $t('sites.conf.loadbalance.stratRR'), value: 'round-robin' },
+          { label: $t('sites.conf.loadbalance.stratLC'), value: 'least_conn' },
+          { label: $t('sites.conf.loadbalance.stratIPHash'), value: 'ip_hash' },
+        ]"
+        size="default"
+        button-class="mb-4 md:w-64"
+      />
 
       <div class="mb-3 flex items-center justify-between">
         <span class="text-sm font-medium">{{ $t('sites.conf.loadbalance.upstreams') }}</span>

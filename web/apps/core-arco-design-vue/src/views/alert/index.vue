@@ -278,9 +278,12 @@ onMounted(() => {
         </div>
         <div class="flex items-center gap-3">
           <span class="w-20 shrink-0 text-sm text-muted-foreground">{{ $t('alert.metric') }}</span>
-          <select v-model="form.metric" class="h-9 flex-1 rounded-md border border-input bg-background px-2 text-sm outline-none">
-            <option v-for="(m, k) in metricMeta" :key="k" :value="k">{{ m.label }}</option>
-          </select>
+          <YdSelect
+            v-model="form.metric"
+            :options="Object.entries(metricMeta).map(([k, m]) => ({ label: m.label, value: k }))"
+            size="default"
+            button-class="flex-1"
+          />
         </div>
         <div v-if="isLogRule" class="flex items-start gap-3">
           <span class="w-20 shrink-0 pt-2 text-sm text-muted-foreground">LogsQL</span>
@@ -292,13 +295,18 @@ onMounted(() => {
         </div>
         <div v-if="isLogRule" class="flex items-center gap-3">
           <span class="w-20 shrink-0 text-sm text-muted-foreground">{{ $t('alert.window') }}</span>
-          <select v-model="form.windowMin" class="h-9 flex-1 rounded-md border border-input bg-background px-2 text-sm outline-none">
-            <option :value="1">{{ $t('alert.lastNMin', { n: 1 }) }}</option>
-            <option :value="5">{{ $t('alert.lastNMin', { n: 5 }) }}</option>
-            <option :value="15">{{ $t('alert.lastNMin', { n: 15 }) }}</option>
-            <option :value="30">{{ $t('alert.lastNMin', { n: 30 }) }}</option>
-            <option :value="60">{{ $t('alert.lastNHour', { n: 1 }) }}</option>
-          </select>
+          <YdSelect
+            v-model="form.windowMin"
+            :options="[
+              { label: $t('alert.lastNMin', { n: 1 }), value: 1 },
+              { label: $t('alert.lastNMin', { n: 5 }), value: 5 },
+              { label: $t('alert.lastNMin', { n: 15 }), value: 15 },
+              { label: $t('alert.lastNMin', { n: 30 }), value: 30 },
+              { label: $t('alert.lastNHour', { n: 1 }), value: 60 },
+            ]"
+            size="default"
+            button-class="flex-1"
+          />
         </div>
         <div class="flex items-center gap-3">
           <span class="w-20 shrink-0 text-sm text-muted-foreground">{{ $t('alert.threshold') }}</span>
@@ -307,15 +315,20 @@ onMounted(() => {
         </div>
         <div class="flex items-center gap-3">
           <span class="w-20 shrink-0 text-sm text-muted-foreground">{{ $t('alert.channelType') }}</span>
-          <select v-model="form.webhookType" class="h-9 flex-1 rounded-md border border-input bg-background px-2 text-sm outline-none">
-            <option value="feishu">{{ $t('alert.chFeishu') }}</option>
-            <option value="dingtalk">{{ $t('alert.chDingtalk') }}</option>
-            <option value="wecom">{{ $t('alert.chWecom') }}</option>
-            <option value="telegram">Telegram Bot</option>
-            <option value="bark">{{ $t('alert.chBark') }}</option>
-            <option value="email">{{ $t('alert.chEmail') }}</option>
-            <option value="generic">{{ $t('alert.chGeneric') }}</option>
-          </select>
+          <YdSelect
+            v-model="form.webhookType"
+            :options="[
+              { label: $t('alert.chFeishu'), value: 'feishu' },
+              { label: $t('alert.chDingtalk'), value: 'dingtalk' },
+              { label: $t('alert.chWecom'), value: 'wecom' },
+              { label: 'Telegram Bot', value: 'telegram' },
+              { label: $t('alert.chBark'), value: 'bark' },
+              { label: $t('alert.chEmail'), value: 'email' },
+              { label: $t('alert.chGeneric'), value: 'generic' },
+            ]"
+            size="default"
+            button-class="flex-1"
+          />
         </div>
         <div v-if="needUrl" class="flex items-center gap-3">
           <span class="w-20 shrink-0 text-sm text-muted-foreground">Webhook</span>

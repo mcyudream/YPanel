@@ -122,13 +122,16 @@ onDeactivated(() => toggleOpsPolling(false))
         <div class="flex flex-wrap items-center gap-2">
           <FaIcon name="i-lucide:shield-check" class="text-base text-primary opacity-70" />
           <span class="text-sm font-medium">{{ $t('ai.mcp.opsTitle') }}</span>
-          <select v-model="opsState" class="h-8 rounded-md border bg-background px-2 text-xs outline-none focus:border-primary">
-            <option value="">{{ $t('common.all') }}</option>
-            <option value="pending">{{ $t('ai.mcp.state.pending') }}</option>
-            <option value="succeeded">{{ $t('common.success') }}</option>
-            <option value="failed">{{ $t('common.failed') }}</option>
-            <option value="expired">{{ $t('ai.mcp.state.expired') }}</option>
-          </select>
+          <YdSelect
+            v-model="opsState"
+            :options="[
+              { label: $t('common.all'), value: '' },
+              { label: $t('ai.mcp.state.pending'), value: 'pending' },
+              { label: $t('common.success'), value: 'succeeded' },
+              { label: $t('common.failed'), value: 'failed' },
+              { label: $t('ai.mcp.state.expired'), value: 'expired' },
+            ]"
+          />
           <FaButton variant="ghost" size="sm" @click="loadOps">{{ $t('common.refresh') }}</FaButton>
         </div>
         <div v-if="!ops.length" class="mt-2 text-xs text-muted-foreground">{{ $t('ai.mcp.opsEmpty') }}</div>
@@ -199,10 +202,15 @@ onDeactivated(() => toggleOpsPolling(false))
         </div>
         <div class="flex items-center gap-3">
           <span class="w-24 shrink-0 text-muted-foreground">{{ $t('ai.mcp.transport') }}</span>
-          <select v-model="mcpForm.transport" class="h-9 flex-1 rounded-md border bg-background px-2 outline-none">
-            <option value="stdio">{{ $t('ai.mcp.transportStdio') }}</option>
-            <option value="streamable-http">{{ $t('ai.mcp.transportHttp') }}</option>
-          </select>
+          <YdSelect
+            v-model="mcpForm.transport"
+            :options="[
+              { label: $t('ai.mcp.transportStdio'), value: 'stdio' },
+              { label: $t('ai.mcp.transportHttp'), value: 'streamable-http' },
+            ]"
+            size="default"
+            button-class="flex-1"
+          />
         </div>
         <div v-if="mcpForm.transport === 'stdio'" class="space-y-3">
           <div class="flex items-center gap-3">

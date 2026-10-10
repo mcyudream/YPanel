@@ -17,6 +17,12 @@ const runDir = ref('/')
 const loading = ref(false)
 const saving = ref(false)
 
+const runDirOptions = computed(() => [
+  { label: i18n.global.t('sites.conf.dir.rootOption'), value: '/' },
+  ...(conf.value?.subdirs || []).map(d => ({ label: d, value: d })),
+  ...(runDir.value !== '/' && !(conf.value?.subdirs || []).includes(runDir.value) ? [{ label: runDir.value, value: runDir.value }] : []),
+])
+
 async function load() {
   loading.value = true
   try {
@@ -70,11 +76,7 @@ onMounted(load)
         {{ $t('sites.conf.dir.runDirDesc') }}
       </p>
       <div class="flex items-center gap-2">
-        <select v-model="runDir" class="h-9 w-56 rounded-md border bg-background px-2 text-sm outline-none focus:border-primary">
-          <option value="/">{{ $t('sites.conf.dir.rootOption') }}</option>
-          <option v-for="d in conf?.subdirs || []" :key="d" :value="d">{{ d }}</option>
-          <option v-if="runDir !== '/' && !(conf?.subdirs || []).includes(runDir)" :value="runDir">{{ runDir }}</option>
-        </select>
+        <YdSelect v-model="runDir" :options="runDirOptions" size="default" button-class="w-56" />
         <FaButton size="sm" :loading="saving" :disabled="!dirty" @click="save">
           {{ $t('sites.shared.saveReload') }}
         </FaButton>

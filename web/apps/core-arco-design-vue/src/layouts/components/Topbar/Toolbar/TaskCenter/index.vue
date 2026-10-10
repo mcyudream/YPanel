@@ -238,12 +238,15 @@ onBeforeUnmount(() => {
       <!-- 列表态 -->
       <div v-if="!taskCenter.activeTaskId" class="flex flex-col gap-3">
         <div class="flex items-center gap-2">
-          <select v-model="statusFilter" class="h-8 rounded-md border bg-background px-2 text-sm outline-none">
-            <option value="">{{ $t('layout.taskCenter.allStatus') }}</option>
-            <option value="running">{{ $t('layout.taskStatus.running') }}</option>
-            <option value="success">{{ $t('layout.taskStatus.success') }}</option>
-            <option value="failed">{{ $t('layout.taskStatus.failed') }}</option>
-          </select>
+          <YdSelect
+            v-model="statusFilter"
+            :options="[
+              { label: $t('layout.taskCenter.allStatus'), value: '' },
+              { label: $t('layout.taskStatus.running'), value: 'running' },
+              { label: $t('layout.taskStatus.success'), value: 'success' },
+              { label: $t('layout.taskStatus.failed'), value: 'failed' },
+            ]"
+          />
           <span class="ml-auto text-xs text-muted-foreground">{{ $t('common.total', { n: total }) }}</span>
           <FaButton variant="outline" size="sm" @click="clearFinished">
             <FaIcon name="i-lucide:eraser" class="mr-1" /> {{ $t('layout.taskCenter.cleanFinished') }}

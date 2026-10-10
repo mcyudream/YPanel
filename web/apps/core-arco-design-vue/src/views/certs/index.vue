@@ -39,6 +39,12 @@ async function loadAccounts() {
   acmeAccounts.value = await certApi.acmeAccounts().catch(() => [])
 }
 
+// DNS 账户下拉：无账户时保留原生的禁用占位项（value 0），有账户时仅列账户
+const dnsAccountOptions = computed(() => [
+  ...(!dnsAccounts.value.length ? [{ label: i18n.global.t('certs.noDnsOption'), value: 0, disabled: true }] : []),
+  ...dnsAccounts.value.map(a => ({ label: `${a.name}（${tr(`certs.provider.${a.provider}`, a.provider)}）`, value: a.id })),
+])
+
 const filteredCerts = computed(() => {
   let list = [...certs.value]
   if (keyword.value.trim()) {
@@ -476,17 +482,11 @@ onMounted(() => {
         </div>
         <div class="flex items-center gap-3">
           <span class="w-20 shrink-0 text-sm text-muted-foreground">{{ $t('certs.acmeAccounts') }}</span>
-          <select v-model.number="issueForm.acmeAccountId" class="h-9 flex-1 rounded-md border bg-background px-2 text-sm outline-none focus:border-primary">
-            <option :value="0">{{ $t('certs.defaultAcme') }}</option>
-            <option v-for="a in acmeAccounts" :key="a.id" :value="a.id">{{ a.email }}（{{ caLabel[a.caType] }}）</option>
-          </select>
+          <YdSelect v-model="issueForm.acmeAccountId" button-class="flex-1" :options="[{ label: $t('certs.defaultAcme'), value: 0 }, ...acmeAccounts.map(a => ({ label: `${a.email}（${caLabel[a.caType]}）`, value: a.id }))]" />
         </div>
         <div class="flex items-center gap-3">
           <span class="w-20 shrink-0 text-sm text-muted-foreground">{{ $t('certs.dnsAccounts') }}</span>
-          <select v-model.number="issueForm.dnsAccountId" class="h-9 flex-1 rounded-md border bg-background px-2 text-sm outline-none focus:border-primary">
-            <option v-if="!dnsAccounts.length" :value="0" disabled>{{ $t('certs.noDnsOption') }}</option>
-            <option v-for="a in dnsAccounts" :key="a.id" :value="a.id">{{ a.name }}（{{ tr(`certs.provider.${a.provider}`, a.provider) }}）</option>
-          </select>
+          <YdSelect v-model="issueForm.dnsAccountId" button-class="flex-1" :options="dnsAccountOptions" />
         </div>
         <div class="flex items-center gap-3">
           <span class="w-20 shrink-0 text-sm text-muted-foreground">{{ $t('common.remark') }}</span>
@@ -593,11 +593,7 @@ onMounted(() => {
           <div class="flex flex-col gap-2">
             <div class="flex items-center gap-2">
               <FaInput v-model="dnsForm.name" :placeholder="$t('certs.dnsNamePlaceholder')" class="flex-1" />
-              <select v-model="dnsForm.provider" class="h-9 rounded-md border bg-background px-2 text-sm outline-none focus:border-primary">
-                <option value="aliyun">{{ $t('certs.provider.aliyun') }}</option>
-                <option value="dnspod">{{ $t('certs.provider.dnspod') }}</option>
-                <option value="cloudflare">{{ $t('certs.provider.cloudflare') }}</option>
-              </select>
+              <YdSelect v-model="dnsForm.provider" :options="[{ label: $t('certs.provider.aliyun'), value: 'aliyun' }, { label: $t('certs.provider.dnspod'), value: 'dnspod' }, { label: $t('certs.provider.cloudflare'), value: 'cloudflare' }]" />
             </div>
             <FaInput v-model="dnsForm.accessKey" :placeholder="$t('certs.accessKeyPlaceholder')" />
             <FaInput v-model="dnsForm.secret" placeholder="AccessKey Secret / SecretKey / Global API Key" type="password" />
@@ -646,17 +642,8 @@ onMounted(() => {
           <div class="flex flex-col gap-2">
             <FaInput v-model="acmeForm.email" :placeholder="$t('certs.emailPlaceholder')" />
             <div class="flex items-center gap-2">
-              <select v-model="acmeForm.caType" class="h-9 flex-1 rounded-md border bg-background px-2 text-sm outline-none focus:border-primary">
-                <option value="letsencrypt">Let's Encrypt</option>
-                <option value="zerossl">ZeroSSL</option>
-                <option value="buypass">Buypass</option>
-              </select>
-              <select v-model="acmeForm.keyType" class="h-9 flex-1 rounded-md border bg-background px-2 text-sm outline-none focus:border-primary">
-                <option value="ec-256">EC 256</option>
-                <option value="ec-384">EC 384</option>
-                <option value="rsa-2048">RSA 2048</option>
-                <option value="rsa-4096">RSA 4096</option>
-              </select>
+              <YdSelect v-model="acmeForm.caType" button-class="flex-1" :options="[{ label: `Let's Encrypt`, value: 'letsencrypt' }, 'zerossl', 'buypass']" />
+              <YdSelect v-model="acmeForm.keyType" button-class="flex-1" :options="[{ label: 'EC 256', value: 'ec-256' }, { label: 'EC 384', value: 'ec-384' }, { label: 'RSA 2048', value: 'rsa-2048' }, { label: 'RSA 4096', value: 'rsa-4096' }]" />
               <FaButton size="sm" :loading="acmeSaving" @click="doCreateAcme">{{ $t('common.create') }}</FaButton>
             </div>
           </div>

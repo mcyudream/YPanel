@@ -72,11 +72,16 @@ onMounted(load)
       </div>
       <div>
         <div class="mb-1 text-sm font-medium">{{ $t('sites.conf.realip.header') }}</div>
-        <select v-model="edit.header" class="h-9 w-full rounded-md border bg-background px-2 text-sm outline-none md:w-72">
-          <option value="X-Forwarded-For">{{ $t('sites.conf.realip.headerXFF') }}</option>
-          <option value="X-Real-IP">{{ $t('sites.conf.realip.headerXRealIP') }}</option>
-          <option value="CF-Connecting-IP">{{ $t('sites.conf.realip.headerCF') }}</option>
-        </select>
+        <YdSelect
+          v-model="edit.header"
+          :options="[
+            { label: $t('sites.conf.realip.headerXFF'), value: 'X-Forwarded-For' },
+            { label: $t('sites.conf.realip.headerXRealIP'), value: 'X-Real-IP' },
+            { label: $t('sites.conf.realip.headerCF'), value: 'CF-Connecting-IP' },
+          ]"
+          size="default"
+          button-class="w-full md:w-72"
+        />
       </div>
     </div>
 

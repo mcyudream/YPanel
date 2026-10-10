@@ -133,11 +133,7 @@ function remove(n: DockerNetwork) {
         </div>
         <div class="flex items-center gap-3">
           <span class="w-20 shrink-0 text-sm text-muted-foreground">{{ $t('container.common.driver') }}</span>
-          <select v-model="form.driver" class="h-9 flex-1 rounded-md border bg-background px-2 text-sm outline-none">
-            <option value="bridge">bridge</option>
-            <option value="host">host</option>
-            <option value="overlay">overlay</option>
-          </select>
+          <YdSelect v-model="form.driver" button-class="flex-1" :options="['bridge', 'host', 'overlay']" />
         </div>
       </div>
       <template #footer>

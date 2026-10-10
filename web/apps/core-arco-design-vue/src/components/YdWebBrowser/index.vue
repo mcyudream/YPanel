@@ -164,9 +164,13 @@ defineExpose({ navigate })
   <div class="ydb-browser">
     <!-- 工具条：地址栏 / 刷新 / 外部打开 -->
     <div class="ydb-bar">
-      <select v-model="nodeSel" class="ydb-btn ydb-node" title="节点" @change="showTargets && loadTargets()">
-        <option v-for="n in nodes" :key="n.id" :value="n.id">{{ n.name }}</option>
-      </select>
+      <YdSelect
+        v-model="nodeSel"
+        :options="nodes.map(n => ({ label: n.name, value: n.id }))"
+        button-class="ydb-btn ydb-node"
+        title="节点"
+        @update:model-value="showTargets && loadTargets()"
+      />
       <button class="ydb-btn" title="发现该节点可浏览目标" @click="toggleTargets()">
         <i class="i-lucide-list-ends" />
       </button>

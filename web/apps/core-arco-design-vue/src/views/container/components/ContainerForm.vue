@@ -70,6 +70,12 @@ function emptyForm() {
 }
 
 const netOptions = computed(() => networks.value.filter(n => n.name !== 'bridge' && n.name !== 'host').map(n => n.name))
+// 网络下拉选项：固定 bridge/host + 当前值兜底（edit 预填的网络不在列表时原样保留）+ 自定义网络
+const networkSelectOptions = computed(() => {
+  const cur = form.value.network
+  const extra = cur && cur !== 'bridge' && cur !== 'host' && !netOptions.value.includes(cur) ? [cur] : []
+  return ['bridge', 'host', ...extra, ...netOptions.value]
+})
 
 watch(visible, async (v) => {
   if (!v) {
@@ -382,25 +388,11 @@ function doPasteEnv() {
         <div class="grid grid-cols-3 gap-3">
           <label class="space-y-1">
             <span class="text-xs text-muted-foreground">{{ $t('container.form.networkLabel') }}{{ isEdit ? $t('container.form.networkEditNote') : '' }}</span>
-            <select v-model="form.network" class="h-9 w-full rounded-md border bg-background px-2 text-sm outline-none">
-              <option value="bridge">bridge</option>
-              <option value="host">host</option>
-              <option v-if="form.network && form.network !== 'bridge' && form.network !== 'host' && !netOptions.includes(form.network)" :value="form.network">
-                {{ form.network }}
-              </option>
-              <option v-for="n in netOptions" :key="n" :value="n">
-                {{ n }}
-              </option>
-            </select>
+            <YdSelect v-model="form.network" :options="networkSelectOptions" button-class="w-full" />
           </label>
           <label class="space-y-1">
             <span class="text-xs text-muted-foreground">{{ $t('container.form.restartLabel') }}</span>
-            <select v-model="form.restart" class="h-9 w-full rounded-md border bg-background px-2 text-sm outline-none">
-              <option value="no">{{ $t('container.form.restartNo') }}</option>
-              <option value="always">always</option>
-              <option value="unless-stopped">unless-stopped</option>
-              <option value="on-failure">on-failure</option>
-            </select>
+            <YdSelect v-model="form.restart" :options="[{ label: $t('container.form.restartNo'), value: 'no' }, 'always', 'unless-stopped', 'on-failure']" button-class="w-full" />
           </label>
           <label class="flex items-center gap-2 pt-5 text-sm">
             <input v-model="form.tty" type="checkbox" class="accent-[var(--primary)]">
@@ -421,10 +413,7 @@ function doPasteEnv() {
           <FaInput v-model="p.host" :placeholder="$t('container.form.hostPortPlaceholder')" class="w-36" />
           <span class="text-muted-foreground">→</span>
           <FaInput v-model="p.container" :placeholder="$t('container.form.containerPortPlaceholder')" class="w-36" />
-          <select v-model="p.proto" class="h-9 rounded-md border bg-background px-2 text-sm outline-none">
-            <option value="tcp">tcp</option>
-            <option value="udp">udp</option>
-          </select>
+          <YdSelect v-model="p.proto" :options="['tcp', 'udp']" />
           <FaButton variant="ghost" size="icon-sm" class="text-red-500!" @click="form.ports.splice(i, 1)">
             <FaIcon name="i-lucide:trash-2" class="text-sm" />
           </FaButton>
@@ -443,19 +432,12 @@ function doPasteEnv() {
           </FaButton>
         </div>
         <div v-for="(m, i) in form.mounts" :key="i" class="flex items-center gap-2">
-          <select v-model="m.type" class="h-9 w-24 rounded-md border bg-background px-2 text-sm outline-none">
-            <option value="bind">{{ $t('container.form.bindOption') }}</option>
-            <option value="volume">{{ $t('container.form.volumeOption') }}</option>
-          </select>
+          <YdSelect v-model="m.type" :options="[{ label: $t('container.form.bindOption'), value: 'bind' }, { label: $t('container.form.volumeOption'), value: 'volume' }]" button-class="w-24" />
           <FaInput v-if="m.type === 'bind'" v-model="m.source" placeholder="/srv/data" class="w-56" />
-          <select v-else v-model="m.source" class="h-9 w-56 rounded-md border bg-background px-2 text-sm outline-none">
-            <option value="" disabled>
-              {{ $t('container.form.selectVolume') }}
-            </option>
-            <option v-for="v in volumes" :key="v.name" :value="v.name">
-              {{ v.name }}
-            </option>
-          </select>
+          <YdSelect
+            v-else v-model="m.source" button-class="w-56" :placeholder="$t('container.form.selectVolume')"
+            :options="[{ label: $t('container.form.selectVolume'), value: '', disabled: true }, ...volumes.map(v => ({ label: v.name, value: v.name }))]"
+          />
           <span class="text-muted-foreground">→</span>
           <FaInput v-model="m.target" :placeholder="$t('container.form.targetPlaceholder')" class="w-56" />
           <label class="flex items-center gap-1 text-xs text-muted-foreground">

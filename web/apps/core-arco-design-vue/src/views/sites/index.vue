@@ -161,6 +161,14 @@ const proxyRules = ref<{ prefix: string, target: string, ws?: boolean }[]>([{ pr
 const creating = ref(false)
 const runtimes = ref<{ id: number, name: string, type: string, version: string, origin: string, fcgiAddr: string, containerName: string, running: boolean }[]>([])
 
+const runtimeOptions = computed(() => [
+  ...(!runtimes.value.length ? [{ label: i18n.global.t('sites.dialogs.create.noRuntime'), value: 0, disabled: true }] : []),
+  ...runtimes.value.map(r => ({
+    label: `${r.origin === 'external' ? `${r.name}（${r.fcgiAddr}）` : `${r.containerName || `php-${r.name}`}（${r.version}）`}${r.running ? ` · ${i18n.global.t('sites.list.running')}` : ` · ${i18n.global.t('sites.list.stopped')}`}`,
+    value: r.id,
+  })),
+])
+
 function openCreate() {
   const defGroup = groups.value.find(g => g.isDefault)
   form.value = { name: '', type: 'static', domain: '', extraDomains: '', port: 80, proxyPass: '', indexFiles: 'index.html', runtimeId: 0, groupId: defGroup?.id || 0, remark: '', nodeId: '' }
@@ -485,16 +493,19 @@ onMounted(() => {
       <div v-else>
         <!-- 筛选栏（B23：类型 / 分组 / 搜索） -->
         <div class="mb-3 flex flex-wrap items-center gap-2">
-          <select v-model="filterType" class="h-8 rounded-md border bg-background px-2 text-xs outline-none focus:border-primary">
-            <option value="">{{ $t('sites.list.allTypes') }}</option>
-            <option value="static">{{ $t('sites.type.static') }}</option>
-            <option value="proxy">{{ $t('sites.type.proxy') }}</option>
-            <option value="php">PHP</option>
-          </select>
-          <select v-model="filterGroup" class="h-8 rounded-md border bg-background px-2 text-xs outline-none focus:border-primary">
-            <option value="">{{ $t('sites.list.allGroups') }}</option>
-            <option v-for="g in groups" :key="g.id" :value="g.id">{{ g.name }}（{{ g.sites }}）</option>
-          </select>
+          <YdSelect
+            v-model="filterType"
+            :options="[
+              { label: $t('sites.list.allTypes'), value: '' },
+              { label: $t('sites.type.static'), value: 'static' },
+              { label: $t('sites.type.proxy'), value: 'proxy' },
+              { label: 'PHP', value: 'php' },
+            ]"
+          />
+          <YdSelect
+            v-model="filterGroup"
+            :options="[{ label: $t('sites.list.allGroups'), value: '' }, ...groups.map(g => ({ label: `${g.name}（${g.sites}）`, value: g.id }))]"
+          />
           <FaInput v-model="keyword" :placeholder="$t('sites.list.searchPlaceholder')" class="w-56!" />
           <span class="ml-auto text-xs text-muted-foreground">{{ $t('common.total', { n: filteredSites.length }) }}</span>
           <template v-if="siteSelected.size">
@@ -662,10 +673,12 @@ onMounted(() => {
         </div>
         <div class="flex items-center gap-3">
           <span class="w-20 shrink-0 text-sm text-muted-foreground">{{ $t('sites.list.group') }}</span>
-          <select v-model.number="form.groupId" class="h-9 flex-1 rounded-md border bg-background px-2 text-sm outline-none focus:border-primary">
-            <option :value="0">{{ $t('common.default') }}</option>
-            <option v-for="g in groups.filter(x => !x.isDefault)" :key="g.id" :value="g.id">{{ g.name }}</option>
-          </select>
+          <YdSelect
+            v-model="form.groupId"
+            :options="[{ label: $t('common.default'), value: 0 }, ...groups.filter(x => !x.isDefault).map(g => ({ label: g.name, value: g.id }))]"
+            size="default"
+            button-class="flex-1"
+          />
         </div>
         <div class="flex items-center gap-3">
           <span class="w-20 shrink-0 text-sm text-muted-foreground">{{ $t('sites.dialogs.create.siteName') }}</span>
@@ -673,10 +686,12 @@ onMounted(() => {
         </div>
         <div class="flex items-center gap-3">
           <span class="w-20 shrink-0 text-sm text-muted-foreground">{{ $t('nodes.targetNode') }}</span>
-          <select v-model="form.nodeId" class="h-9 min-w-0 flex-1 rounded-md border border-input bg-background px-2 text-sm outline-none">
-            <option value="">{{ $t('nodes.localPanel') }}</option>
-            <option v-for="n in siteNodes.filter(x => x.id !== 'local')" :key="n.id" :value="n.id">{{ n.name }}</option>
-          </select>
+          <YdSelect
+            v-model="form.nodeId"
+            :options="[{ label: $t('nodes.localPanel'), value: '' }, ...siteNodes.filter(x => x.id !== 'local').map(n => ({ label: n.name, value: n.id }))]"
+            size="default"
+            button-class="min-w-0 flex-1"
+          />
         </div>
         <div class="flex items-center gap-3">
           <span class="w-20 shrink-0 text-sm text-muted-foreground">{{ $t('sites.dialogs.create.primaryDomain') }}</span>
@@ -693,12 +708,7 @@ onMounted(() => {
         </div>
         <div v-if="form.type === 'php'" class="rounded-md border p-3">
           <div class="mb-2 text-sm font-medium">{{ $t('sites.dialogs.create.phpRuntime') }}</div>
-          <select v-model.number="form.runtimeId" class="h-9 w-full rounded-md border bg-background px-2 text-sm outline-none focus:border-primary">
-            <option v-if="!runtimes.length" :value="0" disabled>{{ $t('sites.dialogs.create.noRuntime') }}</option>
-            <option v-for="r in runtimes" :key="r.id" :value="r.id">
-              {{ r.origin === 'external' ? `${r.name}（${r.fcgiAddr}）` : `${r.containerName || `php-${r.name}`}（${r.version}）` }}{{ r.running ? ` · ${$t('sites.list.running')}` : ` · ${$t('sites.list.stopped')}` }}
-            </option>
-          </select>
+          <YdSelect v-model="form.runtimeId" :options="runtimeOptions" size="default" button-class="w-full" />
           <div class="mt-1 text-xs text-muted-foreground">{{ $t('sites.dialogs.create.phpHint') }}</div>
         </div>
         <div v-if="form.type === 'proxy'" class="rounded-md border p-3">

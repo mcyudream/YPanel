@@ -29,6 +29,11 @@ export default antfu(
       'vue/block-order': ['error', {
         order: ['script', 'template', 'style'],
       }],
+      // 禁止原生 <select>：展开层是浏览器 UI 不可主题化，一律用 YdSelect（docs/dev/conventions.md §4）
+      'vue/no-restricted-html-elements': ['error', {
+        elements: ['select'],
+        message: '禁止原生 <select>，使用 YdSelect（FaDropdown 封装）替代',
+      }],
     },
   },
   {
