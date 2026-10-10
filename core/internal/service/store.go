@@ -16,8 +16,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io/fs"
 	"io"
+	"io/fs"
+	"net"
 	"net/http"
 	"os"
 	"os/exec"
@@ -34,8 +35,8 @@ import (
 	"gorm.io/gorm"
 
 	"github.com/ypanel/core/internal/agentclient"
-	"github.com/ypanel/core/internal/rbac"
 	"github.com/ypanel/core/internal/model"
+	"github.com/ypanel/core/internal/rbac"
 	"github.com/ypanel/shared/dto"
 	"github.com/ypanel/shared/errs"
 )
@@ -70,11 +71,11 @@ type StoreFormField struct {
 	Type        string            `json:"type"` // text / number / password / select / service / apps / ...
 	Rule        string            `json:"rule"` // paramPort / paramCommon / paramComplexity / ...
 	Required    bool              `json:"required"`
-	Random      bool              `json:"random"` // 安装时随机生成（密码/名称类）
+	Random      bool              `json:"random"`    // 安装时随机生成（密码/名称类）
 	RandomLen   int               `json:"randomLen"` // 随机值目标长度（字符）；部分应用要求密钥 ≥32 字节，缺省 24
-	Edit        *bool             `json:"edit"`   // false = 只读展示
+	Edit        *bool             `json:"edit"`      // false = 只读展示
 	Disabled    bool              `json:"disabled"`
-	Description FlexString         `json:"description"`
+	Description FlexString        `json:"description"`
 	Values      []StoreFormValue  `json:"values"` // select 选项
 }
 
@@ -186,10 +187,10 @@ type StoreListQuery struct {
 // StoreAppItem 列表项（带安装状态）。
 type StoreAppItem struct {
 	model.AppStoreApp
-	Installed    bool                `json:"installed"`
-	Upgradable   bool                `json:"upgradable"`
-	LatestVer    string              `json:"latestVer"`
-	InstallInfo  *model.AppStoreInstall `json:"installInfo,omitempty"`
+	Installed   bool                   `json:"installed"`
+	Upgradable  bool                   `json:"upgradable"`
+	LatestVer   string                 `json:"latestVer"`
+	InstallInfo *model.AppStoreInstall `json:"installInfo,omitempty"`
 }
 
 // PanelNetwork 面板统一容器网络：商店应用/运行环境/数据库/nginx 全部接入，容器名互通。
@@ -449,14 +450,14 @@ func (s *StoreService) syncOnePanel(ctx context.Context, src *model.AppStoreSour
 	}
 	var listDTO struct {
 		Apps []struct {
-			ID           string   `json:"id"`
-			Name         string   `json:"name"`
-			Title        string   `json:"title"`
-			Description  string   `json:"description"`
-			ReadMe       string   `json:"readMe"`
-			Icon         string   `json:"icon"`
-			Tags         []string `json:"tags"`
-			LastModified int64    `json:"lastModified"`
+			ID                   string   `json:"id"`
+			Name                 string   `json:"name"`
+			Title                string   `json:"title"`
+			Description          string   `json:"description"`
+			ReadMe               string   `json:"readMe"`
+			Icon                 string   `json:"icon"`
+			Tags                 []string `json:"tags"`
+			LastModified         int64    `json:"lastModified"`
 			AdditionalProperties struct {
 				Website       string   `json:"website"`
 				GitHub        string   `json:"github"`
@@ -464,9 +465,9 @@ func (s *StoreService) syncOnePanel(ctx context.Context, src *model.AppStoreSour
 				Architectures []string `json:"architectures"`
 			} `json:"additionalProperties"`
 			Versions []struct {
-				ID          string `json:"id"`
-				Name        string `json:"name"`
-				DownloadURL string `json:"downloadUrl"`
+				ID                   string `json:"id"`
+				Name                 string `json:"name"`
+				DownloadURL          string `json:"downloadUrl"`
 				AdditionalProperties struct {
 					FormFields []StoreFormField `json:"formFields"`
 				} `json:"additionalProperties"`
@@ -489,11 +490,11 @@ func (s *StoreService) syncOnePanel(ctx context.Context, src *model.AppStoreSour
 			Key: a.ID, Name: a.Name, Title: a.Title,
 			Description: truncStr(a.Description, 500), ReadMe: a.ReadMe,
 			IconURL: a.Icon, Tags: strings.Join(a.Tags, ","),
-			Kind: "app",
-			Website: truncStr(a.AdditionalProperties.Website, 500),
-			SourceURL: truncStr(a.AdditionalProperties.GitHub, 500),
-			Document: truncStr(a.AdditionalProperties.Document, 500),
-			Arch: strings.Join(a.AdditionalProperties.Architectures, ","),
+			Kind:         "app",
+			Website:      truncStr(a.AdditionalProperties.Website, 500),
+			SourceURL:    truncStr(a.AdditionalProperties.GitHub, 500),
+			Document:     truncStr(a.AdditionalProperties.Document, 500),
+			Arch:         strings.Join(a.AdditionalProperties.Architectures, ","),
 			VersionsJSON: marshalJSON(versions), LatestVersion: latestVersionOf(versions),
 			LastModified: a.LastModified,
 		})
@@ -604,7 +605,7 @@ func (s *StoreService) syncYpManifest(src *model.AppStoreSource, raw []byte, loc
 		if len(versions) == 0 {
 			continue
 		}
-			adminUIJSON := ""
+		adminUIJSON := ""
 		if a.AdminUI != nil {
 			if b, merr := json.Marshal(a.AdminUI); merr == nil {
 				adminUIJSON = string(b)
@@ -616,7 +617,7 @@ func (s *StoreService) syncYpManifest(src *model.AppStoreSource, raw []byte, loc
 			IconURL: iconURL, Tags: a.Category, Kind: kind, Author: a.Author,
 			Arch: strings.Join(a.Arch, ","), ReverseProxy: a.ReverseProxy,
 			AdminUIJSON: adminUIJSON,
-			Website: truncStr(a.Website, 500), SourceURL: truncStr(a.SourceURL, 500), Document: truncStr(a.Document, 500),
+			Website:     truncStr(a.Website, 500), SourceURL: truncStr(a.SourceURL, 500), Document: truncStr(a.Document, 500),
 			VersionsJSON: marshalJSON(versions), LatestVersion: latestVersionOf(versions),
 		})
 	}
@@ -897,7 +898,7 @@ func (s *StoreService) AppIcon(sourceID uint, key string) ([]byte, string, error
 // StoreInstallInput 安装入参。
 type StoreInstallInput struct {
 	SourceID uint           `json:"sourceId" binding:"required"`
-	NodeID   string         `json:"nodeId"`          // M55 目标节点（空=本机）
+	NodeID   string         `json:"nodeId"` // M55 目标节点（空=本机）
 	Key      string         `json:"key" binding:"required"`
 	Version  string         `json:"version"`
 	Name     string         `json:"name" binding:"required"`
@@ -1100,7 +1101,6 @@ func (s *StoreService) Install(ctx context.Context, in StoreInstallInput) (map[s
 	}
 	finalParams["CONTAINER_NAME"] = project
 	finalParams["CONTAINER_NAME1"] = project + "-1"
-
 
 	// 端口占用预检在任务内执行（需 agent exec）
 	input := in
@@ -1449,9 +1449,9 @@ func (s *StoreService) writeLocalPackage(ctx context.Context, ac *agentclient.Cl
 // StoreUninstallOptions 卸载选项（级联资源勾选）。
 type StoreUninstallOptions struct {
 	NodeID      string // M55 目标节点（空=本机）
-	PurgeData   bool // 删除应用数据（compose 目录含数据卷/数据库文件）
-	RemoveImage bool // 删除应用镜像（compose 内全部 image）
-	CascadeDB   bool // 级联移除关联的数据库纳管记录与备份
+	PurgeData   bool   // 删除应用数据（compose 目录含数据卷/数据库文件）
+	RemoveImage bool   // 删除应用镜像（compose 内全部 image）
+	CascadeDB   bool   // 级联移除关联的数据库纳管记录与备份
 }
 
 // Uninstall 卸载（异步任务）：compose down；数据/镜像/级联按选项执行，默认保留数据目录。
@@ -1579,11 +1579,11 @@ type StoreInstallInfo struct {
 	ComposeProject string            `json:"composeProject"`
 	Running        bool              `json:"running"`
 	Ports          []int             `json:"ports"`
-	Params         map[string]string `json:"params"` // 密码类值已打码
+	Params         map[string]string `json:"params"`  // 密码类值已打码
 	OwnerID        uint              `json:"ownerId"` // M54-P3 数据范围属主（0=公共）
 	CreatedAt      time.Time         `json:"createdAt"`
-	NodeID string `json:"nodeId"`
-	AdminUI *StoreAdminUI `json:"adminUI,omitempty"` // 内网管理界面（桌面注册用，URL 指向本机映射端口）
+	NodeID         string            `json:"nodeId"`
+	AdminUI        *StoreAdminUI     `json:"adminUI,omitempty"` // 内网管理界面（桌面注册用，URL 指向本机映射端口）
 }
 
 // StoreAdminUI 已装应用的内网管理界面信息。
@@ -1593,7 +1593,8 @@ type StoreAdminUI struct {
 }
 
 // InstalledDetailed 已安装详情聚合（含 compose 运行状态、应用元数据与安装参数）。
-func (s *StoreService) InstalledDetailed(ctx context.Context) ([]StoreInstallInfo, error) {
+func (s *StoreService) InstalledDetailed(ctx context.Context, reqHost string) ([]StoreInstallInfo, error) {
+	reqHostname := requestHostname(reqHost)
 	installs := s.Installed()
 	installs = ownerFilterInstalls(ctx, installs)
 	if len(installs) == 0 {
@@ -1679,13 +1680,26 @@ func (s *StoreService) InstalledDetailed(ctx context.Context) ([]StoreInstallInf
 					if name == "" {
 						name = info.AppName
 					}
-					info.AdminUI = &StoreAdminUI{Name: name, URL: fmt.Sprintf("http://127.0.0.1:%s%s", port, path)}
+					// 地址面向「当前访问面板的浏览器」：host 用请求 hostname，用户浏览器与桌面窗口均可直达
+					info.AdminUI = &StoreAdminUI{Name: name, URL: fmt.Sprintf("http://%s:%s%s", reqHostname, port, path)}
 				}
 			}
 		}
 		out = append(out, info)
 	}
 	return out, nil
+}
+
+// InstalledAction 已安装应用操作：start / stop / restart / rebuild。
+// requestHostname 从请求 Host 头提取主机名（去端口；空回退 127.0.0.1）。
+func requestHostname(host string) string {
+	if h, _, err := net.SplitHostPort(host); err == nil && h != "" {
+		return h
+	}
+	if host != "" && !strings.Contains(host, ":") {
+		return host
+	}
+	return "127.0.0.1"
 }
 
 // InstalledAction 已安装应用操作：start / stop / restart / rebuild。

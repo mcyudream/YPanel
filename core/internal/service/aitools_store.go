@@ -95,7 +95,7 @@ func (s *AIService) aiToolsStore(ctx context.Context) []aiToolDef {
 			Desc: "列出已安装的应用（状态/端口/版本/安装参数摘要/可升级）。input 传 {}。",
 			Parameters: schObj(map[string]any{}),
 			Fn: func(_ context.Context, _ string) (string, error) {
-				out, err := s.store.InstalledDetailed(ctx)
+				out, err := s.store.InstalledDetailed(ctx, "")
 				if err != nil {
 					return "", err
 				}

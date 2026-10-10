@@ -171,7 +171,7 @@ func (a *StoreAPI) Icon(c *gin.Context) {
 
 // Installed GET /api/v1/store/installed（详情聚合：状态/端口/图标/可升级/参数）
 func (a *StoreAPI) Installed(c *gin.Context) {
-	out, err := a.Store.InstalledDetailed(c.Request.Context())
+	out, err := a.Store.InstalledDetailed(c.Request.Context(), c.Request.Host)
 	if err != nil {
 		respErr(c, err)
 		return
