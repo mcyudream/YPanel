@@ -359,6 +359,33 @@ func (a *DatabaseAPI) Backups(c *gin.Context) {
 	respOK(c, out)
 }
 
+// ExecEnvCheck GET /api/v1/database/execenv/check —— 外接实例执行环境（Docker+镜像缓存）检测。
+func (a *DatabaseAPI) ExecEnvCheck(c *gin.Context) {
+	out, err := a.DBS.ExecEnvCheck(c.Request.Context())
+	if err != nil {
+		respErr(c, err)
+		return
+	}
+	respOK(c, out)
+}
+
+// ExecEnvPull POST /api/v1/database/execenv/pull {type} —— 预拉取指定类型的执行镜像。
+func (a *DatabaseAPI) ExecEnvPull(c *gin.Context) {
+	var req struct {
+		Type string `json:"type"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil || req.Type == "" {
+		respErr(c, errs.Wrap(errs.ErrBadRequest, "请指定实例类型"))
+		return
+	}
+	out, err := a.DBS.ExecEnvPull(c.Request.Context(), req.Type)
+	if err != nil {
+		respErr(c, err)
+		return
+	}
+	respOK(c, out)
+}
+
 // CreateBackup POST /api/v1/database/instances/:id/backups（body 可选 {storageAccountId,keep}）
 func (a *DatabaseAPI) CreateBackup(c *gin.Context) {
 	id, err := ownedInstanceID(c, a.DBS)

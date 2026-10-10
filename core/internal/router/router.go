@@ -350,6 +350,9 @@ func Setup(d *Deps) (*gin.Engine, error) {
 			authed.DELETE("/database/instances/:id/backups", pm("db:write"), dbAPI.DeleteBackup)
 			authed.POST("/database/instances/:id/backups/restore", pm("db:write"), dbAPI.RestoreBackup)
 
+			authed.GET("/database/execenv/check", pm("db:read"), dbAPI.ExecEnvCheck)
+			authed.POST("/database/execenv/pull", pm("db:write"), dbAPI.ExecEnvPull)
+
 			authed.GET("/nginx/status", pm("site:read"), siteAPI.Status)
 			authed.POST("/nginx/install", pm("site:write"), siteAPI.Install)
 			authed.POST("/nginx/adopt-host", pm("site:write"), siteAPI.AdoptHost)

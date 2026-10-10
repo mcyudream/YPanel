@@ -43,7 +43,29 @@ export interface DbBackup {
   path: string
 }
 
+export interface DbExecEnvImage {
+  type: 'mysql' | 'postgres' | 'redis' | 'mongo'
+  image: string
+  tools: string[]
+  ready: boolean
+}
+
+export interface DbExecEnvStatus {
+  dockerOk: boolean
+  hint?: string
+  images: DbExecEnvImage[]
+}
+
 export default {
+  // M59 外接实例执行环境（dump/导入/备份/恢复经临时 Docker 容器执行，宿主无需客户端工具）
+  execEnvCheck: async () => {
+    const res = await api.get('api/v1/database/execenv/check', { silent: true })
+    return res.data as DbExecEnvStatus
+  },
+  execEnvPull: async (type: string) => {
+    const res = await api.post('api/v1/database/execenv/pull', { type }, { timeout: 620000 })
+    return res.data as DbExecEnvStatus
+  },
   migratePreview: async (src: number, target: number) => {
     const res = await api.get(`api/v1/plugin/db-admin/migrate/preview?src=${src}&target=${target}`, { silent: true })
     return res.data as MigratePreview

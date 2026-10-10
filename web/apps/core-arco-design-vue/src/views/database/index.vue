@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import type { MigratePreview, DbBackup, DbDatabase, DbInstance, DbUser, DbKV, GrantRow } from '@/api/modules/database'
+import type { MigratePreview, DbBackup, DbExecEnvStatus, DbDatabase, DbInstance, DbUser, DbKV, GrantRow } from '@/api/modules/database'
 import apiDb, { dbTuningApi } from '@/api/modules/database'
 import type { StorageAccount } from '@/api/modules/storage'
 import { storageApi } from '@/api/modules/storage'
@@ -251,6 +251,7 @@ function openMigrate() {
   mPreview.value = null
   mSelected.value = []
   mOpen.value = true
+  loadMigrateEnv()
 }
 
 // 迁移目标下拉：禁用占位项（value 0）+ 同类型其它实例
@@ -288,6 +289,13 @@ async function doMigrate() {
     toast.warning(i18n.global.t('database.migrate.selectDb'))
     return
   }
+  // 外接实例经临时容器执行；镜像未缓存不拦截（任务内会自动拉取），仅提示可先预拉
+  if (mNeedTypes.value.length) {
+    await loadMigrateEnv()
+    if (mClientWarning.value.length) {
+      toast.info(i18n.global.t('database.clients.migrateAutoPull'))
+    }
+  }
   const ok = await useFaModal().confirm({
     title: i18n.global.t('database.migrate.confirmTitle'),
     content: i18n.global.t('database.migrate.confirmContent', { n: mSelected.value.length }),
@@ -308,6 +316,101 @@ async function doMigrate() {
     mStarting.value = false
   }
 }
+
+// ---- 外接实例执行环境（dump/导入/备份/恢复经临时 Docker 容器执行，宿主无需客户端工具） ----
+const ccOpen = ref(false)
+const ccLoading = ref(false)
+const ccInstalling = ref('')
+const ccEnv = ref<DbExecEnvStatus | null>(null)
+
+async function loadClients(notify: boolean) {
+  ccLoading.value = true
+  try {
+    ccEnv.value = await apiDb.execEnvCheck()
+  }
+  catch (e: any) {
+    if (notify) {
+      toast.error(i18n.global.t('database.clients.checkFailed'), { description: e?.message })
+    }
+  }
+  finally {
+    ccLoading.value = false
+  }
+}
+
+function openClients() {
+  ccOpen.value = true
+  loadClients(true)
+}
+
+async function installClients(type: string) {
+  ccInstalling.value = type
+  try {
+    ccEnv.value = await apiDb.execEnvPull(type)
+    toast.success(i18n.global.t('database.clients.installed'))
+  }
+  catch (e: any) {
+    toast.error(i18n.global.t('database.clients.installFailed'), { description: e?.message })
+  }
+  finally {
+    ccInstalling.value = ''
+  }
+}
+
+// 迁移链路上涉及外接实例的实例类型（源 dump / 目标导入都在宿主机经临时容器执行）
+const mEnv = ref<DbExecEnvStatus | null>(null)
+const mClientsLoading = ref(false)
+const mClientsInstalling = ref('')
+
+const mNeedTypes = computed(() => {
+  const types = new Set<string>()
+  if (active.value?.origin === 'external') {
+    types.add(active.value.type)
+  }
+  const tgt = instances.value.find(x => x.id === mTarget.value)
+  if (tgt?.origin === 'external') {
+    types.add(tgt.type)
+  }
+  return [...types]
+})
+
+// 外接类型对应镜像尚未缓存的项（首次使用需拉取，可在此预拉）
+const mClientWarning = computed(() => (mEnv.value?.images ?? [])
+  .filter(x => mNeedTypes.value.includes(x.type) && !x.ready))
+
+async function loadMigrateEnv() {
+  if (!mNeedTypes.value.length) {
+    mEnv.value = null
+    return
+  }
+  mClientsLoading.value = true
+  try {
+    mEnv.value = await apiDb.execEnvCheck()
+  }
+  catch {
+    mEnv.value = null
+  }
+  finally {
+    mClientsLoading.value = false
+  }
+}
+
+async function installForMigrate(type: string) {
+  mClientsInstalling.value = type
+  try {
+    mEnv.value = await apiDb.execEnvPull(type)
+    ccEnv.value = mEnv.value
+    toast.success(i18n.global.t('database.clients.installed'))
+  }
+  catch (e: any) {
+    toast.error(i18n.global.t('database.clients.installFailed'), { description: e?.message })
+  }
+  finally {
+    mClientsInstalling.value = ''
+  }
+}
+
+watch(mTarget, () => loadMigrateEnv())
 
 // ---- 备份文件导入（1Panel 等标准 dump 格式） ----
 const biFile = ref<File | null>(null)
@@ -846,6 +949,10 @@ onBeforeUnmount(() => {
           />
           <div class="ml-auto flex items-center gap-2">
             <FaButton variant="outline" size="sm" @click="openMigrate">{{ $t('database.migrate.title') }}</FaButton>
+            <FaButton variant="ghost" size="sm" :title="$t('database.clients.title')" @click="openClients">
+              <FaIcon name="i-lucide:package-check" />
+              {{ $t('database.clients.short') }}
+            </FaButton>
             <label class="flex items-center gap-1.5 text-xs text-muted-foreground" :title="$t('database.remote.tip')">
               {{ $t('database.remote.label') }}
               <FaSwitch :model-value="remoteOn" :disabled="remoteBusy" @update:model-value="toggleRemote" />
@@ -1201,6 +1308,24 @@ onBeforeUnmount(() => {
         <YdSelect v-model="mTarget" button-class="flex-1" :options="migrateTargetOptions" />
         <FaButton variant="outline" size="sm" :loading="mLoading" :disabled="!mTarget" @click="doPreview">{{ $t('database.migrate.preview') }}</FaButton>
       </div>
+      <div v-if="mClientWarning.length" class="rounded-md border border-amber-500/40 bg-amber-500/10 p-2 text-xs">
+        <div class="mb-1.5 flex items-center gap-1 font-medium text-amber-600 dark:text-amber-500">
+          <FaIcon name="i-lucide:triangle-alert" />
+          {{ $t('database.clients.migrateWarn', { images: mClientWarning.map(x => x.image).join(' / ') }) }}
+        </div>
+        <div class="flex flex-wrap items-center gap-2">
+          <template v-for="st in mClientWarning" :key="st.type">
+            <span class="font-mono text-muted-foreground">{{ st.image }}</span>
+            <span class="font-mono text-muted-foreground">({{ st.tools.join(' / ') }})</span>
+            <FaButton
+              size="sm" variant="outline"
+              :loading="mClientsInstalling === st.type" @click="installForMigrate(st.type)"
+            >
+              {{ $t('database.clients.install') }}
+            </FaButton>
+          </template>
+        </div>
+      </div>
       <div v-if="mPreview?.compatible" class="rounded border p-2">
         <div class="mb-1.5 flex items-center text-xs text-muted-foreground">
           {{ $t('database.migrate.dbsSelected', { sel: mSelected.length, total: mPreview.dbs.length }) }}
@@ -1222,6 +1347,41 @@ onBeforeUnmount(() => {
     <template #footer>
       <FaButton size="sm" @click="mOpen = false">{{ $t('common.cancel') }}</FaButton>
       <FaButton type="primary" size="sm" :loading="mStarting" :disabled="!mSelected.length" @click="doMigrate">{{ $t('database.migrate.start') }}</FaButton>
+    </template>
+  </FaModal>
+
+  <!-- 外接实例执行环境 -->
+  <FaModal v-model="ccOpen" :title="$t('database.clients.title')" :width="560">
+    <div class="space-y-3 p-1 text-sm">
+      <div class="text-xs text-muted-foreground">
+        {{ $t('database.clients.tip') }}
+      </div>
+      <div v-loading="ccLoading" class="space-y-2">
+        <div v-if="ccEnv && !ccEnv.dockerOk" class="flex items-center gap-2 rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-xs text-destructive">
+          <FaIcon name="i-lucide:triangle-alert" />
+          {{ ccEnv.hint }}
+        </div>
+        <div v-for="st in ccEnv?.images ?? []" :key="st.type" class="flex items-center gap-3 rounded-md border px-3 py-2">
+          <span class="w-16 font-mono text-xs uppercase text-muted-foreground">{{ st.type }}</span>
+          <div class="flex flex-1 flex-col gap-0.5">
+            <span class="font-mono text-xs">{{ st.image }}</span>
+            <span class="font-mono text-xs text-muted-foreground">{{ st.tools.join(' / ') }}</span>
+          </div>
+          <span v-if="st.ready" class="flex items-center gap-1 text-xs text-emerald-600 dark:text-emerald-500">
+            <FaIcon name="i-lucide:circle-check" />{{ $t('database.clients.ready') }}
+          </span>
+          <FaButton
+            v-else size="sm" variant="outline" :disabled="!ccEnv?.dockerOk"
+            :loading="ccInstalling === st.type" @click="installClients(st.type)"
+          >
+            {{ $t('database.clients.install') }}
+          </FaButton>
+        </div>
+      </div>
+    </div>
+    <template #footer>
+      <FaButton variant="outline" size="sm" :loading="ccLoading" @click="loadClients(true)">{{ $t('common.refresh') }}</FaButton>
+      <FaButton variant="outline" size="sm" @click="ccOpen = false">{{ $t('common.cancel') }}</FaButton>
     </template>
   </FaModal>
 

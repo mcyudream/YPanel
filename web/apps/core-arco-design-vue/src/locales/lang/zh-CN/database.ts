@@ -223,6 +223,19 @@ export default {
     startFailed: '启动失败',
   },
 
+  clients: {
+    title: '外接实例执行环境',
+    short: '执行环境',
+    tip: '外接实例的备份/迁移/导入/恢复经临时 Docker 容器在面板宿主机执行，无需安装任何客户端工具；镜像未缓存时首次操作会自动拉取，也可在此预拉取以加快首次执行。',
+    install: '预拉取镜像',
+    installed: '镜像已就绪',
+    installFailed: '镜像拉取失败',
+    checkFailed: '检测失败',
+    ready: '已缓存',
+    migrateWarn: '执行镜像尚未缓存：{images}（开始迁移后会自动拉取，也可先在下方预拉取）',
+    migrateAutoPull: '部分执行镜像尚未缓存，任务开始后将自动拉取（耗时取决于网络），可在迁移弹窗中先预拉取',
+  },
+
   pwd: {
     title: '修改密码：{name}',
     newPlaceholder: '新密码（字母/数字/下划线/中划线，8-64 位）',

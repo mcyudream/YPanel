@@ -97,18 +97,20 @@ func (s *DBAdminService) ImportSQL(ctx context.Context, instanceID uint, usernam
 	if host == "" {
 		host = "127.0.0.1"
 	}
-	// stdin 中转密码 + SQL 流（与恢复通道同款两层管道）
+	// stdin 中转密码 + SQL 流（与恢复通道同款两层管道）；外接实例走临时容器（宿主无需客户端工具）
 	var cmd string
 	switch inst.Type {
 	case "mysql":
 		if inst.Origin == "external" {
-			cmd = fmt.Sprintf("sh -c 'command -v mysql >/dev/null || { echo \"本机缺少 mysql 客户端\"; exit 127; }; MYSQL_PWD=\"$YP_DB_PWD\" mysql -h %s -P %d -u %s %s' < %s", host, inst.Port, inst.RootUser, database, file)
+			cmd = fmt.Sprintf(dbToolPullPre("mysql")+`{ printf '%%s\n' "$YP_DB_PWD"; cat %s; } | docker run --rm -i --network host %s sh -c 'read -r pw; cf=$(mktemp); printf "[client]\npassword=%%s\n" "$pw" > "$cf"; mysql --defaults-extra-file="$cf" -h %s -P %d -u %s %s; rc=$?; rm -f "$cf"; exit $rc'`,
+				file, dbClientImage["mysql"], host, inst.Port, inst.RootUser, database)
 		} else {
 			cmd = fmt.Sprintf("{ printf '%%s\\n' \"$YP_DB_PWD\"; cat %s; } | docker exec -i %s sh -c 'read -r pw; MYSQL_PWD=\"$pw\" mysql %s'", file, c, database)
 		}
 	case "postgres":
 		if inst.Origin == "external" {
-			cmd = fmt.Sprintf("sh -c 'command -v psql >/dev/null || { echo \"本机缺少 psql 客户端\"; exit 127; }; PGPASSWORD=\"$YP_DB_PWD\" psql -q -h %s -p %d -U %s -d %s' < %s", host, inst.Port, inst.RootUser, database, file)
+			cmd = fmt.Sprintf(dbToolPullPre("postgres")+`{ printf '%%s\n' "$YP_DB_PWD"; cat %s; } | docker run --rm -i --network host %s sh -c 'read -r pw; PGPASSWORD="$pw" psql -q -h %s -p %d -U %s -d %s'`,
+				file, dbClientImage["postgres"], host, inst.Port, inst.RootUser, database)
 		} else {
 			cmd = fmt.Sprintf("docker exec -i %s psql -q -U postgres -d %s < %s", c, database, file)
 		}

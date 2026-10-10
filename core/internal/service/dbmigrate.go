@@ -144,6 +144,19 @@ func (s *DatabaseService) dbDumpFile(inst *model.DatabaseInstance, db string) st
 	return path.Join(s.BackupDir(inst), fmt.Sprintf("migrate-%s-%d.dump", db, time.Now().Unix()))
 }
 
+// execFailMsg exec 失败文案：输出为空时带退出码与指引——dump 通道的 stdout 被重定向进中转文件，
+// 走 stdout 的诊断都会被吞进文件，stderr 空时不能让报错留白。
+func execFailMsg(op string, out dto.ExecResp) string {
+	line := strings.TrimSpace(firstLine(out.Output))
+	if out.TimedOut {
+		return op + "超时，已终止"
+	}
+	if line == "" {
+		return fmt.Sprintf("%s失败（退出码 %d，无错误输出）：执行环境可能异常（Docker 不可用或镜像拉取失败），可在实例页「执行环境」检查；历史诊断信息也可能写入了中转 dump 文件", op, out.ExitCode)
+	}
+	return op + "失败: " + line
+}
+
 // srcDumpShell 源库 dump 到宿主文件（落盘中转；密码经 env + stdin/config 传递）。
 func (s *DatabaseService) srcDumpShell(ctx context.Context, logf TaskLogf, src *model.DatabaseInstance, pwd, db, file string) error {
 	c := src.ComposeProject
@@ -155,13 +168,16 @@ func (s *DatabaseService) srcDumpShell(ctx context.Context, logf TaskLogf, src *
 	switch src.Type {
 	case "mysql":
 		if src.Origin == "external" {
-			cmd = fmt.Sprintf("sh -c 'command -v mysqldump >/dev/null || { echo \"本机缺少 mysqldump\"; exit 127; }; cf=$(mktemp); printf \"[client]\\npassword=%%s\\n\" \"$YP_DB_PWD\" > \"$cf\"; mysqldump --defaults-extra-file=\"$cf\" -h %s -P %d -u %s --databases %s --single-transaction; rc=$?; rm -f \"$cf\"; exit $rc' > %s", host, src.Port, src.RootUser, db, file)
+			// 外接实例统一走临时容器（--network host 直连宿主网络栈，宿主无需客户端工具）
+			cmd = fmt.Sprintf(dbToolPullPre("mysql")+`printf '%%s\n' "$YP_DB_PWD" | docker run --rm -i --network host %s sh -c 'read -r pw; cf=$(mktemp); printf "[client]\npassword=%%s\n" "$pw" > "$cf"; mysqldump --defaults-extra-file="$cf" -h %s -P %d -u %s --databases %s --single-transaction; rc=$?; rm -f "$cf"; exit $rc' > %s`,
+				dbClientImage["mysql"], host, src.Port, src.RootUser, db, file)
 		} else {
 			cmd = fmt.Sprintf("printf '%%s\\n' \"$YP_DB_PWD\" | docker exec -i %s sh -c 'read -r pw; cf=$(mktemp); printf \"[client]\\npassword=%%s\\n\" \"$pw\" > \"$cf\"; MYSQL_PWD=\"$pw\" mysqldump --defaults-extra-file=\"$cf\" --databases %s --single-transaction; rc=$?; rm -f \"$cf\"; exit $rc' > %s", c, db, file)
 		}
 	case "postgres":
 		if src.Origin == "external" {
-			cmd = fmt.Sprintf("sh -c 'command -v pg_dump >/dev/null || { echo \"本机缺少 pg_dump\"; exit 127; }; PGPASSWORD=\"$YP_DB_PWD\" pg_dump -h %s -p %d -U %s -d %s' > %s", host, src.Port, src.RootUser, db, file)
+			cmd = fmt.Sprintf(dbToolPullPre("postgres")+`printf '%%s\n' "$YP_DB_PWD" | docker run --rm -i --network host %s sh -c 'read -r pw; PGPASSWORD="$pw" pg_dump -h %s -p %d -U %s -d %s' > %s`,
+				dbClientImage["postgres"], host, src.Port, src.RootUser, db, file)
 		} else {
 			cmd = fmt.Sprintf("docker exec %s pg_dump -U postgres -d %s > %s", c, db, file)
 		}
@@ -171,7 +187,8 @@ func (s *DatabaseService) srcDumpShell(ctx context.Context, logf TaskLogf, src *
 			file = file + ".archive.gz"
 		}
 		if src.Origin == "external" {
-			cmd = fmt.Sprintf("sh -c 'command -v mongodump >/dev/null || { echo \"本机缺少 mongodump\"; exit 127; }; cf=$(mktemp); printf \"password: %%s\\n\" \"$YP_DB_PWD\" > \"$cf\"; mongodump --archive --gzip --db %s -u %s --config \"$cf\" --authenticationDatabase admin; rc=$?; rm -f \"$cf\"; exit $rc' > %s", db, src.RootUser, file)
+			cmd = fmt.Sprintf(dbToolPullPre("mongo")+`printf '%%s\n' "$YP_DB_PWD" | docker run --rm -i --network host %s sh -c 'read -r pw; cf=$(mktemp); printf "password: %%s\n" "$pw" > "$cf"; mongodump --archive --gzip --host %s --port %d --db %s -u %s --config "$cf" --authenticationDatabase admin; rc=$?; rm -f "$cf"; exit $rc' > %s`,
+				dbClientImage["mongo"], host, src.Port, db, src.RootUser, file)
 		} else {
 			cmd = fmt.Sprintf("printf '%%s\\n' \"$YP_DB_PWD\" | docker exec -i %s sh -c 'read -r pw; cf=$(mktemp); printf \"password: %%s\\n\" \"$pw\" > \"$cf\"; mongodump --archive --gzip --db %s -u %s --config \"$cf\" --authenticationDatabase admin; rc=$?; rm -f \"$cf\"; exit $rc' > %s", c, db, src.RootUser, file)
 		}
@@ -184,7 +201,7 @@ func (s *DatabaseService) srcDumpShell(ctx context.Context, logf TaskLogf, src *
 		return err
 	}
 	if out.ExitCode != 0 || out.TimedOut {
-		return errs.Wrapc(errs.CodeFileOpFailed, "dump 失败: "+firstLine(out.Output))
+		return errs.Wrapc(errs.CodeFileOpFailed, execFailMsg("dump", out))
 	}
 	logf("info", "  dump 完成 → %s", file)
 	return nil
@@ -219,18 +236,20 @@ func (s *DatabaseService) migrateSQLDB(ctx context.Context, logf TaskLogf, src, 
 	case isMySQL && dst.Origin == "container":
 		cmd = fmt.Sprintf("{ printf '%%s\\n' \"$YP_DB_PWD\"; cat %s; } | docker exec -i %s sh -c 'read -r pw; MYSQL_PWD=\"$pw\" mysql'", file, c)
 	case isMySQL:
-		cmd = fmt.Sprintf("sh -c 'command -v mysql >/dev/null || { echo \"本机缺少 mysql 客户端\"; exit 127; }; cf=$(mktemp); printf \"[client]\\npassword=%%s\\n\" \"$YP_DB_PWD\" > \"$cf\"; mysql --defaults-extra-file=\"$cf\" -h %s -P %d -u %s < %s; rc=$?; rm -f \"$cf\"; exit $rc'", host, dst.Port, dst.RootUser, file)
+		cmd = fmt.Sprintf(dbToolPullPre("mysql")+`{ printf '%%s\n' "$YP_DB_PWD"; cat %s; } | docker run --rm -i --network host %s sh -c 'read -r pw; cf=$(mktemp); printf "[client]\npassword=%%s\n" "$pw" > "$cf"; mysql --defaults-extra-file="$cf" -h %s -P %d -u %s %s; rc=$?; rm -f "$cf"; exit $rc'`,
+			file, dbClientImage["mysql"], host, dst.Port, dst.RootUser, db)
 	case !isMySQL && dst.Origin == "container":
 		cmd = fmt.Sprintf("docker exec -i %s psql -q -U postgres -d %s < %s", c, db, file)
 	default:
-		cmd = fmt.Sprintf("sh -c 'command -v psql >/dev/null || { echo \"本机缺少 psql 客户端\"; exit 127; }; PGPASSWORD=\"$YP_DB_PWD\" psql -q -h %s -p %d -U %s -d %s' < %s", host, dst.Port, dst.RootUser, db, file)
+		cmd = fmt.Sprintf(dbToolPullPre("postgres")+`{ printf '%%s\n' "$YP_DB_PWD"; cat %s; } | docker run --rm -i --network host %s sh -c 'read -r pw; PGPASSWORD="$pw" psql -q -h %s -p %d -U %s -d %s'`,
+			file, dbClientImage["postgres"], host, dst.Port, dst.RootUser, db)
 	}
 	out, err := s.ExecAgent(ctx, cmd, map[string]string{"YP_DB_PWD": dstPwd}, 14400)
 	if err != nil {
 		return err
 	}
 	if out.ExitCode != 0 || out.TimedOut {
-		return errs.Wrapc(errs.CodeFileOpFailed, "目标导入失败: "+firstLine(out.Output))
+		return errs.Wrapc(errs.CodeFileOpFailed, execFailMsg("目标导入", out))
 	}
 	return nil
 }
@@ -250,14 +269,15 @@ func (s *DatabaseService) migrateMongoDB(ctx context.Context, logf TaskLogf, src
 	if dst.Origin == "container" {
 		cmd = fmt.Sprintf("{ printf '%%s\\n' \"$YP_DB_PWD\"; cat %s; } | docker exec -i %s sh -c 'read -r pw; cf=$(mktemp); printf \"password: %%s\\n\" \"$pw\" > \"$cf\"; mongorestore --archive --gzip --drop -u %s --config \"$cf\" --authenticationDatabase admin; rc=$?; rm -f \"$cf\"; exit $rc'", file, c, dst.RootUser)
 	} else {
-		cmd = fmt.Sprintf("sh -c 'command -v mongorestore >/dev/null || { echo \"本机缺少 mongorestore\"; exit 127; }; cf=$(mktemp); printf \"password: %%s\\n\" \"$YP_DB_PWD\" > \"$cf\"; mongorestore --archive --gzip --drop -h %s --port %d -u %s --config \"$cf\" --authenticationDatabase admin; rc=$?; rm -f \"$cf\"; exit $rc' < %s", host, dst.Port, dst.RootUser, file)
+		cmd = fmt.Sprintf(dbToolPullPre("mongo")+`{ printf '%%s\n' "$YP_DB_PWD"; cat %s; } | docker run --rm -i --network host %s sh -c 'read -r pw; cf=$(mktemp); printf "password: %%s\n" "$pw" > "$cf"; mongorestore --archive --gzip --drop --host %s --port %d -u %s --config "$cf" --authenticationDatabase admin; rc=$?; rm -f "$cf"; exit $rc'`,
+			file, dbClientImage["mongo"], host, dst.Port, dst.RootUser)
 	}
 	out, err := s.ExecAgent(ctx, cmd, map[string]string{"YP_DB_PWD": dstPwd}, 14400)
 	if err != nil {
 		return err
 	}
 	if out.ExitCode != 0 || out.TimedOut {
-		return errs.Wrapc(errs.CodeFileOpFailed, "目标恢复失败: "+firstLine(out.Output))
+		return errs.Wrapc(errs.CodeFileOpFailed, execFailMsg("目标恢复", out))
 	}
 	return nil
 }

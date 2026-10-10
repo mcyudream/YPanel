@@ -872,23 +872,27 @@ func (s *DatabaseService) CreateBackup(ctx context.Context, id uint, opts ...Bac
 	}
 	// 密码只经 ExecReq.Env 注入 agent sh 环境（$YP_DB_PWD 引用），argv 无明文；
 	// 容器内经 stdin `read -r pw` 中转，mongo 走 tools --config 临时文件（用完即删）。
+	// 外接实例统一走临时容器（--network host 直连宿主网络栈，宿主无需客户端工具）。
 	var cmd string
 	switch inst.Type {
 	case "mysql":
 		if inst.Origin == "external" {
-			cmd = fmt.Sprintf("sh -c 'command -v mysqldump >/dev/null || { echo \"本机缺少 mysqldump 客户端\"; exit 127; }; MYSQL_PWD=\"$YP_DB_PWD\" mysqldump -h %s -P %d -u %s --all-databases --single-transaction' > %s", host, inst.Port, inst.RootUser, target)
+			cmd = fmt.Sprintf(dbToolPullPre("mysql")+`printf '%%s\n' "$YP_DB_PWD" | docker run --rm -i --network host %s sh -c 'read -r pw; cf=$(mktemp); printf "[client]\npassword=%%s\n" "$pw" > "$cf"; mysqldump --defaults-extra-file="$cf" -h %s -P %d -u %s --all-databases --single-transaction; rc=$?; rm -f "$cf"; exit $rc' > %s`,
+				dbClientImage["mysql"], host, inst.Port, inst.RootUser, target)
 		} else {
 			cmd = fmt.Sprintf("printf '%%s\\n' \"$YP_DB_PWD\" | docker exec -i %s sh -c 'read -r pw; MYSQL_PWD=\"$pw\" mysqldump -uroot --all-databases --single-transaction' > %s", c, target)
 		}
 	case "postgres":
 		if inst.Origin == "external" {
-			cmd = fmt.Sprintf("sh -c 'command -v pg_dumpall >/dev/null || { echo \"本机缺少 pg_dumpall 客户端\"; exit 127; }; PGPASSWORD=\"$YP_DB_PWD\" pg_dumpall -h %s -p %d -U %s' > %s", host, inst.Port, inst.RootUser, target)
+			cmd = fmt.Sprintf(dbToolPullPre("postgres")+`printf '%%s\n' "$YP_DB_PWD" | docker run --rm -i --network host %s sh -c 'read -r pw; PGPASSWORD="$pw" pg_dumpall -h %s -p %d -U %s' > %s`,
+				dbClientImage["postgres"], host, inst.Port, inst.RootUser, target)
 		} else {
 			cmd = fmt.Sprintf("docker exec %s pg_dumpall -U postgres > %s", c, target)
 		}
 	case "redis":
 		if inst.Origin == "external" {
-			cmd = fmt.Sprintf("sh -c 'command -v redis-cli >/dev/null || { echo \"本机缺少 redis-cli 客户端\"; exit 127; }; REDISCLI_AUTH=\"$YP_DB_PWD\" redis-cli -h %s -p %d --rdb %s'", host, inst.Port, target)
+			cmd = fmt.Sprintf(dbToolPullPre("redis")+`printf '%%s\n' "$YP_DB_PWD" | docker run --rm -i --network host %s sh -c 'read -r pw; REDISCLI_AUTH="$pw" redis-cli -h %s -p %d --rdb /tmp/yp-dump.rdb; rc=$?; [ "$rc" -eq 0 ] && cat /tmp/yp-dump.rdb; exit $rc' > %s`,
+				dbClientImage["redis"], host, inst.Port, target)
 		} else {
 			// SAVE 输出与告警均丢弃，避免污染 RDB 流
 			cmd = fmt.Sprintf("printf '%%s\\n' \"$YP_DB_PWD\" | docker exec -i %s sh -c 'read -r pw; REDISCLI_AUTH=\"$pw\" redis-cli SAVE >/dev/null 2>&1; cat /data/dump.rdb' > %s", c, target)
@@ -896,7 +900,8 @@ func (s *DatabaseService) CreateBackup(ctx context.Context, id uint, opts ...Bac
 	case "mongo":
 		// mongodump/mongorestore 无密码环境变量约定，统一走 --config 临时文件（umask 077 + 用完即删）
 		if inst.Origin == "external" {
-			cmd = fmt.Sprintf("sh -c 'command -v mongodump >/dev/null || { echo \"本机缺少 mongodump 客户端\"; exit 127; }; cf=$(mktemp); printf \"password: %%s\\n\" \"$YP_DB_PWD\" > \"$cf\"; mongodump --archive --gzip --host %s --port %d -u %s --config \"$cf\" --authenticationDatabase admin; rc=$?; rm -f \"$cf\"; exit $rc' > %s", host, inst.Port, inst.RootUser, target)
+			cmd = fmt.Sprintf(dbToolPullPre("mongo")+`printf '%%s\n' "$YP_DB_PWD" | docker run --rm -i --network host %s sh -c 'read -r pw; cf=$(mktemp); printf "password: %%s\n" "$pw" > "$cf"; mongodump --archive --gzip --host %s --port %d -u %s --config "$cf" --authenticationDatabase admin; rc=$?; rm -f "$cf"; exit $rc' > %s`,
+				dbClientImage["mongo"], host, inst.Port, inst.RootUser, target)
 		} else {
 			cmd = fmt.Sprintf("printf '%%s\\n' \"$YP_DB_PWD\" | docker exec -i %s sh -c 'read -r pw; cf=$(mktemp); printf \"password: %%s\\n\" \"$pw\" > \"$cf\"; mongodump --archive --gzip -u %s --config \"$cf\" --authenticationDatabase admin; rc=$?; rm -f \"$cf\"; exit $rc' > %s", c, inst.RootUser, target)
 		}
@@ -1003,13 +1008,15 @@ func (s *DatabaseService) Restore(ctx context.Context, id uint, file string) err
 	switch inst.Type {
 	case "mysql":
 		if inst.Origin == "external" {
-			cmd = fmt.Sprintf("sh -c 'command -v mysql >/dev/null || { echo \"本机缺少 mysql 客户端\"; exit 127; }; MYSQL_PWD=\"$YP_DB_PWD\" mysql -h %s -P %d -u %s' < %s", host, inst.Port, inst.RootUser, src)
+			cmd = fmt.Sprintf(dbToolPullPre("mysql")+`{ printf '%%s\n' "$YP_DB_PWD"; cat %s; } | docker run --rm -i --network host %s sh -c 'read -r pw; cf=$(mktemp); printf "[client]\npassword=%%s\n" "$pw" > "$cf"; mysql --defaults-extra-file="$cf" -h %s -P %d -u %s; rc=$?; rm -f "$cf"; exit $rc'`,
+				src, dbClientImage["mysql"], host, inst.Port, inst.RootUser)
 		} else {
 			cmd = fmt.Sprintf("{ printf '%%s\\n' \"$YP_DB_PWD\"; cat %s; } | docker exec -i %s sh -c 'read -r pw; MYSQL_PWD=\"$pw\" mysql -uroot'", src, c)
 		}
 	case "postgres":
 		if inst.Origin == "external" {
-			cmd = fmt.Sprintf("sh -c 'command -v psql >/dev/null || { echo \"本机缺少 psql 客户端\"; exit 127; }; PGPASSWORD=\"$YP_DB_PWD\" psql -h %s -p %d -U %s' < %s", host, inst.Port, inst.RootUser, src)
+			cmd = fmt.Sprintf(dbToolPullPre("postgres")+`{ printf '%%s\n' "$YP_DB_PWD"; cat %s; } | docker run --rm -i --network host %s sh -c 'read -r pw; PGPASSWORD="$pw" psql -q -h %s -p %d -U %s'`,
+				src, dbClientImage["postgres"], host, inst.Port, inst.RootUser)
 		} else {
 			cmd = fmt.Sprintf("docker exec -i %s psql -U postgres < %s", c, src)
 		}
@@ -1021,7 +1028,8 @@ func (s *DatabaseService) Restore(ctx context.Context, id uint, file string) err
 		cmd = fmt.Sprintf("docker cp %s %s:/data/dump.rdb && docker restart %s", src, c, c)
 	case "mongo":
 		if inst.Origin == "external" {
-			cmd = fmt.Sprintf("sh -c 'command -v mongorestore >/dev/null || { echo \"本机缺少 mongorestore 客户端\"; exit 127; }; cf=$(mktemp); printf \"password: %%s\\n\" \"$YP_DB_PWD\" > \"$cf\"; mongorestore --archive --gzip --host %s --port %d -u %s --config \"$cf\" --authenticationDatabase admin --drop; rc=$?; rm -f \"$cf\"; exit $rc' < %s", host, inst.Port, inst.RootUser, src)
+			cmd = fmt.Sprintf(dbToolPullPre("mongo")+`{ printf '%%s\n' "$YP_DB_PWD"; cat %s; } | docker run --rm -i --network host %s sh -c 'read -r pw; cf=$(mktemp); printf "password: %%s\n" "$pw" > "$cf"; mongorestore --archive --gzip --host %s --port %d -u %s --config "$cf" --authenticationDatabase admin --drop; rc=$?; rm -f "$cf"; exit $rc'`,
+				src, dbClientImage["mongo"], host, inst.Port, inst.RootUser)
 		} else {
 			cmd = fmt.Sprintf("{ printf '%%s\\n' \"$YP_DB_PWD\"; cat %s; } | docker exec -i %s sh -c 'read -r pw; cf=$(mktemp); printf \"password: %%s\\n\" \"$pw\" > \"$cf\"; mongorestore --archive --gzip --config \"$cf\" --authenticationDatabase admin --drop; rc=$?; rm -f \"$cf\"; exit $rc'", src, c)
 		}

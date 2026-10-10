@@ -223,6 +223,19 @@ export default {
     startFailed: 'Start failed',
   },
 
+  clients: {
+    title: 'External Instance Runtime',
+    short: 'Runtime',
+    tip: 'Backup/migration/import/restore for external instances runs in temporary Docker containers on the panel host - no client tools needed. Uncached images are pulled automatically on first use, or pre-pull them here to speed up the first run.',
+    install: 'Pre-pull image',
+    installed: 'Image ready',
+    installFailed: 'Image pull failed',
+    checkFailed: 'Check failed',
+    ready: 'Cached',
+    migrateWarn: 'Runtime images not cached yet: {images} (they will be pulled automatically when the migration starts; pre-pull below to avoid the wait)',
+    migrateAutoPull: 'Some runtime images are not cached yet; they will be pulled automatically after the task starts (may take a while). Pre-pull them in the migration dialog first if you prefer',
+  },
+
   pwd: {
     title: 'Change password: {name}',
     newPlaceholder: 'New password (letters/digits/dashes, 8-64 chars)',
