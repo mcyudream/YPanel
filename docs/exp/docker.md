@@ -81,3 +81,8 @@
 - **根因**：老版 Harbor 包给全部服务（**包括 log 服务自己**）配了 `logging: driver: syslog, options: syslog-address: tcp://log:10514`——syslog driver 在容器启动时初始化并解析地址，log 服务自己还没运行、compose DNS 里没有 `log`，解析失败直接挡死 start（连不上的 connect refused 只告警不挡，DNS 解析失败才挡）；其他服务在 log 停机期重启也会撞上。1Panel 官方用 `127.0.0.1:1514`+端口映射（IP 字面量可解析、连接失败异步重试）就是绕这个。
 - **规避/解决**：日志服务端容器自己**不要**配 syslog driver（用默认 json-file），只有采集客户端配；新版包已整体移除 syslog。历史残留容器 LogConfig 固化不可改，只能按新 compose `--force-recreate` 重建，或直接换新版包重装。
 - **来源**：2026-10-10，142 磁盘保护停机→恢复时 app-harbor-test 老包 db/log 容器永远起不来（同日已用新版包重装消除）。
+
+### docker compose 新版把 --progress 收编为全局 flag：子命令位直接报错；非 TTY 下本就默认 plain
+
+- **现象**：`docker compose build --progress=plain` 在 142 的 compose v2.39+ 报 `--progress is a global compose flag, better use 'docker compose --progress xx build'`，构建直接失败（脚本/面板老代码原本能跑，docker 升级后静默变砖）。
+- **规避/解决**：非 TTY 场景 buildkit 输出本来就是 plain 格式，直接去掉 `--progress=plain` 即可；需要显式控制时用全局位 `docker compose --progress plain build`。凡是 compose 子命令 flag，升级 docker 后要复查一遍是否被收编/废弃。

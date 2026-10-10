@@ -363,3 +363,36 @@
 - **根因**：YPanel 自有商店的 key 是 `postgres`，1P 官方源是 `postgresql`（还有 `postgresql-cluster`）；`dbServiceKeys` 只认自有的四个 key，且接管时把 `app_store_installs.key` 原样写进 `database_instances.type`——dbdriver 只认 mysql/postgres/redis/mongo。另一个隐藏坑：1P postgresql 包的管理用户名是安装时随机生成的（`PANEL_DB_ROOT_USER`），不能回落假设 `postgres`，否则连通性验证必败。
 - **规避/解决**：① `dbServiceKeys` 同时收录两套 key，查询条件统一走 `dbServiceKeyList()`（多处硬编码必漂移）；② 加 `dbServiceTypeAlias()`（postgresql→postgres）在落库/建驱动前归一；③ 接管解析管理用户名按 `PANEL_DB_ROOT_USER/POSTGRES_USER/...` 优先、默认值兜底；端口解析改为有序候选 + 排序回退（map 遍历无序，多个含 PORT 键时结果不确定）。
 - **来源**：2026-10-10，用户报告「app-postgresql 在应用商店安装(1p源)没有被接管到数据库管理」（core/internal/service/database.go）。
+
+### Go 1.22 mux 对未注册 POST 路径可能回 405 而非 404：新版端点存在性判定必须 404/405 双匹配
+
+- **现象**：M59 镜像拉取流式端点（新 core → 旧 agent）回退判定只认 `HTTP 404`，真机打旧 agent 却回 `405 Method Not Allowed`——回退不触发，任务直接失败。
+- **根因**：Go 1.22 ServeMux 方法+路径模式注册下，未注册的子路径请求命中「路径前缀已注册但方法不匹配」的语义时回 405（旧 agent 的路由表里 `/agent/v1/docker/images/pull` 已注册 POST，`/pull/stream` 前缀相近），并非教科书式 404。
+- **规避/解决**：「探测新端点是否存在」类判定对 404 与 405 都视为缺失（`isAgentEndpointMissing` 双匹配）；流式端点错误语义设计为全程 HTTP 200 + 事件行（`{"error":...}`），把业务失败与端点缺失两类错误分开。
+
+### 面板驱动 agent 升级「切换完成」但版本没变：非标准安装路径节点会被静默架空
+
+- **现象**：node-alpha（手装 agent 在 `/opt/ypanel/ypagent`，早于 M54 标准 `/opt/ypagent`）走面板一键升级，五步全绿「完成」，心跳版本却一直不变直到 90s 超时。
+- **根因**：升级流程按标准常量路径推送（`/opt/ypagent/updates` → `/opt/ypagent/ypagent`）并 `systemctl restart ypagent`——服务重启的是 systemd 单元里 ExecStart 指向的旧路径二进制，推送过去的新二进制躺在没人引用的标准路径上。切换脚本全部成功、结果完全无效，且无任何报错。
+- **规避/解决**：①一次性对齐：`mkdir -p /etc/systemd/system/ypagent.service.d && printf '[Service]\nExecStart=\nExecStart=/opt/ypagent/ypagent -addr 0.0.0.0:9528\n' > override.conf && daemon-reload && restart`（ExecStart 先置空再赋值是 systemd drop-in 覆盖的硬要求）；②运维判据：升级任务「成功」但心跳版本不变 = 非标准路径节点，对齐后重试；③quick_start.sh 标准发行无此问题。顺带：替换运行中的 agent 二进制 `cp` 会 Text file busy，用 `cp → mv -f` 原子换 inode。另：pre-M38（2026-10-08 前）的 agent 无 files/upload 端点，面板推送报 `[2002] 无权执行该操作`，只能手动换一次二进制解开鸡生蛋。
+
+### 存量表字段后加的列重建必踩空值：runtime.image 为空渲染出非法 compose
+
+- **现象**：重建最老的 php-main 运行时必失败 `services.php.image must be a string`，而新建的运行时都正常。
+- **根因**：image 列是后续版本加的（早期 runtime 只按目录约定起容器），存量行该列为空；重建用该值渲染 compose 得到空 `image:` 直接过不了校验。
+- **规避/解决**：任务入口处按当前命名惯例补齐（`ypanel-rt/php-<name>:<ver>`）并回写 DB（一次性自愈），不要在每个使用点判空。「老数据 + 新渲染」的组合在重建/重装类入口都要想一遍。
+
+### exec 落盘重定向通道的报错留白：stdout 诊断被 `> 文件` 吞掉，报错只剩「失败: 」
+
+- **现象**：迁移报 `[3004] dump 失败:`（冒号后全空），任务一秒内失败，无从下手。是「备份先 mkdir、迁移裸重定向」条目的第二层：目录修好后失败原因换了一种隐形法。
+- **根因**：dump/import 命令形如 `sh -c '... || { echo "本机缺少 xxx"; exit 127; }; ...工具...' > 中转文件`——整段 stdout 被重定向进**中转文件**，我们自己写的缺失提示是 echo 到 stdout 的，恰好被吞进文件；stderr 反而干净，agent 合并捕获的 Output 为空，报错留白。线上宿主机没装 mysqldump 时即触发（exit 127 一秒失败）。同一路径失败但 stderr 有内容时（如 Access denied）报错正常，所以「报错为空」本身就是 stdout 型失败的指纹。
+- **规避/解决**：① exec 通道里所有给运维看的诊断 echo 一律 `>&2`（stderr 不受 `> 文件` 影响）；② 失败分支用 execFailMsg 兜底：输出为空时报错带退出码与指引，不留白；③ 面板侧补「客户端环境」检测+一键安装（dbclients.go，apt/dnf/yum 三通道+装后回读），把「装客户端」变成面板内动作。
+- **来源**：2026-10-11，线上外接 MySQL 迁移空报错排查（43.248.139.249 面板，无 SSH 登录通道，纯代码推演闭环）+ dbmigrate/dbimport/database 三文件 15 处 echo 修复。
+
+### 外接实例 dump 通道决策：临时 Docker 容器取代宿主客户端（终案）
+
+- **决策**：外接（external）实例的 dump/导入/备份/恢复统一经临时容器执行：`docker image inspect X >/dev/null 2>&1 || docker pull X; ... | docker run --rm -i --network host <mysql:8.0|postgres:17|redis:7|mongo:7> sh -c 'read -r pw; ...' > 中转文件`。宿主机不再依赖任何数据库客户端，此前「缺客户端检测+apt/yum 一键安装」方案被此案取代（保留语义改为「执行环境」：检测 Docker 可用 + 镜像缓存，一键预拉取，`/database/execenv/check|pull`）。
+- **要点**：① `--network host` 一招解决全部网络拓扑——容器共享宿主网络栈，external 目标是回环（127.0.0.1:port）或远程 IP 都直达，无需 host-gateway 换算；② 密码沿用 stdin 首行 `read -r pw` 中转（与容器实例通道同构），`docker run -e` 会把明文带进宿主 argv，不可用；mongo 的 --config 文件写在容器内 mktemp，随 `--rm` 销毁，免挂载；③ 镜像选型：mysql:8.0 客户端向下兼容 5.x；pg_dump 新版本官方支持 dump 更老服务端（反向才报 version mismatch），取 postgres:17；④ 镜像未缓存不拦截操作（run 内自动 pull，stderr 可见进度），只在前端提示可预拉取——拉取走 daemon 已配置的加速器。
+- **顺带修的存量 bug**：mongo external dump 原命令缺 `--host/--port`（默认连 27017，非标端口的外接 mongo 一直会连错）；本次统一带上。
+- **边界**：rootless Docker 不支持 host 网络（面板场景为 root daemon，不受影响）；首次未缓存镜像时任务前段耗时是拉镜像（任务日志可见 docker pull 输出）。
+- **来源**：2026-10-11，线上外接 MySQL 迁移缺 mysqldump 事件后的方案拍板（用户定案「不强依赖系统环境」）。
