@@ -998,13 +998,13 @@ function statusText(s: StoreSource) {
               </div>
             </div>
             <div class="mt-2 line-clamp-2 min-h-10 flex-1 text-xs text-muted-foreground">{{ a.description }}</div>
-            <div class="mt-3 flex items-center justify-between border-t pt-2" @click.stop>
-              <div class="flex gap-1">
+            <div class="mt-3 border-t pt-2" @click.stop>
+              <div class="flex flex-wrap gap-1">
                 <span class="rounded bg-muted px-1.5 py-0.5 text-xs text-muted-foreground">{{ kindLabel(a.kind) }}</span>
                 <span v-for="t in (a.tags || '').split(',').filter(Boolean).slice(0, 2)" :key="t" class="rounded bg-muted px-1.5 py-0.5 text-xs text-muted-foreground">{{ t }}</span>
-                <span class="rounded bg-muted px-1.5 py-0.5 text-xs text-muted-foreground" :title="sourceName(a.sourceId)">{{ sourceName(a.sourceId) }}</span>
+                <span class="max-w-full truncate rounded bg-muted px-1.5 py-0.5 text-xs text-muted-foreground" :title="sourceName(a.sourceId)">{{ sourceName(a.sourceId) }}</span>
               </div>
-              <div class="flex gap-1.5">
+              <div class="mt-2 flex flex-wrap justify-end gap-1.5">
                 <FaButton v-if="a.upgradable" size="sm" variant="outline" @click="upgrade(a)">{{ $t('store.upgradeV', { v: a.latestVer }) }}</FaButton>
                 <FaButton v-if="a.installed" size="sm" variant="outline" @click="uninstall(a.installInfo?.composeProject || '')">{{ $t('store.uninstall') }}</FaButton>
                 <FaButton v-auth="['store:write']" size="sm" :variant="a.installed ? 'outline' : 'default'" @click="openInstall(a)">
