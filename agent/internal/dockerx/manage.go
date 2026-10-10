@@ -11,7 +11,9 @@ import (
 	"net/netip"
 	"os"
 	"regexp"
+	"sort"
 	"strings"
+	"time"
 
 	"github.com/moby/moby/api/types/container"
 	"github.com/moby/moby/api/types/network"
@@ -89,6 +91,77 @@ func (m *Manager) ImagePull(ctx context.Context, ref string) (string, error) {
 		}
 	}
 	return sb.String(), nil
+}
+
+// ImagePullStream 拉取镜像，进度经 emit 流出（供 HTTP chunked 端点转发到 core 任务日志）：
+// 无 ID 的状态行去重后即时发出；有 ID 的逐层进度在内存只保留各层最新值、每秒聚合一行
+// （层数多时截取前 6 层），避免逐条转发刷屏。失败返回 error（含 docker 错误消息）。
+func (m *Manager) ImagePullStream(ctx context.Context, ref string, emit func(text string)) error {
+	if ref == "" {
+		return errs.ErrBadRequest
+	}
+	cli, err := m.getClient()
+	if err != nil {
+		return err
+	}
+	rd, err := cli.ImagePull(ctx, ref, client.ImagePullOptions{})
+	if err != nil {
+		return errs.Wrapc(errs.CodeFileOpFailed, "拉取失败: "+err.Error())
+	}
+	defer func() { _ = rd.Close() }()
+	dec := json.NewDecoder(rd)
+	states := map[string]string{} // 层 ID → 最新进度
+	seen := map[string]bool{}     // 无 ID 状态行去重（Pulling from xxx / Digest / Status 等）
+	var lastFlush time.Time
+	flush := func() {
+		if len(states) == 0 {
+			return
+		}
+		ids := make([]string, 0, len(states))
+		for id := range states {
+			ids = append(ids, id)
+		}
+		sort.Strings(ids)
+		if len(ids) > 6 {
+			ids = ids[:6]
+		}
+		parts := make([]string, 0, len(ids))
+		for _, id := range ids {
+			parts = append(parts, id+" "+states[id])
+		}
+		if len(states) > 6 {
+			parts = append(parts, fmt.Sprintf("…共 %d 层", len(states)))
+		}
+		emit("进度：" + strings.Join(parts, " ｜ "))
+		lastFlush = time.Now()
+	}
+	for {
+		var line pullLine
+		if err := dec.Decode(&line); err != nil {
+			break
+		}
+		if line.Error != "" {
+			return errs.Wrapc(errs.CodeFileOpFailed, "拉取失败: "+line.Error)
+		}
+		switch {
+		case line.ID != "" && line.Progress != "":
+			states[line.ID] = line.Progress
+		case line.Status != "":
+			t := line.Status
+			if line.ID != "" {
+				t = line.ID + " " + t
+			}
+			if !seen[t] {
+				seen[t] = true
+				emit(t)
+			}
+		}
+		if len(states) > 0 && time.Since(lastFlush) >= time.Second {
+			flush()
+		}
+	}
+	flush()
+	return nil
 }
 
 // ImageRemove 删除镜像。

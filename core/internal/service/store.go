@@ -1389,14 +1389,72 @@ func (s *StoreService) deployCompose(ctx context.Context, logf TaskLogf, app mod
 	if oerr := s.writeComposeOverride(ctx, logf, ac, dir, tz, hosts, mountHostsFile); oerr != nil {
 		return strings.Join(logs, "\n"), oerr
 	}
-	// 镜像本地齐全时跳过 pull（compose pull 会连 registry 校验 digest，网络受限时干等）；
-	// 有缺失才 pull（大镜像耗时长，进度/错误完整可读）
-	pullCmd := `missing=0; for img in $(grep -E '^[[:space:]]*image:' docker-compose.yml | awk '{print $2}' | tr -d '"'); do docker image inspect "$img" >/dev/null 2>&1 || missing=1; done; if [ "$missing" -ne 0 ]; then docker compose -p ` + project + ` pull --quiet 2>&1 | tail -5; test ${PIPESTATUS[0]} -eq 0; fi`
-	_ = step("检查镜像", fmt.Sprintf("cd %s && %s", dir, pullCmd), 1800)
+	// 预拉取缺失镜像（逐镜像流式进度进任务日志；全部本地已有则跳过不连 registry）
+	if perr := s.prePullImages(ctx, logf, ac, dir, project); perr != nil {
+		return strings.Join(logs, "\n"), perr
+	}
 	if err := step("compose up", fmt.Sprintf("cd %s && docker compose -p %s up -d", dir, project), 600); err != nil {
 		return strings.Join(logs, "\n"), err
 	}
 	return strings.Join(logs, "\n"), nil
+}
+
+// prePullImages compose 依赖镜像预拉取：`compose config --images` 解析清单（不支持时回退 grep image: 行，
+// 再失败则跳过预拉交由 compose up 自行处理），本地已有的跳过，缺失镜像逐个走 agent 流式拉取——
+// 逐层进度实时进任务日志，拉取失败即中止安装（早失败，不再 compose up 中途挂）。
+// 节点 agent 过旧（无流式端点 404）时回退原静默 `compose pull`。
+func (s *StoreService) prePullImages(ctx context.Context, logf TaskLogf, ac *agentclient.Client, dir, project string) error {
+	exec := func(cmd string, timeoutSecs int) (string, int, error) {
+		out, err := agentclient.DoJSON[dto.ExecReq, dto.ExecResp](ac, ctx, "POST", "/agent/v1/exec",
+			&dto.ExecReq{Command: cmd, TimeoutSecs: timeoutSecs})
+		if err != nil {
+			return "", 1, err
+		}
+		return out.Output, out.ExitCode, nil
+	}
+	out, code, err := exec(fmt.Sprintf("cd %s && docker compose -p %s config --images 2>/dev/null | sort -u", dir, project), 60)
+	if err != nil || code != 0 || strings.TrimSpace(out) == "" {
+		// 回退：grep compose 文件 image: 行（不解析 ${VAR}，仅尽力）
+		out, code, err = exec(fmt.Sprintf("cd %s && grep -E '^[[:space:]]*image:' docker-compose.yml | awk '{print $2}' | tr -d '\"' | sort -u", dir), 60)
+		if err != nil || code != 0 || strings.TrimSpace(out) == "" {
+			logf("info", "镜像清单解析失败，跳过预拉取（由 compose up 处理）")
+			return nil
+		}
+	}
+	images := []string{}
+	for _, l := range strings.Split(out, "\n") {
+		if l = strings.TrimSpace(l); l != "" {
+			images = append(images, l)
+		}
+	}
+	missing := []string{}
+	for _, img := range images {
+		_, code, err := exec(fmt.Sprintf("docker image inspect '%s' >/dev/null 2>&1", img), 30)
+		if err != nil || code != 0 {
+			missing = append(missing, img)
+		}
+	}
+	if len(missing) == 0 {
+		logf("info", "镜像已齐全（%d 个），跳过拉取", len(images))
+		return nil
+	}
+	logf("info", "待拉取镜像 %d/%d：%s", len(missing), len(images), strings.Join(missing, "、"))
+	for i, img := range missing {
+		logf("info", "[%d/%d] 拉取 %s", i+1, len(missing), img)
+		if perr := streamImagePull(ctx, ac, img, logf); perr != nil {
+			if isAgentEndpointMissing(perr) {
+				logf("info", "节点 agent 版本较旧（无流式拉取端点），回退静默 compose pull…")
+				oc, cc, eerr := exec(fmt.Sprintf("cd %s && docker compose -p %s pull --quiet 2>&1 | tail -5; test ${PIPESTATUS[0]} -eq 0", dir, project), 1800)
+				if eerr != nil || cc != 0 {
+					return errs.Wrapc(errs.CodeFileOpFailed, "镜像拉取失败（compose pull）: "+tailOutput(oc, 800))
+				}
+				return nil
+			}
+			return errs.Wrapc(errs.CodeFileOpFailed, fmt.Sprintf("拉取 %s 失败: %s", img, perr.Error()))
+		}
+	}
+	logf("info", "镜像预拉取完成 ✓")
+	return nil
 }
 
 // writeLocalPackage 把仓库内包目录的文本文件写入 agent 目标目录（compose 文件统一命名 docker-compose.yml）。

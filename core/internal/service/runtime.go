@@ -590,6 +590,14 @@ func cmpOr(v, def string) string {
 // buildPHP 写模板文件并构建、启动（任务内执行；重建时用户配置仅在缺失时补写，避免覆盖手工修改）。
 func (s *RuntimeService) buildPHP(ctx context.Context, logf TaskLogf, row *model.Runtime, baseImage string) error {
 	dir := s.dir(row)
+	// 存量兜底：image 字段出现前的老运行时行该列为空（重建必然渲染出非法 compose），按当前命名惯例补齐并回写
+	if row.Image == "" {
+		row.Image = fmt.Sprintf("%s/php-%s:%s", runtimeImagePrefix, row.Name, row.Version)
+		if err := s.db.Model(row).Update("image", row.Image).Error; err != nil {
+			logf("info", "回写镜像名失败（继续用派生名）: %s", err.Error())
+		}
+		logf("info", "存量记录缺镜像名，已按惯例补齐: %s", row.Image)
+	}
 	exts := envJSON(row).Extensions
 	files := map[string]string{
 		dir + "/Dockerfile":                          mustEmbed("runtimedata/php/Dockerfile"),
@@ -630,14 +638,45 @@ func (s *RuntimeService) buildPHP(ctx context.Context, logf TaskLogf, row *model
 	logf("info", "清理同名旧容器（如有）")
 	_, _ = s.exec(ctx, 120, "%s 2>/dev/null; true", composeCmd(dir+"/docker-compose.yml", row.ComposeProject, "down --remove-orphans"))
 
+	// 构建走 agent 流式 exec：步骤骨架行（#N [stage] RUN / DONE / ERROR / CACHED）实时进任务日志，
+	// 近期输出留环形缓冲供失败时看尾部；旧 agent（无端点 404/405）回退阻塞构建（完成后倒尾部）。
+	// 不传 --progress：非 TTY 下 buildkit 默认即 plain 输出，且新版 compose 把该 flag 收编为全局 flag（子命令位直接报错）。
 	logf("info", "构建镜像 %s（首次构建含扩展编译，可能耗时数分钟）", row.Image)
-	buildOut, err := s.exec(ctx, 1800, "%s", composeCmd(dir+"/docker-compose.yml", row.ComposeProject, "build --progress=plain"))
-	logf("info", "%s", tailOutput(buildOut.Output, 1500))
-	if err != nil {
-		return err
+	buildCmd := composeCmd(dir+"/docker-compose.yml", row.ComposeProject, "build")
+	var recent []string
+	onBuildLine := func(line string) {
+		recent = append(recent, line)
+		if len(recent) > 200 {
+			recent = recent[len(recent)-200:]
+		}
+		if buildStepLine(line) {
+			logf("info", "%s", line)
+		}
 	}
-	if buildOut.ExitCode != 0 {
-		return errs.Wrapc(errs.CodeFileOpFailed, "镜像构建失败: "+tailOutput(buildOut.Output, 600))
+	ac, cerr := s.client()
+	if cerr != nil {
+		return errs.Wrapc(errs.CodeFileOpFailed, "镜像构建失败: "+cerr.Error())
+	}
+	exitCode, timedOut, serr := streamExec(ctx, ac, buildCmd, 1800, onBuildLine)
+	switch {
+	case serr != nil && isAgentEndpointMissing(serr):
+		logf("info", "节点 agent 版本较旧（无流式执行端点），回退阻塞构建…")
+		buildOut, berr := s.exec(ctx, 1800, "%s", buildCmd)
+		logf("info", "%s", tailOutput(buildOut.Output, 1500))
+		if berr != nil {
+			return berr
+		}
+		if buildOut.ExitCode != 0 {
+			return errs.Wrapc(errs.CodeFileOpFailed, "镜像构建失败: "+tailOutput(buildOut.Output, 600))
+		}
+	case serr != nil:
+		return errs.Wrapc(errs.CodeFileOpFailed, "镜像构建失败: "+serr.Error())
+	case timedOut:
+		return errs.Wrapc(errs.CodeFileOpFailed, "镜像构建超时（30 分钟）")
+	case exitCode != 0:
+		return errs.Wrapc(errs.CodeFileOpFailed, "镜像构建失败（exit "+strconv.Itoa(exitCode)+"）: "+tailOutput(strings.Join(recent, "\n"), 600))
+	default:
+		logf("info", "镜像构建完成 ✓")
 	}
 
 	logf("info", "启动容器 %s", containerNameOr(row))

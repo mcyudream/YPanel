@@ -29,7 +29,8 @@ func NewDockerExtService(nodes *NodeService, tasks *TaskService) *DockerExtServi
 	return &DockerExtService{nodes: nodes, tasks: tasks}
 }
 
-// ImagePullTask 异步镜像拉取任务（返回任务 ID）。
+// ImagePullTask 异步镜像拉取任务（返回任务 ID）。走 agent 流式拉取端点，逐层进度实时进任务日志；
+// 节点 agent 过旧（无流式端点 404）时回退聚合拉取（完成后一次性输出）。
 func (s *DockerExtService) ImagePullTask(ref string) (map[string]any, error) {
 	if s.tasks == nil {
 		return nil, errs.Wrap(errs.ErrBadRequest, "任务服务不可用")
@@ -37,21 +38,117 @@ func (s *DockerExtService) ImagePullTask(ref string) (map[string]any, error) {
 	task, err := s.tasks.StartTask(TaskImagePull, "拉取镜像 "+ref, ref, 60*time.Minute,
 		func(ctx context.Context, logf TaskLogf) error {
 			logf("info", "开始拉取镜像 %s", ref)
-			out, err := s.ImagePull(ctx, ref)
+			ac, err := s.client()
 			if err != nil {
 				return err
 			}
-			for _, l := range strings.Split(strings.TrimSpace(out), "\n") {
-				if l = strings.TrimSpace(l); l != "" {
-					logf("info", "%s", l)
+			if serr := streamImagePull(ctx, ac, ref, logf); serr != nil {
+				if !isAgentEndpointMissing(serr) {
+					return serr
 				}
+				logf("info", "节点 agent 版本较旧（无流式拉取端点），回退聚合拉取…")
+				out, perr := s.ImagePull(ctx, ref)
+				for _, l := range strings.Split(strings.TrimSpace(out), "\n") {
+					if l = strings.TrimSpace(l); l != "" {
+						logf("info", "%s", l)
+					}
+				}
+				return perr
 			}
+			logf("info", "拉取完成 ✓")
 			return nil
 		})
 	if err != nil {
 		return nil, err
 	}
 	return map[string]any{"taskId": task.ID}, nil
+}
+
+// pullStreamEvent agent 拉取流事件行（NDJSON）。
+type pullStreamEvent struct {
+	Text  string `json:"text"`
+	Error string `json:"error"`
+	Done  bool   `json:"done"`
+}
+
+// isAgentEndpointMissing 旧版 agent 无对应端点的判定（agent 升级前与新 core 短暂共存的兼容桥）。
+// 实测旧 mux 对未注册 POST 路径可能回 405（路径前缀撞上其他方法注册）而非 404，两者都算端点缺失。
+func isAgentEndpointMissing(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := err.Error()
+	return strings.Contains(msg, "HTTP 404") || strings.Contains(msg, "HTTP 405")
+}
+
+// streamImagePull 走 agent 流式端点拉取镜像，进度逐行写 logf；事件行 error 即失败。
+func streamImagePull(ctx context.Context, ac *agentclient.Client, ref string, logf TaskLogf) error {
+	return ac.DoStreamLines(ctx, http.MethodPost, "/agent/v1/docker/images/pull/stream", map[string]string{"ref": ref},
+		func(line []byte) error {
+			var ev pullStreamEvent
+			if err := json.Unmarshal(line, &ev); err != nil {
+				return nil // 未知行忽略（向前兼容）
+			}
+			if ev.Error != "" {
+				return errs.Wrapc(errs.CodeFileOpFailed, ev.Error)
+			}
+			if ev.Text != "" {
+				logf("info", "%s", ev.Text)
+			}
+			return nil
+		})
+}
+
+// execStreamEvent agent 流式 exec 事件行（NDJSON）。
+type execStreamEvent struct {
+	Line    string `json:"line"`
+	Exit    int    `json:"exit"`
+	Timeout bool   `json:"timeout"`
+	Error   string `json:"error"`
+}
+
+// streamExec 走 agent 流式 exec 逐行回调（stdout/stderr 合并），返回 (exitCode, timedOut, error)。
+// err 仅启动失败/流中断；命令非零退出经 exitCode 表达。旧 agent（无端点 404/405）由调用方回退阻塞 exec。
+func streamExec(ctx context.Context, ac *agentclient.Client, command string, timeoutSecs int, onLine func(string)) (int, bool, error) {
+	var exit int
+	var timedOut bool
+	err := ac.DoStreamLines(ctx, http.MethodPost, "/agent/v1/exec/stream", dto.ExecReq{Command: command, TimeoutSecs: timeoutSecs},
+		func(line []byte) error {
+			var ev execStreamEvent
+			if err := json.Unmarshal(line, &ev); err != nil {
+				return nil // 未知行忽略（向前兼容）
+			}
+			if ev.Error != "" {
+				return errs.Wrapc(errs.CodeFileOpFailed, ev.Error)
+			}
+			if ev.Line != "" && onLine != nil {
+				onLine(ev.Line)
+			}
+			exit, timedOut = ev.Exit, ev.Timeout
+			return nil
+		})
+	return exit, timedOut, err
+}
+
+// buildStepLine docker build --progress=plain 输出的步骤骨架行过滤：
+// 仅保留 `#N [stage i/j] ...` 步骤开始、DONE/ERROR/CACHED 终态与 writing image/naming to 收尾，
+// 跳过步骤内噪音（apk fetch、编译输出等），任务日志保持可读。
+func buildStepLine(line string) bool {
+	if len(line) < 3 || line[0] != '#' {
+		return false
+	}
+	i := 1
+	for i < len(line) && line[i] >= '0' && line[i] <= '9' {
+		i++
+	}
+	if i == 1 || i >= len(line) || line[i] != ' ' {
+		return false
+	}
+	rest := line[i+1:]
+	return strings.HasPrefix(rest, "[") ||
+		strings.HasPrefix(rest, "DONE") || strings.HasPrefix(rest, "ERROR") ||
+		strings.HasPrefix(rest, "CACHED") || strings.HasPrefix(rest, "writing image") ||
+		strings.HasPrefix(rest, "naming to")
 }
 
 // Client 暴露 agent 客户端（WS 代理等直连场景使用）。
