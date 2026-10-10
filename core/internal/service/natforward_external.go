@@ -122,7 +122,10 @@ func parseNatExternal(out string) (available bool, rules []NatExternalRule) {
 			if family == 4 {
 				available = true
 			}
-			if r, ok := parseNatExternalRule(family, line[3:]); ok && r.Chain != natChainFwd && r.Chain != natChainPost {
+			if r, ok := parseNatExternalRule(family, line[3:]); ok &&
+				r.Chain != natChainFwd && r.Chain != natChainPost &&
+				// 面板挂在主链上的跳转规则（-j YPANEL_FWD[_POST]）不属于外部规则
+				!strings.Contains(r.Spec, "-j "+natChainFwd) && !strings.Contains(r.Spec, "-j "+natChainPost) {
 				rules = append(rules, r)
 			}
 		case strings.HasPrefix(line, "-P "), strings.HasPrefix(line, "-N "):

@@ -49,6 +49,10 @@ func TestParseNatExternal(t *testing.T) {
 		// 面板自建链：排除
 		`-A YPANEL_FWD -p tcp -m tcp --dport 8090 -m comment --comment ypanel-fwd-1 -j DNAT --to-destination 10.0.0.9:80`,
 		"-A YPANEL_FWD_POST -p tcp -d 10.0.0.9 --dport 80 -j MASQUERADE",
+		// 面板挂在主链上的跳转：排除
+		"-A PREROUTING -j YPANEL_FWD",
+		"-A OUTPUT -j YPANEL_FWD",
+		"-A POSTROUTING -j YPANEL_FWD_POST",
 		// 网段 -d：不支持
 		`-A PREROUTING -d 192.168.1.0/24 -p tcp -m tcp --dport 8005 -j DNAT --to-destination 10.0.0.8:8005`,
 		"===V6===",

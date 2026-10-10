@@ -155,3 +155,10 @@
 - **根因**：`adminer.php` 在凌晨磁盘保护触发时段（03:52 mtime）被源码覆盖写坏——size 从官方 476,603B 膨胀到 645,217B，中间混入约 168KB 垃圾块（头尾 PHP 代码完好，CSS 常量区损坏），PHP 运行到损坏区即 warning、内嵌资产输出乱字节。**与网关/代理完全无关**（直连容器 `od -c` 出的是同一份乱字节是铁证）。webgw 注入排查中「样式表 0 规则」等怪象全是该坏文件的伴生症状。
 - **规避/解决**：①「HTTP 200 = 内容正确」不成立——排查静态资产问题必须 `od -c` 看前几十字节 body，别只看状态行；②跨层对比定位法：直连容器 body → 网关 body → 浏览器 body，谁的字节都一样就与中间层无关；③php 应用文件损坏用商店包内 `package/source/` 干净文件 md5 对照（`/opt/ypanel/data/store-sources/<src>/apps/<app>/<ver>/package/source/`），`docker cp` 覆盖即修复；④磁盘保护触发时段（02:30–03:55）内发生的文件写入一律怀疑损坏，重装应用比逐文件排查快。
 - **来源**：2026-10-10，M56 浏览器层验收期用户报「adminer 没有 css」（app-adminer-test，磁盘 100%→保护触发→恢复时间线吻合）。
+
+### 真机 E2E 全线「服务端 404」先怀疑测试脚本自身：urllib data=None 且未传 method= 一律发 GET
+
+- **现象**：M58 NAT 接管 E2E 中，create/import（带 body）全部成功，而 disable/enable/delete（无 body）全部返回 `{"code":404,"message":"not found"}`（web.go NoRoute 兜底）。症状极具迷惑性：同模块无参路由正常、带 `:id` 路由全灭，差点定性成「gin 路由树冲突」，先后排查了二进制路由串、本地复刻 gin 树、进程身份、启动日志——服务端从头到尾没问题。
+- **根因**：`urllib.request.Request(url, data, headers)` 在 `data=None` 且未显式传 `method=` 时按 data 推断方法，一律发 **GET**——POST/DELETE 调用实际全变成了 GET，落到 NoRoute。同理 `curl -X POST` 与 urllib 行为差异要分清。
+- **规避/解决**：Python 测试脚本构造 Request 一律显式 `method=method`；E2E 见到 NoRoute 404 先用 `curl -X POST` 直打同 URL 对照（142 本机 curl 立刻成功即暴露脚本问题），再怀疑服务端。另：iptables `-S` 对 `-d a.b.c.d` 恒显示为 `a.b.c.d/32`，断言字符串按显示形态写。
+- **来源**：2026-10-10，M58 NAT 接管 142 真机 E2E（假阴性 5 项，修正脚本后 20/20）。
