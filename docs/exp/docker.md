@@ -58,3 +58,12 @@
 - **规避/解决**：php 站点模板显式补 `fastcgi_param CONTENT_TYPE $content_type;` + `fastcgi_param CONTENT_LENGTH $content_length;`（site.go confTemplate php 分支，已修）；存量站点 conf 需 sed 补行 + reload。判别手法：写一个 `var_export([$_SERVER['CONTENT_LENGTH'] ?? null, array_keys($_POST)])` 探针进站点根（注意 RunDir 子目录的站点要放子目录里）。
 - **附带**：Laravel 错误页/翻译加载（spatie translation-loader 查 language_lines 表）会在**未配置数据库时**抛嵌套异常，把真实错误（如 TokenMismatch 419）伪装成 500 空响应——排查时先看 `storage/logs/laravel-*.log` 而非响应体。
 - **来源**：2026-10-10 Blessing Skin 6.0.2 商店安装 Web 向导驱动（BS 安装向导表单为 Laravel 标准 POST，无 JS 依赖，Playwright 原生 fill+click 即可驱动；密码类字段每次填表必须显式赋值，页面残留值不可信）
+
+### 外接数据库「同节点不搬 IP」三层策略落地：存量容器接网的三个非显然坑
+
+- **背景**：`applyExternalDB` 连接地址策略升级为三层（同网络容器名直连 → 同节点不同网络 `host.docker.internal:host-gateway` 代指 → 跨节点才搬 IP）。面板自建数据库实例的 compose 原本**没有任何 networks 配置**，只在自己项目网络（`db-<名>_default`）里，导致「同一容器网络」前提对自建实例永远不成立，同节点外接也只能走宿主 IP——实例接入统一网络 `ypanel_default`（composeYAML 服务级 networks + 顶层 `external: true` 引用，参照 php 运行时模板写法）后自然命中直连分支。
+- **坑一：`docker network inspect <net>` 只列运行中容器**——对 Exited 容器 `network connect` 是生效的（启动后自动挂上），但 inspect 的 `Containers` 列表里看不到，别误判失败；验证用 `docker inspect <容器> --format '{{json .NetworkSettings.Networks}}'` 看容器侧。
+- **坑二：存量容器手动 connect 后必须同步补写实例的编排文件**——实例编排文件不声明 networks 时，下次 compose up 重建容器会按文件创建，手动接入的网络直接丢掉。实例是容器 + 编排文件成对改（模板渲染的标准结构，`restart:` 行后插服务级 networks、文件尾加顶层 external 段，改完 `docker compose config --quiet` 校验）。
+- **坑三：agent 写的实例编排文件名是 `compose.yaml` 不是 `docker-compose.yml`**——`/opt/ypanel/compose/<项目>/compose.yaml`，按后者的路径找文件会扑空（商店应用的则是 `docker-compose.yml`，两套命名并存）。
+- **附带**：安装向导「自定义 hosts」校验正则 `extraHostPattern` 只认 `域名:IP`，`host.docker.internal:host-gateway` 过不了——host-gateway 条目只能代码内注入（applyExternalDB 返回 extraHosts，合并进 override hosts 列表，去重）；php 应用跑共享运行时容器，host-gateway 注入对象是**运行时容器**而非应用（新建运行时模板已自带，复用的存量缺时 `EnsureHostGateway` 补写 compose 并 up -d 重建，站点闪断数秒）。
+- **来源**：2026-10-10 外接 DB 连接地址三层策略（core/internal/service/store.go / database.go / runtime.go；142 真机存量 5 实例补接）

@@ -129,6 +129,8 @@ func (s *DatabaseService) clientFor(nodeId string) (*agentclient.Client, error) 
 }
 
 // composeYAML 生成实例的 compose 配置。
+// 实例容器接入统一网络 ypanel_default（external）：同节点商店应用外接时才能以「容器名:内部端口」
+// docker DNS 直连；不接入则实例只在自己的 compose 项目网络里，同节点外接只能退到 host 代指。
 func composeYAML(inst *model.DatabaseInstance, password string) (string, error) {
 	def, ok := dbDefaults[inst.Type]
 	if !ok {
@@ -142,6 +144,7 @@ func composeYAML(inst *model.DatabaseInstance, password string) (string, error) 
 	fmt.Fprintf(&b, "    ports:\n      - \"%d:%d\"\n", inst.Port, defPort(inst.Type))
 	b.WriteString("    volumes:\n      - ./data:" + dataDirOf(inst.Type) + "\n")
 	b.WriteString("    restart: unless-stopped\n")
+	b.WriteString("    networks:\n      - " + PanelNetwork + "\n")
 	switch inst.Type {
 	case "mysql":
 		fmt.Fprintf(&b, "    environment:\n      MYSQL_ROOT_PASSWORD: \"%s\"\n", password)
@@ -152,6 +155,7 @@ func composeYAML(inst *model.DatabaseInstance, password string) (string, error) 
 	case "mongo":
 		fmt.Fprintf(&b, "    environment:\n      MONGO_INITDB_ROOT_USERNAME: \"%s\"\n      MONGO_INITDB_ROOT_PASSWORD: \"%s\"\n", inst.RootUser, password)
 	}
+	b.WriteString("networks:\n  " + PanelNetwork + ":\n    external: true\n")
 	return b.String(), nil
 }
 
@@ -224,6 +228,10 @@ func (s *DatabaseService) CreateInstance(ctx context.Context, name, dbType strin
 
 	ac, err := s.client()
 	if err != nil {
+		return nil, err
+	}
+	// 实例容器接入统一网络（external 引用，网络必须已存在）
+	if err := ensurePanelNetwork(ctx, ac); err != nil {
 		return nil, err
 	}
 	yaml, err := composeYAML(inst, password)
@@ -399,7 +407,7 @@ func (s *DatabaseService) List(ctx context.Context) ([]map[string]any, error) {
 func (s *DatabaseService) StartAutoAdopt(ctx context.Context) {
 	go func() {
 		var installs []model.AppStoreInstall
-		if err := s.db.Where("key IN ?", []string{"mysql", "postgres", "redis", "mongo"}).Find(&installs).Error; err != nil {
+		if err := s.db.Where("key IN ?", dbServiceKeyList()).Find(&installs).Error; err != nil {
 			return
 		}
 		for _, i := range installs {
@@ -436,12 +444,31 @@ func (s *DatabaseService) AdoptWithRetry(ctx context.Context, project, nodeId st
 }
 
 // dbServiceKeys 可接管的商店数据库应用 key。
-var dbServiceKeys = map[string]bool{"mysql": true, "postgres": true, "redis": true, "mongo": true}
+// 注意 1Panel 官方源 PostgreSQL 的 key 是 postgresql（驱动类型为 postgres，见 dbServiceTypeAlias）。
+var dbServiceKeys = map[string]bool{"mysql": true, "postgres": true, "postgresql": true, "redis": true, "mongo": true}
+
+// dbServiceTypeAlias 商店应用 key → 数据库驱动类型。
+func dbServiceTypeAlias(key string) string {
+	if key == "postgresql" {
+		return "postgres"
+	}
+	return key
+}
+
+// dbServiceKeyList dbServiceKeys 的稳定序键表（查询条件复用，避免多处硬编码漂移）。
+func dbServiceKeyList() []string {
+	keys := make([]string, 0, len(dbServiceKeys))
+	for k := range dbServiceKeys {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	return keys
+}
 
 // adoptableItems 商店已装、尚未纳管的数据库应用（running 映射由调用方传入复用）。
 func (s *DatabaseService) adoptableItems(running map[string]bool) []map[string]any {
 	var installs []model.AppStoreInstall
-	if err := s.db.Where("key IN ?", []string{"mysql", "postgres", "redis", "mongo"}).Find(&installs).Error; err != nil {
+	if err := s.db.Where("key IN ?", dbServiceKeyList()).Find(&installs).Error; err != nil {
 		return nil
 	}
 	out := []map[string]any{}
@@ -452,7 +479,7 @@ func (s *DatabaseService) adoptableItems(running map[string]bool) []map[string]a
 			continue
 		}
 		out = append(out, map[string]any{
-			"id": 0, "name": i.Name, "type": i.Key, "origin": "store", "host": "127.0.0.1",
+			"id": 0, "name": i.Name, "type": dbServiceTypeAlias(i.Key), "origin": "store", "host": "127.0.0.1",
 			"port": 0, "user": "", "remark": "商店应用（待接管）",
 			"composeProject": i.ComposeProject, "running": running[i.ComposeProject],
 			"adoptable": true, "createdAt": i.CreatedAt,
@@ -470,6 +497,7 @@ func (s *DatabaseService) Adopt(ctx context.Context, project, nodeId string) (*m
 	if !dbServiceKeys[inst.Key] {
 		return nil, errs.Wrap(errs.ErrBadRequest, "该应用不是可接管的数据库类型: "+inst.Key)
 	}
+	dbType := dbServiceTypeAlias(inst.Key) // postgresql → postgres（驱动/默认值按规范类型）
 	var count int64
 	_ = s.db.Model(&model.DatabaseInstance{}).Where("compose_project = ? OR name = ?", project, inst.Name).Count(&count).Error
 	if count > 0 {
@@ -508,21 +536,46 @@ func (s *DatabaseService) Adopt(ctx context.Context, project, nodeId string) (*m
 		}
 		return ""
 	}
-	portPick := func() int {
-		for k, v := range env {
+	// 管理用户名：1P 官方包（如 postgresql 的 PANEL_DB_ROOT_USER）是随机生成的用户名，
+	// 不能假设 root/postgres；读不到再回落该类型的默认管理用户。
+	user := ""
+	for _, c := range []string{"PANEL_DB_ROOT_USER", "POSTGRES_USER", "MYSQL_ROOT_USER", "MYSQL_USER", "MONGO_INITDB_ROOT_USERNAME"} {
+		if v := env[c]; v != "" {
+			user = v
+			break
+		}
+	}
+	if user == "" {
+		user = dbDefaults[dbType].user
+	}
+	port := 0
+	for _, c := range []string{"PANEL_APP_PORT_HTTP", "PANEL_APP_PORT", "POSTGRES_PORT", "PGSQL_PORT", "MYSQL_PORT", "REDIS_PORT", "MONGO_PORT", "DATABASE_PORT"} {
+		if v := env[c]; v != "" {
+			if n, err := strconv.Atoi(v); err == nil && n > 0 && n < 65536 {
+				port = n
+				break
+			}
+		}
+	}
+	if port == 0 { // 回退：任意含 PORT 的键（排序保证确定性）
+		keys := make([]string, 0, len(env))
+		for k := range env {
+			keys = append(keys, k)
+		}
+		sort.Strings(keys)
+		for _, k := range keys {
 			if strings.Contains(strings.ToUpper(k), "PORT") {
-				if n, err := strconv.Atoi(v); err == nil && n > 0 && n < 65536 {
-					return n
+				if n, err := strconv.Atoi(env[k]); err == nil && n > 0 && n < 65536 {
+					port = n
+					break
 				}
 			}
 		}
-		return 0
 	}
 	password := pick("PANEL_DB_ROOT_PASSWORD", "MYSQL_ROOT_PASSWORD", "POSTGRES_PASSWORD", "MONGO_INITDB_ROOT_PASSWORD", "PANEL_REDIS_PASSWORD", "REDIS_PASSWORD")
 	if password == "" {
 		return nil, errs.Wrap(errs.ErrBadRequest, "未能从应用参数中解析出密码，请改用「接入外部实例」手动填写")
 	}
-	port := portPick()
 	if port == 0 {
 		return nil, errs.Wrap(errs.ErrBadRequest, "未能从应用参数中解析出宿主端口")
 	}
@@ -535,12 +588,12 @@ func (s *DatabaseService) Adopt(ctx context.Context, project, nodeId string) (*m
 		return nil, err
 	}
 	row := &model.DatabaseInstance{
-		Name: name, Type: inst.Key, Origin: "container", Host: "127.0.0.1",
-		Port: port, RootUser: dbDefaults[inst.Key].user, PasswordEnc: enc,
+		Name: name, Type: dbType, Origin: "container", Host: "127.0.0.1",
+		Port: port, RootUser: user, PasswordEnc: enc,
 		ComposeProject: project, Remark: "商店应用接管",
 	}
 	// 连通性验证（容器映射在宿主 127.0.0.1:port）
-	drv, derr := dbdriver.New(row.Type, row.Host, row.Port, row.RootUser, password)
+	drv, derr := dbdriver.New(dbType, row.Host, row.Port, row.RootUser, password)
 	if derr == nil {
 		cctx, cancel := context.WithTimeout(ctx, 8*time.Second)
 		perr := drv.Ping(cctx)
@@ -1115,6 +1168,34 @@ func (s *DatabaseService) GrantUserDatabase(ctx context.Context, instanceID uint
 		return errs.Wrap(errs.ErrBadRequest, "该实例类型不支持库级授权")
 	}
 	return g.GrantDatabase(ctx, database, user, host)
+}
+
+// CreateExtensions 纳管 PG 实例在指定库批量创建扩展（幂等）——商店安装「建库建扩展」一键化的底层。
+func (s *DatabaseService) CreateExtensions(ctx context.Context, id uint, dbName string, exts []string) error {
+	inst, err := s.ByID(id)
+	if err != nil {
+		return err
+	}
+	if inst.Type != "postgres" {
+		return errs.Wrap(errs.ErrBadRequest, "仅 PostgreSQL 实例支持创建扩展")
+	}
+	drv, err := s.driverFor(inst)
+	if err != nil {
+		return err
+	}
+	defer drv.Close()
+	pe, ok := drv.(interface {
+		CreateExtension(ctx context.Context, database, name string) error
+	})
+	if !ok {
+		return errs.Wrap(errs.ErrBadRequest, "该实例驱动不支持扩展创建")
+	}
+	for _, e := range exts {
+		if err := pe.CreateExtension(ctx, dbName, e); err != nil {
+			return fmt.Errorf("创建扩展 %s 失败: %w", e, err)
+		}
+	}
+	return nil
 }
 
 // ---- M39：MySQL 管理深化（授权矩阵/参数/状态，经 MySQLAdmin 能力探测） ----

@@ -349,3 +349,17 @@
 - **根因**：安装命令写死 `apt-get install -y vsftpd` 没有 `apt-get update`（对比 nginx.go 的安装有 `-qq update`）；apt 在 lists 为空时不知道任何候选包。失败后统一兜底文案把真实原因盖掉了。
 - **规避/解决**：① apt 通道固定 `apt-get update -qq && apt-get install -y -qq <pkg>`；② 多通道用 `command -v apt-get/dnf/yum` 分支（dnf/yum 前置 `install -y epel-release` 的场景注意 fail2ban 在 EPEL）；③ 装后 `command -v <bin>` 回读验证再 `systemctl enable --now`，失败按输出末行报错并区分「无包管理器/源不可用」；④ 勿把失败一律归因为「发行版不支持」。修复后 142 实测：卸载 vsftpd + 清空 /var/lib/apt/lists 后面板安装 30s 自愈成功。
 - **来源**：2026-10-10，FTP/fail2ban 一键安装修复（core/internal/service/ftp.go、fail2ban.go；用户线上 Ubuntu 节点安装失败追溯）。
+
+### 同域功能的「目录准备」不对称：备份先 mkdir、迁移裸重定向，dump 目录不存在必挂
+
+- **现象**：迁移 MySQL 库报 `[3004] dump 失败: sh: 1: cannot create /opt/ypanel/backups/mysql/old-mysql/migrate-*.dump.sql: Directory nonexistent`，仅「从未备份过」的源实例必现——做过一次备份的实例目录已存在，迁移一直正常，bug 因此长期潜伏。
+- **根因**：dump 输出走 shell 重定向 `> <文件>`（dash 不自动建父目录），而实例备份目录 `<backupBase>/<type>/<name>/` 只在备份接口（CreateBackup）里先调 agent `/agent/v1/files/mkdir` 创建；迁移路径（dbmigrate.go srcDumpShell）引用同一 BackupDir 却漏了建目录。对照：agent 的 `files/write` 内部 MkdirAll 父目录，所以 SQL 导入/备份导入落盘不受影响——**只有走 shell 重定向的写路径依赖「目录已存在」这个隐性前提**。
+- **规避/解决**：凡是 exec + shell 重定向落盘到面板约定目录的命令，执行体开头对涉及的目录显式调一次 `/agent/v1/files/mkdir`（幂等递归）；新增引用 BackupDir/site BackupDir 等约定目录的写路径时，检查该目录是否已有创建方。迁移修复即在 migrateRun 开头对源/目标实例各 mkdir 一次。
+- **来源**：2026-10-10，实例迁移「Directory nonexistent」修复（core/internal/service/dbmigrate.go）。
+
+### 商店数据库应用 key ≠ 驱动类型：1Panel 官方源 PostgreSQL 的 key 是 postgresql
+
+- **现象**：1P 官方源装 PostgreSQL 应用装完不被自动接管进数据库管理，「待接管」列表也不出现；硬接管后实例类型变 postgresql，所有数据库操作报「不支持的数据库类型」。
+- **根因**：YPanel 自有商店的 key 是 `postgres`，1P 官方源是 `postgresql`（还有 `postgresql-cluster`）；`dbServiceKeys` 只认自有的四个 key，且接管时把 `app_store_installs.key` 原样写进 `database_instances.type`——dbdriver 只认 mysql/postgres/redis/mongo。另一个隐藏坑：1P postgresql 包的管理用户名是安装时随机生成的（`PANEL_DB_ROOT_USER`），不能回落假设 `postgres`，否则连通性验证必败。
+- **规避/解决**：① `dbServiceKeys` 同时收录两套 key，查询条件统一走 `dbServiceKeyList()`（多处硬编码必漂移）；② 加 `dbServiceTypeAlias()`（postgresql→postgres）在落库/建驱动前归一；③ 接管解析管理用户名按 `PANEL_DB_ROOT_USER/POSTGRES_USER/...` 优先、默认值兜底；端口解析改为有序候选 + 排序回退（map 遍历无序，多个含 PORT 键时结果不确定）。
+- **来源**：2026-10-10，用户报告「app-postgresql 在应用商店安装(1p源)没有被接管到数据库管理」（core/internal/service/database.go）。

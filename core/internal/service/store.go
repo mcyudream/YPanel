@@ -60,6 +60,7 @@ type StoreVersion struct {
 	LocalDir     string           `json:"localDir"`    // yp-git：仓库内包目录（相对仓库根）
 	ReleaseNotes string           `json:"releaseNotes"`
 	FormFields   []StoreFormField `json:"formFields"`
+	PGExtensions []string         `json:"pgExtensions,omitempty"` // 纳管 PG 需自动创建的扩展（建库后 CREATE EXTENSION IF NOT EXISTS）
 }
 
 // StoreFormField 版本参数定义（兼容 1Panel formFields 全量形态）。
@@ -144,6 +145,7 @@ type ypVerion struct {
 	ReleaseNotes string      `json:"releaseNotes"`
 	Env          []ypEnvItem `json:"env"`
 	Ports        []ypPortDef `json:"ports"`
+	PGExtensions []string    `json:"pgExtensions"` // 纳管 PG 自动建扩展声明
 }
 
 // ypAdminUI 内网管理界面声明：安装后注册到桌面工作台，点击经内网浏览器（gw 会话式反代）打开。
@@ -558,7 +560,7 @@ func (s *StoreService) syncYpManifest(src *model.AppStoreSource, raw []byte, loc
 			if v.ID == "" || v.Package == "" {
 				continue
 			}
-			sv := StoreVersion{ID: v.ID, Name: v.ID, ReleaseNotes: v.ReleaseNotes}
+			sv := StoreVersion{ID: v.ID, Name: v.ID, ReleaseNotes: v.ReleaseNotes, PGExtensions: v.PGExtensions}
 			switch {
 			case localRoot != "":
 				sv.LocalDir = v.Package
@@ -918,10 +920,11 @@ type StoreInstallInput struct {
 
 // StoreExternalDB 安装时外接数据库实例选项。
 type StoreExternalDB struct {
-	InstanceID      uint   `json:"instanceId" binding:"required"`
-	Database        string `json:"database"`        // 目标库名；空 = 应用 key
-	User            string `json:"user"`            // 应用账号名；空 = <key>_user
-	CreateIfMissing bool   `json:"createIfMissing"` // 库/账号不存在时自动创建
+	InstanceID      uint     `json:"instanceId" binding:"required"`
+	Database        string   `json:"database"`        // 目标库名；空 = 应用 key
+	User            string   `json:"user"`            // 应用账号名；空 = <key>_user
+	CreateIfMissing bool     `json:"createIfMissing"` // 库/账号不存在时自动创建
+	Extensions      []string `json:"extensions"`      // PG 实例附加扩展（与应用包 pgExtensions 声明合并去重）
 }
 
 // dbFieldSet 应用包数据库参数键集（由 formFields 识别）。
@@ -1348,8 +1351,22 @@ func (s *StoreService) deployCompose(ctx context.Context, logf TaskLogf, app mod
 		if res, rerr := agentclient.GetJSON[dto.FileReadResp](ac, ctx, "/agent/v1/files/read?path="+escapeURL2(dir+"/docker-compose.yml")); rerr == nil && res != nil {
 			composeText = res.Content
 		}
-		if err := s.applyExternalDB(ctx, logf, ver, in, params, composeText); err != nil {
-			return strings.Join(logs, "\n"), err
+		extraHosts, derr := s.applyExternalDB(ctx, logf, ver, in, params, composeText)
+		if derr != nil {
+			return strings.Join(logs, "\n"), derr
+		}
+		// 同节点不同网络的外接实例：应用容器需 host-gateway 解析（override extra_hosts，去重合并）
+		for _, h := range extraHosts {
+			dup := false
+			for _, x := range hosts {
+				if x == h {
+					dup = true
+					break
+				}
+			}
+			if !dup {
+				hosts = append(hosts, h)
+			}
 		}
 	}
 	// .env 渲染
@@ -1997,24 +2014,39 @@ func hasKey(keys []string, k string) bool {
 	return false
 }
 
+// mergedPGExtensions 合并应用包声明与向导附加扩展并去重（保持序：声明在前）。
+func mergedPGExtensions(declared, extra []string) []string {
+	seen := map[string]bool{}
+	out := make([]string, 0, len(declared)+len(extra))
+	for _, e := range append(append([]string{}, declared...), extra...) {
+		e = strings.TrimSpace(e)
+		if e == "" || seen[e] {
+			continue
+		}
+		seen[e] = true
+		out = append(out, e)
+	}
+	return out
+}
+
 // applyExternalDB 外接实例落地：reveal 凭据 → 按需建库建号（幂等）→ 注入连接参数。
-// 连接地址：面板容器实例用宿主内网 IP + 映射端口（应用容器→宿主可达）；外部实例用 host 原样。
-func (s *StoreService) applyExternalDB(ctx context.Context, logf TaskLogf, ver StoreVersion, in StoreInstallInput, params map[string]string, composeText string) error {
+// 返回应用容器需要追加的 extra_hosts（同节点不同网络时为 host-gateway 解析条目，空表示无需）。
+func (s *StoreService) applyExternalDB(ctx context.Context, logf TaskLogf, ver StoreVersion, in StoreInstallInput, params map[string]string, composeText string) ([]string, error) {
 	ext := in.ExternalDB
 	fs := dbFieldSetOf(ver.FormFields, composeText)
 	if fs == nil || fs.Host == "" {
-		return errs.Wrap(errs.ErrBadRequest, "未识别到数据库连接参数（*_HOST）")
+		return nil, errs.Wrap(errs.ErrBadRequest, "未识别到数据库连接参数（*_HOST）")
 	}
 	inst, err := s.dbs.ByID(ext.InstanceID)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	if inst.Type != "mysql" && inst.Type != "postgres" {
-		return errs.Wrap(errs.ErrBadRequest, fmt.Sprintf("暂仅支持 mysql/postgres 实例外接，实例类型: %s", inst.Type))
+		return nil, errs.Wrap(errs.ErrBadRequest, fmt.Sprintf("暂仅支持 mysql/postgres 实例外接，实例类型: %s", inst.Type))
 	}
 	info, err := s.dbs.ConnectInfo(ctx, ext.InstanceID)
 	if err != nil {
-		return errs.Wrapc(errs.CodeInternal, "读取实例连接信息失败: "+err.Error())
+		return nil, errs.Wrapc(errs.CodeInternal, "读取实例连接信息失败: "+err.Error())
 	}
 
 	dbName := ext.Database
@@ -2031,7 +2063,7 @@ func (s *StoreService) applyExternalDB(ctx context.Context, logf TaskLogf, ver S
 	if ext.CreateIfMissing {
 		existing, err := s.dbs.Databases(ctx, ext.InstanceID)
 		if err != nil {
-			return errs.Wrapc(errs.CodeInternal, "列出实例数据库失败: "+err.Error())
+			return nil, errs.Wrapc(errs.CodeInternal, "列出实例数据库失败: "+err.Error())
 		}
 		found := false
 		for _, d := range existing {
@@ -2062,13 +2094,13 @@ func (s *StoreService) applyExternalDB(ctx context.Context, logf TaskLogf, ver S
 		}
 		if !found {
 			if err := s.dbs.CreateDatabase(ctx, ext.InstanceID, dbName, ""); err != nil {
-				return errs.Wrapc(errs.CodeInternal, "创建数据库 "+dbName+" 失败: "+err.Error())
+				return nil, errs.Wrapc(errs.CodeInternal, "创建数据库 "+dbName+" 失败: "+err.Error())
 			}
 			logf("info", "已在实例 %s 创建数据库 %s", inst.Name, dbName)
 		}
 		users, err := s.dbs.Users(ctx, ext.InstanceID)
 		if err != nil {
-			return errs.Wrapc(errs.CodeInternal, "列出实例账号失败: "+err.Error())
+			return nil, errs.Wrapc(errs.CodeInternal, "列出实例账号失败: "+err.Error())
 		}
 		userFound := false
 		for _, u := range users {
@@ -2079,7 +2111,7 @@ func (s *StoreService) applyExternalDB(ctx context.Context, logf TaskLogf, ver S
 		}
 		if !userFound {
 			if err := s.dbs.CreateUser(ctx, ext.InstanceID, dbUser, "%", dbPass); err != nil {
-				return errs.Wrapc(errs.CodeInternal, "创建账号 "+dbUser+" 失败: "+err.Error())
+				return nil, errs.Wrapc(errs.CodeInternal, "创建账号 "+dbUser+" 失败: "+err.Error())
 			}
 			logf("info", "已在实例 %s 创建账号 %s", inst.Name, dbUser)
 		} else {
@@ -2106,35 +2138,58 @@ func (s *StoreService) applyExternalDB(ctx context.Context, logf TaskLogf, ver S
 				}
 			}
 			if err := s.dbs.CreateUser(ctx, ext.InstanceID, dbUser, "%", dbPass); err != nil {
-				return errs.Wrapc(errs.CodeInternal, "创建账号 "+dbUser+" 失败: "+err.Error())
+				return nil, errs.Wrapc(errs.CodeInternal, "创建账号 "+dbUser+" 失败: "+err.Error())
 			}
 			logf("info", "账号 %s 已存在（不覆盖密码），已新建账号 %s", base, dbUser)
 		}
 		if err := s.dbs.GrantUserDatabase(ctx, ext.InstanceID, dbName, dbUser, "%"); err != nil {
-			return errs.Wrapc(errs.CodeInternal, "授权 "+dbUser+" 访问 "+dbName+" 失败: "+err.Error())
+			return nil, errs.Wrapc(errs.CodeInternal, "授权 "+dbUser+" 访问 "+dbName+" 失败: "+err.Error())
 		}
 		logf("info", "已授权 %s 访问 %s", dbUser, dbName)
 	} else {
 		logf("info", "跳过建库建号（未勾选自动创建），请确保 %s/%s 已存在", dbName, dbUser)
 	}
 
-	// 连接地址策略（M32）：应用默认接入统一网络，与实例容器同网络时用「容器名:内部端口」直连
-	// （docker DNS，不依赖宿主端口映射）；不同网络或外部实例用宿主内网 IP + 映射端口
-	// （实例凭据里的回环地址在应用容器内指向容器自身，必须改写）。
+	// PG 扩展一键创建：应用包声明（pgExtensions）∪ 向导附加（extensions），建库后 CREATE EXTENSION IF NOT EXISTS。
+	// 失败即中止安装——应用缺扩展必然运行异常，装了也是坏的。
+	if inst.Type == "postgres" {
+		exts := mergedPGExtensions(ver.PGExtensions, ext.Extensions)
+		if len(exts) > 0 {
+			if err := s.dbs.CreateExtensions(ctx, ext.InstanceID, dbName, exts); err != nil {
+				return nil, errs.Wrapc(errs.CodeInternal, "创建 PG 扩展失败: "+err.Error())
+			}
+			logf("info", "已在 %s 创建 PG 扩展: %s", dbName, strings.Join(exts, "、"))
+		}
+	}
+
+	// 连接地址策略（M32/M55，三层）：同节点时应用容器内不搬宿主 IP——
+	// ① 同一容器网络（实例容器接入应用所在网络）用「容器名:内部端口」docker DNS 直连；
+	// ② 同节点不同网络用「host.docker.internal:映射端口」代指（安装时自动注入 extra_hosts
+	//    host-gateway 解析，配置里零 IP，宿主换 IP 无需改应用配置；host 网络模式应用直接回环）；
+	// ③ 跨节点（或外部远端实例）才搬 IP:端口。实例凭据里的回环地址在应用容器内指向容器自身，必须改写。
 	appNet := in.Network
 	if appNet == "" {
 		appNet = PanelNetwork
 	}
-	// M55 跨节点：容器名直连仅当应用与实例同节点（不同节点 docker 网络隔离），否则走宿主内网 IP:映射端口
-	sameNode := normalizeNodeID(in.NodeID) == "local"
+	// M55 跨节点：docker 网络跨节点隔离，同节点才有 ①②；外部实例 host 为远端 IP 的视为跨机
+	sameNode := normalizeNodeID(in.NodeID) == "local" && instanceOnLocalHost(inst)
 	host := info.LanIP
 	port := info.MapPort
-	if info.Container != "" && sameNode && strings.Contains(info.Networks, appNet) {
+	var extraHosts []string
+	switch {
+	case sameNode && info.Container != "" && netListHas(info.Networks, appNet):
 		host = info.Container
 		port = info.InnerPort
 		logf("info", "实例容器与应用同在 %s 网络，连接地址使用 %s:%s（容器名直连）", appNet, host, port)
-	} else {
-		logf("info", "实例与应用不同网络或为外部实例，连接地址使用宿主内网 %s:%s", host, port)
+	case sameNode && appNet == "host":
+		host = "127.0.0.1" // host 网络应用即宿主网络栈，回环直达映射端口
+		logf("info", "应用为 host 网络模式，连接地址使用 127.0.0.1:%s", port)
+	case sameNode:
+		host = "host.docker.internal"
+		extraHosts = append(extraHosts, HostGatewayExtraHost)
+		logf("info", "实例与应用同节点不同网络，连接地址使用 %s:%s（host 代指，已注入 host-gateway 解析）", host, port)
+	default:
+		logf("info", "实例与应用跨节点或为外部远端实例，连接地址使用 %s:%s", host, port)
 	}
 
 	if fs.Host != "" {
@@ -2153,7 +2208,31 @@ func (s *StoreService) applyExternalDB(ctx context.Context, logf TaskLogf, ver S
 		params[fs.Password] = dbPass
 	}
 	logf("info", "已注入外接数据库参数（实例 %s，库 %s，账号 %s）", inst.Name, dbName, dbUser)
-	return nil
+	return extraHosts, nil
+}
+
+// HostGatewayExtraHost 同节点不同网络外接 DB 时注入应用容器的宿主代指解析
+// （Docker ≥20.10 由 daemon 把 host-gateway 解析为宿主网关地址，配置里不出现宿主 IP）。
+const HostGatewayExtraHost = "host.docker.internal:host-gateway"
+
+// instanceOnLocalHost 数据库实例是否在本机节点（容器实例恒在本机；外部实例看 host：
+// 回环/空 = 本机映射端口纳管，远端 IP = 真正跨机，只能原样搬地址）。
+func instanceOnLocalHost(inst *model.DatabaseInstance) bool {
+	if inst.Origin == "container" {
+		return true
+	}
+	h := inst.Host
+	return h == "" || h == "127.0.0.1" || h == "localhost" || h == "::1"
+}
+
+// netListHas 空格分隔的网络列表精确匹配（strings.Contains 会被前缀同名网络误命中）。
+func netListHas(networks, name string) bool {
+	for _, f := range strings.Fields(networks) {
+		if f == name {
+			return true
+		}
+	}
+	return false
 }
 
 // hostLanIP 宿主内网 IP（agent hostname -I 首个地址，进程内缓存）。

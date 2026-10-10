@@ -22,6 +22,8 @@ services:
       - ./supervisor/supervisord.conf:/etc/supervisord.conf
       - ./supervisor/supervisor.d:/etc/supervisor.d
       - ./supervisor/log:/var/log/supervisor
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     networks:
       - ypanel_default
 

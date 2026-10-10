@@ -252,6 +252,45 @@ func composeCmd(file, project, op string) string {
 	return fmt.Sprintf("docker compose -f %s -p %s %s", file, project, op)
 }
 
+// EnsureHostGateway 确保运行时容器可解析 host.docker.internal（商店 php 应用同节点不同网络
+// 外接数据库时，连接参数用宿主代指而非搬 IP）。新建运行时的模板已自带该 extra_hosts；
+// 复用的存量运行时缺时补写主 compose（面板模板渲染的标准结构，environment: 前插入安全）
+// 并 up -d 重建容器——php-fpm 闪断数秒，共享该运行时的其他站点会短暂中断。
+// 返回是否发生了重建。
+func (s *RuntimeService) EnsureHostGateway(ctx context.Context, r *model.Runtime) (bool, error) {
+	out, err := s.exec(ctx, 20, "docker inspect -f '{{range .HostConfig.ExtraHosts}}{{.}} {{end}}' %s 2>/dev/null || true", r.ContainerName)
+	if err != nil {
+		return false, err
+	}
+	if strings.Contains(out.Output, "host.docker.internal") {
+		return false, nil
+	}
+	file, err := s.locateCompose(ctx, r)
+	if err != nil {
+		return false, err
+	}
+	src, err := s.readRemote(ctx, file)
+	if err != nil {
+		return false, err
+	}
+	if strings.Contains(src, "extra_hosts:") {
+		// 编排文件已带（新模板），容器尚未重建——交给下次 up，不做文本改写
+		return false, nil
+	}
+	const inject = "    extra_hosts:\n      - \"host.docker.internal:host-gateway\"\n"
+	idx := strings.Index(src, "    environment:")
+	if idx < 0 {
+		return false, fmt.Errorf("运行时 compose 结构异常，未找到注入点（environment 段缺失）")
+	}
+	if err := s.writeRemote(ctx, file, src[:idx]+inject+src[idx:]); err != nil {
+		return false, err
+	}
+	if _, err := s.exec(ctx, 300, "%s", composeCmd(file, r.ComposeProject, "up -d")); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
 // envJSON 解析运行参数。
 func envJSON(row *model.Runtime) runtimeEnv {
 	var env runtimeEnv

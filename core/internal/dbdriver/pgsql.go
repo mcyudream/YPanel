@@ -3,6 +3,7 @@ package dbdriver
 import (
 	"context"
 	"fmt"
+	"regexp"
 	"strings"
 	"sync"
 
@@ -19,6 +20,9 @@ type pgDriver struct {
 	pwd   string
 	pools map[string]*pgxpool.Pool // 按库名缓存连接池（含基座 "postgres"）
 }
+
+// pgExtNamePattern 扩展名白名单（uuid-ossp / pg_trgm 等；仅用于校验，SQL 侧 %q 引用）。
+var pgExtNamePattern = regexp.MustCompile(`^[A-Za-z0-9_-]{1,63}$`)
 
 func newPostgres(host string, port int, user, password string) (Driver, error) {
 	d := &pgDriver{host: host, port: port, user: user, pwd: password, pools: map[string]*pgxpool.Pool{}}
@@ -109,6 +113,20 @@ func (d *pgDriver) CreateDatabase(ctx context.Context, name, charset string) err
 	}
 	// CREATE DATABASE 不允许在事务块内，pgx Exec 单语句即自动提交
 	_, err = p.Exec(ctx, fmt.Sprintf(`CREATE DATABASE %q`, name))
+	return err
+}
+
+// CreateExtension 在指定库创建扩展（幂等；商店纳管建库后自动建扩展用）。
+// 扩展名可含连字符（uuid-ossp），不走 ValidateIdent——用专用白名单，%q 引用防注入。
+func (d *pgDriver) CreateExtension(ctx context.Context, database, name string) error {
+	if !pgExtNamePattern.MatchString(name) {
+		return errs.Wrap(errs.ErrBadRequest, "扩展名不合法（字母/数字/连字符/下划线，≤63 位）: "+name)
+	}
+	p, err := d.poolFor(ctx, database)
+	if err != nil {
+		return err
+	}
+	_, err = p.Exec(ctx, fmt.Sprintf(`CREATE EXTENSION IF NOT EXISTS %q`, name))
 	return err
 }
 

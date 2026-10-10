@@ -37,8 +37,9 @@ type phpAppManifest struct {
 		Root    string `json:"root"`    // 站点入口子目录（如 public，P2）
 	} `json:"web"`
 	Database struct {
-		Engine string `json:"engine"` // mysql / pg（声明后向导出现「数据库」下拉：应用自带或纳管实例自动建库）
-		Create bool   `json:"create"`
+		Engine       string   `json:"engine"` // mysql / pg（声明后向导出现「数据库」下拉：应用自带或纳管实例自动建库）
+		Create       bool     `json:"create"`
+		PGExtensions []string `json:"pgExtensions"` // 纳管 PG 建库后自动创建的扩展
 	} `json:"database"`
 	Upgrade struct {
 		Commands []string `json:"commands"` // 版本变更时执行的升级命令（缺省回落 install 命令）
@@ -192,11 +193,22 @@ func (s *StoreService) runInstallPHP(ctx context.Context, logf TaskLogf, app mod
 	need := mf.PHP.Extensions.Required
 
 	// 2.5 数据库：向导选了纳管实例 → 自动建库建号并注入连接参数（凭据记入安装参数与任务日志）
+	needHostGateway := false
 	dbPrefix := "DATABASE"
 	if strings.EqualFold(mf.Database.Engine, "pg") || strings.EqualFold(mf.Database.Engine, "postgresql") {
 		dbPrefix = "PGSQL"
 	}
 	if in.ExternalDB != nil && mf.Database.Create {
+		// 引擎一致性：应用声明的数据库引擎必须与所选实例类型匹配（mysql 应用选 PG 实例必然装坏）
+		if inst, ierr := s.dbs.ByID(in.ExternalDB.InstanceID); ierr == nil {
+			wantPg := strings.EqualFold(mf.Database.Engine, "pg") || strings.EqualFold(mf.Database.Engine, "postgresql")
+			if wantPg && inst.Type != "postgres" {
+				return errs.Wrap(errs.ErrBadRequest, fmt.Sprintf("应用声明 PostgreSQL 数据库，所选实例 %s 类型为 %s", inst.Name, inst.Type))
+			}
+			if !wantPg && inst.Type != "mysql" {
+				return errs.Wrap(errs.ErrBadRequest, fmt.Sprintf("应用声明 MySQL 数据库，所选实例 %s 类型为 %s", inst.Name, inst.Type))
+			}
+		}
 		if in.ExternalDB.Database == "" {
 			in.ExternalDB.Database = params[dbPrefix+"_NAME"]
 		}
@@ -204,9 +216,13 @@ func (s *StoreService) runInstallPHP(ctx context.Context, logf TaskLogf, app mod
 			in.ExternalDB.User = params[dbPrefix+"_USER"]
 		}
 		in.ExternalDB.CreateIfMissing = true
-		if err := s.applyExternalDB(ctx, logf, ver, in, params, ""); err != nil {
-			return err
+		in.ExternalDB.Extensions = append(in.ExternalDB.Extensions, mf.Database.PGExtensions...)
+		extHosts, derr := s.applyExternalDB(ctx, logf, ver, in, params, "")
+		if derr != nil {
+			return derr
 		}
+		// 同节点不同网络的外接实例连接参数是 host.docker.internal:端口，运行时容器需 host-gateway 解析
+		needHostGateway = len(extHosts) > 0
 		logf("info", "数据库已就绪：%s@%s:%s（凭据见「参数」）", params[dbPrefix+"_NAME"], params[dbPrefix+"_HOST"], params[dbPrefix+"_PORT"])
 	}
 
@@ -261,6 +277,15 @@ func (s *StoreService) runInstallPHP(ctx context.Context, logf TaskLogf, app mod
 		}
 	} else {
 		logf("info", "复用 PHP %s 运行时 %s（同节点共享）", phpVer, rt.Name)
+	}
+	// 外接 DB 走宿主代指（host.docker.internal）时，确保运行时容器具备 host-gateway 解析
+	//（新建运行时模板已自带；复用的存量运行时缺时补写并重建，站点短暂中断）
+	if needHostGateway && rt.ID != 0 {
+		if recreated, gerr := s.runtimes.EnsureHostGateway(ctx, &rt); gerr != nil {
+			logf("info", "运行时 host-gateway 解析注入失败（应用可能连不上数据库，可重建运行时后重装）: %v", gerr)
+		} else if recreated {
+			logf("info", "已为运行时 %s 注入 host-gateway 解析并重建容器（共享站点短暂中断）", rt.Name)
+		}
 	}
 
 	// 4. 创建站点绑定运行时（nginx fastcgi → 运行时容器:9000；端口映射/防火墙由站点模块处理）

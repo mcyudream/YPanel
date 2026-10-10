@@ -84,7 +84,8 @@ ypanel/
 应用需要数据库时**必须按标准键集声明**，安装向导才会出现「数据库」下拉（应用自带 / 使用纳管实例自动建库建号注入）：
 
 - **键集命名**（compose 应用在 `versions[].env`、php 应用由 app.json `database` 声明合成）：`<前缀>_HOST` 必备，前缀词干须含 `DB|DATABASE|SQL|MYSQL|MARIA|MONGO` 之一（如 `DATABASE_HOST`、`MYSQL_HOST`），其余按 `<前缀>_PORT/_NAME/_USER/_PASSWORD` 推导。**不遵守命名的声明不会触发下拉**（前端 dbHostKey 与后端 dbFieldSetOf 双端同规则检测）。
-- **接管行为**：向导选中纳管实例后，同前缀的原始连接字段（地址/端口/库名/用户/密码）从表单**隐藏接管**，由 `applyExternalDB` 自动建库建号授权并注入连接参数（同网络容器名直连，否则宿主 IP+映射端口）；「应用自带」时原始字段照常显示。
+- **接管行为**：向导选中纳管实例后，同前缀的原始连接字段（地址/端口/库名/用户/密码）从表单**隐藏接管**，由 `applyExternalDB` 自动建库建号授权并注入连接参数。连接地址按三层策略生成（同节点应用容器内不搬宿主 IP）：① 实例容器与应用**同一容器网络** → 容器名:内部端口（docker DNS 直连；面板自建实例 compose 统一接入 `ypanel_default`）；② 同节点**不同网络** → `host.docker.internal:映射端口`（安装时自动注入 `extra_hosts: host.docker.internal:host-gateway`，配置零 IP；host 网络模式应用直接用回环）；③ **跨节点**或外部远端实例 → 宿主/远端 IP:端口。「应用自带」时原始字段照常显示。
+- **PG 扩展一键创建**：应用需要 PG 扩展时在包内声明——compose 应用写 `index.json` 版本项 `"pgExtensions": ["pg_trgm"]`，php 应用写 `app.json` 的 `database.pgExtensions`；安装选纳管 PG 后建库自动 `CREATE EXTENSION IF NOT EXISTS`（包声明 ∪ 向导 `externalDB.extensions` 附加，去重），创建失败即中止安装（缺扩展的应用装了也是坏的）。php 应用向导传实例时会校验声明引擎与实例类型一致（mysql 应用选 PG 实例直接报错）。
 - **默认值**：compose 应用默认「应用自带」；php 应用（app.json `database.create: true`）默认「纳管实例」。
 - 应用自带数据库的 compose 应用（如 element-skin）：内置服务密码字段用 `random: true` 自动随机，不走纳管下拉。
 

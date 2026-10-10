@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/ypanel/core/internal/agentclient"
 	"github.com/ypanel/core/internal/dbdriver"
 	"github.com/ypanel/core/internal/model"
 	"github.com/ypanel/shared/dto"
@@ -84,6 +85,17 @@ func (s *DatabaseService) MigrateStart(ctx context.Context, username string, src
 
 // migrateRun 迁移执行体（每库：dump 落盘 → 目标导入；redis 逐键）。
 func (s *DatabaseService) migrateRun(ctx context.Context, logf TaskLogf, username string, src, dst *model.DatabaseInstance, dbs []string) error {
+	// 建源/目标实例备份目录（dump 中转落盘用；shell 重定向不会自动建目录，幂等）
+	ac, err := s.client()
+	if err != nil {
+		return err
+	}
+	for _, inst := range []*model.DatabaseInstance{src, dst} {
+		if _, err := agentclient.DoJSON[dto.FileMkdirReq, struct{}](ac, ctx, "POST", "/agent/v1/files/mkdir",
+			&dto.FileMkdirReq{Path: s.BackupDir(inst)}); err != nil {
+			return errs.Wrap(errs.ErrBadRequest, "mkdir: "+err.Error())
+		}
+	}
 	srcPwd, err := s.decryptPassword(src.PasswordEnc)
 	if err != nil {
 		return err
@@ -296,5 +308,3 @@ func (s *DatabaseService) migrateRedisDB(ctx context.Context, logf TaskLogf, src
 	logf("info", "  迁移 %d 个 key", total)
 	return nil
 }
-
-var _ = dto.ExecReq{}
