@@ -7,6 +7,7 @@ package service
 
 import (
 	"context"
+	"log/slog"
 	"path"
 	"runtime"
 	"sort"
@@ -143,7 +144,22 @@ func (s *SelfUpdateService) Apply(ctx context.Context, file string) (map[string]
 }
 
 // CheckOnline 并行探测双源，判定可更新性。
+// 结果 30 秒缓存（互斥复用）：Gitee 匿名 API 限额低，频繁刷新设置页会把两源检查打出限流/超时，
+// 造成「不可达」假象；日志记录不可达的具体原因（HTTP 码/超时），前端 chip 的 hover 提示同源展示。
+var (
+	checkCacheMu      sync.Mutex
+	checkCacheAt      time.Time
+	checkCacheResult  *OnlineCheck
+)
+
 func (s *SelfUpdateService) CheckOnline(ctx context.Context) (*OnlineCheck, error) {
+	checkCacheMu.Lock()
+	if checkCacheResult != nil && time.Since(checkCacheAt) < 30*time.Second {
+		defer checkCacheMu.Unlock()
+		return checkCacheResult, nil
+	}
+	checkCacheMu.Unlock()
+
 	ctx, cancel := context.WithTimeout(ctx, 20*time.Second)
 	defer cancel()
 	var wg sync.WaitGroup
@@ -160,6 +176,11 @@ func (s *SelfUpdateService) CheckOnline(ctx context.Context) (*OnlineCheck, erro
 		}(src)
 	}
 	wg.Wait()
+	for _, src := range res {
+		if !src.Reachable {
+			slog.Warn("更新源检查失败", "source", src.Source, "error", src.Error)
+		}
+	}
 	isDev := release.IsDevVersion(s.currentVer)
 	check := &OnlineCheck{CurrentVersion: s.currentVer, CurrentIsDev: isDev, Sources: []OnlineRelease{*res["gitee"], *res["github"]}}
 	for _, src := range res {
@@ -173,6 +194,9 @@ func (s *SelfUpdateService) CheckOnline(ctx context.Context) (*OnlineCheck, erro
 	if check.Latest != "" {
 		check.Updatable = isDev || release.CompareVersions(s.currentVer, check.Latest) < 0
 	}
+	checkCacheMu.Lock()
+	checkCacheAt, checkCacheResult = time.Now(), check
+	checkCacheMu.Unlock()
 	return check, nil
 }
 
