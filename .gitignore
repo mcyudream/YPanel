@@ -6,8 +6,12 @@ docs/*
 !docs/dev/
 !docs/exp/
 
-# 环境与密钥
+# 环境与密钥（.env* 不提交；前端应用的 env 三件套无敏感信息，豁免入库——否则 CI 构建缺
+# VITE_APP_TITLE 等配置，运行时 import.meta.env 全 undefined：品牌名空白/标签页标题 undefined）
 .env*
+!web/apps/core-arco-design-vue/.env.development
+!web/apps/core-arco-design-vue/.env.production
+!web/apps/core-arco-design-vue/.env.test
 *.pem
 *.key
 
