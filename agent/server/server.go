@@ -120,11 +120,13 @@ func (s *Server) Start(ctx context.Context) (base string, wait func(), err error
 	mux.HandleFunc("POST /agent/v1/files/decompress", s.auth(s.handleFileDecompress))
 	mux.HandleFunc("GET /agent/v1/files/search", s.auth(s.handleFileSearch))
 	mux.HandleFunc("POST /agent/v1/exec", s.auth(s.handleExec))
+	mux.HandleFunc("POST /agent/v1/exec/stream", s.auth(s.handleExecStream))
 	mux.HandleFunc("GET /agent/v1/processes", s.auth(s.handleProcessList))
 	mux.HandleFunc("POST /agent/v1/processes/kill", s.auth(s.handleProcessKill))
 	mux.HandleFunc("GET /agent/v1/services", s.auth(s.handleServiceList))
 	mux.HandleFunc("GET /agent/v1/docker/images", s.auth(s.handleDockerImageList))
 	mux.HandleFunc("POST /agent/v1/docker/images/pull", s.auth(s.handleDockerImagePull))
+	mux.HandleFunc("POST /agent/v1/docker/images/pull/stream", s.auth(s.handleDockerImagePullStream))
 	// {id...} 多段匹配：镜像引用含斜杠（registry/namespace/name:tag），单段 {id} 会路由 miss 报 404
 	mux.HandleFunc("DELETE /agent/v1/docker/images/{id...}", s.auth(s.handleDockerImageRemove))
 	mux.HandleFunc("POST /agent/v1/docker/images/prune", s.auth(s.handleDockerImagesPrune))

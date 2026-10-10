@@ -1,6 +1,7 @@
 package server
 
 import (
+	"encoding/json"
 	"log/slog"
 	"net/http"
 
@@ -149,4 +150,42 @@ func (s *Server) handleExec(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeOK(w, out)
+}
+
+// handleExecStream POST /agent/v1/exec/stream {command,timeoutSecs}
+// NDJSON chunked 流式（全程 HTTP 200，终态/错误走事件行）：{"line":...} 输出行（stdout/stderr 合并）/
+// {"exit":N} 终态 / {"timeout":true} 超时 / {"error":...} 启动失败。供 core 长构建类任务日志实时滚动。
+func (s *Server) handleExecStream(w http.ResponseWriter, r *http.Request) {
+	req, err := decodeBody[dto.ExecReq](r)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	slog.Info("agent exec stream", "cmdPrefix", req.Command[:min(60, len(req.Command))], "timeout", req.TimeoutSecs)
+	fl, ok := w.(http.Flusher)
+	if !ok {
+		writeErr(w, errs.Wrapc(errs.CodeFileOpFailed, "当前连接不支持流式响应"))
+		return
+	}
+	w.Header().Set("Content-Type", "application/x-ndjson")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.WriteHeader(http.StatusOK)
+	fl.Flush()
+	enc := json.NewEncoder(w)
+	exit, timedOut, err := execx.RunStream(r.Context(), req.Command, req.TimeoutSecs, func(line string) {
+		_ = enc.Encode(map[string]any{"line": line})
+		fl.Flush()
+	})
+	if err != nil {
+		_ = enc.Encode(map[string]any{"error": err.Error()})
+		fl.Flush()
+		return
+	}
+	if timedOut {
+		_ = enc.Encode(map[string]any{"timeout": true})
+		fl.Flush()
+		return
+	}
+	_ = enc.Encode(map[string]any{"exit": exit})
+	fl.Flush()
 }

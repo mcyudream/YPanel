@@ -47,6 +47,25 @@ func NewTaskService(db *gorm.DB) *TaskService {
 // TaskLogf 任务日志写入器（并发安全，追加到任务的 log_text）。
 type TaskLogf func(level, format string, args ...any)
 
+// NewProgressLogger 节流进度写入器：距上次输出不足 minInterval、或内容与上次完全相同时静默。
+// 用于下载/拉取类每秒可能多次触发的重复性进度（任务中心前端 2s 轮询日志，无需更密）；
+// 里程碑类日志直接用 logf，不走节流。
+func NewProgressLogger(logf TaskLogf, minInterval time.Duration) func(format string, args ...any) {
+	var mu sync.Mutex
+	var last time.Time
+	var lastMsg string
+	return func(format string, args ...any) {
+		msg := fmt.Sprintf(format, args...)
+		mu.Lock()
+		defer mu.Unlock()
+		if msg == lastMsg || time.Since(last) < minInterval {
+			return
+		}
+		last, lastMsg = time.Now(), msg
+		logf("info", "%s", msg)
+	}
+}
+
 // StartTask 创建任务并异步执行（ctx 独立于请求：协程用 Background + 超时由任务自身控制）。
 // 返回任务记录（running）。run 的返回值决定 success/failed。
 func (s *TaskService) StartTask(typ, title, ref string, timeout time.Duration, run func(ctx context.Context, logf TaskLogf) error) (*model.AppTask, error) {

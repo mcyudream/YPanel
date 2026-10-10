@@ -3,6 +3,7 @@
 package agentclient
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -71,7 +72,49 @@ func GetJSON[Resp any](c *Client, ctx context.Context, path string) (*Resp, erro
 	return doResp[Resp](c, req)
 }
 
+// DoStreamLines 发送 JSON body 并逐行读取 NDJSON 流式响应（chunked；每行即一条事件，不走业务信封）。
+// onLine 返回 error 时中止读取并原样返回该错误；非 2xx 视为传输/路由层问题（含旧版 agent 无此端点的 404）。
+func (c *Client) DoStreamLines(ctx context.Context, method, path string, body any, onLine func(line []byte) error) error {
+	var rd io.Reader
+	if body != nil {
+		b, err := json.Marshal(body)
+		if err != nil {
+			return errs.Wrap(errs.ErrBadRequest, err.Error())
+		}
+		rd = bytes.NewReader(b)
+	}
+	req, err := c.NewRequest(ctx, method, path, rd)
+	if err != nil {
+		return errs.Wrap(errs.ErrAgentUnreach, err.Error())
+	}
+	if body != nil {
+		req.Header.Set("Content-Type", "application/json")
+	}
+	resp, err := c.HTTP.Do(req)
+	if err != nil {
+		return errs.Wrap(errs.ErrAgentUnreach, err.Error())
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		head, _ := io.ReadAll(io.LimitReader(resp.Body, 256))
+		return errs.Wrap(errs.ErrAgentUnreach, fmt.Sprintf("agent HTTP %d: %s", resp.StatusCode, strings.TrimSpace(string(head))))
+	}
+	sc := bufio.NewScanner(resp.Body)
+	sc.Buffer(make([]byte, 64*1024), 1024*1024)
+	for sc.Scan() {
+		line := bytes.TrimSpace(sc.Bytes())
+		if len(line) == 0 {
+			continue
+		}
+		if err := onLine(line); err != nil {
+			return err
+		}
+	}
+	return sc.Err()
+}
+
 func doResp[Resp any](c *Client, req *http.Request) (*Resp, error) {
+
 	resp, err := c.HTTP.Do(req)
 	if err != nil {
 		return nil, errs.Wrap(errs.ErrAgentUnreach, err.Error())

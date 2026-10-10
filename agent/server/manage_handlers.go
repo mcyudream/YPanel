@@ -51,6 +51,44 @@ func (s *Server) handleDockerImagePull(w http.ResponseWriter, r *http.Request) {
 	writeOK(w, map[string]string{"output": out})
 }
 
+// handleDockerImagePullStream POST /agent/v1/docker/images/pull/stream {ref}
+// NDJSON chunked 流式响应（全程 HTTP 200，错误走事件行）：{"text":...} 进度 / {"error":...} 失败 / {"done":true} 完成。
+// 旧版 core 只调非流式端点，本端点供新版 core 的任务日志实时滚动。
+func (s *Server) handleDockerImagePullStream(w http.ResponseWriter, r *http.Request) {
+	if !s.dockerOK() {
+		writeErr(w, errs.ErrAgentDisabled)
+		return
+	}
+	req, err := decodeBody[struct {
+		Ref string `json:"ref" binding:"required"`
+	}](r)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	fl, ok := w.(http.Flusher)
+	if !ok {
+		writeErr(w, errs.Wrapc(errs.CodeFileOpFailed, "当前连接不支持流式响应"))
+		return
+	}
+	w.Header().Set("Content-Type", "application/x-ndjson")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.WriteHeader(http.StatusOK)
+	fl.Flush()
+	enc := json.NewEncoder(w)
+	perr := s.dock.ImagePullStream(r.Context(), req.Ref, func(text string) {
+		_ = enc.Encode(map[string]any{"text": text})
+		fl.Flush()
+	})
+	if perr != nil {
+		_ = enc.Encode(map[string]any{"error": perr.Error()})
+		fl.Flush()
+		return
+	}
+	_ = enc.Encode(map[string]any{"done": true})
+	fl.Flush()
+}
+
 // handleDockerImageRemove DELETE /agent/v1/docker/images/{id}
 func (s *Server) handleDockerImageRemove(w http.ResponseWriter, r *http.Request) {
 	force := r.URL.Query().Get("force") == "1"
