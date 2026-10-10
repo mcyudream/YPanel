@@ -174,6 +174,6 @@ export const fileExtApi = {
   revokeShare: (id: number) => api.delete(`api/v1/files/shares/${id}`),
   remoteDownload: async (url: string, destDir: string) => {
     const res = await api.post('api/v1/files/remote-download', { url, destDir })
-    return res.data as { file: string, dir: string }
+    return res.data as { taskId: number }
   },
 }

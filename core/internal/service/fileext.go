@@ -28,11 +28,12 @@ import (
 type FileExtService struct {
 	db    *gorm.DB
 	nodes *NodeService
+	tasks *TaskService // 远程下载任务化（可 nil）
 }
 
 // NewFileExtService 创建。
-func NewFileExtService(db *gorm.DB, nodes *NodeService) *FileExtService {
-	return &FileExtService{db: db, nodes: nodes}
+func NewFileExtService(db *gorm.DB, nodes *NodeService, tasks *TaskService) *FileExtService {
+	return &FileExtService{db: db, nodes: nodes, tasks: tasks}
 }
 
 func (s *FileExtService) client() (*agentclient.Client, error) {
@@ -201,8 +202,54 @@ func checkPublicHost(host string) error {
 	return nil
 }
 
-// RemoteDownload 经 core 下载（逐跳 SSRF 复核）并流式落盘 agent 目录。返回文件名。
-func (s *FileExtService) RemoteDownload(ctx context.Context, rawURL, destDir string) (string, error) {
+// progressReader 计数读取器：累计已读字节数回调（下载进度）。
+type progressReader struct {
+	r      io.Reader
+	onRead func(n int64)
+}
+
+func (p *progressReader) Read(b []byte) (int, error) {
+	n, err := p.r.Read(b)
+	if n > 0 {
+		p.onRead(int64(n))
+	}
+	return n, err
+}
+
+// RemoteDownloadTask 远程下载任务化：立即回 taskId，下载进度（百分比/速度，2s 节流）进任务日志，
+// 任务中心与文件页均可跟踪；完成后任务日志记录落盘路径。
+func (s *FileExtService) RemoteDownloadTask(rawURL, destDir string) (map[string]any, error) {
+	if s.tasks == nil {
+		return nil, errs.Wrap(errs.ErrBadRequest, "任务服务不可用")
+	}
+	name := path.Base(mustParsePath(rawURL))
+	task, err := s.tasks.StartTask("file-download", "远程下载 "+name, destDir, 2*time.Hour,
+		func(ctx context.Context, logf TaskLogf) error {
+			saved, err := s.remoteDownloadRun(ctx, logf, rawURL, destDir)
+			if err != nil {
+				return err
+			}
+			logf("info", "下载完成：%s/%s", destDir, saved)
+			return nil
+		})
+	if err != nil {
+		return nil, err
+	}
+	return map[string]any{"taskId": task.ID}, nil
+}
+
+// mustParsePath URL path 提取（解析失败回退时间戳名，仅用于任务标题展示）。
+func mustParsePath(rawURL string) string {
+	u, err := url.Parse(rawURL)
+	if err != nil || u.Path == "" {
+		return fmt.Sprintf("download-%d", time.Now().Unix())
+	}
+	return u.Path
+}
+
+// remoteDownloadRun 经 core 下载（逐跳 SSRF 复核）并流式落盘 agent 目录。返回文件名；
+// 下载进度经 plog 写任务日志（2s 节流，Content-Length 已知时带百分比）。
+func (s *FileExtService) remoteDownloadRun(ctx context.Context, logf TaskLogf, rawURL, destDir string) (string, error) {
 	u, err := url.Parse(rawURL)
 	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
 		return "", errs.Wrap(errs.ErrBadRequest, "仅支持 http(s) 直链")
@@ -262,12 +309,38 @@ func (s *FileExtService) RemoteDownload(ctx context.Context, rawURL, destDir str
 	if resp.ContentLength > 2<<30 {
 		return "", errs.Wrap(errs.ErrBadRequest, "文件超过 2GB 上限")
 	}
+	logf("info", "开始下载 %s → %s", rawURL, destDir)
 	ac, err := s.client()
 	if err != nil {
 		return "", err
 	}
-	if err := UploadMultipartToAgent(ac, ctx, destDir, name, resp.Body); err != nil {
+	// 进度：计数读取器 + 2s 节流日志（任务中心前端 2s 轮询，无需更密）
+	plog := NewProgressLogger(logf, 2*time.Second)
+	var done, lastDone int64
+	last := time.Now()
+	total := resp.ContentLength
+	body := io.Reader(resp.Body)
+	if logf != nil {
+		body = &progressReader{r: resp.Body, onRead: func(n int64) {
+			done += n
+			span := time.Since(last).Seconds()
+			if span < 2 || done < lastDone {
+				return
+			}
+			speed := float64(done-lastDone) / span / 1048576
+			if total > 0 {
+				plog("已下载 %.1f/%.1f MB（%.1f MB/s，%.0f%%）", float64(done)/1048576, float64(total)/1048576, speed, float64(done)/float64(total)*100)
+			} else {
+				plog("已下载 %.1f MB（%.1f MB/s）", float64(done)/1048576, speed)
+			}
+			lastDone, last = done, time.Now()
+		}}
+	}
+	if err := UploadMultipartToAgent(ac, ctx, destDir, name, body); err != nil {
 		return "", err
+	}
+	if logf != nil {
+		logf("info", "传输完成 %.1f MB", float64(done)/1048576)
 	}
 	return name, nil
 }

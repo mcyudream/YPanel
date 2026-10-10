@@ -167,7 +167,7 @@ func (a *FileExtAPI) ShareRevoke(c *gin.Context) {
 	respOK(c, struct{}{})
 }
 
-// RemoteDownload POST /api/v1/files/remote-download {url,destDir}
+// RemoteDownload POST /api/v1/files/remote-download {url,destDir} → 任务化（立即回 taskId，进度见任务中心）
 func (a *FileExtAPI) RemoteDownload(c *gin.Context) {
 	req, ok := bind[struct {
 		URL     string `json:"url" binding:"required"`
@@ -176,12 +176,12 @@ func (a *FileExtAPI) RemoteDownload(c *gin.Context) {
 	if !ok {
 		return
 	}
-	name, err := a.Ext.RemoteDownload(c.Request.Context(), req.URL, req.DestDir)
+	out, err := a.Ext.RemoteDownloadTask(req.URL, req.DestDir)
 	if err != nil {
 		respErr(c, err)
 		return
 	}
-	respOK(c, gin.H{"file": name, "dir": req.DestDir})
+	respOK(c, out)
 }
 
 // ShareDownload GET /s/:token（公开无鉴权；agent 流式下载）

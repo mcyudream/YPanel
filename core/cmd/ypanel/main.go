@@ -93,7 +93,7 @@ func run(ctx context.Context, cfg *config.Config) error {
 	backupSvc := service.NewBackupService(nodes, storageSvc)
 	dockerEnvSvc := service.NewDockerEnvService(gdb, nodes, string(auth.Secret()))
 	dockerImgSvc := service.NewDockerImgService(nodes)
-	fileExtSvc := service.NewFileExtService(gdb, nodes)
+	fileExtSvc := service.NewFileExtService(gdb, nodes, taskSvc)
 	fileCrossSvc := service.NewFileCrossService(nodes, taskSvc)
 	sysToolSvc := service.NewSystemToolService(nodes)
 	panelBkSvc := service.NewPanelBackupService(nodes)

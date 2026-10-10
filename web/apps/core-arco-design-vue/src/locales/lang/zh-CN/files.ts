@@ -67,6 +67,8 @@ export default {
     remoteNeedUrl: '请填写 URL 与目标目录',
     downloading: '下载中…',
     downloadDone: '下载完成：{path}',
+    downloadTaskStarted: '已转入后台下载，任务中心可查看实时进度',
+    downloadDoneTask: '远程下载完成，文件已落盘',
     downloadFailed: '下载失败',
     moveTo: '移动到…',
     copyTo: '复制到…',

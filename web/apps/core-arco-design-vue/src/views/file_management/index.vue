@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import type { FileEntry } from '@/api/modules/file'
 import apiFile, { fileExtApi } from '@/api/modules/file'
+import api from '@/api'
 import type { TrashItem, FileFavorite, FileShareRow } from '@/api/modules/file'
 import apiNode from '@/api/modules/node'
 import { fmtBytes } from '@/utils/format'
@@ -327,12 +328,27 @@ async function doRemoteDownload() {
     return
   }
   remoteBusy.value = true
-  useFaToast().info(i18n.global.t('files.list.downloading'))
   try {
-    const out = await fileExtApi.remoteDownload(remoteForm.value.url, remoteForm.value.destDir)
-    useFaToast().success(i18n.global.t('files.list.downloadDone', { path: `${out.dir}/${out.file}` }))
+    // 任务化：立即回 taskId，下载进度（百分比/速度）在任务中心实时滚动
+    const { taskId } = await fileExtApi.remoteDownload(remoteForm.value.url, remoteForm.value.destDir)
+    useFaToast().info(i18n.global.t('files.list.downloadTaskStarted'))
     remoteVisible.value = false
-    load()
+    for (let i = 0; i < 600; i++) {
+      await new Promise(r => setTimeout(r, 2000))
+      try {
+        const t = await api.get(`api/v1/tasks/${taskId}`, { silent: true }).then(r => r.data)
+        if (t.status === 'success') {
+          useFaToast().success(i18n.global.t('files.list.downloadDoneTask'))
+          load()
+          return
+        }
+        if (t.status === 'failed') {
+          useFaToast().error(i18n.global.t('files.list.downloadFailed'), { description: t.error })
+          return
+        }
+      }
+      catch {}
+    }
   }
   catch (e: any) {
     useFaToast().error(i18n.global.t('files.list.downloadFailed'), { description: e?.message })

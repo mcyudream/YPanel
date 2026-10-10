@@ -67,6 +67,8 @@ export default {
     remoteNeedUrl: 'Please enter the URL and the target directory',
     downloading: 'Downloading…',
     downloadDone: 'Download completed: {path}',
+    downloadTaskStarted: 'Download moved to background; track live progress in Task Center',
+    downloadDoneTask: 'Remote download completed',
     downloadFailed: 'Download failed',
     moveTo: 'Move to…',
     copyTo: 'Copy to…',
