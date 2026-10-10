@@ -236,11 +236,13 @@ func (s *AIService) aiToolsExec(ctx context.Context) []aiToolDef {
 			Desc: "在服务器上执行任意 shell 命令（systemd 服务环境，无终端交互；每次执行都会请求用户确认）。仅在没有更合适的面板工具时使用。input JSON：{\"command\":\"shell 命令\",\"timeoutSecs\":120}",
 			Parameters: schObj(map[string]any{
 				"command": schStr("要执行的 shell 命令"), "timeoutSecs": schInt("超时秒数，默认 120 上限 300"),
+				"node": schStr("目标节点，默认 local"),
 			}, "command"),
 			Fn: func(_ context.Context, input string) (string, error) {
 				p, err := parseToolArgs[struct {
 					Command     string `json:"command"`
 					TimeoutSecs int    `json:"timeoutSecs"`
+					Node        string `json:"node"`
 				}](input)
 				if err != nil {
 					return "", err
@@ -251,16 +253,18 @@ func (s *AIService) aiToolsExec(ctx context.Context) []aiToolDef {
 				if p.TimeoutSecs < 1 || p.TimeoutSecs > 300 {
 					p.TimeoutSecs = 120
 				}
+				ctx = withAINode(ctx, p.Node)
 				return s.hostExecTimeout(ctx, p.Command, p.TimeoutSecs)
 			},
 		},
 		{
 			Name: "run_in_workspace", Module: aiModExec, Risk: aiRiskDanger,
 			Desc: "在 AI 工作空间目录（" + workspaceDir + "）中执行 shell 命令（写临时脚本/代码实验；每次执行都会请求用户确认）。input JSON：{\"command\":\"shell 命令\"}",
-			Parameters: schObj(map[string]any{"command": schStr("shell 命令")}, "command"),
+			Parameters: schObj(map[string]any{"command": schStr("shell 命令"), "node": schStr("目标节点，默认 local")}, "command"),
 			Fn: func(_ context.Context, input string) (string, error) {
 				p, err := parseToolArgs[struct {
 					Command string `json:"command"`
+					Node    string `json:"node"`
 				}](input)
 				if err != nil {
 					return "", err
@@ -268,6 +272,7 @@ func (s *AIService) aiToolsExec(ctx context.Context) []aiToolDef {
 				if strings.TrimSpace(p.Command) == "" {
 					return "", fmt.Errorf("命令为空")
 				}
+				ctx = withAINode(ctx, p.Node)
 				return s.hostExec(ctx, fmt.Sprintf("mkdir -p '%s' && cd '%s' && %s", workspaceDir, workspaceDir, p.Command))
 			},
 		},
