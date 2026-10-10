@@ -40,12 +40,16 @@ func (f *FileAPI) uploadMultipart(c *gin.Context, r io.Reader, filename, dir str
 		_ = mw.Close()
 		_ = pw.CloseWithError(werr)
 	}()
-	req, err := f.client(c).NewRequest(c.Request.Context(), http.MethodPost, "/agent/v1/files/upload?path="+escape(dir), pr)
+	cl, cerr := f.client(c)
+	if cerr != nil {
+		return nil, cerr
+	}
+	req, err := cl.NewRequest(c.Request.Context(), http.MethodPost, "/agent/v1/files/upload?path="+escape(dir), pr)
 	if err != nil {
 		return nil, err
 	}
 	req.Header.Set("Content-Type", mw.FormDataContentType())
-	resp, err := f.client(c).HTTP.Do(req)
+	resp, err := cl.HTTP.Do(req)
 	if err != nil {
 		return nil, errAgentUnreach(err)
 	}

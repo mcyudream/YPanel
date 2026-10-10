@@ -17,9 +17,13 @@ type ContainerFileAPI struct {
 	Nodes *service.NodeService
 }
 
-func (f *ContainerFileAPI) client(c *gin.Context) *agentclient.Client {
-	node, _ := f.Nodes.ByID(c.DefaultQuery("node", "local"))
-	return agentclient.New(node.BaseURL, node.Token)
+func (f *ContainerFileAPI) client(c *gin.Context) (*agentclient.Client, error) {
+	nodeID := c.DefaultQuery("node", "local")
+	node, err := f.Nodes.ByID(nodeID)
+	if err != nil || node == nil {
+		return nil, errBadRequest("节点不存在: " + nodeID)
+	}
+	return agentclient.New(node.BaseURL, node.Token), nil
 }
 
 // basePath 容器文件端点前缀。
@@ -29,7 +33,12 @@ func (f *ContainerFileAPI) basePath(c *gin.Context) string {
 
 // List GET /api/v1/docker/containers/:id/files/list?path=&node=
 func (f *ContainerFileAPI) List(c *gin.Context) {
-	out, err := agentclient.GetJSON[dto.FileListResp](f.client(c), c.Request.Context(), f.basePath(c)+"/list?path="+escape(c.Query("path")))
+	cl, cerr := f.client(c)
+	if cerr != nil {
+		respErr(c, cerr)
+		return
+	}
+	out, err := agentclient.GetJSON[dto.FileListResp](cl, c.Request.Context(), f.basePath(c)+"/list?path="+escape(c.Query("path")))
 	if err != nil {
 		respErr(c, err)
 		return
@@ -43,7 +52,12 @@ func (f *ContainerFileAPI) Read(c *gin.Context) {
 	if c.Query("raw") != "" {
 		q += "&raw=" + escape(c.Query("raw"))
 	}
-	out, err := agentclient.GetJSON[dto.FileReadResp](f.client(c), c.Request.Context(), q)
+	cl, cerr := f.client(c)
+	if cerr != nil {
+		respErr(c, cerr)
+		return
+	}
+	out, err := agentclient.GetJSON[dto.FileReadResp](cl, c.Request.Context(), q)
 	if err != nil {
 		respErr(c, err)
 		return
@@ -53,12 +67,17 @@ func (f *ContainerFileAPI) Read(c *gin.Context) {
 
 // Download GET /api/v1/docker/containers/:id/files/download?path=&node=（流式透传）
 func (f *ContainerFileAPI) Download(c *gin.Context) {
-	req, err := f.client(c).NewRequest(c.Request.Context(), http.MethodGet, f.basePath(c)+"/download?path="+escape(c.Query("path")), nil)
+	cl, cerr := f.client(c)
+	if cerr != nil {
+		respErr(c, cerr)
+		return
+	}
+	req, err := cl.NewRequest(c.Request.Context(), http.MethodGet, f.basePath(c)+"/download?path="+escape(c.Query("path")), nil)
 	if err != nil {
 		respErr(c, err)
 		return
 	}
-	resp, err := f.client(c).HTTP.Do(req)
+	resp, err := cl.HTTP.Do(req)
 	if err != nil {
 		respErr(c, errAgentUnreach(err))
 		return
@@ -83,7 +102,12 @@ func (f *ContainerFileAPI) Write(c *gin.Context) {
 	if !ok {
 		return
 	}
-	if _, err := agentclient.DoJSON[dto.FileWriteReq, struct{}](f.client(c), c.Request.Context(), http.MethodPost, f.basePath(c)+"/write", req); err != nil {
+	cl, cerr := f.client(c)
+	if cerr != nil {
+		respErr(c, cerr)
+		return
+	}
+	if _, err := agentclient.DoJSON[dto.FileWriteReq, struct{}](cl, c.Request.Context(), http.MethodPost, f.basePath(c)+"/write", req); err != nil {
 		respErr(c, err)
 		return
 	}
@@ -96,7 +120,12 @@ func (f *ContainerFileAPI) Mkdir(c *gin.Context) {
 	if !ok {
 		return
 	}
-	if _, err := agentclient.DoJSON[dto.FileMkdirReq, struct{}](f.client(c), c.Request.Context(), http.MethodPost, f.basePath(c)+"/mkdir", req); err != nil {
+	cl, cerr := f.client(c)
+	if cerr != nil {
+		respErr(c, cerr)
+		return
+	}
+	if _, err := agentclient.DoJSON[dto.FileMkdirReq, struct{}](cl, c.Request.Context(), http.MethodPost, f.basePath(c)+"/mkdir", req); err != nil {
 		respErr(c, err)
 		return
 	}
@@ -109,7 +138,12 @@ func (f *ContainerFileAPI) Rename(c *gin.Context) {
 	if !ok {
 		return
 	}
-	if _, err := agentclient.DoJSON[dto.FileRenameReq, struct{}](f.client(c), c.Request.Context(), http.MethodPost, f.basePath(c)+"/rename", req); err != nil {
+	cl, cerr := f.client(c)
+	if cerr != nil {
+		respErr(c, cerr)
+		return
+	}
+	if _, err := agentclient.DoJSON[dto.FileRenameReq, struct{}](cl, c.Request.Context(), http.MethodPost, f.basePath(c)+"/rename", req); err != nil {
 		respErr(c, err)
 		return
 	}
@@ -122,7 +156,12 @@ func (f *ContainerFileAPI) Delete(c *gin.Context) {
 	if !ok {
 		return
 	}
-	if _, err := agentclient.DoJSON[dto.FileDeleteReq, struct{}](f.client(c), c.Request.Context(), http.MethodPost, f.basePath(c)+"/delete", req); err != nil {
+	cl, cerr := f.client(c)
+	if cerr != nil {
+		respErr(c, cerr)
+		return
+	}
+	if _, err := agentclient.DoJSON[dto.FileDeleteReq, struct{}](cl, c.Request.Context(), http.MethodPost, f.basePath(c)+"/delete", req); err != nil {
 		respErr(c, err)
 		return
 	}
@@ -135,7 +174,12 @@ func (f *ContainerFileAPI) Chmod(c *gin.Context) {
 	if !ok {
 		return
 	}
-	if _, err := agentclient.DoJSON[dto.FileChmodReq, struct{}](f.client(c), c.Request.Context(), http.MethodPost, f.basePath(c)+"/chmod", req); err != nil {
+	cl, cerr := f.client(c)
+	if cerr != nil {
+		respErr(c, cerr)
+		return
+	}
+	if _, err := agentclient.DoJSON[dto.FileChmodReq, struct{}](cl, c.Request.Context(), http.MethodPost, f.basePath(c)+"/chmod", req); err != nil {
 		respErr(c, err)
 		return
 	}
@@ -148,7 +192,12 @@ func (f *ContainerFileAPI) Chown(c *gin.Context) {
 	if !ok {
 		return
 	}
-	if _, err := agentclient.DoJSON[dto.FileChownReq, struct{}](f.client(c), c.Request.Context(), http.MethodPost, f.basePath(c)+"/chown", req); err != nil {
+	cl, cerr := f.client(c)
+	if cerr != nil {
+		respErr(c, cerr)
+		return
+	}
+	if _, err := agentclient.DoJSON[dto.FileChownReq, struct{}](cl, c.Request.Context(), http.MethodPost, f.basePath(c)+"/chown", req); err != nil {
 		respErr(c, err)
 		return
 	}
@@ -185,7 +234,12 @@ func (f *ContainerFileAPI) Upload(c *gin.Context) {
 		Name:       fileHdr.Filename,
 		ContentB64: base64.StdEncoding.EncodeToString(content),
 	}
-	if _, err := agentclient.DoJSON[containerUploadReq, struct{}](f.client(c), c.Request.Context(), http.MethodPost, f.basePath(c)+"/upload", &req); err != nil {
+	cl, cerr := f.client(c)
+	if cerr != nil {
+		respErr(c, cerr)
+		return
+	}
+	if _, err := agentclient.DoJSON[containerUploadReq, struct{}](cl, c.Request.Context(), http.MethodPost, f.basePath(c)+"/upload", &req); err != nil {
 		respErr(c, err)
 		return
 	}

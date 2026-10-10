@@ -131,14 +131,23 @@ type FileAPI struct {
 	Cross *service.FileCrossService
 }
 
-func (f *FileAPI) client(c *gin.Context) *agentclient.Client {
-	node, _ := f.Nodes.ByID(c.DefaultQuery("node", "local"))
-	return agentclient.New(node.BaseURL, node.Token)
+func (f *FileAPI) client(c *gin.Context) (*agentclient.Client, error) {
+	nodeID := c.DefaultQuery("node", "local")
+	node, err := f.Nodes.ByID(nodeID)
+	if err != nil || node == nil {
+		return nil, errBadRequest("节点不存在: " + nodeID)
+	}
+	return agentclient.New(node.BaseURL, node.Token), nil
 }
 
 // List GET /api/v1/files/list?path=
 func (f *FileAPI) List(c *gin.Context) {
-	out, err := agentclient.GetJSON[dto.FileListResp](f.client(c), c.Request.Context(), "/agent/v1/files/list?path="+escape(c.Query("path")))
+	cl, cerr := f.client(c)
+	if cerr != nil {
+		respErr(c, cerr)
+		return
+	}
+	out, err := agentclient.GetJSON[dto.FileListResp](cl, c.Request.Context(), "/agent/v1/files/list?path="+escape(c.Query("path")))
 	if err != nil {
 		respErr(c, err)
 		return
@@ -155,7 +164,12 @@ func (f *FileAPI) Read(c *gin.Context) {
 	if c.Query("encoding") != "" {
 		q += "&encoding=" + escape(c.Query("encoding"))
 	}
-	out, err := agentclient.GetJSON[dto.FileReadResp](f.client(c), c.Request.Context(), q)
+	cl, cerr := f.client(c)
+	if cerr != nil {
+		respErr(c, cerr)
+		return
+	}
+	out, err := agentclient.GetJSON[dto.FileReadResp](cl, c.Request.Context(), q)
 	if err != nil {
 		respErr(c, err)
 		return
@@ -173,7 +187,12 @@ func (f *FileAPI) Write(c *gin.Context) {
 	if f.Rev != nil && service.ScopeFor(node, req.Path) != "" {
 		f.Rev.SnapshotBefore(c.Request.Context(), node, req.Path, "save", c.GetString(middleware.CtxUsername))
 	}
-	if _, err := agentclient.DoJSON[dto.FileWriteReq, struct{}](f.client(c), c.Request.Context(), http.MethodPost, "/agent/v1/files/write", req); err != nil {
+	cl, cerr := f.client(c)
+	if cerr != nil {
+		respErr(c, cerr)
+		return
+	}
+	if _, err := agentclient.DoJSON[dto.FileWriteReq, struct{}](cl, c.Request.Context(), http.MethodPost, "/agent/v1/files/write", req); err != nil {
 		respErr(c, err)
 		return
 	}
@@ -186,7 +205,12 @@ func (f *FileAPI) Mkdir(c *gin.Context) {
 	if !ok {
 		return
 	}
-	if _, err := agentclient.DoJSON[dto.FileMkdirReq, struct{}](f.client(c), c.Request.Context(), http.MethodPost, "/agent/v1/files/mkdir", req); err != nil {
+	cl, cerr := f.client(c)
+	if cerr != nil {
+		respErr(c, cerr)
+		return
+	}
+	if _, err := agentclient.DoJSON[dto.FileMkdirReq, struct{}](cl, c.Request.Context(), http.MethodPost, "/agent/v1/files/mkdir", req); err != nil {
 		respErr(c, err)
 		return
 	}
@@ -199,7 +223,12 @@ func (f *FileAPI) Rename(c *gin.Context) {
 	if !ok {
 		return
 	}
-	if _, err := agentclient.DoJSON[dto.FileRenameReq, struct{}](f.client(c), c.Request.Context(), http.MethodPost, "/agent/v1/files/rename", req); err != nil {
+	cl, cerr := f.client(c)
+	if cerr != nil {
+		respErr(c, cerr)
+		return
+	}
+	if _, err := agentclient.DoJSON[dto.FileRenameReq, struct{}](cl, c.Request.Context(), http.MethodPost, "/agent/v1/files/rename", req); err != nil {
 		respErr(c, err)
 		return
 	}
@@ -212,7 +241,12 @@ func (f *FileAPI) Copy(c *gin.Context) {
 	if !ok {
 		return
 	}
-	if _, err := agentclient.DoJSON[dto.FileCopyReq, struct{}](f.client(c), c.Request.Context(), http.MethodPost, "/agent/v1/files/copy", req); err != nil {
+	cl, cerr := f.client(c)
+	if cerr != nil {
+		respErr(c, cerr)
+		return
+	}
+	if _, err := agentclient.DoJSON[dto.FileCopyReq, struct{}](cl, c.Request.Context(), http.MethodPost, "/agent/v1/files/copy", req); err != nil {
 		respErr(c, err)
 		return
 	}
@@ -225,7 +259,12 @@ func (f *FileAPI) Delete(c *gin.Context) {
 	if !ok {
 		return
 	}
-	if _, err := agentclient.DoJSON[dto.FileDeleteReq, struct{}](f.client(c), c.Request.Context(), http.MethodPost, "/agent/v1/files/delete", req); err != nil {
+	cl, cerr := f.client(c)
+	if cerr != nil {
+		respErr(c, cerr)
+		return
+	}
+	if _, err := agentclient.DoJSON[dto.FileDeleteReq, struct{}](cl, c.Request.Context(), http.MethodPost, "/agent/v1/files/delete", req); err != nil {
 		respErr(c, err)
 		return
 	}
@@ -238,7 +277,12 @@ func (f *FileAPI) Chmod(c *gin.Context) {
 	if !ok {
 		return
 	}
-	if _, err := agentclient.DoJSON[dto.FileChmodReq, struct{}](f.client(c), c.Request.Context(), http.MethodPost, "/agent/v1/files/chmod", req); err != nil {
+	cl, cerr := f.client(c)
+	if cerr != nil {
+		respErr(c, cerr)
+		return
+	}
+	if _, err := agentclient.DoJSON[dto.FileChmodReq, struct{}](cl, c.Request.Context(), http.MethodPost, "/agent/v1/files/chmod", req); err != nil {
 		respErr(c, err)
 		return
 	}
@@ -251,7 +295,12 @@ func (f *FileAPI) Chown(c *gin.Context) {
 	if !ok {
 		return
 	}
-	if _, err := agentclient.DoJSON[dto.FileChownReq, struct{}](f.client(c), c.Request.Context(), http.MethodPost, "/agent/v1/files/chown", req); err != nil {
+	cl, cerr := f.client(c)
+	if cerr != nil {
+		respErr(c, cerr)
+		return
+	}
+	if _, err := agentclient.DoJSON[dto.FileChownReq, struct{}](cl, c.Request.Context(), http.MethodPost, "/agent/v1/files/chown", req); err != nil {
 		respErr(c, err)
 		return
 	}
@@ -260,7 +309,12 @@ func (f *FileAPI) Chown(c *gin.Context) {
 
 // Owners GET /api/v1/files/owners（系统用户/组枚举）
 func (f *FileAPI) Owners(c *gin.Context) {
-	out, err := agentclient.GetJSON[dto.FileOwnersResp](f.client(c), c.Request.Context(), "/agent/v1/files/owners")
+	cl, cerr := f.client(c)
+	if cerr != nil {
+		respErr(c, cerr)
+		return
+	}
+	out, err := agentclient.GetJSON[dto.FileOwnersResp](cl, c.Request.Context(), "/agent/v1/files/owners")
 	if err != nil {
 		respErr(c, err)
 		return
@@ -274,7 +328,12 @@ func (f *FileAPI) Compress(c *gin.Context) {
 	if !ok {
 		return
 	}
-	if _, err := agentclient.DoJSON[dto.FileCompressReq, struct{}](f.client(c), c.Request.Context(), http.MethodPost, "/agent/v1/files/compress", req); err != nil {
+	cl, cerr := f.client(c)
+	if cerr != nil {
+		respErr(c, cerr)
+		return
+	}
+	if _, err := agentclient.DoJSON[dto.FileCompressReq, struct{}](cl, c.Request.Context(), http.MethodPost, "/agent/v1/files/compress", req); err != nil {
 		respErr(c, err)
 		return
 	}
@@ -287,7 +346,12 @@ func (f *FileAPI) Decompress(c *gin.Context) {
 	if !ok {
 		return
 	}
-	if _, err := agentclient.DoJSON[dto.FileDecompressReq, struct{}](f.client(c), c.Request.Context(), http.MethodPost, "/agent/v1/files/decompress", req); err != nil {
+	cl, cerr := f.client(c)
+	if cerr != nil {
+		respErr(c, cerr)
+		return
+	}
+	if _, err := agentclient.DoJSON[dto.FileDecompressReq, struct{}](cl, c.Request.Context(), http.MethodPost, "/agent/v1/files/decompress", req); err != nil {
 		respErr(c, err)
 		return
 	}
@@ -296,7 +360,12 @@ func (f *FileAPI) Decompress(c *gin.Context) {
 
 // Search GET /api/v1/files/search?dir=&keyword=
 func (f *FileAPI) Search(c *gin.Context) {
-	out, err := agentclient.GetJSON[[]dto.FileEntry](f.client(c), c.Request.Context(),
+	cl, cerr := f.client(c)
+	if cerr != nil {
+		respErr(c, cerr)
+		return
+	}
+	out, err := agentclient.GetJSON[[]dto.FileEntry](cl, c.Request.Context(),
 		"/agent/v1/files/search?dir="+escape(c.Query("dir"))+"&keyword="+escape(c.Query("keyword")))
 	if err != nil {
 		respErr(c, err)
@@ -330,12 +399,17 @@ func (f *FileAPI) Upload(c *gin.Context) {
 
 // Download GET /api/v1/files/download?path=（文件原样流式；目录 tar.gz）
 func (f *FileAPI) Download(c *gin.Context) {
-	req, err := f.client(c).NewRequest(c.Request.Context(), http.MethodGet, "/agent/v1/files/download?path="+escape(c.Query("path")), nil)
+	cl, cerr := f.client(c)
+	if cerr != nil {
+		respErr(c, cerr)
+		return
+	}
+	req, err := cl.NewRequest(c.Request.Context(), http.MethodGet, "/agent/v1/files/download?path="+escape(c.Query("path")), nil)
 	if err != nil {
 		respErr(c, err)
 		return
 	}
-	resp, err := f.client(c).HTTP.Do(req)
+	resp, err := cl.HTTP.Do(req)
 	if err != nil {
 		respErr(c, errAgentUnreach(err))
 		return
