@@ -8,6 +8,7 @@ package gwserver
 
 import (
 	"context"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -131,6 +132,8 @@ func sidFromReferer(referer string) string {
 }
 
 // proxyBySid 会话前缀内请求：剥离 /s/{sid} 前缀后按会话代理（路径结构与直连一致）。
+// M56：/__yp_proxy.js 为注入库端点；/~h/<b64> 段为页面声明的跨 host 转发目标；
+// html 响应统一经 injectWriter 注入 proxy-lib。
 func (s *Server) proxyBySid(w http.ResponseWriter, r *http.Request, ep string) {
 	rest := strings.TrimPrefix(ep, "/s")
 	rest = strings.TrimPrefix(rest, "/")
@@ -142,17 +145,49 @@ func (s *Server) proxyBySid(w http.ResponseWriter, r *http.Request, ep string) {
 		sid, remainder = rest[:slash], rest[slash:]
 	}
 	ses := s.svc.Get(sid)
-	p := s.svc.Proxy(sid)
-	if ses == nil || p == nil {
+	if ses == nil {
 		s.renderMiss(w, r)
 		return
 	}
 	s.svc.TouchSession(tokenOf(r), sid)
+	// 跨 host 段：/~h/<b64url(origin)>/rest → 按该 origin 动态代理（校验与私网复核同会话口径）
+	p := s.svc.Proxy(sid)
+	prefix := "/s/" + sid
+	if b64, after, ok := splitCrossHost(remainder); ok {
+		origin, err := decodeCrossOrigin(b64)
+		if err != nil {
+			http.Error(w, "非法的跨主机目标", http.StatusBadRequest)
+			return
+		}
+		if err := s.svc.CheckOrigin(origin); err != nil {
+			http.Error(w, err.Error(), http.StatusForbidden)
+			return
+		}
+		prefix += "/~h/" + b64
+		p = s.svc.CrossProxy(origin, prefix)
+		remainder = after
+	}
+	// 脚本端点在跨 host 解析之后统一拦截：跨 host 页面注入的 src 携带 ~h 段也能命中
+	if remainder == proxyScriptPath {
+		renderProxyScript(w, sid, ses.Target)
+		return
+	}
+	if p == nil {
+		s.renderMiss(w, r)
+		return
+	}
 	applyPath(r, remainder)
-	p.ServeHTTP(w, r)
+	if isUpgradeRequest(r) {
+		// WebSocket 等升级请求交给 ReverseProxy 原生 hijack，不包注入层（无 html 可注入）
+		p.ServeHTTP(w, r)
+		return
+	}
+	iw := newInjectWriter(w, prefix+proxyScriptPath, r.Method)
+	defer iw.drain()
+	p.ServeHTTP(iw, r)
 }
 
-// proxyRoot 根逃逸请求：按 Referer 找回的会话代理，目标路径 = 原始根路径。
+// proxyRoot 根逃逸请求：按 Referer 找回的会话代理，目标路径 = 原始根路径（同样注入 proxy-lib）。
 func (s *Server) proxyRoot(w http.ResponseWriter, r *http.Request, sid, ep string) {
 	ses := s.svc.Get(sid)
 	p := s.svc.Proxy(sid)
@@ -161,7 +196,50 @@ func (s *Server) proxyRoot(w http.ResponseWriter, r *http.Request, sid, ep strin
 		return
 	}
 	applyPath(r, ep)
-	p.ServeHTTP(w, r)
+	if isUpgradeRequest(r) {
+		p.ServeHTTP(w, r)
+		return
+	}
+	iw := newInjectWriter(w, "/s/"+sid+proxyScriptPath, r.Method)
+	defer iw.drain()
+	p.ServeHTTP(iw, r)
+}
+
+// isUpgradeRequest 识别 WebSocket 等协议升级请求（ReverseProxy 需原生 ResponseWriter 做 hijack）。
+func isUpgradeRequest(r *http.Request) bool {
+	if !strings.Contains(strings.ToLower(r.Header.Get("Connection")), "upgrade") {
+		return false
+	}
+	return r.Header.Get("Upgrade") != ""
+}
+
+// crossHostMark 跨 host 段标记：/s/{sid}/~h/<b64url(origin)>/rest。
+const crossHostMark = "/~h/"
+
+// splitCrossHost 解析跨 host 段：返回 b64 编码目标与剩余路径。
+func splitCrossHost(rest string) (b64, after string, ok bool) {
+	if !strings.HasPrefix(rest, crossHostMark) {
+		return "", "", false
+	}
+	body := rest[len(crossHostMark):]
+	if i := strings.IndexByte(body, '/'); i >= 0 {
+		return body[:i], body[i:], true
+	}
+	return body, "/", true
+}
+
+// decodeCrossOrigin b64url 解码跨 host 目标并校验形态（仅 http/https、携带主机）。
+func decodeCrossOrigin(b64 string) (string, error) {
+	raw, err := base64.RawURLEncoding.DecodeString(b64)
+	if err != nil {
+		return "", err
+	}
+	origin := string(raw)
+	u, err := url.Parse(origin)
+	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
+		return "", fmt.Errorf("非法目标: %q", origin)
+	}
+	return origin, nil
 }
 
 // applyPath 写回目标路径（保留原始转义；空路径归一为根）。

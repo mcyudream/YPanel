@@ -307,3 +307,17 @@
 - **根因**：两层叠加。① agent 的 Bearer PSK 校验失败回 `writeErr(errs.ErrForbidden)` → HTTP 200 + `{code:2002}` 信封（agent/server.go auth 中间件）；core `agentclient.doResp` 对 agent 信封非零码**原样透传**（`&errs.Error{Code: env.Code}`），于是「agent 认证失败」冒充成面板权限拒绝；② 前端 M0 时代契约 `isSessionError = 2001 || 2002` 全局登出（当时 2002 只可能来自 admin 闸门），RBAC 后 2002 是常规业务拒绝。节点"离线"（online:false）只代表心跳过期，agent 进程可能还活着且在拒绝 token——这类节点最易踩。
 - **规避/解决**：① core `doResp` 对 agent 信封中的鉴权码（2001/2002）重映射为 `CodeAgentUnreach` + 明确文案「节点 agent 认证失败（token 不匹配），请重新配对该节点」——agent 的会话语义永远不能穿透到面板用户面；② 前端 `isSessionError` 收窄为仅 2001，2002 只拦截提示不登出（exp/frontend.md「meta.auth 硬拦截」条的姊妹约定：会话语义只认 2001）。排查特征：所有走某节点的请求统一回 2002 且 `data:{}`（respErr 形态）→ 先怀疑 agent 信封透传，curl 对照 admin 同请求即可证实。
 - **来源**：2026-10-09，M54 部署后用户切到 node-143（agent token 失配，心跳停摆但进程存活）触发登出风暴；两处修复 + 前端产物解剖验证（编译后 `te(e)=e===ee.Unauthorized`）。
+
+### Go httputil.ReverseProxy 流式注入 HTML 的三个坑：压缩、Flush 冲刷、doctype 怪异模式
+
+- **现象**：给 webgw 反代加「向 text/html 响应流式注入 <script>」时三处翻车：① 目标返回 gzip 压缩体，注入器拿到的是密文；② 注入锚点（<head>）经常找不到——第一块 body 可能只有 `<!do` 几个字节；③ 若把注入内容放在 `<!doctype html>` 之前，页面整页进入浏览器怪异模式（quirks mode），布局全面失真。
+- **根因**：① 浏览器子请求带 `Accept-Encoding: gzip` 被反代原样透传，目标返回压缩流，注入必须在明文上做——Go transport 只对「请求未带该头」的请求自动加 gzip 并透明解压；② `FlushInterval: -1`（SSE 即时冲刷）让 ReverseProxy **每个 chunk 都调一次 ResponseWriter.Flush()**，包装 writer 若照单透传，第一块就把缓冲里未决的锚点冲走了；③ doctype 之前出现任何非空白内容都会使浏览器放弃 standards mode。
+- **规避/解决**：① Director 里 `r.Header.Del("Accept-Encoding")`，transport 自动补 gzip 并透明解压，响应头里的 Content-Encoding 一并消失（代价：出口方向无压缩）；② html 未完成锚点判定前**抑制 Flush 透传**（注入完成/非 html 才放行），配 16KB 缓冲上限 + drain 兜底防小文档悬挂；③ 锚点查找降级链：<head…>（大小写不敏感、属性值引号状态机防 `>` 误判）→ doctype `>` 之后 → 文档最前；`Content-Length` 必须在注入模式下删除（body 变长，交给 chunked）。单测重点：跨 chunk 截断的 `<head`、`<header` 干扰项、恰好等于缓冲上限。
+- **来源**：2026-10-10，M56 webgw proxy-lib 注入器（core/internal/gwserver/inject.go，两轮真机验收定位）。
+
+### 反代内嵌端点（/s/{sid}/__yp_proxy.js）的拦截点必须放在路径变形解析之后
+
+- **现象**：跨 host 页面（/s/{sid}/~h/<b64>/...）注入的脚本 src 带 host 段，请求落到网关后被**代理到目标服务**（拿到 404/unsupported path）而不是返回注入库；同 target 页面（裸 /s/{sid}/__yp_proxy.js）却正常。
+- **根因**：脚本端点拦截写在 splitCrossHost 之前，只匹配裸 remainder；跨 host 形态解析后 remainder 已剥掉 ~h 段，但代码顺序上已被放过。
+- **规避/解决**：内嵌端点拦截统一放在「前缀/路径段解析全部完成之后、代理发起之前」，用最终 remainder 匹配；注入的 src 与解析规则同步设计（注入器拿到的 scriptURL 就是最终解析形态）。新增路径形态（~h 段这类）时，先过一遍所有内嵌端点的前缀匹配顺序。
+- **来源**：2026-10-10，M56 跨 host 注入验收（142 实测 src 带 ~h 段 404，拦截点后移一处修复）。

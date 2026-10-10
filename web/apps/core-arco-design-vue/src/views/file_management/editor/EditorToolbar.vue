@@ -1,18 +1,24 @@
 <script setup lang="ts">
-// 顶部工具栏：撤销重做/查找/格式化 | 保存/全存 | 切分/侧栏/底栏 | 关闭（节点选择在文件树头部）
+// 顶部工具栏：撤销重做/查找/格式化 | 保存/全存 | 切分/侧栏/底栏 | 最小化/关闭（节点选择在文件树头部）
 import { i18n } from '@/locales'
 
 const store = useFileEditorStore()
 
 function closeWorkspace() {
   if (store.requestClose() === 'confirm') {
+    const reasons: string[] = []
+    if (store.dirtyCount > 0) {
+      reasons.push(i18n.global.t('files.editor.unsavedAllContent', { n: store.dirtyCount }))
+    }
+    if (store.terminalSessions > 0) {
+      reasons.push(i18n.global.t('files.editor.closeConfirmTerminals', { n: store.terminalSessions }))
+    }
     useFaModal().confirm({
-      title: i18n.global.t('files.editor.unsavedTitle'),
-      content: i18n.global.t('files.editor.unsavedAllContent', { n: store.dirtyCount }),
+      title: i18n.global.t('files.editor.closeConfirmTitle'),
+      content: reasons.join(' '),
       onConfirm: async () => {
         await store.saveAll()
-        store.visible = false
-        store.editorOpened = false
+        store.closeAll()
       },
     })
   }
@@ -72,6 +78,9 @@ const tbtn = 'size-7!'
         <FaIcon name="i-lucide:square-terminal" class="text-sm" :class="store.layout.terminalVisible ? 'text-primary' : ''" />
       </FaButton>
       <div class="mx-0.5 h-5 w-px bg-border" />
+      <FaButton variant="ghost" size="icon-sm" :class="tbtn" :title="$t('files.editor.minimize')" @click="store.requestMinimize">
+        <FaIcon name="i-lucide:chevrons-right" class="text-sm" />
+      </FaButton>
       <FaButton variant="ghost" size="icon-sm" :class="tbtn" :title="$t('files.editor.closeWorkspace')" @click="closeWorkspace">
         <FaIcon name="i-lucide:x" class="text-sm" />
       </FaButton>

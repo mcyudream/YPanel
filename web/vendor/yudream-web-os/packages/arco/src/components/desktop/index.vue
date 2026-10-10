@@ -7,7 +7,7 @@ import { useThemeStore } from '../../stores/theme'
 import YwAppIcon from '../app-icon/index.vue'
 import YwWindow from '../window/index.vue'
 import { bindDesktopDrag } from './drag'
-import { tileBackground } from '../icon-tile/colors'
+import { CATEGORY_GRADIENTS, categoryBackground, tileBackground } from '../icon-tile/colors'
 
 const props = withDefaults(defineProps<{
   wallpaper?: WallpaperMeta | null
@@ -231,6 +231,44 @@ function seedApps() {
   }
 }
 
+/** ── 图标配色：按功能分类固定底色，用户可自定义覆盖（持久化 icon.colors scope） ── */
+const ICON_COLORS_KEY = 'icon.colors'
+const iconColors = ref<Record<string, string>>({})
+
+function applyIconColors() {
+  for (const app of os.registry.list()) {
+    const color = iconColors.value[app.id] ?? categoryBackground(app.category)
+    if (color) {
+      os.registry.override(app.id, { iconBg: color })
+    }
+  }
+}
+
+void (async () => {
+  try {
+    iconColors.value = (await os.persist.get<Record<string, string>>(ICON_COLORS_KEY)) ?? {}
+  }
+  catch {}
+  applyIconColors()
+})()
+
+function setIconColor(appId: string, color: string | null) {
+  if (color) {
+    iconColors.value = { ...iconColors.value, [appId]: color }
+  }
+  else {
+    const next = { ...iconColors.value }
+    delete next[appId]
+    iconColors.value = next
+  }
+  void os.persist.set(ICON_COLORS_KEY, iconColors.value)
+  const app = os.registry.get(appId)
+  const finalColor = iconColors.value[appId] ?? categoryBackground(app?.category)
+  if (finalColor) {
+    os.registry.override(appId, { iconBg: finalColor })
+  }
+}
+
 /** 卡片右下把手拖拽调大小的预览跨度（声明前置供 cellStyle 引用） */
 const resizePreview = ref<{ id: string, w: number, h: number, leftVisual: number } | null>(null)
 let resizeCleanup: (() => void) | null = null
@@ -436,7 +474,10 @@ onMounted(async () => {
     syncWidgets()
     syncFromModel()
   })
-  watch(() => appsStore.apps.length, () => seedApps())
+  watch(() => appsStore.apps.length, () => {
+    seedApps()
+    applyIconColors()
+  })
   if (gridEl.value) {
     drag.container = gridEl.value
     drag.model = os.desktop
@@ -445,7 +486,11 @@ onMounted(async () => {
   }
 })
 
-watch(() => appsStore.all, reconcilePayloads, { deep: true })
+// 应用定义变化（含图标配色 override）→ 重载窗口载荷 + 重取 iconBg 渲染
+watch(() => appsStore.all, () => {
+  reconcilePayloads()
+  syncFromModel()
+}, { deep: true })
 
 onBeforeUnmount(() => {
   window.removeEventListener('resize', syncViewport)
@@ -527,6 +572,35 @@ function onIconContextmenu(ev: MouseEvent, item: RenderItem) {
   }
   if (item.kind !== 'app') {
     items.push({ label: '重命名', icon: 'i-lucide-pencil', onSelect: () => startRename(item) })
+  }
+  if (item.kind === 'app') {
+    items.push({
+      label: '图标颜色 ▸',
+      icon: 'i-lucide-palette',
+      onSelect: () => {
+        const swatches = [
+          ['蓝色 · 系统管理', 'system'],
+          ['靛蓝 · 数据库', 'database'],
+          ['青色 · 网络组网', 'network'],
+          ['绿色 · 监控告警', 'monitor'],
+          ['橙色 · 工具商店', 'tool'],
+          ['品红 · AI 智能', 'ai'],
+          ['紫色 · 开发终端', 'develop'],
+        ]
+        os.ui.menu({
+          x: ev.clientX,
+          y: ev.clientY,
+          items: [
+            ...swatches.map(([label, cat]) => ({
+              label: `设为${label}`,
+              onSelect: () => setIconColor(item.appId!, CATEGORY_GRADIENTS[cat]!),
+            })),
+            { separator: true, label: '' },
+            { label: '恢复分类默认', onSelect: () => setIconColor(item.appId!, null) },
+          ],
+        })
+      },
+    })
   }
   // 大小：文件夹卡片 1×1/2×2/3×2/4×3；应用图标 1×1/2×1/1×2/2×2/4×2
   const presets: Array<{ label: string, w: number, h: number }> = item.kind === 'folder'

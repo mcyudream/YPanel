@@ -142,3 +142,16 @@
 - **GitHub runner 出口对 gitee attach_files 大文件上传不可行**：30MB 附件零字节挂满超时，而本地/国内机上传秒级。CI 只建 Release 骨架（180s 快败），**正式镜像 = 本地跑 deploy/mirror-release.sh <tag>**；替代下载通道：GitHub API artifact（`git credential fill` 取 token → GET /actions/runs/{id}/artifacts → zip 含全部产物，不走被墙的 objects CDN）。
 - **sha256sums 条目按文件名匹配**：下载保存名写死（ypanel-linux.tar.gz）与 sums 带架构名（ypanel-linux-amd64.tar.gz）对不上必炸——文件名从 URL basename 保留。另 CheckAgentUpdate 类布尔判定字段注意每个分支显式赋值（漏置 else 分支的 true 导致恒 false）。
 - **来源**：2026-10-09 M54（143 真机：面板自更新 v0.9.3 ✓ + node-143b v0.9.1→v0.9.3 一键升级 7s 切换心跳确认 ✓）
+
+### 142 测试机端口/路径速记：9428 是 VictoriaLogs（vmui 挂根路径）、面板根路径 / 恒 404
+
+- **现象**：142 上临时起服务挑 9428 会静默绑不上（docker-proxy 占用，nohup python3 无声失败），后续请求全打到 VictoriaLogs；vmui 的 Web UI 挂在**根路径**（`/` 返回 200 text/html），`/vmui/` 反而 400 "unsupported path requested"。面板自身 `curl /` 无论带不带 entry 头都是 404，但 `/assets/` 200、`/health` 200——根路径 404 是安全入口开启后的常态，不代表面板坏了。
+- **规避/解决**：142 上做代理/网关类验收，临时目标服务用空闲高位端口（如 19528）；探测 VictoriaLogs 用根路径；判断面板存活用 `/health`，判断前端产物完整用 `/assets/` 下真实 chunk。
+- **来源**：2026-10-10，M56 webgw 验收（9428 被占导致首轮验收打到 vmui 上，路径探测逐个澄清）。
+
+### 磁盘满时段的 php 应用「源码覆盖」会产出 size 异常的坏文件：页面能跑但静态资产全是乱字节
+
+- **现象**：Adminer（php 应用）页面有样式表 link、HTTP 200、大小「正常」，但浏览器 0 条规则完全无样式，同时页面顶部有 `PHP Warning: Trying to access array offset on null ... on line 1452`。初查极具迷惑性：curl 状态行 `200 text/css 47791B` 一切「正常」，差点归因于新上线的 webgw 注入层。
+- **根因**：`adminer.php` 在凌晨磁盘保护触发时段（03:52 mtime）被源码覆盖写坏——size 从官方 476,603B 膨胀到 645,217B，中间混入约 168KB 垃圾块（头尾 PHP 代码完好，CSS 常量区损坏），PHP 运行到损坏区即 warning、内嵌资产输出乱字节。**与网关/代理完全无关**（直连容器 `od -c` 出的是同一份乱字节是铁证）。webgw 注入排查中「样式表 0 规则」等怪象全是该坏文件的伴生症状。
+- **规避/解决**：①「HTTP 200 = 内容正确」不成立——排查静态资产问题必须 `od -c` 看前几十字节 body，别只看状态行；②跨层对比定位法：直连容器 body → 网关 body → 浏览器 body，谁的字节都一样就与中间层无关；③php 应用文件损坏用商店包内 `package/source/` 干净文件 md5 对照（`/opt/ypanel/data/store-sources/<src>/apps/<app>/<ver>/package/source/`），`docker cp` 覆盖即修复；④磁盘保护触发时段（02:30–03:55）内发生的文件写入一律怀疑损坏，重装应用比逐文件排查快。
+- **来源**：2026-10-10，M56 浏览器层验收期用户报「adminer 没有 css」（app-adminer-test，磁盘 100%→保护触发→恢复时间线吻合）。

@@ -5,7 +5,6 @@ import apiContainer, { LabelComposeProject, LabelComposeService, type ContainerI
 import apiFile from '@/api/modules/file'
 import { storeApi, type StoreAppItem, type StoreInstall } from '@/api/modules/store'
 import { i18n, tr } from '@/locales'
-import FileEditorWorkspace from '@/views/file_management/editor/Workspace.vue'
 import { computed } from 'vue'
 import { closestWindowId, useYwEmbed } from '@/views/desktop/embed'
 
@@ -586,6 +585,5 @@ onBeforeUnmount(() => {
       </template>
     </FaModal>
 
-    <FileEditorWorkspace />
   </div>
 </template>

@@ -7,7 +7,6 @@ import { fmtBytes } from '@/utils/format'
 import { useFaModal } from '@fantastic-admin/components'
 import YdChmodDialog from '@/components/YdChmodDialog/index.vue'
 import YdDirPicker from '@/components/YdDirPicker/index.vue'
-import FileEditorWorkspace from './editor/Workspace.vue'
 import { useYwEmbed } from '@/views/desktop/embed'
 import { i18n } from '@/locales'
 
@@ -1043,7 +1042,6 @@ onBeforeUnmount(() => {
     </FaModal>
 
     <!-- 文件编辑工作台（VS Code 式弹窗） -->
-    <FileEditorWorkspace />
 
     <!-- M38：回收站 -->
     <FaModal v-model="trashVisible" :title="$t('files.trash')" class="max-w-3xl!" :destroy-on-close="true">

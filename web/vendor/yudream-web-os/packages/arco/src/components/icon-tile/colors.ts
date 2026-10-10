@@ -13,6 +13,25 @@ const TILE_GRADIENTS = [
   'linear-gradient(135deg, #9A9AA5 0%, #5C5C66 100%)',
 ]
 
+/**
+ * 按应用功能分类的固定底座色：同类应用同色（系统蓝/数据库靛/网络青/监控绿/工具橙/AI 品红/开发紫）。
+ * 配合 tileBackground 的 fallback：分类未命中时按 key hash 取色。
+ */
+export const CATEGORY_GRADIENTS: Record<string, string> = {
+  system: 'linear-gradient(135deg, #41A8F8 0%, #0B63D8 100%)',
+  database: 'linear-gradient(135deg, #6D8DF8 0%, #4050D8 100%)',
+  network: 'linear-gradient(135deg, #4ED4D4 0%, #1D9FA8 100%)',
+  monitor: 'linear-gradient(135deg, #6FD66F 0%, #2FA341 100%)',
+  tool: 'linear-gradient(135deg, #FFAD52 0%, #F2701D 100%)',
+  ai: 'linear-gradient(135deg, #FF74B7 0%, #E93A8C 100%)',
+  develop: 'linear-gradient(135deg, #B470F2 0%, #7B3FD4 100%)',
+}
+
+/** 分类固定底色；未分类/未命中返回 undefined（调用方回退 hash 色板） */
+export function categoryBackground(category?: string): string | undefined {
+  return category ? CATEGORY_GRADIENTS[category] : undefined
+}
+
 /** 稳定 hash（djb2 变体） */
 function hashKey(key: string): number {
   let h = 5381

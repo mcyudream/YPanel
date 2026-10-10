@@ -253,7 +253,13 @@ onBeforeUnmount(() => {
     s.term.dispose()
   })
   sessions.value = []
+  store.terminalSessions = 0
 })
+
+// 会话数回写 store：关闭确认（断开提示）与贴边按钮徽标消费
+watch(() => sessions.value.length, (n) => {
+  store.terminalSessions = n
+}, { immediate: true })
 </script>
 
 <template>

@@ -46,6 +46,7 @@ type WebGwService struct {
 	proxy     map[string]*httputil.ReverseProxy // sid → 专用反代（目标固定，Director 闭包缓存）
 	tokens    map[string]webGwToken             // 网关 Cookie 令牌 → uid（随机不透明值，不存 JWT）
 	lastSid   map[string]string                 // 网关令牌 → 最近使用会话（根逃逸无 Referer 兜底）
+	originOK  map[string]time.Time              // 跨 host 目标校验通过时间（CheckOrigin 结果缓存）
 	transport *http.Transport
 	// 面板自身识别：目标是本机面板时注入 X-Safe-Entry（安全入口使 iframe 内登录 404）
 	selfPort  int
@@ -160,6 +161,7 @@ func NewWebGwService(ctx context.Context, settings *SettingService) *WebGwServic
 		proxy:     map[string]*httputil.ReverseProxy{},
 		tokens:    map[string]webGwToken{},
 		lastSid:   map[string]string{},
+		originOK:  map[string]time.Time{},
 		transport: webGwTransport(),
 	}
 	// 过期会话惰性清理：每分钟一轮
@@ -192,6 +194,11 @@ func (s *WebGwService) cleanup() {
 		if now.After(t.ExpiresAt) {
 			delete(s.tokens, tok)
 			delete(s.lastSid, tok)
+		}
+	}
+	for origin, ok := range s.originOK {
+		if now.Sub(ok) > 10*time.Minute {
+			delete(s.originOK, origin)
 		}
 	}
 }
@@ -278,6 +285,32 @@ func (s *WebGwService) Create(rawURL string, uid uint) (*WebGwSession, error) {
 	return ses, nil
 }
 
+// originCheckTTL 跨 host 目标校验结果缓存时长（防页面高频跨 host 请求每请求 DNS）。
+const originCheckTTL = 5 * time.Minute
+
+// CheckOrigin 校验页面声明的跨 host 目标（/s/{sid}/~h/<b64>）：
+// 形态仅 http/https；主机目标校验与会话创建同口径（私网默认/公网开关），结果短缓存。
+// DialContext 每连接私网复核仍生效，缓存只省 DNS 不放行任何非私网落连。
+func (s *WebGwService) CheckOrigin(origin string) error {
+	u, err := url.Parse(origin)
+	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
+		return errs.Wrap(errs.ErrBadRequest, "非法的跨主机目标")
+	}
+	s.mu.RLock()
+	at, ok := s.originOK[origin]
+	s.mu.RUnlock()
+	if ok && time.Since(at) < originCheckTTL {
+		return nil
+	}
+	if err := s.validateTarget(u.Hostname()); err != nil {
+		return err
+	}
+	s.mu.Lock()
+	s.originOK[origin] = time.Now()
+	s.mu.Unlock()
+	return nil
+}
+
 // Get 取会话（自动判过期）。
 func (s *WebGwService) Get(sid string) *WebGwSession {
 	s.mu.RLock()
@@ -349,6 +382,22 @@ func (s *WebGwService) newProxy(ses *WebGwSession) *httputil.ReverseProxy {
 	if err != nil {
 		slog.Error("webgw: 会话目标非法", "target", ses.Target, "err", err)
 	}
+	return s.newReverseProxy(target, "/s/"+ses.Sid)
+}
+
+// CrossProxy 跨 host 请求代理（/s/{sid}/~h/<b64url(origin)>）：目标来自页面声明、
+// 进入前已过 CheckOrigin。请求级构造（对象轻量、transport 共享），
+// 改写前缀携带 host 段，Set-Cookie/Location 不丢跨 host 归属。
+func (s *WebGwService) CrossProxy(origin, prefix string) *httputil.ReverseProxy {
+	target, err := url.Parse(origin)
+	if err != nil {
+		slog.Error("webgw: 跨主机目标非法", "origin", origin, "err", err)
+	}
+	return s.newReverseProxy(target, prefix)
+}
+
+// newReverseProxy 会话固定目标与跨 host 目标共用的反代构造。
+func (s *WebGwService) newReverseProxy(target *url.URL, prefix string) *httputil.ReverseProxy {
 	return &httputil.ReverseProxy{
 		Transport:     s.transport,
 		FlushInterval: -1, // SSE/日志类流即时冲刷
@@ -358,6 +407,9 @@ func (s *WebGwService) newProxy(ses *WebGwSession) *httputil.ReverseProxy {
 			r.URL.Host = target.Host
 			r.Host = target.Host // 保留目标 Host（应用虚拟主机/校验场景）
 			s.applySelfEntry(r)  // 目标是本机面板时补安全入口头
+			// 剥压缩协商：proxy-lib 需往 html 注入脚本，必须拿到明文体；
+			// 请求无该头时 transport 自动加 gzip 并透明解压（出口方向暂无压缩，内网可接受）
+			r.Header.Del("Accept-Encoding")
 			r.Header.Set("X-Forwarded-Proto", "http")
 			if r.TLS != nil {
 				r.Header.Set("X-Forwarded-Proto", "https")
@@ -366,29 +418,11 @@ func (s *WebGwService) newProxy(ses *WebGwSession) *httputil.ReverseProxy {
 			r.Header.Set("X-Forwarded-For", r.RemoteAddr)
 		},
 		ModifyResponse: func(w *http.Response) error {
-			h := w.Header
-			prefix := "/s/" + ses.Sid
-			// 允许被窗口 iframe 渲染
-			h.Del("X-Frame-Options")
-			if v := h.Get("Content-Security-Policy"); v != "" {
-				h.Set("Content-Security-Policy", relaxFrameAncestors(v))
-			}
-			// Set-Cookie：去 Domain（host-only 到面板域）+ Path 前插会话前缀（多会话隔离）
-			cookies := h.Values("Set-Cookie")
-			if len(cookies) > 0 {
-				h.Del("Set-Cookie")
-				for _, c := range cookies {
-					h.Add("Set-Cookie", rewriteSetCookie(c, prefix))
-				}
-			}
-			// Location：绝对目标地址与站内绝对路径都改回会话前缀
-			if loc := h.Get("Location"); loc != "" {
-				h.Set("Location", rewriteLocation(loc, target, prefix))
-			}
+			rewriteResponseHeaders(&w.Header, target, prefix)
 			return nil
 		},
 		ErrorHandler: func(w http.ResponseWriter, r *http.Request, err error) {
-			slog.Warn("webgw: 目标不可达", "sid", ses.Sid[:8], "target", ses.Target, "err", err)
+			slog.Warn("webgw: 目标不可达", "prefix", prefix, "target", target.String(), "err", err)
 			w.Header().Set("Content-Type", "text/html; charset=utf-8")
 			w.WriteHeader(http.StatusBadGateway)
 			fmt.Fprintf(w, `<!doctype html><meta charset="utf-8"><title>目标不可达</title>
@@ -397,9 +431,39 @@ func (s *WebGwService) newProxy(ses *WebGwSession) *httputil.ReverseProxy {
 <h2 style="margin:0 0 8px;font-size:18px">面板无法连接到目标</h2>
 <p style="margin:0 0 4px;font-size:14px;color:#64748b">%s</p>
 <p style="margin:0;font-size:12px;color:#94a3b8">请确认目标服务已启动且端口正确，可尝试刷新。</p>
-</div></body>`, ses.Target)
+</div></body>`, target.String())
 		},
 	}
+}
+
+// rewriteResponseHeaders 响应头改写（会话与跨 host 共用）：
+//   - 允许被窗口 iframe 渲染：剥 X-Frame-Options；
+//   - CSP 方案 A（M56）：text/html 删整头——proxy-lib 注入与请求改写不得受
+//     script-src/connect-src 限制，安全由令牌门禁 + 出站私网复核承担；非 html relax frame-ancestors；
+//   - Set-Cookie：去 Domain（host-only 到面板域）+ Path 前插会话前缀（多会话隔离）；
+//   - Location：绝对目标地址与站内绝对路径都改回会话前缀。
+func rewriteResponseHeaders(h *http.Header, target *url.URL, prefix string) {
+	h.Del("X-Frame-Options")
+	if IsHTMLContentType(h.Get("Content-Type")) {
+		h.Del("Content-Security-Policy")
+	} else if v := h.Get("Content-Security-Policy"); v != "" {
+		h.Set("Content-Security-Policy", relaxFrameAncestors(v))
+	}
+	cookies := h.Values("Set-Cookie")
+	if len(cookies) > 0 {
+		h.Del("Set-Cookie")
+		for _, c := range cookies {
+			h.Add("Set-Cookie", rewriteSetCookie(c, prefix))
+		}
+	}
+	if loc := h.Get("Location"); loc != "" {
+		h.Set("Location", rewriteLocation(loc, target, prefix))
+	}
+}
+
+// IsHTMLContentType 与注入器同口径的 html 判定（Content-Type 前缀 text/html，忽略参数与大小写）。
+func IsHTMLContentType(ct string) bool {
+	return strings.HasPrefix(strings.ToLower(strings.TrimSpace(ct)), "text/html")
 }
 
 // relaxFrameAncestors 把 CSP 中 frame-ancestors 指令宽化为 *（其余指令原样保留）。

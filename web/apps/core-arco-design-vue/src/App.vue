@@ -12,6 +12,7 @@ import 'dayjs/locale/zh-cn'
 const route = useRoute()
 
 const appSettingsStore = useAppSettingsStore()
+const appAccountStore = useAppAccountStore()
 
 const { auth } = useAppAuth()
 const { generateTitle } = useAppMenu()
@@ -49,6 +50,12 @@ const isAuth = computed(() => {
   })
 })
 
+// M57 快速工作台浮层：仅经典面板（桌面有窗口体系）+ 已登录 + 有文件或终端权限时显示
+const dockAllowed = computed(() => {
+  return useAppAccountStore().isLogin && auth(['file:read', 'terminal:access'])
+})
+const isDesktopRoute = computed(() => route.path.startsWith('/desktop'))
+
 // 设置网页 title
 watch([
   () => appSettingsStore.settings.app.dynamicTitle,
@@ -85,8 +92,10 @@ onMounted(() => {
       <AppNotAllowed v-else />
     </RouterView>
     <AppBackToTop />
-    <!-- B18：全局 AI 浮层（登录后任意页面可用） -->
-    <AiFloatLayer v-if="isAuth" />
+    <!-- B18：全局 AI 浮层（登录后任意页面可用；登录页不渲染——isAuth 只判路由权限不判登录态） -->
+    <AiFloatLayer v-if="isAuth && appAccountStore.isLogin" />
+    <!-- M57：全局快速工作台浮层（文件树/编辑器/终端，最小化跨路由留存） -->
+    <YdQuickDock v-if="isAuth && appAccountStore.isLogin && dockAllowed && !isDesktopRoute" />
     <FaToast :theme="appSettingsStore.currentColorScheme" />
     <AppSystemInfo />
   </Provider>

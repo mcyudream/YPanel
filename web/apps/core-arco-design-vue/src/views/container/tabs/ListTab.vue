@@ -4,7 +4,6 @@ import { LabelComposeProject } from '@/api/modules/container'
 import apiContainer from '@/api/modules/container'
 import { dockerExtApi } from '@/api/modules/dockerext'
 import { dockerImgApi } from '@/api/modules/dockerenv'
-import FileEditorWorkspace from '@/views/file_management/editor/Workspace.vue'
 import YdDangerDelete from '@/components/YdDangerDelete/index.vue'
 import ContainerForm from '../components/ContainerForm.vue'
 import DockerInstallWizard from '../components/DockerInstallWizard.vue'
@@ -554,7 +553,6 @@ onBeforeUnmount(() => {
 
     <ContainerForm v-model="createVisible" mode="create" @created="load(true)" />
     <ContainerForm v-model="editVisible" mode="edit" :container-id="editId" @saved="load(true)" />
-    <FileEditorWorkspace />
     <!-- M35：提交为镜像 -->
     <FaModal v-model="commitVisible" :title="$t('container.list.commitModalTitle', { name: commitTarget?.name || '' })" :destroy-on-close="true">
       <div class="flex flex-col gap-3">

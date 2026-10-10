@@ -381,4 +381,9 @@ export default {
     copyTipSuffix: '.',
     copySettings: 'Copy Settings',
   },
+  ydQuickDock: {
+    label: 'Workspace',
+    tip: 'Quick workspace: files / editor / terminal',
+    resizeTip: 'Drag to resize panel width',
+  },
 }

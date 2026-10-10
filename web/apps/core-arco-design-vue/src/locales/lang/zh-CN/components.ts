@@ -381,4 +381,9 @@ export default {
     copyTipSuffix: '文件中。',
     copySettings: '复制配置',
   },
+  ydQuickDock: {
+    label: '工作台',
+    tip: '快速工作台：文件 / 编辑器 / 终端',
+    resizeTip: '拖拽调整面板宽度',
+  },
 }

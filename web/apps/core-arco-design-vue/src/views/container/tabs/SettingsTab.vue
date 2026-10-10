@@ -5,7 +5,6 @@ import { dockerInstallApi } from '@/api/modules/dockerinstall'
 import type { DockerPrecheck } from '@/api/modules/dockerinstall'
 import DockerInstallWizard from '../components/DockerInstallWizard.vue'
 import { dockerImgApi } from '@/api/modules/dockerenv'
-import FileEditorWorkspace from '@/views/file_management/editor/Workspace.vue'
 import { i18n } from '@/locales'
 
 // Docker 配置（M23）：daemon.json 统一走文件工作台编辑（保存自动存版本），此处负责重启生效与仓库管理。
@@ -356,7 +355,6 @@ function removeRegistry(reg: string) {
     </FaModal>
 
     <DockerInstallWizard v-model="installVisible" @installed="onInstalled" />
-    <FileEditorWorkspace />
   </div>
     </FaPageMain>
   </div>

@@ -6,7 +6,6 @@ import apiContainer, { LabelComposeProject, LabelComposeService } from '@/api/mo
 import apiFile from '@/api/modules/file'
 import { storeApi, type StoreAppItem, type StoreInstall } from '@/api/modules/store'
 import SrcCreateWizard from '@/views/container/components/SrcCreateWizard.vue'
-import FileEditorWorkspace from '@/views/file_management/editor/Workspace.vue'
 import { i18n, tr } from '@/locales'
 import { useYwEmbed } from '@/views/desktop/embed'
 
@@ -668,7 +667,6 @@ onBeforeUnmount(() => {
     <!-- 从源码创建（M26 P2，组件自含弹窗） -->
     <SrcCreateWizard v-model="srcWizardVisible" @created="onSrcCreated" />
 
-    <FileEditorWorkspace />
   </div>
     </FaPageMain>
   </div>

@@ -100,14 +100,18 @@ async function ensureMonaco(): Promise<MonacoNamespace> {
 export const useFileEditorStore = defineStore('fileEditor', () => {
   // ---- 弹窗与节点 ----
   const visible = ref(false)
-  /** 弹窗动画结束（opened 或可见后 350ms 兜底）后置 true：monaco 等需要真实容器尺寸的子组件此时才挂载 */
+  /** 面板动画结束（可见后 350ms 兜底）后置 true：monaco 等需要真实容器尺寸的子组件此时才挂载 */
   const editorOpened = ref(false)
+  /** 内容树是否已（曾）挂载：首次 openWorkspace 才挂载（monaco/xterm 不进首屏），关闭时复位卸载；最小化保持 true */
+  const everOpened = ref(false)
+  /** 活动终端会话数（TerminalPanel 回写，关闭确认与贴边按钮徽标用） */
+  const terminalSessions = ref(0)
   watch(visible, (v) => {
     if (!v) {
       editorOpened.value = false
       return
     }
-    // FaModal 定制尺寸下 @opened 可能不触发，用动画时长兜底
+    // 滑入动画约 300ms，等动画结束再放行 monaco 挂载（0 尺寸量测坑）
     setTimeout(() => {
       if (visible.value) {
         editorOpened.value = true
@@ -510,6 +514,7 @@ export const useFileEditorStore = defineStore('fileEditor', () => {
   const initialDir = ref('')
 
   async function openWorkspace(path?: string, node?: string, containerId?: string, initialDirArg?: string) {
+    everOpened.value = true
     visible.value = true
     currentContainer.value = containerId ?? ''
     // 仅显式传入时生效（文件管理等全盘入口不传则保持根目录）
@@ -525,14 +530,34 @@ export const useFileEditorStore = defineStore('fileEditor', () => {
     }
   }
 
-  /** 关闭工作台：有未保存内容时返回 'confirm' 由 UI 走确认。 */
+  /** 最小化到贴边按钮：仅隐藏面板，tabs/终端会话全保留（跨路由存活）。 */
+  function requestMinimize() {
+    visible.value = false
+  }
+
+  /** 关闭工作台：有未保存内容或活动终端会话时返回 'confirm' 由 UI 走确认。 */
   function requestClose(): 'confirm' | 'closed' {
-    if (dirtyCount.value > 0) {
+    if (dirtyCount.value > 0 || terminalSessions.value > 0) {
       return 'confirm'
     }
+    closeAll()
+    return 'closed'
+  }
+
+  /** 全量关闭：dispose 全部 model、清空状态、卸载内容树（终端 WS 随组件卸载断开）。 */
+  function closeAll() {
+    for (const id of Object.keys(tabs.value)) {
+      delete tabs.value[id]
+      modelRegistry.get(id)?.dispose()
+      modelRegistry.delete(id)
+    }
+    groups.value = []
+    activeGroupId.value = 0
+    currentContainer.value = ''
+    initialDir.value = ''
     visible.value = false
     editorOpened.value = false
-    return 'closed'
+    everOpened.value = false
   }
 
   async function loadNodes() {
@@ -548,6 +573,8 @@ export const useFileEditorStore = defineStore('fileEditor', () => {
   return {
     visible,
     editorOpened,
+    everOpened,
+    terminalSessions,
     nodes,
     currentNode,
     currentContainer,
@@ -581,6 +608,8 @@ export const useFileEditorStore = defineStore('fileEditor', () => {
     toggleMinimap,
     openWorkspace,
     requestClose,
+    requestMinimize,
+    closeAll,
     loadNodes,
     getModel,
     registerEditor,

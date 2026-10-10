@@ -2,7 +2,6 @@
 import apiContainer from '@/api/modules/container'
 import { LabelComposeProject } from '@/api/modules/container'
 import { i18n, tr } from '@/locales'
-import FileEditorWorkspace from '@/views/file_management/editor/Workspace.vue'
 import ContainerForm from './components/ContainerForm.vue'
 import LogViewer from './components/LogViewer.vue'
 import StatsCharts from './components/StatsCharts.vue'
@@ -477,6 +476,5 @@ onBeforeUnmount(() => {
     <ContainerForm v-model="editVisible" mode="edit" :container-id="id" @saved="onSaved" />
 
     <!-- 文件工作台（容器模式弹窗） -->
-    <FileEditorWorkspace />
   </div>
 </template>

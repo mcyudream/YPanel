@@ -626,3 +626,36 @@
 - **模型侧**：整理/排序跳过 type 'widget'（原位保留，placed 先登记占格）；moveTo 对 widget 项特殊化——挤开非 widget 占位者、widget 互撞走自由位重定位、撞 blockedCells（若将来有）自由位重定位。
 - **坑**：①落点换算的行必须做上界钳制（rows - spanH），否则向下拖出视口；②shadow 对账的回写要在 onCommit 单点做，别在 onChange 里互相触发（双方都 notify，无守卫即死循环）。
 - **来源**：2026-10-10，桌面小组件原生化（方案 A，vendor widget-model/desktop-model/desktop/host + YPanel 壳）。
+
+### IAB 对跨源 iframe 的 evaluate 运行在隔离世界：window 变量与 fetch 全部失真，页面验证必须走「inline script 写 DOM」回路
+
+- **现象**：验收 webgw proxy-lib 注入效果时，注入标签在、脚本 200，但 `frameLocator(iframe).locator("body").evaluate(() => window.__YP_WEBGW_HOOKED__)` 恒为 false、在 evaluate 里发起跨 host fetch 报 CORS 失败——差点误判「库未执行」，差点去改没毛病的代码。同一批里 `securitypolicyviolation` 无事件、动态 script 探针 onload/onerror 交替，全是同一个根因的连带伪影。
+- **根因**：ZCode IAB（Playwright surface）对**跨源 iframe**（webgw 的 8881 端口文档相对面板 8880 即跨源）的 evaluate 运行在**隔离世界（isolated world）**：与页面真实 JS 世界互不可见——页面 hook 过的 `window.fetch`、脚本设置的 `window.__YP_WEBGW__` 在隔离世界读到的都是原生值/undefined；反向，隔离世界发起的 fetch 也不走页面的 hook。**DOM 是两个世界共享的**。
+- **规避/解决**：跨源 iframe 的页面行为验证一律走「页面世界回路」——evaluate 里 `document.createElement('script')` + `textContent` 注入内联脚本（在页面世界执行），把要观测的状态（hook 标志、fetch 结果）写到 `document.body.setAttribute('data-*', …)`，再从 evaluate 读 DOM 属性。直接读 window 变量/调 fetch 的结论一律不作数。同族坑：webos 窗口层按钮 `locator.click()` 可能超时不落地（坐标/可点击判定问题），用 evaluate 里 `el.click()`；图标按钮 `textContent` 为空，按 `aria-label` 定位。
+- **来源**：2026-10-10，M56 浏览器层验收（142 桌面工作台内网浏览器窗，回路法实测 hooked:true + 跨 host fetch 改写成功）。
+
+### App.vue 全局浮层的 isAuth 守卫只判路由权限不判登录态：登录页会渲染全局浮层
+
+- **现象**：登录页出现 AI 悬浮球/快速工作台浮层。守卫写的是 `isAuth = route.matched.every(item => auth(item.meta.auth ?? ''))`——登录页路由没有 `meta.auth`，`auth('')` 恒为 true，`isAuth` 恒真。
+- **规避/解决**：全局级浮层（AiFloatLayer/YdQuickDock 等）挂 App.vue 时守卫必须是 `isAuth && accountStore.isLogin`——路由权限与登录态是两个正交维度。验证：登录页断言悬浮球选择器不存在 + 登录后断言恢复（不误伤）。
+- **来源**：2026-10-10，用户反馈登录页出现 AI 悬浮窗（20261010.1455-dev 修复）。
+
+### 浏览器侧过安全入口的正确姿势：入口路径种 cookie / localStorage.login_entry，`?entry=` 查询参数对 SPA 无效
+
+- **现象**：自动化验收带 `?entry=<段>` 打开面板登录页，登录请求全部 404/不发；人工浏览器登录却正常。
+- **根因**：SecurityGate 只对 `/api/v1/auth/login` 检查入口（query `?entry=`/`X-Safe-Entry` 头/`yp_entry_ok` cookie 三选一），但 SPA 的登录页**不读页面 URL 的 entry 查询参数**——浏览器侧两条正路：① 先访问入口路径 `http://host/<入口段>`（EntryGate 种 30 天 HttpOnly cookie，之后同源全放行）；② dev/代理下给 localStorage 写 `login_entry`（fa 的 `api/modules/app.ts` 登录时取它作 `X-Safe-Entry` 头）。`?entry=` 只对裸 API 调用（curl/脚本）有意义。
+- **规避/解决**：浏览器自动化登录用 ② 最省事（`localStorage.setItem('login_entry', '<入口段>')` 后再提交）；生产用户引导走 ①。另有三件套坑叠加：fa 登录按钮是 `type="submit"` 且无 onClick（合成 click 不触发原生提交，必须 `form.requestSubmit()`）；输入赋值用原生 value setter + `input` 事件；**表单字段选择器必须限定在 `form` 内**（页面上其它组件的输入框会抢 `querySelector`）。
+- **来源**：2026-10-10，M57 快速工作台验收（用户指正「入口写错了」后核对 security_gate.go/entrygate.go/app.ts 定位）。
+
+### 遮挡窗口 rAF 冻结会让 Vue Transition 的 leave 永不完成：v-show 卡在可见态；显隐应改 class 切换 + CSS transform
+
+- **现象**：遮挡 IAB 里点击最小化，store 状态已翻转但面板 `display:flex` 原地不动，DOM 挂着 `*-leave-from *-leave-active` 类；`requestAnimationFrame` 探针确认永不回调（`visibilityState` 却是 'visible'）。此前 exp 只记录了 RouterView out-in 卡死，**任何** `<Transition>` 包 `v-show` 都中招。
+- **根因**：Vue Transition 的 leave 完成判定依赖 rAF 驱动的过渡结束探测；Chromium 对遮挡/后台渲染进程暂停 rAF，过渡永不结束，元素停在过渡首帧（可见）。
+- **规避/解决**：自绘浮层的显隐不用 `<Transition>`——常驻渲染 + class 切换：`.panel { transition: transform .3s ease }` + 关闭类 `transform: translateX(102%); visibility: hidden; pointer-events: none`（visibility 不进 transition-property，**隐藏语义即时生效**，不依赖 rAF；滑动动画仅作真实窗口的视觉增强）。附带收益：transform 不改布局尺寸，xterm/monaco 的 ResizeObserver 不会经历 0 尺寸抖动。
+- **来源**：2026-10-10，M57 快速工作台最小化卡可见态排查（rAF 探针一次定位）。
+
+### 遮挡窗口里合成输入全免疫（monaco/xterm/CTA 都不达）：会话类功能验收改走后端进程取证
+
+- **现象**：遮挡 IAB 里给 xterm textarea 派发 keydown、给 monaco 的 textarea 派发 beforeinput/input、`document.execCommand('insertText')`、`tab.cua.type` 真实输入——终端无回显、编辑器不变脏，全部静默无效（此前 exp 已知 CUA 不可靠，本条把「合成键盘事件」也证实无效）。
+- **规避/解决**：不与渲染层较劲，**后端取证**判定会话留存：面板里开终端 → SSH 到被管机 `ps -eo pid,etime,cmd | grep ypanel-bashrc`（agent PTY bash 带 `/tmp/ypanel-bashrc-*.sh` rcfile 特征），跨路由/最小化操作后同一 PID etime 持续增长 = 同一会话存活；关闭后 PID 消失 = WS 真断。配合前端 pinia state（tabs/terminalSessions）与 xterm DOM 计数双端断言。xterm 缓冲在遮挡窗口下 `.xterm-rows` 可能为空（渲染暂停），不能作为「会话丢了」的判据。
+- **来源**：2026-10-10，M57 跨路由会话留存验收（142 ps etime 前后对照实证留存与回收）。

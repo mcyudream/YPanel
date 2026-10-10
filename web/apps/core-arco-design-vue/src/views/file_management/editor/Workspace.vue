@@ -8,7 +8,9 @@ import FileTreePanel from './FileTreePanel.vue'
 import StatusBar from './StatusBar.vue'
 import TerminalPanel from './TerminalPanel.vue'
 
-// 文件编辑工作台：FaModal 近全屏弹窗，VS Code 式布局（侧栏 | 编辑器组 | 终端 | 状态栏）。
+// 文件编辑工作台内容面板：VS Code 式布局（侧栏 | 编辑器组 | 终端 | 状态栏）。
+// M57 起由全局浮层 YdQuickDock 承载（App.vue 单实例、跨路由常驻），本组件只管内容布局与快捷键；
+// 显隐（v-show/动画）由壳层控制，最小化不卸载本组件（终端会话留存），关闭由 store.closeAll() 复位。
 const store = useFileEditorStore()
 
 // 侧栏宽度 / 终端高度拖拽回写
@@ -80,57 +82,41 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <FaModal
-    v-model="store.visible"
-    :header="false"
-    :footer="false"
-    :closable="false"
-    :close-on-press-escape="false"
-    :close-on-click-overlay="false"
-    :border="false"
-    :draggable="false"
-    class="h-[94vh]! max-h-[94vh]! w-[97vw]! max-w-[97vw]! sm:top-[3vh]!"
-    content-class="p-0! min-h-0! flex-1 overflow-hidden"
-    :destroy-on-close="true"
-    @opened="store.editorOpened = true"
-    @close="store.editorOpened = false"
-  >
-    <div class="flex h-full flex-col overflow-hidden bg-background text-foreground">
-      <EditorToolbar />
+  <div class="flex h-full flex-col overflow-hidden bg-background text-foreground">
+    <EditorToolbar />
 
-      <!-- 主区域：侧栏 | 内容 -->
-      <div class="min-h-0 flex-1">
-        <Splitpanes class="h-full" @resized="onOuterResized">
-          <FileTreePanel v-if="store.layout.sidebarVisible && store.layout.sidebarSide === 'left'" />
-          <Pane :size="store.layout.sidebarVisible ? 100 - store.layout.sidebarWidth : 100" min-size="30" class="min-h-0 min-w-0">
-            <!-- 内容：编辑器组 + 终端 -->
-            <Splitpanes v-if="store.layout.terminalVisible" class="h-full" :horizontal="store.layout.terminalSide === 'bottom'" @resized="onContentResized">
-              <Pane :size="100 - store.layout.terminalSize" min-size="20" class="min-h-0 min-w-0">
-                <Splitpanes class="h-full">
-                  <EditorGroup
-                    v-for="g in store.groups"
-                    :key="g.id"
-                    :group="g"
-                    :size="100 / store.groups.length"
-                  />
-                </Splitpanes>
-              </Pane>
-              <TerminalPanel :horizontal="store.layout.terminalSide === 'bottom'" />
-            </Splitpanes>
-            <Splitpanes v-else class="h-full">
-              <EditorGroup
-                v-for="g in store.groups"
-                :key="g.id"
-                :group="g"
-                :size="100 / store.groups.length"
-              />
-            </Splitpanes>
-          </Pane>
-          <FileTreePanel v-if="store.layout.sidebarVisible && store.layout.sidebarSide === 'right'" />
-        </Splitpanes>
-      </div>
-
-      <StatusBar />
+    <!-- 主区域：侧栏 | 内容 -->
+    <div class="min-h-0 flex-1">
+      <Splitpanes class="h-full" @resized="onOuterResized">
+        <FileTreePanel v-if="store.layout.sidebarVisible && store.layout.sidebarSide === 'left'" />
+        <Pane :size="store.layout.sidebarVisible ? 100 - store.layout.sidebarWidth : 100" min-size="30" class="min-h-0 min-w-0">
+          <!-- 内容：编辑器组 + 终端 -->
+          <Splitpanes v-if="store.layout.terminalVisible" class="h-full" :horizontal="store.layout.terminalSide === 'bottom'" @resized="onContentResized">
+            <Pane :size="100 - store.layout.terminalSize" min-size="20" class="min-h-0 min-w-0">
+              <Splitpanes class="h-full">
+                <EditorGroup
+                  v-for="g in store.groups"
+                  :key="g.id"
+                  :group="g"
+                  :size="100 / store.groups.length"
+                />
+              </Splitpanes>
+            </Pane>
+            <TerminalPanel :horizontal="store.layout.terminalSide === 'bottom'" />
+          </Splitpanes>
+          <Splitpanes v-else class="h-full">
+            <EditorGroup
+              v-for="g in store.groups"
+              :key="g.id"
+              :group="g"
+              :size="100 / store.groups.length"
+            />
+          </Splitpanes>
+        </Pane>
+        <FileTreePanel v-if="store.layout.sidebarVisible && store.layout.sidebarSide === 'right'" />
+      </Splitpanes>
     </div>
-  </FaModal>
+
+    <StatusBar />
+  </div>
 </template>
