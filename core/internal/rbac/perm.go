@@ -228,6 +228,8 @@ func CallerFrom(ctx context.Context) (Caller, bool) {
 // write/danger 风险一律取写点；模块未登记时回落 ai:use / ai:admin。
 var aiModulePerm = map[string][2]string{
 	"system":           {"dashboard:read", "host:manage"},
+	"monitor_alert":    {"monitor:read", "monitor:read"},
+	"panel_ops":        {"panel:read", "panel:manage"},
 	"docker_containers": {"docker:read", "docker:write"},
 	"docker_images":     {"docker:read", "docker:write"},
 	"docker_networks":   {"docker:read", "docker:write"},
@@ -246,7 +248,15 @@ var aiModulePerm = map[string][2]string{
 	"diagnostics":       {"monitor:read", "monitor:read"},
 	"panel_ai":          {"ai:use", "ai:admin"},
 	"meta":              {"ai:use", "ai:use"},
-	"mcp":               {"mcp:manage", "mcp:manage"},
+}
+
+// ToolModules 已登记的工具模块清单（覆盖测试/管理页用）。
+func ToolModules() []string {
+	out := make([]string, 0, len(aiModulePerm))
+	for m := range aiModulePerm {
+		out = append(out, m)
+	}
+	return out
 }
 
 // ToolPerm 工具模块 → 权限点（read 取读点，其余取写点；未知模块回落 ai:use/ai:admin）。

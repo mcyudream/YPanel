@@ -97,14 +97,25 @@ php 站点 fastcgi 段**必须显式包含** `fastcgi_param CONTENT_TYPE $conten
 
 重装语义=站点目录原位保留 + 源码覆盖（.env/storage 不丢）；app.json `upgrade.backup=true` 时重装前自动 tar 站点目录（备份失败即中止），`upgrade.commands` 在版本变更时替代 install 命令执行。
 
-## 6. Git 规范
+## 6. AI 工具同步规范（M33 固化）
+
+面板功能与 AI 工具注册表**必须同步维护**——功能上线而工具缺失 = 功能不完整：
+
+- **新增功能**（新路由域/新服务能力）：在 `core/internal/service/aitools_*.go` 同步提供工具（名称/描述/JSON Schema/风险级/节点参数），并在 `internal/rbac/perm.go` 的 `aiModulePerm` 确认权限点映射、`aiModuleRegistry` 确认目录条目；
+- **修改功能**（参数/行为/返回变化）：同步更新对应工具的 Desc/Schema/实现，确保模型调用不失效；
+- **强制校验**：`go test ./internal/service/ -run TestAITools`——`TestAIToolsCoverAllRouteDomains` 扫描 router.go 全部 authed 路由域，未映射到工具模块的域会点名失败（新域在测试的 `routeDomainMap` 补映射或加入 `routeWhitelist`）；`TestAIModuleRegistryConsistent` 校验模块注册表与权限表一致；
+- **节点语义**：涉及节点资源的工具必须支持 `node` 可选参数（helper 层 `withAINode`/`acFromCtx` 统一解析；Docker 域走 `DockerExtService.WithNode`）；
+- **风险分级**：每个工具必须声明 risk（read/write/danger），danger 工具描述中注明确认语义；未登记模块回落 ai:use/ai:admin；
+- **节点化现状豁免域**：databases（实例 host 即位置）、sites_certs（nginx 单机）、panel_ops/monitor 的面板全局数据、srcbuild（构建固定面板机）。
+
+## 7. Git 规范
 
 - 分支：`main` 稳定；功能分支 `feat/xxx`，修复 `fix/xxx`
 - 提交信息：中文，格式 `类型: 描述`（feat/fix/docs/refactor/chore），如 `feat: 容器列表接口`
 - 禁止提交：`docs/local.md`、`reference/`、`.env*`、构建产物、真实凭证
 - 提交前自查：无调试日志、无注释掉的死代码、无 TODO 无主的临时代码
 
-## 7. 文档与计划
+## 8. 文档与计划
 
 - 新模块开发前：docs/plan/ 下先有计划（目标/工作项/验收标准），经确认后动工
 - 计划完成后在计划文档标注状态；长期结论沉淀回 docs/ 或 docs/dev/
