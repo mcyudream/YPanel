@@ -59,6 +59,8 @@ function nodeInstallable(i: VLInstance) {
   return i.online && !i.found
 }
 
+const installableNodes = computed(() => instances.value.filter(nodeInstallable))
+
 // 在商店应用列表中定位应用所在源：VL/vector 为 YPanel 收录版（默认参数对接面板 VL），
 // 同名应用存在于多个源时优先非 1Panel 源
 async function resolveSourceId(key: string): Promise<number> {
@@ -72,9 +74,9 @@ async function resolveSourceId(key: string): Promise<number> {
   return found[0].sourceId
 }
 
-async function installStack(nodeId: string) {
+async function installStack(nodeId: string, opts?: { silent?: boolean }): Promise<boolean> {
   if (installingNodes.value.includes(nodeId))
-    return
+    return false
   const t = i18n.global.t
   installingNodes.value = [...installingNodes.value, nodeId]
   try {
@@ -82,16 +84,40 @@ async function installStack(nodeId: string) {
     for (let i = 0; i < LOG_STACK_KEYS.length; i++) {
       await storeApi.install({ sourceId: sourceIds[i], key: LOG_STACK_KEYS[i], version: '', name: LOG_STACK_KEYS[i], params: {}, nodeId })
     }
-    useFaToast().success(t('logcenter.status.installQueued'))
+    if (!opts?.silent)
+      useFaToast().success(t('logcenter.status.installQueued'))
     // VL 容器启动 + agent 发现均有延迟，稍后自动刷新一次状态
     setTimeout(() => { void loadStatus() }, 45_000)
+    return true
   }
   catch (e: any) {
     useFaToast().error(t('logcenter.status.installFail'), { description: e?.message })
+    return false
   }
   finally {
     installingNodes.value = installingNodes.value.filter(n => n !== nodeId)
   }
+}
+
+// 一键接入全部未安装节点：节点间串行（避免商店安装并发互踩），单节点内 VL→Vector 串行
+async function installAllMissing() {
+  const t = i18n.global.t
+  const nodes = installableNodes.value.map(i => i.nodeId)
+  if (!nodes.length)
+    return
+  useFaModal().confirm({
+    title: t('logcenter.status.installAll'),
+    content: t('logcenter.status.installAllConfirm', { n: nodes.length }),
+    onConfirm: async () => {
+      let done = 0
+      for (const n of nodes) {
+        if (await installStack(n, { silent: true }))
+          done++
+      }
+      useFaToast().success(t('logcenter.status.installAllQueued', { done, total: nodes.length }))
+      setTimeout(() => { void loadStatus() }, 45_000)
+    },
+  })
 }
 
 // ---- 保留策略（VL 自动清理过期数据；改 .env + 重建容器生效） ----
@@ -691,13 +717,30 @@ onMounted(async () => {
         <!-- 聚合状态条 -->
         <div class="flex flex-wrap items-center gap-1.5 text-xs">
           <span class="text-muted-foreground">{{ $t('logcenter.status.nodes') }}</span>
-          <span
-            v-for="i in instances" :key="i.nodeId"
-            class="rounded-full px-2 py-0.5"
-            :class="i.online && i.found ? 'bg-emerald-500/10 text-emerald-600' : 'bg-muted text-muted-foreground'"
-            :title="i.error || (i.container ? `${i.container}:${i.port}` : '')"
-          >{{ i.nodeName }} · {{ i.online ? (i.found ? (readyInstances.length > 1 ? $t('logcenter.status.aggregating') : $t('logcenter.status.connected')) : (i.error || $t('logcenter.status.notInstalled'))) : $t('logcenter.status.offline') }}</span>
+          <template v-for="i in instances" :key="i.nodeId">
+            <span
+              class="rounded-full px-2 py-0.5"
+              :class="i.online && i.found ? 'bg-emerald-500/10 text-emerald-600' : 'bg-muted text-muted-foreground'"
+              :title="i.error || (i.container ? `${i.container}:${i.port}` : '')"
+            >{{ i.nodeName }} · {{ i.online ? (i.found ? (readyInstances.length > 1 ? $t('logcenter.status.aggregating') : $t('logcenter.status.connected')) : (i.error || $t('logcenter.status.notInstalled'))) : $t('logcenter.status.offline') }}</span>
+            <FaButton
+              v-if="nodeInstallable(i)"
+              variant="outline"
+              size="sm"
+              class="h-5 rounded-full px-2 text-xs"
+              :loading="installingNodes.includes(i.nodeId)"
+              @click="installStack(i.nodeId)"
+            >{{ $t('logcenter.status.install') }}</FaButton>
+          </template>
           <FaButton size="sm" variant="ghost" class="text-muted-foreground" :loading="statusLoading" @click="loadStatus().then(() => { void reloadFields() })">{{ $t('common.refresh') }}</FaButton>
+          <FaButton
+            v-if="installableNodes.length > 1"
+            size="sm"
+            variant="outline"
+            class="h-5 rounded-full px-2 text-xs"
+            :disabled="installingNodes.length > 0"
+            @click="installAllMissing()"
+          >{{ $t('logcenter.status.installAll') }}（{{ installableNodes.length }}）</FaButton>
           <!-- 保留策略 -->
           <span class="ml-2 text-muted-foreground">{{ $t('logcenter.retention.label') }}</span>
           <span
