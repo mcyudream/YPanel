@@ -64,7 +64,7 @@ onMounted(load)
 <template>
   <div class="space-y-5">
     <div class="rounded-lg border p-4">
-      <div class="mb-3 flex items-center justify-between">
+      <div class="mb-3 flex flex-wrap items-center justify-between">
         <span class="text-sm font-medium">{{ $t('sites.conf.proxy.rules') }}</span>
         <FaButton variant="outline" size="sm" @click="addRule">
           <FaIcon name="i-lucide:plus" class="mr-1" /> {{ $t('sites.conf.proxy.addRule') }}
@@ -93,7 +93,7 @@ onMounted(load)
     </div>
 
     <div class="rounded-lg border p-4">
-      <div class="mb-3 flex items-center justify-between">
+      <div class="mb-3 flex flex-wrap items-center justify-between">
         <div>
           <div class="text-sm font-medium">{{ $t('sites.conf.proxy.cacheTitle') }}</div>
           <p class="mt-0.5 text-xs text-muted-foreground">{{ $t('sites.conf.proxy.cacheDesc') }}</p>

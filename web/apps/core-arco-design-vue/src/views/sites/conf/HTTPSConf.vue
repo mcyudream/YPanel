@@ -168,7 +168,7 @@ onMounted(load)
 <template>
   <div class="space-y-5">
     <div class="rounded-lg border p-4">
-      <div class="flex items-center justify-between">
+      <div class="flex flex-wrap items-center justify-between">
         <div class="flex items-center gap-2 text-sm font-medium">
           {{ $t('sites.conf.https.status') }}
           <span

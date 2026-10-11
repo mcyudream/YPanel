@@ -73,6 +73,9 @@ function renderDuChart() {
     duChartInstance?.dispose()
     duChartInstance = echarts.init(duChartEl.value)
     duChartDom = duChartEl.value
+    // 容器随 DOM 重建重新纳管，侧栏开合/旋转屏后重排
+    duChartRo.disconnect()
+    duChartRo.observe(duChartEl.value)
   }
   duChartInstance.setOption({
     animation: false,
@@ -105,8 +108,14 @@ watch(() => props.disks, (disks) => {
   }
 }, { immediate: true })
 
+// 侧栏开合/旋转屏后图表重排（ResizeObserver 范式，同 StatsCharts）
+const duChartRo = new ResizeObserver(() => {
+  duChartInstance?.resize()
+})
+
 onBeforeUnmount(() => {
   duChartInstance?.dispose()
+  duChartRo.disconnect()
 })
 </script>
 

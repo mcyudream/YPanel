@@ -38,7 +38,7 @@ function handleCollaspe() {
 
 <template>
   <div
-    :class="cn('yp-page-main m-4 flex flex-col overflow-hidden rounded-lg border bg-card transition-[background-color,border-color]', {
+    :class="cn('yp-page-main m-4 flex flex-col overflow-hidden rounded-lg border bg-card transition-[background-color,border-color] max-md:m-0 max-md:rounded-none max-md:border-0', {
       'overflow-hidden': collaspe,
     }, props.class)"
   >
@@ -48,7 +48,7 @@ function handleCollaspe() {
       </slot>
     </div>
     <div
-      :class="cn('group/pagemain relative h-[calc-size(auto,size)] bg-inherit p-4 rounded-lg transition-height', {
+      :class="cn('group/pagemain relative h-[calc-size(auto,size)] bg-inherit p-4 rounded-lg transition-height max-md:p-0 max-md:rounded-none', {
         'border-t': !!slots.title || title,
         'overflow-hidden': collaspe,
         'mask-b-from-12': isCollaspe,

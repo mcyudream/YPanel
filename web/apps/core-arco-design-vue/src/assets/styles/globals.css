@@ -78,3 +78,13 @@ body {
 textarea {
   font-family: inherit;
 }
+
+/* 触屏设备输入字号 ≥16px：iOS Safari 聚焦 <16px 输入框会自动放大页面（viewport 已放开缩放） */
+@media (pointer: coarse) {
+  input,
+  textarea,
+  select {
+    font-size: 16px;
+  }
+}
+

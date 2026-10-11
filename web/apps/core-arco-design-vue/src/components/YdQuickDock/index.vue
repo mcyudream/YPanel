@@ -72,12 +72,12 @@ const hasSessions = computed(() => Object.keys(store.tabs).length > 0 || store.t
          class 切换的隐藏语义（visibility/pointer-events）即时生效，滑入动画仅作视觉增强 -->
     <template v-if="store.everOpened">
       <section
-        class="yd-dock-panel fixed inset-y-[3vh] right-0 z-1600 flex flex-col overflow-hidden border-l bg-background shadow-2xl"
+        class="yd-dock-panel fixed inset-y-[3vh] right-0 z-1600 flex flex-col overflow-hidden border-l bg-background shadow-2xl max-md:inset-y-0 max-md:w-[97vw]! max-md:border-t"
         :class="store.visible ? 'yd-dock-panel-open' : 'yd-dock-panel-closed'"
         :style="{ width: `${dockWidth}vw` }"
       >
         <div
-          class="absolute inset-y-0 left-0 z-10 w-1 cursor-col-resize bg-transparent transition-colors hover:bg-primary/40"
+          class="absolute inset-y-0 left-0 z-10 w-1 cursor-col-resize touch-none bg-transparent transition-colors hover:bg-primary/40 max-md:w-6"
           :title="$t('components.ydQuickDock.resizeTip')"
           @pointerdown="onHandleDown"
         />

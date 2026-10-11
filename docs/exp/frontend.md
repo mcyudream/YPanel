@@ -674,3 +674,31 @@
 - **根因**：exp 既有条目「并行会话 git add -A 卷入未提交改动」的续集——被卷入后 HEAD 本身就是污染态；`git checkout --` 与 git status 都以 HEAD 为基准，对这种污染完全失明。
 - **规避/解决**：并行会话活跃期，「恢复某文件」不能依赖 `git checkout --`，恢复后必须**按内容断言**（grep 关键挂载/符号是否存在）而非看 git status；本例靠「store 状态对但组件树里遍历不到组件实例 → curl dev server 编译产物 grep 挂载 → 磁盘 grep 为 0」三级定位。修复=按锚点重新补齐 6 处挂载（Edit/python 逐文件 assert）。
 - **来源**：2026-10-10，M57 双实例反转后「文件管理的文件打不开」（用户报告，584c037 卷入删行所致）。
+
+### fa 基座下裸 localStorage.getItem('token') 取不到 token：SSE/fetch 直连请求全 401，「AI 长任务自己断联」的根因之一
+
+- **现象**：AI 对话页发消息后流「静默消失」（新加的断流提示显示「连接中断」）；curl 直打同接口正常；页面 axios 请求全部正常。另观察到 IAB 刷新页面后被踢回登录页。
+- **根因**：fa 基座把 `window.localStorage` 换成 `fa_` 键前缀包装实现，但**该包装只在基座模块上下文生效**——`useAppAccountStore().token`（axios 拦截器同源）内存值始终有效，而 `localStorage.getItem('token')` 走原生对象读不到（底层真实键带 `fa_` 前缀，且登录写入的持久化键与读取键可能不一致）。useAiChat/chatStream 裸取 token → Bearer 为空 → 后端 auth 中间件 abort 返回 **HTTP 200 + `{code:2001}` JSON**（非 SSE）→ 前端旧逻辑只查 `resp.ok` 把 JSON 错误体当正常流读尽 → 无内容无报错，「AI 不说话了」。
+- **规避/解决**：① 业务代码取 token 一律 `useAppAccountStore().token`，与 axios 拦截器同源，禁止裸 localStorage.getItem('token')（存量：useEventBus.ts、backups.vue×2、ImagesTab.vue、router/index.ts 同款写法待清理）；② fetch SSE 前的检查改为「content-type 非 event-stream 一律按错误解析」（200+JSON 业务错误体也算失败），不再依赖 resp.ok；③ 后端 SSE 错误帧载荷字段统一 `{"error": ...}`（前端 ev.error 识别），此前发 `{"message": ...}` 前端永远解析不到=错误静默。
+- **附带坑**：evaluate/自动化脚本里 dump `Object.keys(localStorage)` 看到的是底层真实键（全带 fa_ 前缀），别据此推断业务键名。
+- **来源**：2026-10-11，M60 AI 对话断流排查（142 真机复现：浏览器流 0s 断 + curl 正常 + evaluate 复现 tokenLen=0）。
+
+### 跨模块改函数签名只编译单模块不报错：agent CLI 调用点漏改，部署期才炸
+
+- **现象**：部署脚本构建 linux 产物时报 `not enough arguments in call to release.DownloadScript`——HEAD 上一次提交改了 shared 包函数签名（+fallbackURL），core 侧两个调用点改了，agent/cmd/agent/cli.go 的调用点漏改。
+- **根因**：本仓库 core/agent/shared 是独立 go module（core 经 replace 引 shared），在 core/ 目录 `go build ./...` 不会编译 agent 模块；「编译通过」只覆盖了本模块。
+- **规避/解决**：改 shared/ 的导出函数签名后，必须全仓 grep 调用点（`grep -rn "FuncName(" core/ agent/ shared/`）逐个适配；部署前的完整构建（scripts/build.sh 依次构建各模块）是最后防线，别只跑单模块测试就提交。
+- **来源**：2026-10-11，f5bd174（Gitee 下载加固）遗留的 agent CLI 编译错误，M60 部署时暴露。
+
+### AI 聊天页贴底发送键会被全局悬浮球挡住；fa Drawer 预挂载使「同组件双实例」干扰自动化定位
+
+- **现象**：①聊天页发送框改为贴底布局后，右下角圆形发送键被全局 AI 悬浮球（fixed bottom-6 right-6）压住无法点击；②自动化验收会话搜索框时 `getByPlaceholder` fill 成功但页面侧栏关键词不变——`location.reload` 后值「回弹」。
+- **根因**：①两个贴右下角的 fixed 元素同位冲突，z-index 高者胜；②FaDrawer 内容在关闭态即挂载（teleport 到 body），页面里存在**两个 SessionList 实例**（侧栏 + 抽屉），各自持有独立 keyword 状态——locator 命中抽屉实例（不可见）的 input，fill 进了隐藏组件。
+- **规避/解决**：①互斥显示——AiFloatLayer 悬浮球 `v-if="!route.path.startsWith('/ai/chat')"`（有完整对话入口的页面不显示球）；「贴右下角 fixed 元素」新增时先排查与悬浮球/回到底部钮的撞位。②自动化驱动「页面上唯一输入框」前先 `count()` 断言唯一，双实例场景用容器作用域定位（`aside.chat-side input`）+ 原生 value setter + dispatch input 事件驱动 v-model。
+- **来源**：2026-10-11，M60.1 AI 对话页二轮美化 142 真机验收。
+
+### 后台化长任务的浏览器验收：运行态窗口难抓、旧 bundle 打已删端点、locale 残留三连坑
+
+- **现象**：M62（AI 任务后台化）E2E 时反复「发送失败/找不到会话/停止按钮不在」：①发完长任务再定位 UI 时任务常已跑完，抓不到运行态；②部署后旧 tab 不刷新，旧 bundle 打**已删除的端点**得到 404 信封（HTTP 200），表象是「任务没发出去」却无报错弹窗；③验收中改过 locale（localStorage），切换后按钮 title/placeholder 全变英文，双语 locator 失配。
+- **规避/解决**：①**运行态验证改后端断言**：journal 的 run started/finished（status=stopped/done）+ 会话表 updated_at 是确定性证据，不与 UI 抓时机赛跑；需要 UI 挂起态时用 danger 工具的「等待批准」窗口（120s，确定性长态）。②部署后验收第一动作 `tab.reload()` 并断言 `performance.getEntriesByType('resource')` 的 index hash 与服务器 html 一致（同源 hash 导航不重载文档，老坑的新变体：端点被删后旧 bundle 静默失败）。③locale 先归一并 reload，或 locator 全部用双语正则 + 坐标点击兜底（IAB locator click 卡 actionability 是高频坑）。
+- **来源**：2026-10-11 晚，M62 AI 任务持久化 E2E（142 真机，多窗口+强刷新验收）。

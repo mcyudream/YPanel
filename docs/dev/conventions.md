@@ -75,6 +75,19 @@ ypanel/
 - API 层统一封装（错误处理、token 刷新、WS 重连）；禁止组件内裸 fetch
 - 类型完备：API 请求/响应均有 TS 类型，与后端 shared/ 的 dto 对齐（后续考虑代码生成）
 
+### 4.1 移动端适配约定（M61 起）
+
+fa 基座默认放行移动端（`mobile: true`），业务层按「桌面布局优先、md 断点收敛」适配。新写/改造页面必须遵守：
+
+- **断点口径**：md（768px）为移动/桌面收敛线——移动端特有处理一律 `max-md:`（增量、不干扰桌面），桌面降级一律 `md:`/`lg:`；触屏专属特性（快捷键条、长按提示）用 `(pointer: coarse)` 检测。fa 基座 pc/mobile 模式切换线（1024px）与 `useAppSettingsStore().mode` 不在业务层直接分支。
+- **禁止 hover-only**：触屏无 hover，`opacity-0 group-hover:*` 类控件触屏永久不可达——移动端需可达的控件用 `max-md:opacity-60 md:group-hover:opacity-100` 常显弱化态。
+- **表格范式**：表格容器必须 `overflow-x-auto`（禁 `overflow-hidden` 裁剪）+ 次要列 `hidden md:table-cell` 降级；操作列 ≤4 个常显按钮，其余收进「更多」下拉。
+- **宽度约束**：工具栏控件不给超过 3 个连排的固定宽度（`w-44` 类）；浮层/侧板禁写死 `w-96` 级固定宽，用 `max-w-[calc(100vw-2rem)]` 或断点宽度。
+- **高度约束**：禁裸写 `calc(100vh-Npx)` 桌面经验值（N 按桌面页头估算，移动端失真）——必须给 `max-md:` 降扣减档或改 flex 链/dvh。
+- **多栏布局**：splitpanes/多列工作台必须有窄屏策略（max-md 单栏化或侧栏抽屉化）；弹窗内表单网格 `grid-cols-1 sm:grid-cols-2` 起步，禁固定 `grid-cols-2/3` 单档。
+- **图表**：echarts 容器一律配 ResizeObserver（范式见 `container/components/StatsCharts.vue`），旋转屏/侧栏开合自动重排。
+- **弹窗**：宽度只用 `class="max-w-*!"`（FaModal 无 `width` prop，`:width` 是无效透传）；<sm 基座自动全屏 sheet，勿自写全屏逻辑。
+
 ## 5. 商店应用约定
 
 应用打包规范以商店仓库 `YPanel-AppStore/README.md` 为准；扩展可用性实测矩阵见 `docs/dev/php-runtime-extensions.md`。

@@ -340,7 +340,7 @@ onMounted(() => {
             <FaButton size="sm" :loading="sysCreating" @click="createSysSnap">{{ $t('manage.backups.sysCreate') }}</FaButton>
           </div>
         </div>
-        <div v-if="sysSnaps.length" class="mt-3 overflow-hidden rounded-lg border">
+        <div v-if="sysSnaps.length" class="mt-3 overflow-x-auto rounded-lg border">
           <table class="w-full text-sm">
             <thead class="bg-muted/50 text-left text-xs text-muted-foreground">
               <tr><th class="px-3 py-2">{{ $t('manage.backups.file') }}</th><th class="w-24 px-3 py-2">{{ $t('common.size') }}</th><th class="w-44 px-3 py-2">{{ $t('manage.backups.createTime') }}</th><th class="px-3 py-2 text-right">{{ $t('common.operation') }}</th></tr>
@@ -388,7 +388,7 @@ onMounted(() => {
         {{ restoreHint }}
       </div>
 
-      <div class="overflow-hidden rounded-lg border">
+      <div class="overflow-x-auto rounded-lg border">
         <table class="w-full text-sm">
           <thead class="bg-muted/50 text-left text-xs text-muted-foreground">
             <tr>

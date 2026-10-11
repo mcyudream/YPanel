@@ -13,13 +13,21 @@ import TerminalPanel from './TerminalPanel.vue'
 // store 由 useFileEditorStore 的 provide/inject 作用域决定（浮层子树解析到独立实例）。
 const store = useFileEditorStore()
 
-// 侧栏宽度 / 终端高度拖拽回写
+// 侧栏宽度 / 终端高度拖拽回写（侧栏可见性读 eff*：mobile 会话开关与桌面记忆统一口径）
 function onOuterResized(e: SplitpanesResizedPayload) {
   const idx = store.layout.sidebarSide === 'left' ? 0 : e.panes.length - 1
-  if (store.layout.sidebarVisible && e.panes[idx]) {
+  if (store.effSidebarVisible && e.panes[idx]) {
     store.layout.sidebarWidth = Math.round(e.panes[idx].size * 10) / 10
   }
 }
+
+// 侧栏面板宽度：mobile 召回时用更宽的固定值（20% 桌面记忆在 375px 屏只有 ~70px 不可用）
+const sidebarPaneSize = computed(() => {
+  if (!store.effSidebarVisible) {
+    return 100
+  }
+  return store.isMobileLayout ? 45 : 100 - store.layout.sidebarWidth
+})
 
 function onContentResized(e: SplitpanesResizedPayload) {
   const last = e.panes[e.panes.length - 1]
@@ -88,10 +96,10 @@ onBeforeUnmount(() => {
     <!-- 主区域：侧栏 | 内容 -->
     <div class="min-h-0 flex-1">
       <Splitpanes class="h-full" @resized="onOuterResized">
-        <FileTreePanel v-if="store.layout.sidebarVisible && store.layout.sidebarSide === 'left'" />
-        <Pane :size="store.layout.sidebarVisible ? 100 - store.layout.sidebarWidth : 100" min-size="30" class="min-h-0 min-w-0">
+        <FileTreePanel v-if="store.effSidebarVisible && store.layout.sidebarSide === 'left'" />
+        <Pane :size="sidebarPaneSize" min-size="30" class="min-h-0 min-w-0">
           <!-- 内容：编辑器组 + 终端 -->
-          <Splitpanes v-if="store.layout.terminalVisible" class="h-full" :horizontal="store.layout.terminalSide === 'bottom'" @resized="onContentResized">
+          <Splitpanes v-if="store.effTerminalVisible" class="h-full" :horizontal="store.layout.terminalSide === 'bottom'" @resized="onContentResized">
             <Pane :size="100 - store.layout.terminalSize" min-size="20" class="min-h-0 min-w-0">
               <Splitpanes class="h-full">
                 <EditorGroup
@@ -113,10 +121,34 @@ onBeforeUnmount(() => {
             />
           </Splitpanes>
         </Pane>
-        <FileTreePanel v-if="store.layout.sidebarVisible && store.layout.sidebarSide === 'right'" />
+        <FileTreePanel v-if="store.effSidebarVisible && store.layout.sidebarSide === 'right'" />
       </Splitpanes>
     </div>
 
     <StatusBar />
   </div>
 </template>
+
+<style scoped>
+/* 分隔条触屏热区：splitpanes 默认分隔条仅 1px，手指拖不动——伪元素命中即宿主元素，
+   竖排分栏左右外扩 6px、横排分栏上下外扩 6px（touch-action:none 由库样式提供） */
+:deep(.splitpanes--vertical > .splitpanes__splitter) {
+  position: relative;
+}
+
+:deep(.splitpanes--vertical > .splitpanes__splitter)::before {
+  content: '';
+  position: absolute;
+  inset: 0 -6px;
+}
+
+:deep(.splitpanes--horizontal > .splitpanes__splitter) {
+  position: relative;
+}
+
+:deep(.splitpanes--horizontal > .splitpanes__splitter)::before {
+  content: '';
+  position: absolute;
+  inset: -6px 0;
+}
+</style>

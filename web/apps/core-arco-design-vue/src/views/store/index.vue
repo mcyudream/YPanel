@@ -1147,7 +1147,7 @@ function statusText(s: StoreSource) {
         </div>
 
         <!-- 链接信息（对齐 1Panel：官网 / 开源社区 / 文档） -->
-        <div v-if="detailApp.website || detailApp.sourceUrl || detailApp.document" class="grid grid-cols-3 overflow-hidden rounded-lg border text-sm">
+        <div v-if="detailApp.website || detailApp.sourceUrl || detailApp.document" class="grid grid-cols-1 overflow-hidden rounded-lg border text-sm sm:grid-cols-3">
           <a
             v-if="detailApp.website"
             :href="detailApp.website"

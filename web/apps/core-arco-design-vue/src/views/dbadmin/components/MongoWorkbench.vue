@@ -646,9 +646,9 @@ onBeforeUnmount(() => {
 
     <!-- ============ Aggregations ============ -->
     <template v-else-if="tab === 'agg'">
-      <div class="flex min-h-0 flex-1 gap-3">
-        <!-- 管道编辑 -->
-        <div class="flex w-[420px] shrink-0 flex-col gap-2 overflow-auto rounded-md border p-2">
+      <div class="flex min-h-0 flex-1 flex-col gap-3 lg:flex-row">
+        <!-- 管道编辑（窄屏堆叠为顶部限高面板） -->
+        <div class="flex w-[420px] shrink-0 flex-col gap-2 overflow-auto rounded-md border p-2 max-lg:h-56 max-lg:w-full">
           <div class="flex items-center text-xs text-muted-foreground">
             {{ $t('dbadmin.mongo.pipelineHint', { n: MAX_DOCS }) }}
           </div>

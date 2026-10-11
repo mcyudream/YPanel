@@ -60,7 +60,7 @@ onMounted(load)
 <template>
   <div class="space-y-5">
     <div class="rounded-lg border p-4">
-      <div class="flex items-center justify-between">
+      <div class="flex flex-wrap items-center justify-between">
         <div>
           <div class="text-sm font-medium">{{ $t('sites.conf.authbasic.enable') }}</div>
           <p class="mt-0.5 text-xs text-muted-foreground">{{ $t('sites.conf.authbasic.enableDesc') }}</p>
@@ -72,7 +72,7 @@ onMounted(load)
     </div>
 
     <div class="rounded-lg border p-4">
-      <div class="mb-3 flex items-center justify-between">
+      <div class="mb-3 flex flex-wrap items-center justify-between">
         <span class="text-sm font-medium">{{ $t('sites.conf.authbasic.users') }}</span>
         <FaButton variant="outline" size="sm" @click="addUser">
           <FaIcon name="i-lucide:plus" class="mr-1" /> {{ $t('sites.conf.authbasic.addUser') }}

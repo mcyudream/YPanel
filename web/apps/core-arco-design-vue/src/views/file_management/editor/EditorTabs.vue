@@ -114,7 +114,7 @@ function onDragOver(e: DragEvent, tabId: string) {
       >@{{ tabOf(tabId)!.node }}</span>
       <span v-if="tabOf(tabId)?.dirty" class="text-primary" :title="$t('files.editor.unsavedDot')">●</span>
       <span
-        class="inline-flex size-4 shrink-0 cursor-pointer items-center justify-center rounded-full opacity-0 transition-opacity group-hover:opacity-60 hover:!opacity-100 hover:bg-accent"
+        class="inline-flex size-4 shrink-0 cursor-pointer items-center justify-center rounded-full opacity-60 transition-opacity md:opacity-0 md:group-hover:opacity-60 hover:!opacity-100 hover:bg-accent"
         :title="$t('files.editor.closeTab')"
         @click.stop="onClose(tabId)"
       >

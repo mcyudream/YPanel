@@ -365,7 +365,7 @@ function doPasteEnv() {
         <div class="text-xs font-medium text-muted-foreground">
           {{ $t('container.form.sectionBasic') }}
         </div>
-        <div class="grid grid-cols-2 gap-3">
+        <div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
           <label class="space-y-1">
             <span class="text-xs text-muted-foreground">{{ $t('container.form.nameLabel') }}{{ isEdit ? $t('container.form.nameLocked') : '' }}</span>
             <FaInput v-model="form.name" placeholder="my-container" class="w-full" :disabled="isEdit" />
@@ -375,7 +375,7 @@ function doPasteEnv() {
             <FaInput v-model="form.image" placeholder="redis:7-alpine" class="w-full" />
           </label>
         </div>
-        <div class="grid grid-cols-2 gap-3">
+        <div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
           <label class="space-y-1">
             <span class="text-xs text-muted-foreground">{{ $t('container.form.cmdLabel') }}</span>
             <FaInput v-model="form.cmdRaw" placeholder="redis-server --appendonly yes" class="w-full" />
@@ -385,7 +385,7 @@ function doPasteEnv() {
             <FaInput v-model="form.workdir" placeholder="/data" class="w-full" />
           </label>
         </div>
-        <div class="grid grid-cols-3 gap-3">
+        <div class="grid grid-cols-1 gap-3 sm:grid-cols-3">
           <label class="space-y-1">
             <span class="text-xs text-muted-foreground">{{ $t('container.form.networkLabel') }}{{ isEdit ? $t('container.form.networkEditNote') : '' }}</span>
             <YdSelect v-model="form.network" :options="networkSelectOptions" button-class="w-full" />
@@ -483,7 +483,7 @@ function doPasteEnv() {
         <summary class="cursor-pointer text-xs font-medium text-muted-foreground">
           {{ $t('container.form.advanced') }}
         </summary>
-        <div class="mt-3 grid grid-cols-2 gap-3">
+        <div class="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2">
           <label class="space-y-1">
             <span class="text-xs text-muted-foreground">{{ $t('container.form.memoryLabel') }}</span>
             <FaInput v-model.number="form.memoryMB" type="number" :min="0" class="w-full" />
@@ -493,7 +493,7 @@ function doPasteEnv() {
             <FaInput v-model.number="form.cpus" type="number" :min="0" :step="0.1" class="w-full" />
           </label>
         </div>
-        <div class="mt-3 grid grid-cols-2 gap-3">
+        <div class="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2">
           <label class="flex items-center gap-2 text-sm">
             <input v-model="form.privileged" type="checkbox" class="accent-[var(--primary)]">
             {{ $t('container.form.privilegedLabel') }}

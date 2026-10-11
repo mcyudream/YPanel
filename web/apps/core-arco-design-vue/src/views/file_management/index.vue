@@ -364,6 +364,32 @@ const moreMenuItems = computed(() => [[
   { label: i18n.global.t('files.share'), icon: 'i-lucide:share-2', handle: () => { shareForm.value = { path: cwd.value, days: 7 }; lastShareLink.value = ''; openShares() } },
 ]])
 
+// 行内「更多」菜单（移动端收纳低频操作；桌面保持全量平铺按钮不变）
+function rowMenuItems(e: FileEntry) {
+  const items: Array<{ label: string, icon: string, handle: () => void }> = []
+  if (!e.isDir && previewKind(e.name)) {
+    items.push({ label: i18n.global.t('files.preview'), icon: 'i-lucide:eye', handle: () => openPreview(e) })
+  }
+  items.push({
+    label: i18n.global.t(favOf(e.path) ? 'files.list.unfav' : 'files.fav'),
+    icon: 'i-lucide:star',
+    handle: () => toggleFav(e),
+  })
+  if (!e.isDir) {
+    items.push({ label: i18n.global.t('files.shared'), icon: 'i-lucide:share-2', handle: () => quickShare(e) })
+  }
+  items.push({ label: i18n.global.t('files.common.permissions'), icon: 'i-lucide:lock', handle: () => openChmod([e.path], [e]) })
+  if (e.isDir && embed) {
+    items.push({ label: i18n.global.t('files.list.openInNewWindow'), icon: 'i-lucide:app-window', handle: () => openDirInNewWindow(e) })
+  }
+  items.push({ label: i18n.global.t('files.list.compress'), icon: 'i-lucide:package', handle: () => openCompress([e.path]) })
+  if (isArchive(e)) {
+    items.push({ label: i18n.global.t('files.list.decompress'), icon: 'i-lucide:package-open', handle: () => openDecompress(e) })
+  }
+  items.push({ label: i18n.global.t('files.common.rename'), icon: 'i-lucide:text-cursor-input', handle: () => openRename(e) })
+  return [items]
+}
+
 // 预览
 const previewVisible = ref(false)
 const previewEntry = ref<FileEntry | null>(null)
@@ -849,11 +875,11 @@ onBeforeUnmount(() => {
             <FaIcon name="i-lucide:chevron-down" class="ml-1 text-xs text-muted-foreground" />
           </FaButton>
         </FaDropdown>
-        <div class="flex items-center gap-1">
+        <div class="flex min-w-0 items-center gap-1 max-md:w-full">
           <FaInput
             v-model="searchKeyword"
             :placeholder="$t('files.list.searchPlaceholder')"
-            class="w-44!"
+            class="w-44! max-md:min-w-0 max-md:flex-1!"
             @keyup.enter="doSearch"
           />
           <FaButton variant="outline" size="sm" :loading="searching" @click="doSearch">
@@ -921,7 +947,7 @@ onBeforeUnmount(() => {
       </div>
 
       <!-- 文件表格 -->
-      <div class="overflow-hidden rounded-lg border">
+      <div class="overflow-x-auto rounded-lg border">
         <table class="w-full text-sm">
           <thead class="bg-muted/50 text-left text-xs text-muted-foreground">
             <tr>
@@ -932,7 +958,7 @@ onBeforeUnmount(() => {
               <th class="hidden w-40 px-3 py-2 md:table-cell">{{ $t('common.size') }}</th>
               <th class="hidden w-56 px-3 py-2 lg:table-cell">{{ $t('files.list.ownerPerm') }}</th>
               <th class="hidden w-44 px-3 py-2 sm:table-cell">{{ $t('files.list.modifiedAt') }}</th>
-              <th class="w-48 px-3 py-2 text-right">{{ $t('common.operation') }}</th>
+              <th class="w-48 max-md:w-30 px-3 py-2 text-right">{{ $t('common.operation') }}</th>
             </tr>
           </thead>
           <tbody>
@@ -989,36 +1015,42 @@ onBeforeUnmount(() => {
                   <FaButton v-if="!e.isDir" variant="ghost" size="icon-sm" :title="$t('common.edit')" @click="openEditor(e)">
                     <FaIcon name="i-lucide:pen-line" class="text-sm" />
                   </FaButton>
-                  <FaButton v-if="!e.isDir && previewKind(e.name)" variant="ghost" size="icon-sm" :title="$t('files.preview')" @click="openPreview(e)">
+                  <FaButton v-if="!e.isDir && previewKind(e.name)" variant="ghost" size="icon-sm" class="max-md:hidden" :title="$t('files.preview')" @click="openPreview(e)">
                     <FaIcon name="i-lucide:eye" class="text-sm" />
                   </FaButton>
                   <FaButton
-                    variant="ghost" size="icon-sm" :class="favOf(e.path) ? 'text-amber-500!' : ''"
+                    variant="ghost" size="icon-sm" class="max-md:hidden" :class="favOf(e.path) ? 'text-amber-500!' : ''"
                     :title="favOf(e.path) ? $t('files.list.unfav') : $t('files.fav')" @click="toggleFav(e)"
                   >
                     <FaIcon name="i-lucide:star" class="text-sm" />
                   </FaButton>
-                  <FaButton v-if="!e.isDir" variant="ghost" size="icon-sm" :title="$t('files.shared')" @click="quickShare(e)">
+                  <FaButton v-if="!e.isDir" variant="ghost" size="icon-sm" class="max-md:hidden" :title="$t('files.shared')" @click="quickShare(e)">
                     <FaIcon name="i-lucide:share-2" class="text-sm" />
                   </FaButton>
                   <FaButton v-if="!e.isDir" variant="ghost" size="icon-sm" :title="$t('common.download')" @click="openDownload(e)">
                     <FaIcon name="i-lucide:download" class="text-sm" />
                   </FaButton>
-                  <FaButton variant="ghost" size="icon-sm" :title="$t('files.common.permissions')" @click="openChmod([e.path], [e])">
+                  <FaButton variant="ghost" size="icon-sm" class="max-md:hidden" :title="$t('files.common.permissions')" @click="openChmod([e.path], [e])">
                     <FaIcon name="i-lucide:lock" class="text-sm" />
                   </FaButton>
-                  <FaButton v-if="e.isDir && embed" variant="ghost" size="icon-sm" :title="$t('files.list.openInNewWindow')" @click="openDirInNewWindow(e)">
+                  <FaButton v-if="e.isDir && embed" variant="ghost" size="icon-sm" class="max-md:hidden" :title="$t('files.list.openInNewWindow')" @click="openDirInNewWindow(e)">
                     <FaIcon name="i-lucide:app-window" class="text-sm" />
                   </FaButton>
-                  <FaButton variant="ghost" size="icon-sm" :title="$t('files.list.compress')" @click="openCompress([e.path])">
+                  <FaButton variant="ghost" size="icon-sm" class="max-md:hidden" :title="$t('files.list.compress')" @click="openCompress([e.path])">
                     <FaIcon name="i-lucide:package" class="text-sm" />
                   </FaButton>
-                  <FaButton v-if="isArchive(e)" variant="ghost" size="icon-sm" :title="$t('files.list.decompress')" @click="openDecompress(e)">
+                  <FaButton v-if="isArchive(e)" variant="ghost" size="icon-sm" class="max-md:hidden" :title="$t('files.list.decompress')" @click="openDecompress(e)">
                     <FaIcon name="i-lucide:package-open" class="text-sm" />
                   </FaButton>
-                  <FaButton variant="ghost" size="icon-sm" :title="$t('files.common.rename')" @click="openRename(e)">
+                  <FaButton variant="ghost" size="icon-sm" class="max-md:hidden" :title="$t('files.common.rename')" @click="openRename(e)">
                     <FaIcon name="i-lucide:text-cursor-input" class="text-sm" />
                   </FaButton>
+                  <!-- 移动端收纳：低频操作进「更多」（桌面平铺按钮不变） -->
+                  <FaDropdown :items="rowMenuItems(e)">
+                    <FaButton variant="ghost" size="icon-sm" class="md:hidden!" :title="$t('files.more')">
+                      <FaIcon name="i-lucide:ellipsis" class="text-sm" />
+                    </FaButton>
+                  </FaDropdown>
                 </div>
               </td>
             </tr>
@@ -1098,7 +1130,7 @@ onBeforeUnmount(() => {
     <!-- M38：分享管理 -->
     <FaModal v-model="shareVisible" :title="$t('files.dialogs.shareTitle')" class="max-w-2xl!" :destroy-on-close="true">
       <div class="flex flex-col gap-3">
-        <div class="flex items-end gap-2">
+        <div class="flex flex-wrap items-end gap-2">
           <label class="flex-1 space-y-1">
             <span class="text-xs text-muted-foreground">{{ $t('files.dialogs.filePath') }}</span>
             <FaInput v-model="shareForm.path" placeholder="/path/to/file" class="w-full" />
@@ -1167,7 +1199,7 @@ onBeforeUnmount(() => {
       <div class="flex max-h-[70vh] items-center justify-center overflow-auto rounded-lg bg-black/5 p-2 dark:bg-black/30">
         <img v-if="previewKind(previewEntry?.name || '') === 'image'" :src="downloadURL(previewEntry!)" class="max-h-[65vh] max-w-full rounded object-contain" :alt="previewEntry?.name">
         <video v-else-if="previewKind(previewEntry?.name || '') === 'video'" :src="downloadURL(previewEntry!)" controls class="max-h-[65vh] max-w-full rounded" />
-        <audio v-else-if="previewKind(previewEntry?.name || '') === 'audio'" :src="downloadURL(previewEntry!)" controls class="w-96" />
+        <audio v-else-if="previewKind(previewEntry?.name || '') === 'audio'" :src="downloadURL(previewEntry!)" controls class="w-96 max-w-full" />
         <iframe v-else-if="previewKind(previewEntry?.name || '') === 'pdf'" :src="downloadURL(previewEntry!)" class="h-[65vh] w-full rounded border-0" />
         <span v-else class="p-8 text-sm text-muted-foreground">{{ $t('files.dialogs.unsupportedPreview') }}</span>
       </div>

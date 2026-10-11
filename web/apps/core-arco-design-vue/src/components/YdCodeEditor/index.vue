@@ -13,6 +13,8 @@ const props = defineProps<{
   fontSize?: number
   /** diff 模式的原始文本（历史版本预览用） */
   diffOriginal?: string
+  /** diff 内联形态（单列前后对比）：窄容器（移动端）下双栏并排不可读 */
+  diffInline?: boolean
 }>()
 
 const emit = defineEmits<{
@@ -87,7 +89,8 @@ onMounted(async () => {
   if (props.diffOriginal !== undefined) {
     diffEditor = m.editor.createDiffEditor(containerRef.value, {
       ...baseOptions(),
-      renderSideBySide: true,
+      // 移动端窄容器双栏 diff 不可读，可切内联（单栏）形态
+      renderSideBySide: !props.diffInline,
       readOnly: true,
     })
     originalModel = m.editor.createModel(props.diffOriginal)
@@ -111,6 +114,10 @@ onMounted(async () => {
 // flush: 'post' 关键——layout 必须在 v-show 容器补丁到 DOM 之后执行，
 // 否则在 display:none 下量到 0 高，monaco 视图保持 0 行（automaticLayout 因尺寸不再变化也不会再触发）
 watch(() => props.model, (model) => {
+  if (diffEditor) {
+    // diff 形态运行时切换（如旋转屏跨断点）：updateOptions 即时生效
+    diffEditor.updateOptions({ renderSideBySide: !props.diffInline })
+  }
   if (editor) {
     if (model && editor.getModel() !== model) {
       const st = editor.saveViewState()

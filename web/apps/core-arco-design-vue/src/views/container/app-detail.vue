@@ -364,7 +364,7 @@ onBeforeUnmount(() => {
       <template #description>
         <span class="font-mono text-xs">{{ info?.dir || project }}<template v-if="total > 0"> · {{ $t('container.appDetail.runningStats', { running, total }) }}</template><template v-else> · {{ $t('container.appDetail.undeployedHint') }}</template></span>
       </template>
-      <div class="flex items-center gap-2">
+      <div class="flex flex-wrap items-center gap-2">
         <FaButton variant="outline" size="icon-sm" :title="$t('common.refresh')" @click="load()">
           <FaIcon name="i-lucide:refresh-cw" class="text-sm" :class="loading ? 'animate-spin' : ''" />
         </FaButton>
@@ -397,7 +397,7 @@ onBeforeUnmount(() => {
         <div class="mb-3 text-xs font-medium text-muted-foreground">
           {{ $t('container.appDetail.services', { n: info.services.length }) }}
         </div>
-        <div class="mb-6 overflow-hidden rounded-lg border">
+        <div class="mb-6 overflow-x-auto rounded-lg border">
           <table class="w-full text-sm">
             <thead class="bg-muted/50 text-left text-xs text-muted-foreground">
               <tr>

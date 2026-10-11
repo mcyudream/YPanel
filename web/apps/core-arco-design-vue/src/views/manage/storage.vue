@@ -206,7 +206,7 @@ onMounted(load)
     </FaPageHeader>
 
     <FaPageMain>
-      <div class="overflow-hidden rounded-lg border">
+      <div class="overflow-x-auto rounded-lg border">
         <table class="w-full text-sm">
           <thead class="bg-muted/50 text-left text-xs text-muted-foreground">
             <tr>
@@ -268,7 +268,7 @@ onMounted(load)
     <!-- 新建/编辑账号 -->
     <FaModal v-model="dialogVisible" :title="editing ? $t('storage.editTitle', { name: editing.name }) : $t('storage.create')" :destroy-on-close="true">
       <div class="space-y-3">
-        <div class="grid grid-cols-2 gap-3">
+        <div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
           <label class="block space-y-1">
             <span class="text-xs text-muted-foreground">{{ $t('common.name') }}</span>
             <FaInput v-model="form.name" :placeholder="$t('storage.namePlaceholder')" class="w-full" />
@@ -287,7 +287,7 @@ onMounted(load)
           </span>
           <FaInput v-model="form.endpoint" :placeholder="form.type === 's3' ? 'minio.example.com:9000' : form.type === 'sftp' ? '192.168.1.10:22' : 'https://nas.local:5006/dav'" class="w-full" />
         </label>
-        <div v-if="form.type === 's3'" class="grid grid-cols-2 gap-3">
+        <div v-if="form.type === 's3'" class="grid grid-cols-1 gap-3 sm:grid-cols-2">
           <label class="block space-y-1">
             <span class="text-xs text-muted-foreground">{{ $t('storage.bucket') }}</span>
             <FaInput v-model="form.bucket" placeholder="ypanel" class="w-full" />
@@ -297,7 +297,7 @@ onMounted(load)
             <FaInput v-model="form.region" placeholder="us-east-1 / oss-cn-hangzhou" class="w-full" />
           </label>
         </div>
-        <div class="grid grid-cols-2 gap-3">
+        <div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
           <label class="block space-y-1">
             <span class="text-xs text-muted-foreground">{{ form.type === 's3' ? $t('storage.accessKey') : $t('storage.username') }}</span>
             <FaInput v-model="form.accessKey" class="w-full" />
@@ -307,7 +307,7 @@ onMounted(load)
             <FaInput v-model="form.secret" type="password" class="w-full" :placeholder="editing ? $t('storage.keepSecretPlaceholder') : ''" />
           </label>
         </div>
-        <div class="grid grid-cols-2 gap-3">
+        <div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
           <label class="block space-y-1">
             <span class="text-xs text-muted-foreground">{{ $t('storage.backupPath') }}</span>
             <FaInput v-model="form.backupPath" placeholder="ypanel-backups" class="w-full" />

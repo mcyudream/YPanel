@@ -399,7 +399,7 @@ onBeforeUnmount(() => {
       </div>
 
       <!-- 日志 -->
-      <div v-if="activeTab === 'logs'" class="mt-3 h-[calc(100vh-320px)] min-h-100">
+      <div v-if="activeTab === 'logs'" class="mt-3 h-[calc(100vh-320px)] min-h-100 max-md:h-[calc(100dvh-260px)] max-md:min-h-60">
         <LogViewer :container-id="id" :container-name="name" :active="activeTab === 'logs'" />
       </div>
 
@@ -409,7 +409,7 @@ onBeforeUnmount(() => {
       </div>
 
       <!-- 终端 -->
-      <div v-if="activeTab === 'terminal'" class="mt-3 flex h-[calc(100vh-320px)] min-h-100 flex-col gap-2">
+      <div v-if="activeTab === 'terminal'" class="mt-3 flex h-[calc(100vh-320px)] min-h-100 max-md:h-[calc(100dvh-260px)] max-md:min-h-60 flex-col gap-2">
         <div class="flex flex-wrap items-center gap-2">
           <span class="text-xs text-muted-foreground">Shell</span>
           <div class="flex gap-1">

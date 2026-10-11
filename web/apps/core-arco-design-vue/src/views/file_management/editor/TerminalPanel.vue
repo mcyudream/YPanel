@@ -6,6 +6,7 @@ import '@xterm/xterm/css/xterm.css'
 import { useReconnectingWs } from '@/composables/useReconnectingWs'
 import { useHtmlDark } from '@/composables/useHtmlDark'
 import { i18n } from '@/locales'
+import YdTerminalTouchKeybar from '@/components/YdTerminal/TouchKeybar.vue'
 import { Pane } from 'splitpanes'
 
 // 底部终端面板：xterm 多实例 + useReconnectingWs（PTY 不发心跳）。
@@ -260,6 +261,28 @@ onBeforeUnmount(() => {
 watch(() => sessions.value.length, (n) => {
   store.terminalSessions = n
 }, { immediate: true })
+
+// 移动端按键条：发送走会话协议封装（host JSON 帧 / exec 裸帧），断死态与键入同语义（回车重开）
+function keybarSend(data: string) {
+  const s = activeSession.value
+  if (!s) {
+    return
+  }
+  if (s.dead) {
+    if (data === '\r') {
+      restartSession(s)
+    }
+    return
+  }
+  s.send(s.containerId ? data : JSON.stringify({ type: 'input', data }))
+}
+
+// 触屏点按：用户手势内聚焦，iOS 才会弹软键盘
+function onHostPointerUp(ev: PointerEvent) {
+  if (ev.pointerType === 'touch') {
+    activeSession.value?.term.focus()
+  }
+}
 </script>
 
 <template>
@@ -287,7 +310,7 @@ watch(() => sessions.value.length, (n) => {
         <span v-if="s.containerId" class="text-[10px] opacity-60">· {{ $t('files.editor.containerBadge') }}</span>
         <span v-else-if="s.node !== 'local'" class="text-[10px] opacity-60">@{{ s.node }}</span>
         <span
-          class="inline-flex size-3.5 cursor-pointer items-center justify-center rounded-full opacity-0 transition-opacity group-hover:opacity-60 hover:!opacity-100 hover:bg-accent"
+          class="inline-flex size-3.5 cursor-pointer items-center justify-center rounded-full opacity-60 transition-opacity md:opacity-0 md:group-hover:opacity-60 hover:!opacity-100 hover:bg-accent"
           :title="$t('common.close')"
           @click.stop="closeSession(s.id)"
         >
@@ -326,7 +349,7 @@ watch(() => sessions.value.length, (n) => {
     </div>
 
     <!-- 终端容器 -->
-    <div ref="host" class="relative min-h-0 flex-1 p-0.5">
+    <div ref="host" class="relative min-h-0 flex-1 p-0.5" @pointerup="onHostPointerUp">
       <div
         v-for="s in sessions"
         :key="s.id"
@@ -335,6 +358,9 @@ watch(() => sessions.value.length, (n) => {
         class="size-full min-h-0"
       />
     </div>
+
+    <!-- 移动端触屏按键条（组件内自感知 mobile 模式） -->
+    <YdTerminalTouchKeybar :send="keybarSend" :refocus="() => activeSession?.term.focus()" />
 
     <!-- 自定义 shell 输入 -->
     <FaModal v-model="customPrompt.visible" :title="$t('files.editor.customCmdTitle')" class="max-w-lg!" :destroy-on-close="true">

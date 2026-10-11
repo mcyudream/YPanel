@@ -101,7 +101,7 @@ onMounted(load)
     </div>
 
     <div class="rounded-lg border p-4">
-      <div class="mb-2 flex items-center justify-between">
+      <div class="mb-2 flex flex-wrap items-center justify-between">
         <span class="text-sm font-medium">{{ $t('sites.conf.domain.extra') }}</span>
         <span class="text-xs text-muted-foreground">{{ $t('sites.conf.domain.extraTip') }}</span>
       </div>
@@ -114,7 +114,7 @@ onMounted(load)
       <div v-if="!rows.length" class="py-4 text-center text-sm text-muted-foreground">
         {{ $t('sites.conf.domain.none') }}
       </div>
-      <div v-for="(d, i) in rows" :key="d" class="flex items-center justify-between border-b py-2 text-sm last:border-b-0">
+      <div v-for="(d, i) in rows" :key="d" class="flex flex-wrap items-center justify-between border-b py-2 text-sm last:border-b-0">
         <code class="font-mono text-[13px]">{{ d }}</code>
         <div class="flex items-center gap-1">
           <FaButton variant="ghost" size="sm" class="text-muted-foreground" :title="$t('sites.conf.domain.makePrimary')" @click="makePrimary(i)">

@@ -189,7 +189,7 @@ onMounted(loadInstances)
       </div>
 
       <!-- 审计弹窗 -->
-      <FaModal v-model="auditsOpen" :destroy-on-close="true" :title="$t('dbadmin.audit.title')" :width="640">
+      <FaModal v-model="auditsOpen" :destroy-on-close="true" :title="$t('dbadmin.audit.title')" class="max-w-[640px]!">
         <div class="max-h-[62vh] space-y-1 overflow-auto p-0.5">
           <div
             v-for="a in audits"

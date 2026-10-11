@@ -2,7 +2,7 @@
 // M33 P2.5 日志中心：集中检索单页（VictoriaLogs/LogsQL v2）。
 // 对齐 Kibana Discover（字段侧栏/行详情）、Grafana Logs（直方图点击缩放）、金融日志台（历史/常用/排序/高亮）。
 // 实时检索（P1）UI 已下线（后端接口保留）；历史/常用查询 SQLite 持久化。
-import { computed, onMounted, ref, watch, nextTick } from 'vue'
+import { computed, onMounted, onBeforeUnmount, ref, watch, nextTick } from 'vue'
 import { centralApi, historyApi } from '@/api/modules/logcenter'
 import type { CentralQueryItem, CentralStreamValue, LogSearchQueryItem, VLInstance } from '@/api/modules/logcenter'
 import { storeApi } from '@/api/modules/store'
@@ -321,6 +321,8 @@ async function reloadFields() {
 // ---- 历史 / 常用 ----
 const historyList = ref<LogSearchQueryItem[]>([])
 const historyModal = ref(false)
+// 移动端字段抽屉（桌面 aside 常驻；<md 隐藏，经工具条「字段」按钮唤出，同实例双形态）
+const fieldsOpen = ref(false)
 
 const pinnedItems = computed(() => historyList.value.filter(h => h.pinned))
 const recentItems = computed(() => historyList.value.filter(h => !h.pinned).slice(0, 8))
@@ -438,6 +440,10 @@ const displayItems = computed(() => (sortDesc.value ? [...items.value].reverse()
 // ---- 直方图（hits，点击柱子缩放范围） ----
 const histEl = ref<HTMLElement | null>(null)
 let histChart: echarts.ECharts | null = null
+// 侧栏开合/旋转屏后重排（ResizeObserver 范式，同 StatsCharts）
+const histRo = new ResizeObserver(() => {
+  histChart?.resize()
+})
 const lastStep = ref('')
 
 function toLocalInput(d: Date) {
@@ -505,9 +511,17 @@ function renderHist(hits: { timestamps: string[], values: number[] } | null) {
 }
 
 watch(histEl, (el) => {
-  if (el && searched.value) {
-    void nextTick(() => histChart?.resize())
+  histRo.disconnect()
+  if (el) {
+    histRo.observe(el)
+    if (searched.value) {
+      void nextTick(() => histChart?.resize())
+    }
   }
+})
+
+onBeforeUnmount(() => {
+  histRo.disconnect()
 })
 
 // ---- 结果展示 ----
@@ -758,11 +772,21 @@ onMounted(async () => {
 
         <!-- 两栏：字段侧栏 + 检索区 -->
         <div class="flex min-w-0 items-start gap-3">
-          <!-- 字段侧栏 -->
-          <aside class="hidden w-52 shrink-0 flex-col gap-2 self-stretch rounded-lg border bg-muted/30 p-2.5 md:flex">
+          <!-- 移动端字段抽屉遮罩 -->
+          <div v-if="fieldsOpen" class="fixed inset-0 z-1490 bg-black/40 md:hidden" @click="fieldsOpen = false" />
+          <!-- 字段侧栏（桌面常驻；移动端 fixed 抽屉，工具条「字段」唤出） -->
+          <aside
+            class="hidden w-52 shrink-0 flex-col gap-2 self-stretch rounded-lg border bg-muted/30 p-2.5 md:flex max-md:fixed max-md:inset-y-2 max-md:right-2 max-md:z-1500 max-md:w-72 max-md:overflow-auto max-md:shadow-2xl"
+            :class="fieldsOpen ? 'max-md:flex' : ''"
+          >
             <div class="flex items-center justify-between text-xs font-medium">
               <span>{{ $t('logcenter.fields.label') }}</span>
-              <span v-if="activeFilterCount" class="cursor-pointer text-primary underline-offset-2 hover:underline" @click="clearFilters">{{ $t('logcenter.filters.clear', { n: activeFilterCount }) }}</span>
+              <span class="flex items-center gap-1.5">
+                <span v-if="activeFilterCount" class="cursor-pointer text-primary underline-offset-2 hover:underline" @click="clearFilters">{{ $t('logcenter.filters.clear', { n: activeFilterCount }) }}</span>
+                <button type="button" class="cursor-pointer rounded p-0.5 text-muted-foreground hover:text-foreground md:hidden" :title="$t('common.close')" @click="fieldsOpen = false">
+                  <FaIcon name="i-lucide:x" class="text-xs" />
+                </button>
+              </span>
             </div>
             <FaInput v-model="fieldKeyword" :placeholder="$t('logcenter.fields.searchPlaceholder')" class="h-7 w-full! min-w-0! text-xs!" />
             <div v-for="f in sidebarFields" :key="f" class="flex flex-col gap-0.5">
@@ -808,6 +832,9 @@ onMounted(async () => {
                 </FaButton>
               </FaDropdown>
               <FaButton size="sm" variant="ghost" class="text-muted-foreground" @click="historyModal = true">{{ $t('logcenter.toolbar.manage') }}</FaButton>
+              <FaButton size="sm" variant="ghost" class="text-muted-foreground md:hidden" @click="fieldsOpen = true">
+                <FaIcon name="i-lucide:funnel" class="mr-1 text-xs" />{{ $t('logcenter.fields.label') }}
+              </FaButton>
               <span class="ml-auto text-[10px] text-muted-foreground/60">LogsQL v2 · VictoriaLogs</span>
             </div>
 

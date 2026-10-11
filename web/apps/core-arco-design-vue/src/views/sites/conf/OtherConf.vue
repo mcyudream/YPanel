@@ -54,7 +54,7 @@ onMounted(load)
 <template>
   <div class="space-y-5">
     <div class="rounded-lg border p-4">
-      <div class="mb-3 flex items-center justify-between">
+      <div class="mb-3 flex flex-wrap items-center justify-between">
         <div>
           <span class="text-sm font-medium">{{ $t('sites.conf.other.title') }}</span>
           <p class="mt-0.5 text-xs text-muted-foreground">{{ $t('sites.conf.other.desc') }}</p>

@@ -502,10 +502,25 @@ function fileEditorSetup(instanceTag: string) {
   }
 
   // ---- 布局 ----
+  // 移动端单栏化（M61-B3）：手机默认只留编辑区，侧栏/终端为会话内开关不持久化——
+  // 桌面布局记忆（localStorage）不受影响、互不污染。消费方读 eff*，切换统一走 toggle*。
+  const appSettings = useAppSettingsStore()
+  const isMobileLayout = computed(() => appSettings.mode === 'mobile')
+  const mobilePane = ref({ sidebar: false, terminal: false })
+  const effSidebarVisible = computed(() => isMobileLayout.value ? mobilePane.value.sidebar : layout.value.sidebarVisible)
+  const effTerminalVisible = computed(() => isMobileLayout.value ? mobilePane.value.terminal : layout.value.terminalVisible)
   function toggleSidebar() {
+    if (isMobileLayout.value) {
+      mobilePane.value.sidebar = !mobilePane.value.sidebar
+      return
+    }
     layout.value.sidebarVisible = !layout.value.sidebarVisible
   }
   function toggleTerminal() {
+    if (isMobileLayout.value) {
+      mobilePane.value.terminal = !mobilePane.value.terminal
+      return
+    }
     layout.value.terminalVisible = !layout.value.terminalVisible
   }
   function toggleWrap() {
@@ -594,6 +609,9 @@ function fileEditorSetup(instanceTag: string) {
     dirtyCount,
     cursor,
     layout,
+    isMobileLayout,
+    effSidebarVisible,
+    effTerminalVisible,
     open,
     initialDir,
     closeTab,

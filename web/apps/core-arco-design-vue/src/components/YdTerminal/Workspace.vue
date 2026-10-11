@@ -62,6 +62,33 @@ const monitorWidth = useLocalStorage('ypanel.terminal.monitorWidth', 22)
 /** 活动终端会话的当前目录（跟随开关在 Panel 内，空串=不跟随） */
 const termCwd = ref('')
 
+// 移动端单栏化：手机上默认只留终端全宽（桌面布局三栏挤压不可用），可经工具栏按钮唤回。
+// 侧栏开合记忆是桌面经验值，不持久化 mobile 的会话内开关（避免手机继承桌面宽布局、来回横跳）。
+const appSettings = useAppSettingsStore()
+const isMobile = computed(() => appSettings.mode === 'mobile')
+const mobileTree = ref(false)
+const mobileMonitor = ref(false)
+const effTree = computed(() => isMobile.value ? mobileTree.value : treeVisible.value)
+const effMonitor = computed(() => isMobile.value ? mobileMonitor.value : monitorVisible.value)
+
+function toggleTree() {
+  if (isMobile.value) {
+    mobileTree.value = !mobileTree.value
+  }
+  else {
+    treeVisible.value = !treeVisible.value
+  }
+}
+
+function toggleMonitor() {
+  if (isMobile.value) {
+    mobileMonitor.value = !mobileMonitor.value
+  }
+  else {
+    monitorVisible.value = !monitorVisible.value
+  }
+}
+
 onMounted(async () => {
   try {
     nodes.value = await apiNode.list()
@@ -75,7 +102,7 @@ onMounted(async () => {
 
 function onResized(e: SplitpanesResizedPayload) {
   // e.panes 仅含可见面板（v-if），按可见顺序回写：[tree?, center, monitor?]
-  const visible: boolean[] = [treeVisible.value, true, monitorVisible.value]
+  const visible: boolean[] = [effTree.value, true, effMonitor.value]
   let pi = 0
   for (let i = 0; i < 3; i++) {
     if (!visible[i]) {
@@ -109,7 +136,7 @@ function openInEditor(entry: FileEntry) {
   >
   <Splitpanes class="yd-term-workspace h-full w-full" @resized="onResized">
     <Pane
-      v-if="treeVisible"
+      v-if="effTree"
       :size="treeWidth"
       min-size="10"
       max-size="40"
@@ -124,22 +151,22 @@ function openInEditor(entry: FileEntry) {
         v-model:node="node"
         v-model:initial-paste="initialPaste"
         :nodes="nodes"
-        :tree-visible="treeVisible"
-        :monitor-visible="monitorVisible"
-        @toggle-tree="treeVisible = !treeVisible"
-        @toggle-monitor="monitorVisible = !monitorVisible"
+        :tree-visible="effTree"
+        :monitor-visible="effMonitor"
+        @toggle-tree="toggleTree"
+        @toggle-monitor="toggleMonitor"
         @cwd="termCwd = $event"
       />
     </Pane>
 
     <Pane
-      v-if="monitorVisible"
+      v-if="effMonitor"
       :size="monitorWidth"
       min-size="12"
       max-size="45"
       class="border-l bg-muted/20"
     >
-      <YdMonitorSidebar :node="node" :active="monitorVisible" />
+      <YdMonitorSidebar :node="node" :active="effMonitor" />
     </Pane>
   </Splitpanes>
   </div>
@@ -173,7 +200,8 @@ function openInEditor(entry: FileEntry) {
 .yd-term-workspace .splitpanes__splitter::before {
   content: '';
   position: absolute;
-  inset: 0 2px;
+  /* 两侧各外扩 6px：触屏分隔条热区（伪元素命中即宿主元素），桌面拖拽也更好瞄准 */
+  inset: 0 -6px;
   background: transparent;
   transition: background 0.15s;
 }

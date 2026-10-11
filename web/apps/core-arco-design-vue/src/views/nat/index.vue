@@ -421,7 +421,7 @@ onMounted(() => {
       <template #description>
         <span>{{ $t('nat.desc') }}</span>
       </template>
-      <div class="flex items-center gap-2">
+      <div class="flex flex-wrap items-center gap-2">
         <FaSelect v-model="nodeId" :options="nodeOptions" class="w-44" />
         <FaButton variant="outline" size="sm" :loading="loading" @click="load">
           <FaIcon name="i-lucide:refresh-cw" class="mr-1" /> {{ $t('common.refresh') }}

@@ -37,7 +37,7 @@ const props = defineProps<{
       </FaPageHeader>
 
       <FaPageMain class="min-h-0 flex-1!">
-        <div class="h-[calc(100vh-250px)] min-h-100">
+        <div class="h-[calc(100vh-250px)] min-h-100 max-md:h-[calc(100dvh-280px)] max-md:min-h-60">
           <Workspace v-model:initial-paste="props.initialPaste" />
         </div>
       </FaPageMain>

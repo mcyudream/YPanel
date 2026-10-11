@@ -125,7 +125,7 @@ onMounted(() => {
             </FaButton>
           </div>
           <div v-if="attempts.length" class="mt-3 space-y-1">
-            <div v-for="a in attempts" :key="a.ip" class="text-xs px-3 py-1.5 border rounded-md flex gap-3 items-center">
+            <div v-for="a in attempts" :key="a.ip" class="flex flex-wrap items-center gap-3 rounded-md border px-3 py-1.5 text-xs">
               <span class="font-mono w-40">{{ a.ip }}</span>
               <span class="text-red-500">{{ $t('tools.brute.failCount', { count: a.count }) }}</span>
               <span v-if="a.banned" class="text-emerald-600 px-2 py-0.5 rounded-full bg-emerald-500/10">{{ $t('tools.brute.bannedLabel') }}</span>

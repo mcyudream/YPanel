@@ -81,24 +81,24 @@ function setLang(id: string) {
   }
 }
 
-const sbItem = 'inline-flex h-full cursor-pointer items-center gap-1 px-2 transition-colors hover:bg-accent/60'
+const sbItem = 'inline-flex h-full shrink-0 cursor-pointer items-center gap-1 whitespace-nowrap px-2 max-md:px-2.5 transition-colors hover:bg-accent/60'
 </script>
 
 <template>
-  <div class="flex h-6 shrink-0 select-none items-center border-t bg-muted/60 text-xs text-muted-foreground">
+  <div class="flex h-6 max-md:h-7 shrink-0 select-none items-center border-t bg-muted/60 text-xs text-muted-foreground">
     <!-- 左：节点 + 光标 + 脏计数 -->
-    <span class="inline-flex h-full items-center gap-1 px-2" :title="$t('files.editor.currentNode')">
+    <span class="inline-flex h-full shrink-0 items-center gap-1 px-2" :title="$t('files.editor.currentNode')">
       <YdMorphIcon name="server" :size="12" />
       {{ store.currentNode }}
     </span>
-    <span class="inline-flex h-full items-center px-2 tabular-nums" :title="$t('files.editor.cursorPos')">
+    <span class="inline-flex h-full items-center px-2 tabular-nums max-md:hidden" :title="$t('files.editor.cursorPos')">
       {{ $t('files.editor.cursor', { line: store.cursor.line, col: store.cursor.col }) }}<template v-if="store.cursor.selected">{{ $t('files.editor.selCount', { n: store.cursor.selected }) }}</template>
     </span>
     <span v-if="store.dirtyCount" class="inline-flex h-full items-center gap-1 px-2 text-amber-600 dark:text-amber-400">
       ● {{ $t('files.editor.dirtyCount', { n: store.dirtyCount }) }}
     </span>
 
-    <div class="ml-auto flex h-full items-stretch">
+    <div class="ml-auto flex h-full min-w-0 items-stretch overflow-x-auto max-md:overflow-y-hidden">
       <button :title="isDark() ? $t('files.editor.toLight') : $t('files.editor.toDark')" :class="sbItem" @click="toggleTheme">
         <FaIcon :name="isDark() ? 'i-lucide:sun' : 'i-lucide:moon'" class="text-[13px]" />
       </button>
@@ -128,7 +128,7 @@ const sbItem = 'inline-flex h-full cursor-pointer items-center gap-1 px-2 transi
 
       <button :class="sbItem" :disabled="!store.activeTab" @click="historyVisible = true">
         <FaIcon name="i-lucide:history" class="text-[13px]" />
-        {{ $t('files.editor.history') }}
+        <span class="max-md:hidden">{{ $t('files.editor.history') }}</span>
       </button>
 
       <FaDropdown

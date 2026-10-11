@@ -50,6 +50,11 @@ const netChartEl = ref<HTMLElement | null>(null)
 const sysChartEl = ref<HTMLElement | null>(null)
 let netChartInstance: echarts.ECharts | null = null
 let sysChartInstance: echarts.ECharts | null = null
+// 侧栏开合/旋转屏后图表重排（ResizeObserver 范式，同 StatsCharts）
+const chartRo = new ResizeObserver(() => {
+  netChartInstance?.resize()
+  sysChartInstance?.resize()
+})
 
 async function loadHistory() {
   try {
@@ -104,6 +109,12 @@ onMounted(() => {
   overviewTimer = setInterval(refreshOverview, 3000)
   dashboardTimer = setInterval(refreshDashboard, 15000)
   historyTimer = setInterval(loadHistory, 10000)
+  if (netChartEl.value) {
+    chartRo.observe(netChartEl.value)
+  }
+  if (sysChartEl.value) {
+    chartRo.observe(sysChartEl.value)
+  }
 })
 
 onBeforeUnmount(() => {
@@ -118,6 +129,7 @@ onBeforeUnmount(() => {
   }
   netChartInstance?.dispose()
   sysChartInstance?.dispose()
+  chartRo.disconnect()
 })
 
 // ---- 状态四环 ----

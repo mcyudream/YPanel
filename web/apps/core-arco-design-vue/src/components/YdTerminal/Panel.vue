@@ -175,21 +175,21 @@ onMounted(() => createTab())
 
 <template>
   <div class="flex size-full min-h-0 min-w-0 flex-col overflow-hidden">
-    <!-- 顶部工具栏：节点 + 标签 + 面板开关 -->
-    <div class="flex h-8 shrink-0 items-center gap-1 border-b bg-muted/40 px-1.5 text-[13px]">
+    <!-- 顶部工具栏：桌面单行（节点|标签|面板开关）；窄屏两行——首行节点+操作按钮，次行标签独占 -->
+    <div class="flex h-8 shrink-0 items-center gap-1 border-b bg-muted/40 px-1.5 text-[13px] max-md:h-auto max-md:min-h-16 max-md:flex-wrap max-md:gap-y-1 max-md:py-1">
       <FaSelect
         :model-value="props.node"
         :options="[{ label: $t('components.ydTerminal.localNode'), value: 'local' }, ...props.nodes.filter(n => n.id !== 'local').map(n => ({ label: n.hostname || n.name || n.id, value: n.id }))]"
-        class="w-28 shrink-0"
+        class="w-28 shrink-0 max-md:order-1"
         :disabled="props.nodes.filter(n => n.id !== 'local').length === 0"
         @update:model-value="emits('update:node', String($event))"
       />
-      <FaButton variant="ghost" size="icon-sm" class="size-5! shrink-0" :title="$t('components.ydTerminal.newTab')" @click="createTab">
+      <FaButton variant="ghost" size="icon-sm" class="size-5! shrink-0 max-md:order-1" :title="$t('components.ydTerminal.newTab')" @click="createTab">
         <FaIcon name="i-lucide:plus" class="text-xs" />
       </FaButton>
 
-      <!-- 标签 -->
-      <div class="min-w-0 flex flex-1 items-center gap-0.5 overflow-x-auto">
+      <!-- 标签（窄屏独占次行） -->
+      <div class="min-w-0 flex flex-1 items-center gap-0.5 overflow-x-auto max-md:order-3 max-md:basis-full max-md:flex-none">
         <button
           v-for="t in tabs"
           :key="t.id"
@@ -203,7 +203,7 @@ onMounted(() => createTab())
           <span class="max-w-28 truncate">{{ t.title }}</span>
           <span v-if="t.node !== 'local'" class="text-[10px] opacity-60">@{{ nodeLabel(t.node) }}</span>
           <span
-            class="inline-flex size-3.5 shrink-0 cursor-pointer items-center justify-center rounded-full opacity-0 transition-opacity group-hover:opacity-60 hover:!opacity-100 hover:bg-accent"
+            class="inline-flex size-3.5 shrink-0 cursor-pointer items-center justify-center rounded-full opacity-60 transition-opacity md:opacity-0 md:group-hover:opacity-60 hover:!opacity-100 hover:bg-accent"
             :title="$t('common.close')"
             @click.stop="closeTab(t.id)"
           >
@@ -212,14 +212,14 @@ onMounted(() => createTab())
         </button>
       </div>
 
-      <div class="ml-auto flex shrink-0 items-center gap-0.5">
+      <div class="ml-auto flex shrink-0 items-center gap-0.5 max-md:order-2">
         <label class="flex cursor-pointer items-center gap-1 rounded px-1.5 py-0.5 text-xs text-muted-foreground transition-colors hover:bg-accent/50" :title="$t('components.ydTerminal.followTip')">
-          <input v-model="followTerm" type="checkbox" class="size-3">
-          {{ $t('components.ydTerminal.follow') }}
+          <input v-model="followTerm" type="checkbox" class="size-3 max-md:size-3.5">
+          <span class="max-md:hidden">{{ $t('components.ydTerminal.follow') }}</span>
         </label>
         <label class="flex cursor-pointer items-center gap-1 rounded px-1.5 py-0.5 text-xs text-muted-foreground transition-colors hover:bg-accent/50" :title="$t('components.ydTerminal.syncTip')">
-          <input v-model="syncInput" type="checkbox" class="size-3">
-          {{ $t('components.ydTerminal.sync') }}
+          <input v-model="syncInput" type="checkbox" class="size-3 max-md:size-3.5">
+          <span class="max-md:hidden">{{ $t('components.ydTerminal.sync') }}</span>
         </label>
         <FaButton variant="ghost" size="icon-sm" class="size-5!" :title="props.treeVisible ? $t('components.ydTerminal.collapseTree') : $t('components.ydTerminal.expandTree')" @click="emits('toggle-tree')">
           <FaIcon :name="props.treeVisible ? 'i-lucide:panel-left-close' : 'i-lucide:panel-left'" class="text-xs" />

@@ -234,9 +234,9 @@ async function execCommand() {
 </script>
 
 <template>
-  <div class="flex size-full min-h-0 gap-3">
-    <!-- key 列表 -->
-    <div class="flex w-64 shrink-0 flex-col gap-2">
+  <div class="flex size-full min-h-0 flex-col gap-3 lg:flex-row">
+    <!-- key 列表（窄屏堆叠为顶部限高面板） -->
+    <div class="flex w-64 shrink-0 flex-col gap-2 max-lg:h-44 max-lg:w-full">
       <div class="flex items-center gap-1">
         <input
           v-model="pattern"
@@ -395,8 +395,8 @@ async function execCommand() {
       </div>
     </div>
 
-    <!-- 命令控制台 -->
-    <div class="flex w-80 shrink-0 flex-col rounded-md border">
+    <!-- 命令控制台（窄屏堆叠为底部限高面板） -->
+    <div class="flex w-80 shrink-0 flex-col rounded-md border max-lg:h-48 max-lg:w-full">
       <div class="border-b px-2 py-1.5 text-xs font-medium text-muted-foreground">{{ $t('dbadmin.redis.consoleTitle') }}</div>
       <div class="min-h-0 flex-1 overflow-auto p-2 font-mono text-xs">
         <div v-for="(l, i) in consoleLines" :key="i" class="mb-1.5">

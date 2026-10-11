@@ -355,7 +355,7 @@ function onCellKeydown(e: KeyboardEvent) {
     </div>
 
     <!-- 插入行弹窗 -->
-    <FaModal v-model="insertOpen" :destroy-on-close="true" :title="$t('dbadmin.grid.insertRow')" :width="520">
+    <FaModal v-model="insertOpen" :destroy-on-close="true" :title="$t('dbadmin.grid.insertRow')" class="max-w-xl!">
       <div class="max-h-[60vh] space-y-2 overflow-auto p-1">
         <div v-for="c in columns" :key="c" class="flex items-center gap-2">
           <label class="w-40 shrink-0 truncate text-right font-mono text-xs" :title="c">

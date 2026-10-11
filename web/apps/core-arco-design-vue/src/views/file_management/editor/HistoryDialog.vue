@@ -97,9 +97,9 @@ async function restore(entry: FileHistoryEntry) {
     <div v-if="source === 'local'" class="text-xs text-muted-foreground">
       {{ $t('files.editor.snapshotHint') }}
     </div>
-    <div v-if="source === 'local'" class="mt-2 flex gap-2">
-      <!-- 列表 -->
-      <div class="w-56 shrink-0 overflow-auto rounded-md border" style="height: 384px;">
+    <div v-if="source === 'local'" class="mt-2 flex flex-col gap-2 md:flex-row">
+      <!-- 列表（移动端上下堆叠：列表限高滚动，diff 独占下方） -->
+      <div class="w-56 shrink-0 overflow-auto rounded-md border max-md:w-full max-md:h-36 md:h-96">
         <button
           v-for="e in entries"
           :key="e.id"
@@ -115,10 +115,10 @@ async function restore(entry: FileHistoryEntry) {
           {{ $t('files.editor.noSnapshots') }}
         </div>
       </div>
-      <!-- diff 预览 -->
-      <div class="min-w-0 flex-1 overflow-hidden rounded-md border" style="height: 384px;">
+      <!-- diff 预览（窄容器自动内联形态，见 YdCodeEditor.diffInline） -->
+      <div class="min-w-0 flex-1 overflow-hidden rounded-md border max-md:h-72 md:h-96">
         <template v-if="selected">
-          <YdCodeEditor :model="model" :diff-original="selected.content" class="h-full" />
+          <YdCodeEditor :model="model" :diff-original="selected.content" :diff-inline="store.isMobileLayout" class="h-full" />
         </template>
         <div v-else class="flex h-full items-center justify-center text-sm text-muted-foreground">
           {{ $t('files.editor.diffHint') }}

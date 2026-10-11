@@ -377,9 +377,9 @@ onBeforeUnmount(() => {
     </div>
 
     <!-- 新建 / 编辑弹窗 -->
-    <FaModal v-model="modalVisible" :title="editingId ? $t('monitor.probe.editTitle') : $t('monitor.probe.create')" :destroy-on-close="true" class="w-[560px]">
+    <FaModal v-model="modalVisible" :title="editingId ? $t('monitor.probe.editTitle') : $t('monitor.probe.create')" :destroy-on-close="true" class="lg:w-[560px]">
       <div class="flex flex-col gap-3">
-        <div class="grid grid-cols-2 gap-2">
+        <div class="grid grid-cols-1 gap-2 sm:grid-cols-2">
           <button
             v-for="t in TYPE_OPTIONS"
             :key="t.key"

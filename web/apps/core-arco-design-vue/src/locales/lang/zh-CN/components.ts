@@ -177,6 +177,8 @@ export default {
     collapseMonitor: '收起监控',
     expandMonitor: '展开监控',
     dropToFillPath: '松开以填入路径',
+    keybarHide: '收起按键条',
+    keybarShow: '展开按键条（触屏快捷键）',
   },
   // YdTopology compose 服务拓扑
   ydTopology: {
@@ -266,12 +268,16 @@ export default {
     disclaimer: '内容由 YPanel AI 生成，请核对重要信息',
     stopGenerating: '停止生成',
     send: '发送',
+    // 权限档位（M60 四档，与后端 aichat.go 枚举对应）
+    levelReadOnly: '只读',
+    levelConfirm: '变更前确认',
+    levelAutoEdit: '自动编辑',
+    levelFull: '完全访问',
+    selectModel: '选择模型',
+    interrupted: '连接中断——可点重新生成，或回复「继续」让 AI 接着完成',
   },
   // AiFloatLayer 全局 AI 浮层
   aiFloat: {
-    modeReadOnly: '只读',
-    modeStandard: '标准确认',
-    modeAuto: '自动执行',
     welcomeTitle: 'YPanel AI 助手',
     sceneAware: '已感知当前页面：{page}',
     placeholder: '已感知当前页面「{page}」，尽管问…',

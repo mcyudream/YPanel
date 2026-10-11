@@ -28,7 +28,7 @@ const tbtn = 'size-7!'
 </script>
 
 <template>
-  <div class="flex h-9 shrink-0 items-center gap-1 border-b bg-muted/30 px-2">
+  <div class="flex min-h-9 shrink-0 flex-wrap items-center gap-1 border-b bg-muted/30 px-2">
     <!-- 编辑动作 -->
     <FaButton variant="ghost" size="icon-sm" :class="tbtn" :title="$t('files.editor.undo')" :disabled="!store.activeTab" @click="store.runActiveAction('undo')">
       <FaIcon name="i-lucide:undo-2" class="text-sm" />
@@ -43,16 +43,17 @@ const tbtn = 'size-7!'
       <FaIcon name="i-lucide:braces" class="text-sm" />
     </FaButton>
 
-    <div class="mx-1 h-5 w-px bg-border" />
+    <div class="mx-1 h-5 w-px bg-border max-md:hidden" />
 
-    <!-- 保存 -->
+    <!-- 保存（移动端图标化：文字换行占行，title 兜底语义） -->
     <FaButton variant="ghost" size="sm" class="h-7! gap-1 px-2 text-xs" :disabled="!store.activeTab" :loading="store.activeTab?.saving" :title="$t('files.editor.saveTitle')" @click="store.activeTabId && store.save(store.activeTabId)">
       <FaIcon name="i-lucide:save" class="text-sm" />
-      {{ $t('common.save') }}
+      <span class="max-md:hidden">{{ $t('common.save') }}</span>
     </FaButton>
     <FaButton variant="ghost" size="sm" class="h-7! gap-1 px-2 text-xs" :disabled="!store.dirtyCount" :title="$t('files.editor.saveAllTitle')" @click="store.saveAll">
       <FaIcon name="i-lucide:save-all" class="text-sm" />
-      {{ $t('files.editor.saveAll') }}<span v-if="store.dirtyCount" class="text-primary">（{{ store.dirtyCount }}）</span>
+      <span class="max-md:hidden">{{ $t('files.editor.saveAll') }}<span v-if="store.dirtyCount" class="text-primary">（{{ store.dirtyCount }}）</span></span>
+      <span v-if="store.dirtyCount" class="md:hidden text-[10px] text-primary">{{ store.dirtyCount }}</span>
     </FaButton>
 
     <!-- 布局 -->
@@ -61,8 +62,8 @@ const tbtn = 'size-7!'
         <FaIcon name="i-lucide:columns-2" class="text-sm" />
       </FaButton>
       <div class="mx-0.5 h-5 w-px bg-border" />
-      <FaButton variant="ghost" size="icon-sm" :class="tbtn" :title="store.layout.sidebarVisible ? $t('files.editor.hideSidebar') : $t('files.editor.showSidebar')" @click="store.toggleSidebar">
-        <FaIcon name="i-lucide:panel-left" class="text-sm" :class="store.layout.sidebarVisible ? 'text-primary' : ''" />
+      <FaButton variant="ghost" size="icon-sm" :class="tbtn" :title="store.effSidebarVisible ? $t('files.editor.hideSidebar') : $t('files.editor.showSidebar')" @click="store.toggleSidebar">
+        <FaIcon name="i-lucide:panel-left" class="text-sm" :class="store.effSidebarVisible ? 'text-primary' : ''" />
       </FaButton>
       <FaButton
         v-if="store.layout.sidebarVisible"
@@ -74,8 +75,8 @@ const tbtn = 'size-7!'
       >
         <FaIcon :name="store.layout.sidebarSide === 'left' ? 'i-lucide:arrow-right-to-line' : 'i-lucide:arrow-left-to-line'" class="text-sm" />
       </FaButton>
-      <FaButton variant="ghost" size="icon-sm" :class="tbtn" :title="store.layout.terminalVisible ? $t('files.editor.hideTerminal') : $t('files.editor.showTerminal')" @click="store.toggleTerminal">
-        <FaIcon name="i-lucide:square-terminal" class="text-sm" :class="store.layout.terminalVisible ? 'text-primary' : ''" />
+      <FaButton variant="ghost" size="icon-sm" :class="tbtn" :title="store.effTerminalVisible ? $t('files.editor.hideTerminal') : $t('files.editor.showTerminal')" @click="store.toggleTerminal">
+        <FaIcon name="i-lucide:square-terminal" class="text-sm" :class="store.effTerminalVisible ? 'text-primary' : ''" />
       </FaButton>
       <div class="mx-0.5 h-5 w-px bg-border" />
       <FaButton variant="ghost" size="icon-sm" :class="tbtn" :title="$t('files.editor.minimize')" @click="store.requestMinimize">

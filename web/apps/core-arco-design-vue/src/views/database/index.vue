@@ -994,6 +994,7 @@ onBeforeUnmount(() => {
           {{ $t('database.hints.redisUsers') }}
         </div>
 
+        <div class="overflow-x-auto">
         <!-- 数据库表 -->
         <table v-if="tab === 'databases'" class="w-full text-sm">
           <thead class="bg-muted/50 text-left text-xs text-muted-foreground">
@@ -1072,6 +1073,7 @@ onBeforeUnmount(() => {
             </tr>
           </tbody>
         </table>
+        </div>
       </div>
     
 

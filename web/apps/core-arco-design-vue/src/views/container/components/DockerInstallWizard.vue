@@ -208,7 +208,7 @@ function matrixOk(v: boolean | undefined) {
               <span class="font-medium">{{ pk.prettyName || pk.distro || '—' }}</span>
               <span class="font-mono text-xs text-muted-foreground">{{ pk.arch }} / {{ pk.distro }} {{ pk.version }}</span>
             </div>
-            <div class="grid grid-cols-2 gap-x-4 gap-y-1 px-3 py-2 text-xs">
+            <div class="grid grid-cols-1 gap-x-4 gap-y-1 px-3 py-2 text-xs sm:grid-cols-2">
               <div class="flex items-center gap-1">
                 <span class="text-muted-foreground">systemd</span>
                 <FaIcon :name="pk.systemd ? 'i-lucide:check' : 'i-lucide:x'" :class="pk.systemd ? 'text-emerald-500' : 'text-red-500'" />
@@ -246,7 +246,7 @@ function matrixOk(v: boolean | undefined) {
       <!-- ② 选源 -->
       <div v-else-if="phase === 'source'">
         <p class="text-xs text-muted-foreground">{{ $t('container.install.sourceHint') }}</p>
-        <div class="mt-2 grid grid-cols-2 gap-2">
+        <div class="mt-2 grid grid-cols-1 gap-2 sm:grid-cols-2">
           <button
             v-for="s in SOURCES" :key="s.key"
             class="flex flex-col items-start rounded-md border p-3 text-left transition-colors hover:bg-accent/40"

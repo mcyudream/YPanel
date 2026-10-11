@@ -225,7 +225,7 @@ defineExpose({
 
 <template>
   <div class="flex size-full min-h-0 flex-col gap-2">
-    <div class="flex items-center gap-1">
+    <div class="flex flex-wrap items-center gap-1">
       <button
         type="button"
         class="rounded-md px-2.5 py-1 text-xs transition-colors"
@@ -264,7 +264,7 @@ defineExpose({
         </button>
         <div
           v-if="histOpen"
-          class="absolute right-2 top-8 z-20 max-h-72 w-96 overflow-auto rounded-md border bg-background p-1 shadow-lg"
+          class="absolute right-2 top-8 z-20 max-h-72 w-96 max-w-[calc(100vw-4rem)] overflow-auto rounded-md border bg-background p-1 shadow-lg"
         >
           <button
             v-for="(item, i) in history.list.value"
@@ -334,7 +334,7 @@ defineExpose({
       </div>
     </template>
     <!-- 导入 SQL 弹窗 -->
-    <FaModal v-model="importOpen" :title="$t('dbadmin.import.title')" :width="520">
+    <FaModal v-model="importOpen" :title="$t('dbadmin.import.title')" class="max-w-xl!">
       <div class="space-y-3 p-1 text-sm">
         <div class="text-xs text-muted-foreground">
           {{ $t('dbadmin.import.targetDb') }}<span class="font-mono text-foreground">{{ db }}</span> {{ $t('dbadmin.import.hint') }}

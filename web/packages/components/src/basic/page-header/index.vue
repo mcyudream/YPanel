@@ -22,7 +22,7 @@ const slots = defineSlots<{
 </script>
 
 <template>
-  <div :class="cn('yp-page-header mb-4 flex flex-wrap items-center justify-between gap-5 border-b bg-background px-5 py-4', props.class)">
+  <div :class="cn('yp-page-header mb-4 flex flex-wrap items-center justify-between gap-5 border-b bg-background px-5 py-4 max-md:mb-2 max-md:px-3 max-md:py-3', props.class)">
     <div :class="cn('yp-page-header-main flex-[1_1_70%]', props.mainClass)">
       <div class="text-2xl">
         <slot name="title">
