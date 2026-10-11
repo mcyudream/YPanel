@@ -5,6 +5,7 @@ import nodeApi from '@/api/modules/node'
 // M53 SSH 管理（系统分组，节点维度）：sshd 配置 + 密钥统一管理（生成/导入/分发/删除）
 import api from '@/api/modules/ssh'
 import { i18n } from '@/locales'
+import YdNodeSelect from '@/components/YdNodeSelect/index.vue'
 
 defineOptions({
   name: 'ToolsSsh',
@@ -15,11 +16,6 @@ const toast = useFaToast()
 // ---- 节点 ----
 const nodes = ref<NodeItem[]>([])
 const nodeId = ref('local')
-const nodeOptions = computed(() => nodes.value.map(n => ({
-  label: `${n.name}${n.remote ? '' : i18n.global.t('tools.localNode')}${n.online ? '' : i18n.global.t('tools.offlineNode')}`,
-  value: n.id,
-  disabled: !n.online,
-})))
 
 async function loadNodes() {
   try {
@@ -360,7 +356,7 @@ onMounted(async () => {
         <span>{{ $t('tools.ssh.desc') }}</span>
       </template>
       <div class="flex gap-2 items-center">
-        <FaSelect v-model="nodeId" :options="nodeOptions" class="w-48" />
+        <YdNodeSelect v-model="nodeId" :nodes="nodes" button-class="w-48" />
         <FaButton variant="outline" size="sm" :loading="keysBusy" @click="loadAll">
           <FaIcon name="i-lucide:refresh-cw" class="mr-1" /> {{ $t('common.refresh') }}
         </FaButton>

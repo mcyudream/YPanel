@@ -13,6 +13,7 @@ import { useTaskCenterStore } from '@/store/modules/taskCenter'
 import { i18n, tr } from '@/locales'
 import YdLogViewer from '@/components/YdLogViewer/index.vue'
 import YdDangerDelete from '@/components/YdDangerDelete/index.vue'
+import YdNodeSelect from '@/components/YdNodeSelect/index.vue'
 import YdOwnerDialog from '@/components/YdOwnerDialog/index.vue'
 
 defineOptions({
@@ -191,7 +192,7 @@ const installVersions = ref<StoreVersion[]>([])
 // 高级选项：网络 / 时区 / hosts / 目标节点（M55）
 const installAdvanced = ref(false)
 const installNode = ref('')
-const onlineNodes = ref<{ id: string, name: string, arch?: string }[]>([])
+const onlineNodes = ref<{ id: string, name: string, hostname?: string, arch?: string }[]>([])
 const dockerNets = ref<{ name: string }[]>([])
 const netSel = ref('ypanel_default')
 const netNew = ref('')
@@ -561,12 +562,12 @@ async function doSetOwner(uid: number) {
 const installedInfos = ref<StoreInstallInfo[]>([])
 // M55 节点筛选：全部/本机/各节点（前端过滤，installedDetailed 本就跨节点聚合）
 const installedNodeFilter = ref('all')
-const storeNodes = ref<{ id: string, name: string, online: boolean }[]>([])
+const storeNodes = ref<{ id: string, name: string, hostname?: string, online: boolean }[]>([])
 const installedNodeOptions = computed(() => {
-  const opts = [{ label: i18n.global.t('store.nodeAll'), value: 'all' }, { label: i18n.global.t('nodes.localPanel'), value: 'local' }]
+  const opts = [{ label: i18n.global.t('store.nodeAll'), value: 'all', hostname: '' }, { label: i18n.global.t('nodes.localPanel'), value: 'local', hostname: '' }]
   for (const n of storeNodes.value) {
     if (n.id !== 'local' && !opts.some(o => o.value === n.id)) {
-      opts.push({ label: n.name, value: n.id })
+      opts.push({ label: n.name, value: n.id, hostname: n.hostname || '' })
     }
   }
   return opts
@@ -576,11 +577,12 @@ const installedNodeFilterLabel = computed(() =>
 )
 const installedNodeMenu = computed(() => [installedNodeOptions.value.map(o => ({
   label: o.label,
+  description: o.hostname && o.hostname !== o.label ? o.hostname : '',
   handle: () => { installedNodeFilter.value = o.value },
 }))])
 onMounted(() => {
   api.get('api/v1/nodes', { silent: true }).then((r) => {
-    storeNodes.value = (r.data as any[]).map((x: any) => ({ id: x.id, name: x.name, online: x.online }))
+    storeNodes.value = (r.data as any[]).map((x: any) => ({ id: x.id, name: x.name, hostname: x.hostname, online: x.online }))
   }).catch(() => {})
 })
 const installedFiltered = computed(() => {
@@ -1231,10 +1233,12 @@ function statusText(s: StoreSource) {
         </div>
         <div class="flex items-center gap-3">
           <span class="w-28 shrink-0 text-sm text-muted-foreground">{{ $t('nodes.targetNode') }}</span>
-          <YdSelect
+          <YdNodeSelect
             v-model="installNode"
-            :options="[{ label: $t('nodes.localPanel'), value: '' }, ...onlineNodes.filter(x => x.id !== 'local').map(n => ({ label: `${n.name}（${n.arch || 'linux'}）`, value: n.id }))]"
+            local-value=""
+            :nodes="onlineNodes"
             button-class="min-w-0 flex-1"
+            :describe="(n) => (n as { arch?: string }).arch || 'linux'"
           />
         </div>
         <div class="flex items-center gap-3">

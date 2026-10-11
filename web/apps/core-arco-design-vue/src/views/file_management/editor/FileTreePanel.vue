@@ -2,6 +2,7 @@
 import apiFile from '@/api/modules/file'
 import apiCFile from '@/api/modules/cfile'
 import YdChmodDialog from '@/components/YdChmodDialog/index.vue'
+import YdNodeSelect from '@/components/YdNodeSelect/index.vue'
 import type { FileEntry } from '@/api/modules/file'
 import type { FileTreeApi, FileTreeMenuItem, FileTreeNode } from './types'
 import { fmtBytes } from '@/utils/format'
@@ -23,12 +24,6 @@ const filter = ref('')
 const searching = ref(false)
 const searchKeyword = ref('')
 const searchResults = ref<FileEntry[]>([])
-
-const nodeOptions = computed(() => store.nodes.map(n => ({
-  label: n.hostname ? (n.online ? n.hostname : `${n.hostname}${i18n.global.t('files.common.offline')}`) : n.id,
-  value: n.id,
-  disabled: !n.online,
-})))
 
 function toNode(entry: FileEntry): FileTreeNode {
   return { entry, children: entry.isDir ? null : [], expanded: false, loading: false }
@@ -373,12 +368,12 @@ function msg(e: unknown) {
           {{ containerLabel }}
         </span>
       </template>
-      <FaSelect
+      <YdNodeSelect
         v-else
         v-model="store.currentNode"
-        :options="nodeOptions"
-        class="h-6! min-w-0 flex-1! text-xs!"
-        :disabled="!nodeOptions.length"
+        :nodes="store.nodes"
+        button-class="h-6! min-w-0 flex-1! text-xs!"
+        :disabled="!store.nodes.length"
       />
       <div class="ml-auto flex shrink-0 items-center gap-0.5">
         <FaButton variant="ghost" size="icon-sm" class="size-5!" :title="$t('common.refresh')" @click="loadRoots">

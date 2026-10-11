@@ -332,7 +332,10 @@ onBeforeUnmount(() => {
                   {{ n.name }}
                   <span v-if="!n.remote" class="rounded-full bg-primary/10 px-2 py-0.5 text-xs text-primary">{{ $t('nodes.local') }}</span>
                 </div>
-                <div v-if="n.remote" class="font-mono text-xs text-muted-foreground">{{ n.addr }}</div>
+                <div v-if="n.remote" class="font-mono text-xs text-muted-foreground">
+                  {{ n.addr }}<span v-if="n.hostname && n.hostname !== n.name"> · {{ n.hostname }}</span>
+                </div>
+                <div v-else-if="n.hostname && n.hostname !== n.name" class="font-mono text-xs text-muted-foreground">{{ n.hostname }}</div>
               </div>
             </div>
             <span class="inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-xs" :class="n.online ? 'bg-emerald-500/10 text-emerald-600' : 'bg-red-500/10 text-red-600'">
@@ -406,6 +409,7 @@ onBeforeUnmount(() => {
           >
             <input v-model="execSelected" type="checkbox" :value="n.id" class="hidden">
             {{ n.name }}
+            <span v-if="n.hostname && n.hostname !== n.name" class="text-muted-foreground">{{ n.hostname }}</span>
           </label>
         </div>
         <textarea

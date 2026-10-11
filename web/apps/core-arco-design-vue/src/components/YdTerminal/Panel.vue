@@ -2,7 +2,9 @@
 import type { NodeItem } from '@/api/modules/node'
 import type { TerminalConnState } from './types'
 import { useLocalStorage } from '@vueuse/core'
+import { nodeDisplayName } from '@/api/modules/node'
 import { i18n } from '@/locales'
+import YdNodeSelect from '@/components/YdNodeSelect/index.vue'
 import YdTerminal from './index.vue'
 import StatusBar from './StatusBar.vue'
 
@@ -92,7 +94,7 @@ function setRef(id: number) {
 
 function nodeLabel(id: string) {
   const n = props.nodes.find(n => n.id === id)
-  return n ? (n.hostname || n.name || id) : id
+  return n ? nodeDisplayName(n) : id
 }
 
 function createTab() {
@@ -177,10 +179,10 @@ onMounted(() => createTab())
   <div class="flex size-full min-h-0 min-w-0 flex-col overflow-hidden">
     <!-- 顶部工具栏：桌面单行（节点|标签|面板开关）；窄屏两行——首行节点+操作按钮，次行标签独占 -->
     <div class="flex h-8 shrink-0 items-center gap-1 border-b bg-muted/40 px-1.5 text-[13px] max-md:h-auto max-md:min-h-16 max-md:flex-wrap max-md:gap-y-1 max-md:py-1">
-      <FaSelect
+      <YdNodeSelect
         :model-value="props.node"
-        :options="[{ label: $t('components.ydTerminal.localNode'), value: 'local' }, ...props.nodes.filter(n => n.id !== 'local').map(n => ({ label: n.hostname || n.name || n.id, value: n.id }))]"
-        class="w-28 shrink-0 max-md:order-1"
+        :nodes="props.nodes"
+        button-class="w-28 shrink-0 max-md:order-1"
         :disabled="props.nodes.filter(n => n.id !== 'local').length === 0"
         @update:model-value="emits('update:node', String($event))"
       />

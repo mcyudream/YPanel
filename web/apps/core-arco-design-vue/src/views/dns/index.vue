@@ -1,8 +1,8 @@
 <script setup lang="ts">
 import type { DnsConfig, DnsOverview, DnsRecord, DnsRecordType } from '@/api/modules/dns'
 import apiDns from '@/api/modules/dns'
-import nodeApi, { type NodeItem } from '@/api/modules/node'
 import { i18n, tr } from '@/locales'
+import YdNodeSelect from '@/components/YdNodeSelect/index.vue'
 
 defineOptions({
   name: 'DnsIndex',
@@ -21,7 +21,6 @@ function emptyForm(): DnsForm {
   return { type: 'address', domain: '', target: '', comment: '', enabled: true, sort: 0 }
 }
 
-const nodes = ref<NodeItem[]>([])
 const nodeId = ref('local')
 const ov = ref<DnsOverview | null>(null)
 const ovLoading = ref(false)
@@ -51,11 +50,12 @@ const checkDomain = ref('')
 const checking = ref(false)
 const checkOutput = ref('')
 
-const nodeOptions = computed(() => nodes.value.map(n => ({
-  label: `${n.name}${n.remote ? '' : i18n.global.t('dns.node.local')}${n.online ? '' : i18n.global.t('dns.node.offline')}`,
-  value: n.id,
-  disabled: !n.online,
-})))
+// 节点列表由 YdNodeSelect 自拉；就绪后校验当前选择（节点已删除则回落本地）
+function onNodesLoaded(list: Array<{ id: string }>) {
+  if (!list.some(n => n.id === nodeId.value)) {
+    nodeId.value = 'local'
+  }
+}
 
 // 私网/回环地址（含内部网卡置后），供监听 IP 与 address 记录一键填写
 const privateAddrs = computed(() => {
@@ -110,16 +110,6 @@ const targetPlaceholder = computed(() => {
   }
   return ''
 })
-
-async function loadNodes() {
-  try {
-    nodes.value = await nodeApi.list()
-    if (!nodes.value.some(n => n.id === nodeId.value)) {
-      nodeId.value = 'local'
-    }
-  }
-  catch {}
-}
 
 async function loadOverview() {
   ovLoading.value = true
@@ -377,7 +367,6 @@ watch(quickAlign, (v) => {
 watch(nodeId, loadOverview)
 
 onMounted(() => {
-  loadNodes()
   loadOverview()
   load()
 })
@@ -396,7 +385,7 @@ onMounted(() => {
         <span>{{ $t('dns.desc') }}</span>
       </template>
       <div class="flex items-center gap-2">
-        <FaSelect v-model="nodeId" :options="nodeOptions" class="w-44" />
+        <YdNodeSelect v-model="nodeId" button-class="w-44" @loaded="onNodesLoaded" />
         <FaButton variant="outline" size="sm" :loading="ovLoading" @click="loadOverview">
           <FaIcon name="i-lucide:refresh-cw" class="mr-1" /> {{ $t('common.refresh') }}
         </FaButton>

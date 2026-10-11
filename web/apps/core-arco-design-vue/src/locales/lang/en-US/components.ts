@@ -157,6 +157,11 @@ export default {
     rolledBack: 'Rolled back; on-disk content has been restored',
     rollbackFailed: 'Rollback failed',
   },
+  // YdNodeSelect unified node selector
+  ydNodeSelect: {
+    local: 'Local node',
+    offline: 'Offline',
+  },
   // YdTerminal terminal
   ydTerminal: {
     pressEnterRetry: '{reason} · Press Enter to reconnect',

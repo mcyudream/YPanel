@@ -702,3 +702,12 @@
 - **现象**：M62（AI 任务后台化）E2E 时反复「发送失败/找不到会话/停止按钮不在」：①发完长任务再定位 UI 时任务常已跑完，抓不到运行态；②部署后旧 tab 不刷新，旧 bundle 打**已删除的端点**得到 404 信封（HTTP 200），表象是「任务没发出去」却无报错弹窗；③验收中改过 locale（localStorage），切换后按钮 title/placeholder 全变英文，双语 locator 失配。
 - **规避/解决**：①**运行态验证改后端断言**：journal 的 run started/finished（status=stopped/done）+ 会话表 updated_at 是确定性证据，不与 UI 抓时机赛跑；需要 UI 挂起态时用 danger 工具的「等待批准」窗口（120s，确定性长态）。②部署后验收第一动作 `tab.reload()` 并断言 `performance.getEntriesByType('resource')` 的 index hash 与服务器 html 一致（同源 hash 导航不重载文档，老坑的新变体：端点被删后旧 bundle 静默失败）。③locale 先归一并 reload，或 locator 全部用双语正则 + 坐标点击兜底（IAB locator click 卡 actionability 是高频坑）。
 - **来源**：2026-10-11 晚，M62 AI 任务持久化 E2E（142 真机，多窗口+强刷新验收）。
+
+### 节点身份显示用了 hostname：多台同主机名机器在下拉里全是「yudream」无法区分——实体身份口径必须收敛到单一组件
+
+- **现象**：用户生产面板终端页节点下拉显示 `110-42-32-35 / web / yudream / yudream / yudream`——三台同 hostname 机器完全无法区分；用户点名「显示节点的地方都应该使用 nodeid 而不是 hostname」。142 数据对照：`id`=数字串（local/1/2）、`name`=配对唯一名（node-alpha/node-143，节点管理页显示的即它）、`hostname`=机器主机名（可重复，quick_start.sh 默认节点名还取自 hostname）。
+- **根因**：终端 Panel 的 label 写的是 `n.hostname || n.name || n.id`——hostname 优先；全站约 20 处节点展示点各自手拼 label，字段口径无人统一。
+- **修复（M63，收敛而非散改）**：① 新建 `YdNodeSelect`（src/components/YdNodeSelect）作全站「选节点」唯一入口——name 主标签 + hostname 副文本（仅 hostname≠name 时显示）+ 本地词条 + 离线禁用标注，自拉 `api/v1/nodes` 或 `nodes` 透传，`localValue` prop 兼容表单 `''`=local 语义，`describe` prop 覆盖默认副文本（如安装向导标注架构）；② `nodeDisplayName()`（api/modules/node.ts）收敛非选择器场景的 label 口径；③ `FaDropdown` MenuItem 加可选 `description` 渲染副文本（仓库内 fa 包 `web/packages/components`，exports 指向 src 源码，改了即生效）；④ 节点管理卡片 addr 行补 `· hostname`。后端回显 nodeName 的位置（日志中心/磁盘保护）已是唯一名，不动。
+- **换装期的三个坑**：① **`:model-value` 单向绑定漏写 `@update:model-value` 监听**——选择器看起来正常、点击后值静默不写回（cron/sites/store 三处中招），表单内一律直接 `v-model`（与 `local-value` 不冲突）；② **truncate span（overflow:hidden）使 flex item 的 min-content 归零**——触发器无显式宽度时塌缩到外部容器宽（cron 表单里 96px 截成「no...」），对策：组件给默认宽度 `w-36`（buttonClass 显式宽度经 tailwind-merge 覆盖）；③ **存量模板把选择器嵌在 `w-24` label span 里**（cron「命令」行的畸形单行结构），`max-w-full` 被压成 96px——排查宽度塌缩先量父链（getBoundingClientRect 逐层向上），模板结构歪的先理直再换装。
+- **思想**：实体身份的显示规则（哪个字段是身份、哪个字段易重复只能做副文本）是**单点知识**，必须收敛到一个组件/一个助手函数维护；新页面选实体一律用统一选择器，禁止各处手拼 label。同类候选：数据库实例、站点、容器等若有「多字段可作 label」的歧义，同法收敛。
+- **来源**：2026-10-12，用户生产环境截图反馈（M63 节点选择统一组件，142 真机验收 20261012.0018-dev：终端/容器/DNS 下拉、cron 表单写回、节点卡片全 PASS）。

@@ -1,8 +1,8 @@
 <script setup lang="ts">
 import type { NatExternalRule, NatInterface, NatRule } from '@/api/modules/nat'
 import apiNat from '@/api/modules/nat'
-import nodeApi, { type NodeItem } from '@/api/modules/node'
 import { i18n } from '@/locales'
+import YdNodeSelect from '@/components/YdNodeSelect/index.vue'
 
 defineOptions({
   name: 'NatIndex',
@@ -32,7 +32,6 @@ function emptyForm(): NatForm {
   }
 }
 
-const nodes = ref<NodeItem[]>([])
 const nodeId = ref('local')
 const rules = ref<NatRule[]>([])
 const loading = ref(false)
@@ -55,11 +54,12 @@ const extAvailable = ref(true)
 const extLoading = ref(false)
 const extScanned = ref(false)
 
-const nodeOptions = computed(() => nodes.value.map(n => ({
-  label: `${n.name}${n.remote ? '' : i18n.global.t('nat.localNode')}${n.online ? '' : i18n.global.t('nat.offlineNode')}`,
-  value: n.id,
-  disabled: !n.online,
-})))
+// 节点列表由 YdNodeSelect 自拉；就绪后校验当前选择（节点已删除则回落本地）
+function onNodesLoaded(list: Array<{ id: string }>) {
+  if (!list.some(n => n.id === nodeId.value)) {
+    nodeId.value = 'local'
+  }
+}
 
 // 入站网卡选项：非内部网卡优先，内部（lo/docker）置后标注；排除 veth@pair 等含 @ 的虚拟对端名
 const ifaceOptions = computed(() => {
@@ -81,16 +81,6 @@ const localAddrOptions = computed(() => {
 
 function fmtPort(p: number, pe: number) {
   return pe ? `${p}-${pe}` : `${p}`
-}
-
-async function loadNodes() {
-  try {
-    nodes.value = await nodeApi.list()
-    if (!nodes.value.some(n => n.id === nodeId.value)) {
-      nodeId.value = 'local'
-    }
-  }
-  catch {}
 }
 
 async function load() {
@@ -403,7 +393,6 @@ watch(nodeId, () => {
 })
 
 onMounted(() => {
-  loadNodes()
   load()
   loadExternals()
 })
@@ -422,7 +411,7 @@ onMounted(() => {
         <span>{{ $t('nat.desc') }}</span>
       </template>
       <div class="flex flex-wrap items-center gap-2">
-        <FaSelect v-model="nodeId" :options="nodeOptions" class="w-44" />
+        <YdNodeSelect v-model="nodeId" button-class="w-44" @loaded="onNodesLoaded" />
         <FaButton variant="outline" size="sm" :loading="loading" @click="load">
           <FaIcon name="i-lucide:refresh-cw" class="mr-1" /> {{ $t('common.refresh') }}
         </FaButton>

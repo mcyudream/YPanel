@@ -3,7 +3,8 @@ import type { FileEntry } from '@/api/modules/file'
 import apiFile, { fileExtApi } from '@/api/modules/file'
 import api from '@/api'
 import type { TrashItem, FileFavorite, FileShareRow } from '@/api/modules/file'
-import apiNode from '@/api/modules/node'
+import apiNode, { type NodeItem } from '@/api/modules/node'
+import YdNodeSelect from '@/components/YdNodeSelect/index.vue'
 import { fmtBytes } from '@/utils/format'
 import { useFaModal } from '@fantastic-admin/components'
 import YdChmodDialog from '@/components/YdChmodDialog/index.vue'
@@ -41,24 +42,16 @@ const errorMsg = ref('')
 
 // ---- 节点选择（?node= 进入指定节点，默认本机） ----
 const nodeId = ref<string>(props.initialNode ?? ((route.query.node as string) || 'local'))
-const nodes = ref<{ id: string, name: string, online: boolean }[]>([])
+const nodes = ref<NodeItem[]>([])
 
 async function loadNodes() {
   try {
-    const list = await apiNode.list()
-    nodes.value = list.map(n => ({ id: n.id, name: n.online ? n.name : `${n.name}${i18n.global.t('files.common.offline')}`, online: n.online }))
+    nodes.value = await apiNode.list()
   }
   catch {}
 }
 
 const currentNodeName = computed(() => nodes.value.find(n => n.id === nodeId.value)?.name || i18n.global.t('files.common.local'))
-
-/** 节点下拉（FaDropdown：原生 select 展开层不可主题化，深色窗口里突兀） */
-const nodeMenuItems = computed(() => [nodes.value.map(n => ({
-  label: n.id === 'local' ? i18n.global.t('files.common.localNode', { name: n.name }) : n.name,
-  disabled: !n.online,
-  handle: () => pickNode(n.id),
-}))])
 
 function pickNode(id: string) {
   nodeId.value = id
@@ -869,12 +862,12 @@ onBeforeUnmount(() => {
         <span>{{ $t('files.list.description') }}</span>
       </template>
       <div class="flex flex-wrap items-center gap-2">
-        <FaDropdown v-if="nodes.some(n => n.id !== 'local')" :items="nodeMenuItems">
-          <FaButton variant="outline" size="sm" class="h-8">
-            {{ nodeId === 'local' ? $t('files.common.localNode', { name: currentNodeName }) : currentNodeName }}
-            <FaIcon name="i-lucide:chevron-down" class="ml-1 text-xs text-muted-foreground" />
-          </FaButton>
-        </FaDropdown>
+        <YdNodeSelect
+          v-if="nodes.some(n => n.id !== 'local')"
+          :model-value="nodeId"
+          :nodes="nodes"
+          @update:model-value="pickNode"
+        />
         <div class="flex min-w-0 items-center gap-1 max-md:w-full">
           <FaInput
             v-model="searchKeyword"

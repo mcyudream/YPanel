@@ -6,6 +6,7 @@ import { siteBatchApi } from '@/api/modules/site'
 import apiRuntime from '@/api/modules/runtime'
 import YdDangerDelete from '@/components/YdDangerDelete/index.vue'
 import YdOwnerDialog from '@/components/YdOwnerDialog/index.vue'
+import YdNodeSelect from '@/components/YdNodeSelect/index.vue'
 import { siteGroupApi } from '@/api/modules/cert'
 import type { SiteGroup } from '@/api/modules/cert'
 import { useYwEmbed } from '@/views/desktop/embed'
@@ -156,7 +157,7 @@ async function adoptHost() {
 // 创建
 const createVisible = ref(false)
 const form = ref({ name: '', type: 'static', domain: '', extraDomains: '', port: 80, proxyPass: '', indexFiles: 'index.html', runtimeId: 0, groupId: 0, remark: '', nodeId: '' })
-const siteNodes = ref<{ id: string, name: string }[]>([])
+const siteNodes = ref<{ id: string, name: string, hostname?: string }[]>([])
 const proxyRules = ref<{ prefix: string, target: string, ws?: boolean }[]>([{ prefix: '/api', target: '' }])
 const creating = ref(false)
 const runtimes = ref<{ id: number, name: string, type: string, version: string, origin: string, fcgiAddr: string, containerName: string, running: boolean }[]>([])
@@ -443,7 +444,7 @@ async function saveExpire() {
 
 onMounted(() => {
   api.get('api/v1/nodes', { silent: true }).then((r) => {
-    siteNodes.value = (r.data as any[]).map((x: any) => ({ id: x.id, name: x.name }))
+    siteNodes.value = (r.data as any[]).map((x: any) => ({ id: x.id, name: x.name, hostname: x.hostname }))
   }).catch(() => {})
   load()
   loadGroups()
@@ -686,9 +687,10 @@ onMounted(() => {
         </div>
         <div class="flex items-center gap-3">
           <span class="w-20 shrink-0 text-sm text-muted-foreground">{{ $t('nodes.targetNode') }}</span>
-          <YdSelect
+          <YdNodeSelect
             v-model="form.nodeId"
-            :options="[{ label: $t('nodes.localPanel'), value: '' }, ...siteNodes.filter(x => x.id !== 'local').map(n => ({ label: n.name, value: n.id }))]"
+            local-value=""
+            :nodes="siteNodes"
             size="default"
             button-class="min-w-0 flex-1"
           />

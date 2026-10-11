@@ -42,6 +42,8 @@ const Option = createReusableTemplate<{
 
 interface MenuItem {
   label: string
+  /** 次要说明文本，渲染在 label 下方（弱化小字），缺省不占位 */
+  description?: string
   type?: 'checkbox'
   icon?: string
   variant?: 'default' | 'destructive'
@@ -102,7 +104,13 @@ function handleCheckboxItemChange(item: MenuItem, checked: boolean) {
                 <div v-if="hasIcon(its)" class="flex-center size-4">
                   <Icon v-if="v.icon" :name="v.icon" class="size-4" />
                 </div>
-                {{ v.label }}
+                <div v-if="v.description" class="flex min-w-0 flex-col">
+                  <span class="truncate">{{ v.label }}</span>
+                  <span class="truncate text-xs text-muted-foreground">{{ v.description }}</span>
+                </div>
+                <template v-else>
+                  {{ v.label }}
+                </template>
               </DropdownMenuItem>
               <DropdownMenuSub v-else>
                 <DropdownMenuSubTrigger :inset="hasIcon(its)">

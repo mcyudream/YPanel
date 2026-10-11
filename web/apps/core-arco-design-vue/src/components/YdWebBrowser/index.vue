@@ -5,6 +5,7 @@
 import { computed, onMounted, ref } from 'vue'
 import webgwApi, { webgwTargetsApi } from '@/api/modules/webgw'
 import nodeApi from '@/api/modules/node'
+import YdNodeSelect from '@/components/YdNodeSelect/index.vue'
 
 const props = defineProps<{
   /** 初始地址（可选）：有则挂载即导航，无则显示引导空态 */
@@ -108,7 +109,7 @@ function onFrameLoad() {
 
 // ---- M50：节点切换 + 目标发现 ----
 const nodeSel = ref('local')
-const nodes = ref<{ id: string, name: string }[]>([])
+const nodes = ref<{ id: string, name: string, hostname?: string }[]>([])
 const showTargets = ref(false)
 const targetsLoading = ref(false)
 const targets = ref<{ name: string, url: string, hostPort: string, reachable: boolean }[]>([])
@@ -117,7 +118,7 @@ const targetsIp = ref('')
 async function loadNodes() {
   try {
     const res = await nodeApi.list()
-    nodes.value = (res || []).map((n: any) => ({ id: n.id === 0 || n.id === 'local' ? 'local' : String(n.id), name: n.name }))
+    nodes.value = (res || []).map((n: any) => ({ id: n.id === 0 || n.id === 'local' ? 'local' : String(n.id), name: n.name, hostname: n.hostname }))
   }
   catch {}
 }
@@ -164,12 +165,11 @@ defineExpose({ navigate })
   <div class="ydb-browser">
     <!-- 工具条：地址栏 / 刷新 / 外部打开 -->
     <div class="ydb-bar">
-      <YdSelect
+      <YdNodeSelect
         v-model="nodeSel"
-        :options="nodes.map(n => ({ label: n.name, value: n.id }))"
+        :nodes="nodes"
         button-class="ydb-btn ydb-node"
-        title="节点"
-        @update:model-value="showTargets && loadTargets()"
+        @change="() => { if (showTargets) loadTargets() }"
       />
       <button class="ydb-btn" title="发现该节点可浏览目标" @click="toggleTargets()">
         <i class="i-lucide-list-ends" />

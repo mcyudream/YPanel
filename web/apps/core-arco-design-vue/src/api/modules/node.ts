@@ -13,6 +13,17 @@ export interface NodeItem {
   lastSeenAt?: string
 }
 
+/**
+ * 节点身份显示名（全站唯一口径）：name（配对唯一名）优先，缺失回落 id。
+ * 禁止用 hostname 作身份 label——hostname 可重复（多台机器常同名），见 docs/exp/frontend.md。
+ */
+export function nodeDisplayName(n?: Pick<NodeItem, 'id' | 'name'> | null): string {
+  if (!n) {
+    return ''
+  }
+  return n.name || n.id
+}
+
 export default {
   list: async () => {
     const res = await api.get('api/v1/nodes', { silent: true })

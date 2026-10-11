@@ -4,6 +4,7 @@ import { panelBackupApi } from '@/api/modules/ops'
 import api from '@/api/index'
 import { storageApi } from '@/api/modules/storage'
 import { i18n } from '@/locales'
+import YdNodeSelect from '@/components/YdNodeSelect/index.vue'
 
 defineOptions({
   name: 'ManageBackups',
@@ -161,14 +162,14 @@ async function doImportSnap(e: Event) {
 
 // ---- M46：多节点 + 保留份数 ----
 const snapNode = ref('local')
-const nodesList = ref<{ id: string, name: string, online: boolean }[]>([])
+const nodesList = ref<{ id: string, name: string, hostname?: string, online: boolean }[]>([])
 const keepVal = ref(10)
 const pruneBusy = ref(false)
 
 async function loadNodes() {
   try {
     const res = await api.get('api/v1/nodes', { silent: true })
-    nodesList.value = (res.data || []).map((n: any) => ({ id: n.id === 0 || n.id === 'local' ? 'local' : String(n.id), name: n.name, online: n.online ?? true }))
+    nodesList.value = (res.data || []).map((n: any) => ({ id: n.id === 0 || n.id === 'local' ? 'local' : String(n.id), name: n.name, hostname: n.hostname, online: n.online ?? true }))
   }
   catch {}
 }
@@ -364,10 +365,7 @@ onMounted(() => {
 
       <div class="mb-4 flex flex-wrap items-center gap-2 rounded-lg border bg-muted/20 px-3 py-2 text-xs text-muted-foreground">
         <span>{{ $t('manage.backups.node') }}</span>
-        <YdSelect
-          v-model="snapNode" size="sm" class="w-40"
-          :options="nodesList.map(n => ({ label: n.name, value: n.id }))"
-        />
+        <YdNodeSelect v-model="snapNode" :nodes="nodesList" button-class="w-40" />
         <span>{{ $t('manage.backups.keep') }}</span>
         <FaInput v-model="keepVal" type="number" class="w-20" />
         <FaButton variant="outline" size="sm" @click="saveKeep">{{ $t('common.save') }}</FaButton>

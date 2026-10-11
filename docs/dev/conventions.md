@@ -70,6 +70,7 @@ ypanel/
   - **禁止使用原生 `<select>`**（含弹窗/表单内）：原生下拉展开层是浏览器 UI，不可主题化且位置脱管——一律用 `YdSelect`（FaDropdown 封装，drop-in 支持 options/v-model）；存量替换与规则见 eslint `vue/no-restricted-html-elements`
   - fa 缺失的组件以 `yd-` 前缀封装（`YdXxx`），保持 fa 视觉风格与交互效果（主题变量、圆角、阴影、动效一致）；`yd-` 组件集中在 `src/components/`（或 `src/ui/`），全局注册
   - 封装 `yd-` 组件时允许在组件内部使用 Arco 原语，但必须包成完整语义组件，不向外暴露 Arco API
+- **实体身份展示收敛（M63 起）**：凡「选择某实体」的下拉/选择器必须使用统一封装组件（节点=`YdNodeSelect`），**禁止各调用点手拼 label**——身份显示口径（唯一业务标识作主标签、易重复字段只作副文本）收敛在该组件单点维护。节点身份口径：`name`（配对唯一名）为主，`hostname` 可重复仅作副文本，禁止作主 label；非选择器场景的节点文案用 `nodeDisplayName()`（api/modules/node.ts）。新实体出现「多个字段都能当 label」的歧义时，同法封装统一组件，不留第二处口径。
 - 双模式共用同一套 API store（Pinia）与路由权限；模式切换不刷新页面、状态不丢失
 - 组件内通信走 store/事件总线，禁止跨模块直接引用内部实现
 - API 层统一封装（错误处理、token 刷新、WS 重连）；禁止组件内裸 fetch

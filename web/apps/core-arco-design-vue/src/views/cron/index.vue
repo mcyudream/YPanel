@@ -6,6 +6,7 @@ import type { ScriptItem } from '@/api/modules/cron'
 import apiCron, { scriptApi, scriptRunApi } from '@/api/modules/cron'
 import { storageApi } from '@/api/modules/storage'
 import { i18n } from '@/locales'
+import YdNodeSelect from '@/components/YdNodeSelect/index.vue'
 
 defineOptions({
   name: 'CronIndex',
@@ -28,7 +29,7 @@ async function load() {
 // M55 目标节点（shell/script 类）
 onMounted(() => {
   api.get('api/v1/nodes', { silent: true }).then((r) => {
-    cronNodes.value = (r.data as any[]).filter((x: any) => x.id === 'local' || x.online).map((x: any) => ({ id: x.id, name: x.name }))
+    cronNodes.value = (r.data as any[]).filter((x: any) => x.id === 'local' || x.online).map((x: any) => ({ id: x.id, name: x.name, hostname: x.hostname }))
   }).catch(() => {})
 })
 
@@ -37,7 +38,7 @@ const editorVisible = ref(false)
 const isCreate = ref(false)
 const editorId = ref<number>(0)
 const form = ref({ name: '', cron: '*/5 * * * *', command: '', timeoutSecs: 300, type: 'shell', payload: '', nodeId: '' })
-const cronNodes = ref<{ id: string, name: string }[]>([])
+const cronNodes = ref<{ id: string, name: string, hostname?: string }[]>([])
 const saving = ref(false)
 // M34：备份类任务的结构化参数（含远程上传选项）
 const backupFields = ref({ dbId: '', siteName: '', srcDir: '', name: '', project: '', storageAccountId: 0, keep: 0 })
@@ -476,15 +477,17 @@ async function runScript(s: ScriptItem) {
             button-class="flex-1"
           />
         </div>
+        <div v-if="form.type === 'shell'" class="flex items-center gap-3">
+          <span class="w-24 shrink-0 text-sm text-muted-foreground">{{ $t('nodes.targetNode') }}</span>
+          <YdNodeSelect
+            v-model="form.nodeId"
+            local-value=""
+            :nodes="cronNodes"
+            size="default"
+          />
+        </div>
         <div v-if="form.type === 'shell'" class="flex items-start gap-3">
-          <span class="w-24 shrink-0 text-sm text-muted-foreground">{{ $t('cron.command') }}
-        <span class="text-sm text-muted-foreground">{{ $t('nodes.targetNode') }}</span>
-        <YdSelect
-          v-if="form.type === 'shell' || form.type === 'script'"
-          v-model="form.nodeId"
-          :options="[{ label: $t('nodes.localPanel'), value: '' }, ...cronNodes.filter(x => x.id !== 'local').map(n => ({ label: n.name, value: n.id }))]"
-          size="default"
-        /></span>
+          <span class="w-24 shrink-0 text-sm text-muted-foreground">{{ $t('cron.command') }}</span>
           <textarea
             v-model="form.command"
             class="h-24 w-full flex-1 resize-y rounded-md border border-input bg-background p-2 font-mono text-[13px] outline-none focus:ring-1 focus:ring-primary"

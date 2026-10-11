@@ -40,6 +40,7 @@ const nodeName = (id: string) => nodes.value.find(n => n.id === id)?.name ?? id
 const nodeOptions = computed(() => nodes.value.map(n => ({
   label: `${n.name}${n.remote ? '' : i18n.global.t('hosts.localNode')}${n.online ? '' : i18n.global.t('hosts.offlineNode')}`,
   value: n.id,
+  hostname: n.hostname || '',
   disabled: !n.online,
 })))
 
@@ -415,6 +416,7 @@ onMounted(() => {
             size="sm"
             :variant="selectedNodes.includes(n.value) ? 'default' : 'outline'"
             :disabled="n.disabled"
+            :title="n.hostname && n.hostname !== n.label ? n.hostname : undefined"
             @click="toggleNode(n.value)"
           >
             {{ n.label }}

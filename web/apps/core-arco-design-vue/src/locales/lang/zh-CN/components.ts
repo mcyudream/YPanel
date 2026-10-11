@@ -157,6 +157,11 @@ export default {
     rolledBack: '已回滚，盘上内容已恢复',
     rollbackFailed: '回滚失败',
   },
+  // YdNodeSelect 统一节点选择器
+  ydNodeSelect: {
+    local: '本地节点',
+    offline: '离线',
+  },
   // YdTerminal 终端
   ydTerminal: {
     pressEnterRetry: '{reason} · 按 Enter 重连',

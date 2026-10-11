@@ -4,6 +4,7 @@ import { procApi } from '@/api/modules/nodeexec'
 import apiNode from '@/api/modules/node'
 import type { NodeItem } from '@/api/modules/node'
 import { i18n } from '@/locales'
+import YdNodeSelect from '@/components/YdNodeSelect/index.vue'
 
 defineOptions({
   name: 'ProcessesIndex',
@@ -30,17 +31,6 @@ const loadError = ref('')
 // ---- 节点选择 ----
 const nodes = ref<NodeItem[]>([])
 const nodeId = ref<'local' | string>(props.initialNode || (route.query.node as string) || 'local')
-const nodeOptions = computed(() => {
-  const online = nodes.value.filter(n => n.online)
-  return [{ id: 'local', name: `${nodes.value.find(n => n.id === 'local')?.name || i18n.global.t('processes.local')}${i18n.global.t('processes.localSuffix')}` }, ...online.filter(n => n.id !== 'local').map(n => ({ id: n.id, name: n.name }))]
-})
-
-/** 节点下拉（FaDropdown：原生 select 展开层不可主题化） */
-const nodeMenuItems = computed(() => [nodeOptions.value.map(n => ({
-  label: n.name,
-  handle: () => pickNode(n.id),
-}))])
-const currentNodeName = computed(() => nodeOptions.value.find(n => n.id === nodeId.value)?.name ?? i18n.global.t('processes.local'))
 
 async function loadNodes() {
   try {
@@ -239,12 +229,7 @@ onBeforeUnmount(() => {
         <span>{{ $t('processes.desc') }}</span>
       </template>
       <div class="flex flex-wrap items-center gap-2">
-        <FaDropdown :items="nodeMenuItems">
-          <FaButton variant="outline" size="sm" class="h-8">
-            {{ currentNodeName }}
-            <FaIcon name="i-lucide:chevron-down" class="ml-1 text-xs text-muted-foreground" />
-          </FaButton>
-        </FaDropdown>
+        <YdNodeSelect :model-value="nodeId" :nodes="nodes" @update:model-value="pickNode" />
         <FaInput v-model="keyword" :placeholder="$t('processes.filterPlaceholder')" class="w-44" />
         <FaButton variant="outline" size="icon-sm" :title="$t('common.refresh')" @click="load">
           <FaIcon name="i-lucide:refresh-cw" class="text-sm" :class="loading ? 'animate-spin' : ''" />
