@@ -228,6 +228,7 @@ func CallerFrom(ctx context.Context) (Caller, bool) {
 // write/danger 风险一律取写点；模块未登记时回落 ai:use / ai:admin。
 var aiModulePerm = map[string][2]string{
 	"system":           {"dashboard:read", "host:manage"},
+	"web_lookup":        {"dashboard:read", "dashboard:read"},
 	"monitor_alert":    {"monitor:read", "monitor:read"},
 	"panel_ops":        {"panel:read", "panel:manage"},
 	"docker_containers": {"docker:read", "docker:write"},

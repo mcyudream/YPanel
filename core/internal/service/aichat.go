@@ -1,5 +1,5 @@
 // AI 对话（M31 v5）：工具治理循环——模块化工具集（load_tools 按需展开）+
-// 风险分级门禁（read 自动 / write·danger 按确认模式 ask 用户）+ 操作审计 + SSE 流式。
+// 权限档位门禁（M60 四档：read_only / confirm / auto_edit / full）+ 操作审计 + SSE 流式。
 // langchaingo 每轮 GenerateContent 单独传 WithTools，轮间切换工具列表合法；
 // ask 通过 pendingAsks channel 挂起等待前端确认（POST /ai/ask/:id），fail-closed。
 package service
@@ -7,33 +7,56 @@ package service
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
-	"net/http"
 	"strings"
 	"time"
 
 	"github.com/tmc/langchaingo/llms"
 	"github.com/tmc/langchaingo/llms/openai"
 	"github.com/ypanel/core/internal/model"
+	"github.com/ypanel/core/internal/rbac"
 )
 
-const maxToolRounds = 12
+// M60：长任务（多步安装/迁移/排查）经常超出小轮次上限后被静默掐断，放宽并配合耗尽提示。
+const maxToolRounds = 30
+
+// errAIPermDenied：RBAC 工具权限拒绝（M60）——调用方按「无权限」步骤呈现，区别于普通失败。
+var errAIPermDenied = errors.New("权限不足")
 
 // toolOutputTrunc 卡片「原始输出」上限（完整结果仍在模型上下文，此处仅供用户展开查看）。
 const toolOutputTrunc = 2000
 
-// 权限模式（M32 仿 ZCode）：read_only 只读工具集；standard 沿用全局确认设置；auto 全自动执行。
+// 权限档位（M60 对齐 ZCode 权限级别）：
+// read_only 只读（写/danger 工具注入期剔除）；confirm 变更前确认（write+danger 全部弹确认）；
+// auto_edit 自动编辑（write 自动执行，danger 仍需确认）；full 完全访问（全部自动执行）。
 const (
 	aiModeReadOnly = "read_only"
-	aiModeStandard = "standard"
-	aiModeAuto     = "auto"
+	aiModeConfirm  = "confirm"
+	aiModeAutoEdit = "auto_edit"
+	aiModeFull     = "full"
 )
+
+// normalizeAIMode 归一权限档位，兼容旧值（standard→confirm、auto→full），未知回落 confirm。
+func normalizeAIMode(mode string) string {
+	switch mode {
+	case aiModeReadOnly, aiModeConfirm, aiModeAutoEdit, aiModeFull:
+		return mode
+	case "standard":
+		return aiModeConfirm
+	case "auto":
+		return aiModeFull
+	default:
+		return aiModeConfirm
+	}
+}
 
 const aiSystemPrompt = "你是 YPanel 服务器管理面板的运维助手。用简洁中文回答服务器运维问题，回答使用 Markdown 格式。" +
 	"面板能力按模块组织：需要某模块的工具时先调 load_tools 加载（模块目录见 load_tools 描述；用户当前页面相关模块通常已预注入，可直接调用）。" +
-	"查询类工具直接调用；写操作与危险操作（删除/停启/清理等）默认会弹出确认框，由用户批准后才执行——被拒绝或超时未确认的操作不得擅自重试，应说明情况并询问用户意愿。" +
+	"查询类工具直接调用；写操作与危险操作（删除/停启/清理等）是否弹确认框取决于用户选择的权限档位——被拒绝或超时未确认的操作不得擅自重试，应说明情况并询问用户意愿。" +
 	"执行任何变更前，先用一句话向用户说明你要做什么。" +
+	"涉及外部软件文档、报错资料、最佳实践时可用 web_search 联网搜索、fetch_url 抓取网页正文；系统提示中的长期记忆包含本环境服务器特性与历史踩坑，回答前优先对照。" +
 	"用户表达的是意图而非具体操作时，主动串联工具完成端到端交付而不是只给建议，常见工作流：" +
 	"①想要某类应用（博客/图床/网盘等）：store_search_apps 检索 → store_app_detail 看参数 → 安装前先 list_database_instances 和 list_installed_apps 检查是否已有可复用的数据库/依赖服务（有则告知用户并复用，不重复安装）；存在多个同类实例时，列出候选（名称/类型/端口/备注）交由用户选择目标实例，确认后用 reveal_db_credentials 取连接信息并按需 create_database/create_db_user，再填入应用参数→ store_install_app 安装（确认后执行）→ get_task 跟踪安装 → list_compose_projects 验证运行，需要域名时 site_create 反代应用端口 + issue_cert 签发证书；" +
 	"②把 git 仓库跑起来：src_build_preview 检测语言栈与构建参数 → 与用户确认服务/端口 → src_build_create 创建构建任务 → get_task 跟踪构建进度 → list_compose_projects/compose_logs 验证跑通；" +
@@ -65,52 +88,30 @@ func defsToLLMTools(defs []aiToolDef) []llms.Tool {
 	return out
 }
 
-// StreamAgentChat 工具治理循环 + SSE 流式输出。
+// RunAgentChat 工具治理循环 + 事件流输出（M62：与 HTTP 连接解耦——emit/ping 由
+// 调用方注入（chatRun 总线或旧式 SSE 写出），ctx 为任务自身生命周期）。
 // 事件：data: {"scene":{...}} / {"step":{...}} / {"step_result":{...}} / {"ask":{...}} /
 // {"ask_result":{...}} / {"reasoning":"..."} / {"content":"..."} / {"knowledge":[...]} / [DONE]
-func (s *AIService) StreamAgentChat(
+func (s *AIService) RunAgentChat(
 	ctx context.Context,
-	w http.ResponseWriter,
+	emit func(any),
+	ping func(),
 	provider *model.AIProvider,
 	history []ChatMessage,
 	scenePath string,
 	focus string,
 	mode string,
 ) error {
-	// 权限模式（M32 仿 ZCode）：read_only 只读工具集；standard 沿用全局确认设置；auto 全自动执行
-	switch mode {
-	case aiModeReadOnly, aiModeStandard, aiModeAuto:
-	default:
-		mode = aiModeStandard
-	}
+	// 权限档位（M60）：read_only 只读工具集；confirm 变更前确认；auto_edit 自动编辑；full 完全访问
+	mode = normalizeAIMode(mode)
 	llm, err := buildLLM(provider)
 	if err != nil {
 		return err
 	}
 
-	flusher, ok := w.(http.Flusher)
-	if !ok {
-		return errWrapAI("当前连接不支持流式")
-	}
-	w.Header().Set("Content-Type", "text/event-stream")
-	w.Header().Set("Cache-Control", "no-cache")
-	w.WriteHeader(http.StatusOK)
-	flusher.Flush()
-
-	emitJSON := func(v any) {
-		b, _ := json.Marshal(v)
-		fmt.Fprintf(w, "data: %s\n\n", b)
-		flusher.Flush()
-	}
-	emitPing := func() {
-		// SSE 注释帧：ask 等待期间保活，前端 data: 解析自动忽略
-		fmt.Fprintf(w, ": ping\n\n")
-		flusher.Flush()
-	}
-
 	// 场景感知
 	if scene := s.SceneContext(ctx, scenePath, focus); scene != nil {
-		emitJSON(map[string]any{"scene": scene})
+		emit(map[string]any{"scene": scene})
 	}
 
 	// system：提示词 + 技能注入 + 长期记忆召回 + 知识库检索 + 场景摘要
@@ -139,7 +140,7 @@ func (s *AIService) StreamAgentChat(
 		}
 		sys += "\n\n相关知识库条目：\n" + strings.Join(parts, "\n---\n")
 		// 引用来源事件：前端在回答下方展示来源（点击可展开正文）
-		emitJSON(map[string]any{"knowledge": cits})
+		emit(map[string]any{"knowledge": cits})
 	}
 	sys += "\n\n" + s.buildSceneSummary(ctx, scenePath, focus)
 
@@ -164,6 +165,8 @@ func (s *AIService) StreamAgentChat(
 	// 标准多轮 function calling 循环：
 	// 每轮 GenerateContent → 若返回 tool_calls → 治理后执行 → 追加 AI+Tool 消息 → 重新生成。
 	// 每轮重建 toolList（load_tools 可能已展开新模块）。
+	// roundsExhausted：跑满轮次上限仍未产出最终回答（M60 之前是静默退出，长任务像「AI 自己断联」）
+	roundsExhausted := true
 	for round := 0; round < maxToolRounds; round++ {
 		// M42：上下文压缩（超阈值时裁剪历史工具结果，保留最近 4 条完整）
 		msgs = compressContext(msgs)
@@ -174,7 +177,7 @@ func (s *AIService) StreamAgentChat(
 			// - content delta 是原始文本字节（非 JSON），tool_calls delta 是累积 JSON 数组（元素含 function 键）。
 			llms.WithStreamingReasoningFunc(func(_ context.Context, reasoning, chunk []byte) error {
 				if len(reasoning) > 0 {
-					emitJSON(map[string]string{"reasoning": string(reasoning)})
+					emit(map[string]string{"reasoning": string(reasoning)})
 				}
 				if len(chunk) == 0 {
 					return nil
@@ -187,18 +190,20 @@ func (s *AIService) StreamAgentChat(
 						return nil
 					}
 				}
-				emitJSON(map[string]string{"content": string(chunk)})
+				emit(map[string]string{"content": string(chunk)})
 				return nil
 			}))
 		if err != nil {
 			return err
 		}
 		if len(resp.Choices) == 0 {
+			roundsExhausted = false
 			break
 		}
 		choice := resp.Choices[0]
 		// 无 tool_calls = 最终文本回答（已流式透出）
 		if len(choice.ToolCalls) == 0 {
+			roundsExhausted = false
 			break
 		}
 		// 有 tool_calls：执行工具并追加 AI + Tool 消息对，继续循环
@@ -213,7 +218,7 @@ func (s *AIService) StreamAgentChat(
 
 		loadCalled := false
 		for _, tc := range choice.ToolCalls {
-			emitJSON(map[string]any{"step": map[string]string{
+			emit(map[string]any{"step": map[string]string{
 				"type": "tool", "name": tc.FunctionCall.Name,
 				"detail": fmt.Sprintf("执行 %s(%s)", tc.FunctionCall.Name, tc.FunctionCall.Arguments),
 			}})
@@ -224,7 +229,7 @@ func (s *AIService) StreamAgentChat(
 			fuseKey := tc.FunctionCall.Name + "|" + strings.TrimSpace(tc.FunctionCall.Arguments)
 			if fuse[fuseKey] >= 2 {
 				result = "已熔断：该工具以完全相同的参数连续失败 2 次，已停止重试。请调整参数、补充前置步骤或改用其他方法。"
-				emitJSON(map[string]any{"step_result": map[string]string{
+				emit(map[string]any{"step_result": map[string]string{
 					"name": tc.FunctionCall.Name, "status": "熔断", "detail": "同参数连续失败，已短路", "output": "",
 				}})
 				msgs = append(msgs, llms.MessageContent{
@@ -240,14 +245,19 @@ func (s *AIService) StreamAgentChat(
 				result, terr = def.Fn(ctx, tc.FunctionCall.Arguments)
 				loadCalled = true
 			case known && def.Name == "ask_user":
-				result, terr = s.runAskUser(ctx, emitJSON, emitPing, tc.FunctionCall.Arguments)
+				result, terr = s.runAskUser(ctx, emit, ping, tc.FunctionCall.Arguments)
 			case known:
-				result, terr = s.governToolCall(ctx, def, tc.FunctionCall.Arguments, emitJSON, emitPing, mode)
+				result, terr = s.governToolCall(ctx, def, tc.FunctionCall.Arguments, emit, ping, mode)
 			default:
 				result, terr = "", fmt.Errorf("未找到工具 %s（可能未通过 load_tools 加载对应模块）", tc.FunctionCall.Name)
 			}
 			if terr != nil {
-				result = "工具执行失败: " + terr.Error()
+				// M60：RBAC 权限拒绝单列「无权限」（区别于普通失败，用户可行动：去角色管理开权限）
+				if errors.Is(terr, errAIPermDenied) {
+					result = terr.Error()
+				} else {
+					result = "工具执行失败: " + terr.Error()
+				}
 				fuse[fuseKey]++
 			} else {
 				toolOK++
@@ -257,11 +267,14 @@ func (s *AIService) StreamAgentChat(
 			status := "完成"
 			if terr != nil {
 				status = "失败"
+				if errors.Is(terr, errAIPermDenied) {
+					status = "无权限"
+				}
 			}
 			// 卡片主行：可读摘要（列表渲染/键值平铺）；展开项：原始输出（截断），均已脱敏
 			summary := truncText(strings.ReplaceAll(strings.TrimSpace(maskSensitive(toolSummary(def, result))), "\n", " "), 420)
 			output := truncText(maskSensitive(result), toolOutputTrunc)
-			emitJSON(map[string]any{"step_result": map[string]string{
+			emit(map[string]any{"step_result": map[string]string{
 				"name": tc.FunctionCall.Name, "status": status, "detail": summary, "output": output,
 			}})
 			msgs = append(msgs, llms.MessageContent{
@@ -278,25 +291,14 @@ func (s *AIService) StreamAgentChat(
 			defs = s.toolDefsFor(ctx, scenePath, expanded, mode)
 		}
 	}
-	// M42：后台学习——成功工具调用 ≥3 次时异步沉淀会话级记忆（同内容去重）
-	if toolOK >= 3 && s.db != nil {
-		firstQ := ""
-		for _, m := range history {
-			if m.Role == "user" && strings.TrimSpace(m.Content) != "" {
-				firstQ = truncText(m.Content, 60)
-				break
-			}
-		}
-		summary := fmt.Sprintf("【自动沉淀】会话「%s」使用 %d 个工具调用完成任务", firstQ, toolOK)
-		go func(content string) {
-			var n int64
-			if err := s.db.Model(&model.AIMemory{}).Where("content = ?", content).Count(&n).Error; err == nil && n == 0 {
-				_ = s.db.Create(&model.AIMemory{Content: content}).Error
-			}
-		}(summary)
+	// M60：轮次跑满仍未收尾 → 明确告知用户进度与继续方式（此前静默退出，像「AI 断联」）
+	if roundsExhausted {
+		emit(map[string]string{"content": fmt.Sprintf(
+			"\n\n> ⚠️ 本次任务已达单次工具调用轮次上限（%d 轮），已暂停。上面的进度是当前已完成的部分；回复「继续」我会接着完成剩余步骤。",
+			maxToolRounds,
+		)})
 	}
-	emitJSON(map[string]string{"done": "1"})
-	flusher.Flush()
+	emit(map[string]string{"done": "1"})
 	return nil
 }
 
@@ -416,9 +418,9 @@ func (s *AIService) runAskUser(ctx context.Context, emit func(any), ping func(),
 	}
 }
 
-// governToolCall 风险门禁统一出口：
-// read 直接执行；write/danger 按确认模式 ask 用户（一次性审批，fail-closed），
-// 执行结果与 ask 结论全部写操作审计。
+// governToolCall 权限门禁统一出口（M60 四档）：
+// RBAC 预检（无权限 fail-fast）；write/danger 按 confirm/auto_edit/full 档位决定是否 ask 用户
+// （一次性审批，fail-closed）；工具执行期 15s 心跳保活；结果与 ask 结论全部写操作审计。
 func (s *AIService) governToolCall(
 	ctx context.Context,
 	def aiToolDef,
@@ -438,10 +440,18 @@ func (s *AIService) governToolCall(
 			return "", err
 		}
 	}
-	// 权限模式：auto 全自动执行不弹确认；standard 沿用全局确认设置（默认 strict=写+危险都确认）
-	needAsk := def.Risk == aiRiskDanger || (def.Risk == aiRiskWrite && s.AskMode() == aiAskStrict)
-	if mode == aiModeAuto {
+	// M60：RBAC 工具权限预检——无权限显性标「无权限」而不是混进普通失败
+	// （工具注入期已预过滤无权限工具，此处兜底节点范围/权限点校验；权限档位不影响 RBAC 授权）
+	if err := rbac.CheckTool(ctx, def.Module, def.Risk, args); err != nil {
+		s.auditOperation(def, args, "", err.Error(), false, "denied")
+		return "", fmt.Errorf("%w：%v。请联系管理员在「角色管理」开通对应权限；聊天权限档位不影响此限制", errAIPermDenied, err)
+	}
+	// 权限档位（M60）：full 全自动；auto_edit 写自动、危险仍确认；confirm（默认）写+危险都确认
+	needAsk := def.Risk == aiRiskDanger || def.Risk == aiRiskWrite
+	if mode == aiModeFull {
 		needAsk = false
+	} else if mode == aiModeAutoEdit {
+		needAsk = def.Risk == aiRiskDanger
 	}
 	action := "executed"
 	if needAsk {
@@ -489,7 +499,26 @@ func (s *AIService) governToolCall(
 			action = "approved"
 		}
 	}
+	// M60：工具执行期心跳——长命令/安装类工具执行期间 SSE 可能因空闲被中间层掐断，
+	// 后台协程 15s 一帧 ping；退出前 stop+join，保证不在 handler 返回后写连接。
+	stopPing := make(chan struct{})
+	pingDone := make(chan struct{})
+	go func() {
+		defer close(pingDone)
+		t := time.NewTicker(15 * time.Second)
+		defer t.Stop()
+		for {
+			select {
+			case <-stopPing:
+				return
+			case <-t.C:
+				ping()
+			}
+		}
+	}()
 	result, err := def.Fn(ctx, args)
+	close(stopPing)
+	<-pingDone
 	if err != nil {
 		s.auditOperation(def, args, "", err.Error(), false, action)
 	} else {

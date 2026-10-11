@@ -33,7 +33,7 @@ func (s *AIService) aiToolsPanelAI(ctx context.Context) []aiToolDef {
 		},
 		{
 			Name: "save_memory", Module: aiModAI, Risk: aiRiskWrite,
-			Desc: "把本次对话中值得长期记住的运维经验/用户偏好/服务器特性沉淀为记忆（下次对话自动可用）。input 为一句话记忆内容（纯文本或 {\"content\":\"...\"}）。",
+			Desc: "把本次对话中值得长期记住的**可复用运维事实**沉淀为记忆（下次对话自动可用）。只允许沉淀：服务器特性（拓扑/版本/路径/端口）、踩坑结论（根因与解法）、用户偏好。**禁止**沉淀：任务完成状态、工具调用统计、会话过程记录、一次性临时信息。input 为一句话记忆内容（纯文本或 {\"content\":\"...\"}），相同内容自动去重。",
 			Parameters: schObj(map[string]any{"content": schStr("记忆内容一句话")}),
 			Fn: func(_ context.Context, input string) (string, error) {
 				content := strings.TrimSpace(input)
@@ -52,7 +52,12 @@ func (s *AIService) aiToolsPanelAI(ctx context.Context) []aiToolDef {
 				if content == "" {
 					return "", fmt.Errorf("记忆内容为空")
 				}
-				if err := s.db.Create(&model.AIMemory{Content: content}).Error; err != nil {
+				var n int64
+				_ = s.db.Model(&model.AIMemory{}).Where("content = ?", content).Count(&n).Error
+				if n > 0 {
+					return "该记忆已存在，跳过", nil
+				}
+				if err := s.db.Create(&model.AIMemory{Content: truncText(content, 500)}).Error; err != nil {
 					return "", err
 				}
 				return "已记住", nil

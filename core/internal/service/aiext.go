@@ -73,7 +73,7 @@ func (s *AIService) RememberMemory(content string) error {
 // RecallMemories 检索与 query 相关的记忆（最近 20 条中关键词命中前 5）。
 func (s *AIService) RecallMemories(query string) []model.AIMemory {
 	rows := []model.AIMemory{}
-	_ = s.db.Order("id desc").Limit(20).Find(&rows).Error
+	_ = s.db.Order("id desc").Limit(200).Find(&rows).Error
 	if query == "" {
 		return rows[:min5(len(rows))]
 	}
