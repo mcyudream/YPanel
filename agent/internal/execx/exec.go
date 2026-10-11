@@ -50,6 +50,16 @@ func RunStream(ctx context.Context, command string, timeoutSecs int, onLine func
 
 	cmd := exec.CommandContext(ctx, "sh", "-c", command)
 	cmd.SysProcAttr = procAttr() // 超时 Kill 时连同子进程组一起结束
+	// Go 的 CommandContext 默认只杀主进程：sh -c 管道链的子进程存活会握住管道使 Wait 卡死
+	// （docker pull 等长命令超时后 handler 挂起、core 侧误报「节点 agent 不可达」）。
+	// Cancel 改为整组 SIGKILL，WaitDelay 兜底 io 排空超时。
+	cmd.Cancel = func() error {
+		if cmd.Process != nil {
+			return killGroup(cmd.Process.Pid)
+		}
+		return nil
+	}
+	cmd.WaitDelay = 5 * time.Second
 	out, err := cmd.StdoutPipe()
 	if err != nil {
 		return 0, false, err
@@ -111,6 +121,14 @@ func RunEnv(ctx context.Context, command string, env map[string]string, timeoutS
 	defer cancel()
 
 	cmd := exec.CommandContext(ctx, "sh", "-c", command)
+	// 同 RunStream：超时整组 SIGKILL + WaitDelay 兜底（防管道子进程拖死 Wait）
+	cmd.Cancel = func() error {
+		if cmd.Process != nil {
+			return killGroup(cmd.Process.Pid)
+		}
+		return nil
+	}
+	cmd.WaitDelay = 5 * time.Second
 	if len(env) > 0 {
 		cmd.Env = os.Environ()
 		for k, v := range env {

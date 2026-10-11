@@ -5,6 +5,7 @@ import (
 	"strconv"
 	"log/slog"
 	"net/http"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 
@@ -17,12 +18,28 @@ func respOK[T any](c *gin.Context, data T) {
 }
 
 // respErr 业务错误响应（HTTP 恒 200，业务码区分）；非业务错误记日志。
+// 内部错误（code 1000）向前端透出真实原因摘要——YPanel 为自托管管理员面板，
+// 排查价值高于隐藏收益（完整细节仍在服务端日志），否则用户只见「系统内部错误」无法反馈。
 func respErr(c *gin.Context, err error) {
 	be := errs.From(err)
 	if be.Code == errs.CodeInternal && err.Error() != be.Message {
 		slog.Error("api internal error", "err", err.Error(), "path", c.Request.URL.Path)
+		be = &errs.Error{Code: be.Code, I18nKey: be.I18nKey, Message: truncErr(be.Message, err.Error())}
 	}
 	c.JSON(http.StatusOK, errs.RespErr(be))
+}
+
+// truncErr 内部错误透传摘要：「系统内部错误：<原因前 160 字符>」。
+func truncErr(base, detail string) string {
+	detail = strings.TrimSpace(detail)
+	if detail == "" {
+		return base
+	}
+	r := []rune(detail)
+	if len(r) > 160 {
+		r = append(r[:160], '…')
+	}
+	return base + ": " + string(r)
 }
 
 // bind JSON 绑定，失败自动响应。

@@ -7,6 +7,8 @@ export interface AiSessionItem {
   id: number
   title: string
   updatedAt?: string
+  /** 运行态标注（M62）：running / waiting_confirm / waiting_answer；空 = 无任务 */
+  runStatus?: string
 }
 
 const props = withDefaults(defineProps<{
@@ -54,6 +56,12 @@ function commitRename(s: AiSessionItem) {
   if (title && title !== s.title) {
     emit('rename', s, title)
   }
+}
+
+const RUN_BADGE: Record<string, { cls: string, key: string }> = {
+  running: { cls: 'bg-emerald-500/10 text-emerald-600', key: 'ai.chat.runRunning' },
+  waiting_confirm: { cls: 'bg-amber-500/10 text-amber-600', key: 'ai.chat.runWaitingConfirm' },
+  waiting_answer: { cls: 'bg-sky-500/10 text-sky-600', key: 'ai.chat.runWaitingAnswer' },
 }
 
 function onEditKeydown(e: KeyboardEvent, s: AiSessionItem) {
@@ -116,6 +124,14 @@ function onEditKeydown(e: KeyboardEvent, s: AiSessionItem) {
           <button type="button" class="min-w-0 flex-1 cursor-pointer truncate text-left" @click="emit('select', s.id)">
             {{ s.title }}
           </button>
+          <!-- 运行态徽标（悬停时让位给操作按钮） -->
+          <span
+            v-if="s.runStatus && RUN_BADGE[s.runStatus] && editingId !== s.id"
+            class="hidden shrink-0 rounded-full px-1.5 py-0.5 text-[10px] group-hover:hidden sm:inline-flex"
+            :class="RUN_BADGE[s.runStatus].cls"
+          >
+            {{ $t(RUN_BADGE[s.runStatus].key) }}
+          </span>
           <span class="hidden shrink-0 items-center gap-0.5 group-hover:flex max-md:flex">
             <button
               type="button"

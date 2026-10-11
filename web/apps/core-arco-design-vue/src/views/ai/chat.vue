@@ -48,6 +48,9 @@ onMounted(() => {
 })
 onBeforeUnmount(() => {
   mq?.removeEventListener('change', onMqChange)
+  if (pollTimer) {
+    clearTimeout(pollTimer)
+  }
 })
 
 function toggleSidebar() {
@@ -123,14 +126,28 @@ async function loadProviders() {
 const conversations = ref<AiSessionItem[]>([])
 const sessionsLoading = ref(false)
 
-async function loadConversations() {
-  try {
+let pollTimer: ReturnType<typeof setTimeout> | null = null
+
+async function loadConversations(silent = false) {
+  if (!silent) {
     sessionsLoading.value = true
+  }
+  try {
     conversations.value = await conversationApi.list()
   }
   catch {}
   finally {
-    sessionsLoading.value = false
+    if (!silent) {
+      sessionsLoading.value = false
+    }
+  }
+  // 有运行中/待确认/待回答的会话时轻量轮询刷新徽标（M62）
+  if (pollTimer) {
+    clearTimeout(pollTimer)
+    pollTimer = null
+  }
+  if (conversations.value.some(c => !!c.runStatus)) {
+    pollTimer = setTimeout(() => { void loadConversations(true) }, 5000)
   }
 }
 

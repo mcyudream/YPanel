@@ -22,7 +22,11 @@ const props = defineProps<{
 const askStore = useAiAskStore()
 const collapsed = ref(true)
 
-const askPending = computed(() => !props.seg.done && askStore.payload?.id === props.seg.askId)
+// 仅真正挂了 askId 的工具块参与「待确认」判定——否则 undefined === undefined
+// 会把运行中的普通工具块（无 ask，如 full 档任务）误标成待确认（M62 修复）
+const askPending = computed(() =>
+  !props.seg.done && !!props.seg.askId && askStore.payload?.id === props.seg.askId,
+)
 
 // 危险操作挂起时自动展开参数区，方便核对后到下方批准
 watch(askPending, (v) => {

@@ -253,6 +253,12 @@ export function useAiChat(options?: {
             st.done = true
             st.status = ev.ask_result.approved ? '已确认' : (ev.ask_result.reason === 'timeout' ? '已超时' : '已拒绝')
           }
+          // 同步回写分段工具块的终态（否则 attach 回放重建的 ask 块永远显示执行中）
+          const askSeg = segs.find((s): s is Extract<AiSegment, { type: 'tool' }> => s.type === 'tool' && s.askId === ev.ask_result.id)
+          if (askSeg) {
+            askSeg.done = true
+            askSeg.status = (st && st.status) || (ev.ask_result.approved ? '已确认' : '已拒绝')
+          }
           useAiAskStore().settled(ev.ask_result.id)
         }
         if (ev.knowledge) {

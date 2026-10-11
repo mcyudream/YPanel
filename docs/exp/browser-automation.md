@@ -41,3 +41,9 @@
 - **根因**：IAB 桥接的 locator click 可信度在该 SPA（reka-ui 组件库）上不可靠，actionability 检查过不去。
 - **规避/解决**：优先 `dom_cua.click({node_id})`（`get_visible_dom()` 拿 ref，且必须在同一次连接批次内点击，跨调用 ref 会漂移）；无 ref 时 `cua.click({x,y})` 坐标点击（配合截图定位）。会话中途被顶掉后 tab 渲染面可能冻结（截图超时/`could not be restored`），关掉重开新 tab 最快。
 - **来源**：2026-10-11 面板截图
+
+### IAB 旧标签对象跨轮失效：tabs.get 报 could not be restored for activation，只能关掉重开
+
+- **现象**：隔了多轮 cell 后对缓存过的 tab id 调 `tabs.get(id)`，报 `browser tab '...' could not be restored for activation`（列表里 id 还在），get 恢复不了；对它的一切操作全挂。
+- **规避/解决**：先 `tabs.list()` 重新发现，对**每个** id 依次 try-get 找到第一个可恢复的；都不行就 `tabs.close()` 旧的 + `tabs.new()` 重开（登录态在 localStorage/服务端，重开仅需重登）。长验收会话把 tab id 存字符串变量并每 cell 重新 list 校验。
+- **来源**：2026-10-11 深夜，M62 会话状态徽标验收（三个旧 tab 全部恢复失败）。

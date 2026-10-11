@@ -873,6 +873,10 @@ func (s *AIService) hostExecTimeout(ctx context.Context, command string, timeout
 	res, err := agentclient.DoJSON[dto.ExecReq, dto.ExecResp](ac, ctx, "POST", "/agent/v1/exec",
 		&dto.ExecReq{Command: command, TimeoutSecs: timeoutSecs})
 	if err != nil {
+		// 任务总时长到点（chatRun ctx deadline）时的「不可达」是误导：真正含义是任务被终止
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return "", errWrapAI("任务执行时长已达上限，本次调用已随任务终止；请开新会话继续")
+		}
 		return "", err
 	}
 	out := strings.TrimSpace(res.Output)

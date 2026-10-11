@@ -233,7 +233,7 @@ func (s *AIService) aiToolsExec(ctx context.Context) []aiToolDef {
 	return []aiToolDef{
 		{
 			Name: "run_command", Module: aiModExec, Risk: aiRiskDanger,
-			Desc: "在服务器上执行任意 shell 命令（systemd 服务环境，无终端交互；每次执行都会请求用户确认）。仅在没有更合适的面板工具时使用。input JSON：{\"command\":\"shell 命令\",\"timeoutSecs\":120}",
+			Desc: "在服务器上执行任意 shell 命令（systemd 服务环境，无终端交互；每次执行都会请求用户确认）。仅在没有更合适的面板工具时使用。超长操作（大镜像拉取/全量备份等可能超 300 秒）禁止直接阻塞执行——用 nohup 后台化（nohup cmd > /tmp/x.log 2>&1 & echo $!）后按任务 ID 轮询日志。input JSON：{\"command\":\"shell 命令\",\"timeoutSecs\":120}",
 			Parameters: schObj(map[string]any{
 				"command": schStr("要执行的 shell 命令"), "timeoutSecs": schInt("超时秒数，默认 120 上限 300"),
 				"node": schStr("目标节点，默认 local"),

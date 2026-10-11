@@ -396,3 +396,10 @@
 - **顺带修的存量 bug**：mongo external dump 原命令缺 `--host/--port`（默认连 27017，非标端口的外接 mongo 一直会连错）；本次统一带上。
 - **边界**：rootless Docker 不支持 host 网络（面板场景为 root daemon，不受影响）；首次未缓存镜像时任务前段耗时是拉镜像（任务日志可见 docker pull 输出）。
 - **来源**：2026-10-11，线上外接 MySQL 迁移缺 mysqldump 事件后的方案拍板（用户定案「不强依赖系统环境」）。
+
+### GORM v2 全表 Delete 无 WHERE 被静默拦截：「清空全部」类操作必挂，报上来只剩「系统内部错误」
+
+- **现象**：AI 记忆页「清空记忆」恒报「系统内部错误」，服务端日志有 `api internal error` 但信息极少；功能自上线以来从未成功过。
+- **根因**：GORM v2 出于安全拦截不带条件的全表删除——`db.Delete(&Model{})` 返回 `ErrMissingWhereClause`（WHERE conditions required）。该错误非业务 `*Error`，被 `errs.From` 兜底成 code 1000「系统内部错误」，真实原因只留在日志里。
+- **规避/解决**：①清空类操作显式条件：`db.Where("1 = 1").Delete(&Model{})`；②全仓排查同款：`grep "\.Delete(&model\." -A0` 后确认每个调用都带主键或条件；③**内部错误透传设计变更**（respErr）：YPanel 是自托管管理员面板，内部错误信封 message 追加真实原因摘要（截 160 字符，`系统内部错误: WHERE conditions required`），完整细节仍打日志——否则用户只见六个字无法反馈，排查全靠猜。
+- **来源**：2026-10-11 深夜，M62 验收期用户报「清空记忆失败 + 系统内部错误不能透传」（aiext.go DeleteAllMemories）。

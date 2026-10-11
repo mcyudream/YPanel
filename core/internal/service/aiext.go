@@ -137,7 +137,12 @@ func (s *AIService) ListConversations() []map[string]any {
 	_ = s.db.Order("updated_at desc").Limit(50).Find(&rows).Error
 	out := []map[string]any{}
 	for _, r := range rows {
-		out = append(out, map[string]any{"id": r.ID, "title": r.Title, "updatedAt": r.UpdatedAt})
+		item := map[string]any{"id": r.ID, "title": r.Title, "updatedAt": r.UpdatedAt}
+		// M62：运行态标注（running/waiting_confirm/waiting_answer，无任务为空）
+		if st := s.ConversationRunStatus(r.ID); st != "" {
+			item["runStatus"] = st
+		}
+		out = append(out, item)
 	}
 	return out
 }
@@ -208,7 +213,8 @@ func firstUserSnippet(messages []ChatMessage) string {
 
 // DeleteAllMemories 清空全部记忆。
 func (s *AIService) DeleteAllMemories() error {
-	return s.db.Delete(&model.AIMemory{}).Error
+	// GORM v2 拦截无 WHERE 的全表 Delete（ErrMissingWhereClause），清空须显式条件
+	return s.db.Where("1 = 1").Delete(&model.AIMemory{}).Error
 }
 
 // ---- 知识文档（用户注入 md/txt → 分块检索 + read_knowledge 按需深读） ----

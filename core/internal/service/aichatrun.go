@@ -22,7 +22,7 @@ const (
 
 	aiRunMaxEvents    = 8000            // 单任务事件帧回放上限保险丝（超限截半）
 	aiRunTTL          = 10 * time.Minute // 结束后保留时长（迟订阅回放窗口）
-	aiRunTotalTimeout = 30 * time.Minute // 单任务总上限（防泄漏）
+	aiRunTotalTimeout = 60 * time.Minute // 单任务总上限（防泄漏；GitLab 升级类长任务+用户介入间隔需富余）
 )
 
 // chatRun 一轮对话任务的运行体。emit 仅由任务 goroutine 单线程调用。
@@ -36,6 +36,7 @@ type chatRun struct {
 	events [][]byte   // 事件帧（JSON 原文，不含 SSE 信封）
 	subs   map[chan []byte]struct{}
 	status string
+	pending string      // 挂起类型："" 无 / "ask" 待确认 / "question" 待回答（M62 会话列表徽标）
 	doneCh chan struct{} // finish 时关闭（订阅端感知收尾，避免悬挂）
 
 	builder *aiMsgBuilder
@@ -48,6 +49,7 @@ func (r *chatRun) emit(v any) {
 	if err != nil {
 		return
 	}
+	r.trackPending(v)
 	r.builder.feed(b)
 	r.mu.Lock()
 	r.events = append(r.events, b)
@@ -97,6 +99,32 @@ func (r *chatRun) subscribe(offset int) (replay [][]byte, ch chan []byte) {
 func (r *chatRun) unsubscribe(ch chan []byte) {
 	r.mu.Lock()
 	delete(r.subs, ch)
+	r.mu.Unlock()
+}
+
+// trackPending 从帧类型跟踪挂起状态（会话列表「待确认/待回答」徽标数据源）。
+func (r *chatRun) trackPending(v any) {
+	m, ok := v.(map[string]any)
+	if !ok {
+		return
+	}
+	if _, has := m["ask"]; has {
+		r.setPending("ask")
+	}
+	if _, has := m["ask_result"]; has {
+		r.setPending("")
+	}
+	if _, has := m["ask_user"]; has {
+		r.setPending("question")
+	}
+	if _, has := m["ask_user_result"]; has {
+		r.setPending("")
+	}
+}
+
+func (r *chatRun) setPending(p string) {
+	r.mu.Lock()
+	r.pending = p
 	r.mu.Unlock()
 }
 
@@ -340,6 +368,32 @@ func (s *AIService) SubscribeChatRun(convoID uint, offset int) (replay [][]byte,
 	doneCh = r.doneCh
 	r.mu.Unlock()
 	return replay, ch, doneCh, status, true
+}
+
+// ConversationRunStatus 会话的运行态标注（会话列表徽标用）：
+// running / waiting_confirm / waiting_answer；无运行体或已结束返回空串。
+func (s *AIService) ConversationRunStatus(convoID uint) string {
+	v, ok := s.runs.Load(convoID)
+	if !ok {
+		return ""
+	}
+	r, ok := v.(*chatRun)
+	if !ok {
+		return ""
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.status != AIRunStatusRunning {
+		return ""
+	}
+	switch r.pending {
+	case "ask":
+		return "waiting_confirm"
+	case "question":
+		return "waiting_answer"
+	default:
+		return "running"
+	}
 }
 
 // ChatRunStatus 查询会话任务状态（无运行体返回空串）。
