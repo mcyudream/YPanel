@@ -121,54 +121,6 @@ export default {
     return (res.data as any)?.mode as 'strict' | 'danger_only'
   },
 
-  // SSE 流式对话（fetch 流解析，返回增量回调）
-  chatStream: async (
-    providerId: number | undefined,
-    messages: ChatMsg[],
-    onDelta: (content: string) => void,
-    onDone?: () => void,
-  ) => {
-    const token = localStorage.getItem('token') || ''
-    const resp = await fetch('api/v1/ai/chat', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-      body: JSON.stringify({ providerId, messages }),
-    })
-    if (!resp.ok || !resp.body) {
-      throw new Error(`AI 服务异常: HTTP ${resp.status}`)
-    }
-    const reader = resp.body.getReader()
-    const decoder = new TextDecoder()
-    let buf = ''
-    for (;;) {
-      const { done, value } = await reader.read()
-      if (done) {
-        break
-      }
-      buf += decoder.decode(value, { stream: true })
-      const lines = buf.split('\n')
-      buf = lines.pop() || ''
-      for (const line of lines) {
-        const t = line.trim()
-        if (!t.startsWith('data:')) {
-          continue
-        }
-        const payload = t.slice(5).trim()
-        if (payload === '[DONE]') {
-          onDone?.()
-          return
-        }
-        try {
-          const ev = JSON.parse(payload)
-          if (ev.content) {
-            onDelta(ev.content)
-          }
-        }
-        catch {}
-      }
-    }
-    onDone?.()
-  },
 }
 
 // LobeHub 风格供应商预设（B18）：icon 为 @lobehub/icons-static-svg 的 SVG 模块

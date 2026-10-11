@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"strconv"
+	"time"
 
 	"github.com/gin-gonic/gin"
 
@@ -104,13 +105,18 @@ func (a *AIAPI) DeleteProvider(c *gin.Context) {
 	respOK(c, struct{}{})
 }
 
-// Chat POST /api/v1/ai/chat {providerId?, model?, messages:[{role,content}]}（SSE 流式）
-func (a *AIAPI) Chat(c *gin.Context) {
+// ChatStart POST /api/v1/ai/chat/start（M62）：创建后台对话任务，立即返回会话 ID。
+// 任务在后端 goroutine 运行（30min 上限），不随 HTTP 连接断开而终止；
+// 前端经 GET /ai/chat/stream 订阅事件流（换窗口/强刷新可重连介入）。
+func (a *AIAPI) ChatStart(c *gin.Context) {
 	req, ok := bind[struct {
-		ProviderID uint                  `json:"providerId"`
-		Model      string                `json:"model"`
-		Mode       string                `json:"mode"`
-		Messages   []service.ChatMessage `json:"messages"`
+		ConversationID uint                  `json:"conversationId"`
+		ProviderID     uint                  `json:"providerId"`
+		Model          string                `json:"model"`
+		Mode           string                `json:"mode"`
+		Messages       []service.ChatMessage `json:"messages"`
+		Scene          string                `json:"scene"`
+		Focus          string                `json:"focus"`
 	}](c)
 	if !ok {
 		return
@@ -132,10 +138,105 @@ func (a *AIAPI) Chat(c *gin.Context) {
 		cp.Model = req.Model
 		provider = &cp
 	}
-	// M54：调用者权限随 ctx 下钻——AI 工具执行前按模块/风险校验权限
-	if err := a.AI.StreamAgentChat(callerCtx(c), c.Writer, provider, req.Messages, c.Query("scene"), c.Query("focus"), req.Mode); err != nil {
-		c.SSEvent("error", gin.H{"message": err.Error()})
+	convoID, err := a.AI.StartChatRun(callerCtx(c), req.ConversationID, provider, req.Messages, req.Scene, req.Focus, req.Mode)
+	if err != nil {
+		respErr(c, err)
+		return
 	}
+	respOK(c, gin.H{"conversationId": convoID})
+}
+
+// ChatStream GET /api/v1/ai/chat/stream?conversationId=N&offset=K（M62）：
+// 订阅任务事件流——回放 events[K:] 后实时推送；响应头 X-Ai-Run 报告任务状态
+// （none=无运行体，前端回退静态历史）。断开仅取消订阅，不影响任务本身。
+func (a *AIAPI) ChatStream(c *gin.Context) {
+	id64, _ := strconv.ParseUint(c.Query("conversationId"), 10, 64)
+	offset, _ := strconv.Atoi(c.Query("offset"))
+	flusher, ok := c.Writer.(http.Flusher)
+	if !ok {
+		respErr(c, errBadRequest("当前连接不支持流式"))
+		return
+	}
+	c.Header("Content-Type", "text/event-stream")
+	c.Header("Cache-Control", "no-cache")
+	c.Header("X-Accel-Buffering", "no")
+	c.Status(http.StatusOK)
+
+	write := func(b []byte) {
+		_, _ = c.Writer.Write(b)
+		flusher.Flush()
+	}
+	runFrame := func(v any) {
+		b, _ := json.Marshal(v)
+		write(append(append([]byte("data: "), b...), '\n', '\n'))
+	}
+
+	convoID := uint(id64)
+	replay, sub, doneCh, status, has := a.AI.SubscribeChatRun(convoID, offset)
+	if !has {
+		c.Header("X-Ai-Run", "none")
+		runFrame(map[string]string{"done": "1"})
+		return
+	}
+	c.Header("X-Ai-Run", status)
+	for _, b := range replay {
+		write(append(append([]byte("data: "), b...), '\n', '\n'))
+	}
+	if status != service.AIRunStatusRunning {
+		return
+	}
+	heartbeat := time.NewTicker(15 * time.Second)
+	defer heartbeat.Stop()
+	for {
+		select {
+		case b := <-sub:
+			if isPingFrame(b) {
+				write(b)
+				continue
+			}
+			write(append(append([]byte("data: "), b...), '\n', '\n'))
+		case <-heartbeat.C:
+			write([]byte(": ping\n\n"))
+		case <-doneCh:
+			// 任务收尾：剩余帧已按序进缓冲，排空后结束订阅
+			for {
+				select {
+				case b := <-sub:
+					if isPingFrame(b) {
+						write(b)
+						continue
+					}
+					write(append(append([]byte("data: "), b...), '\n', '\n'))
+					continue
+				default:
+				}
+				return
+			}
+		case <-c.Request.Context().Done():
+			return
+		}
+	}
+}
+
+// isPingFrame 心跳注释帧原样透传（不入客户端 offset 计数）。
+func isPingFrame(b []byte) bool {
+	return len(b) > 0 && b[0] == ':'
+}
+
+// ChatStop POST /api/v1/ai/chat/stop {conversationId}（M62）：终止后台任务
+// （fail-closed 语义保留：未批准的操作视为拒绝），半截内容落库。
+func (a *AIAPI) ChatStop(c *gin.Context) {
+	req, ok := bind[struct {
+		ConversationID uint `json:"conversationId"`
+	}](c)
+	if !ok {
+		return
+	}
+	if !a.AI.StopChatRun(req.ConversationID) {
+		respErr(c, errBadRequest("该会话没有进行中的任务"))
+		return
+	}
+	respOK(c, struct{}{})
 }
 
 // ListTools GET /api/v1/ai/tools（系统工具清单 + 开关状态）

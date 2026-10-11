@@ -27,8 +27,11 @@ const props = withDefaults(defineProps<{
 
 const emit = defineEmits<{ close: [], expand: [] }>()
 
-const pos = ref({ x: window.innerWidth - props.width - 24, y: Math.max(16, (window.innerHeight - props.height) / 2 - 40) })
-const size = ref({ w: props.width, h: props.height })
+// 初始尺寸/位置按视口钳制：桌面经验值（520×720）原样落窄屏会直接开出屏外
+const initW = Math.min(props.width, window.innerWidth - 16)
+const initH = Math.min(props.height, window.innerHeight - 24)
+const pos = ref({ x: Math.max(8, window.innerWidth - initW - 24), y: Math.max(8, Math.min(48, (window.innerHeight - initH) / 2 - 40)) })
+const size = ref({ w: initW, h: initH })
 const maximized = ref(false)
 const fullscreen = ref(false)
 
@@ -76,8 +79,9 @@ function onResizeMove(e: PointerEvent) {
   if (!resizeStart) {
     return
   }
-  size.value.w = Math.max(props.minWidth, resizeStart.w + e.clientX - resizeStart.x)
-  size.value.h = Math.max(props.minHeight, resizeStart.h + e.clientY - resizeStart.y)
+  // 缩放同时钳制到视口内（右/下缘不出屏）
+  size.value.w = Math.max(props.minWidth, Math.min(window.innerWidth - pos.value.x - 8, resizeStart.w + e.clientX - resizeStart.x))
+  size.value.h = Math.max(props.minHeight, Math.min(window.innerHeight - pos.value.y - 8, resizeStart.h + e.clientY - resizeStart.y))
 }
 function onResizeUp() {
   resizeStart = null
@@ -120,9 +124,9 @@ onBeforeUnmount(() => {
     class="fixed flex flex-col overflow-hidden rounded-xl border bg-background shadow-2xl"
     :style="style"
   >
-    <!-- 标题栏（拖动） -->
+    <!-- 标题栏（拖动；touch-none 防触屏拖动被页面滚动劫持） -->
     <div
-      class="flex cursor-move items-center justify-between border-b bg-muted/40 px-3 py-2 select-none"
+      class="flex cursor-move touch-none items-center justify-between border-b bg-muted/40 px-3 py-2 select-none"
       @pointerdown="onTitleDown"
     >
       <div class="flex items-center gap-2 text-sm font-medium">
@@ -164,10 +168,10 @@ onBeforeUnmount(() => {
       <slot />
     </div>
 
-    <!-- 缩放手柄 -->
+    <!-- 缩放手柄（触屏可拖：touch-none + 命中区外扩） -->
     <span
       v-if="resizable && !maximized && !fullscreen"
-      class="absolute right-0 bottom-0 size-4 cursor-nwse-resize"
+      class="absolute right-0 bottom-0 size-4 cursor-nwse-resize touch-none before:absolute before:-top-4 before:-left-4 before:h-8 before:w-8 before:content-['']"
       @pointerdown="onResizeDown"
     />
   </div>

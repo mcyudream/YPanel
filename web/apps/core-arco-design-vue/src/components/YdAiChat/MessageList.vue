@@ -55,16 +55,21 @@ function jump() {
 
 <template>
   <div class="relative min-h-0 flex-1">
-    <div ref="listRef" class="h-full space-y-4 overflow-y-auto p-4" @scroll="onScroll">
-      <slot />
+    <div ref="listRef" class="h-full overflow-y-auto px-4 py-4" @scroll="onScroll">
+      <!-- 内容宽度约束 920px 居中（参考 YuDream-Admin） -->
+      <div class="mx-auto w-full max-w-[920px] space-y-5">
+        <slot />
+      </div>
     </div>
+    <!-- 回到底部：右下角圆形悬浮钮 -->
     <button
       v-if="showJump"
       type="button"
-      class="absolute bottom-3 left-1/2 flex -translate-x-1/2 cursor-pointer items-center gap-1 rounded-full border bg-background px-3 py-1 text-xs text-muted-foreground shadow-md transition-colors hover:text-foreground"
+      class="absolute bottom-4 right-4 flex size-9 cursor-pointer items-center justify-center rounded-full border bg-background text-muted-foreground shadow-md transition-all hover:text-foreground hover:shadow-lg"
+      :title="$t('components.ydAiChat.jumpToBottom')"
       @click="jump"
     >
-      <FaIcon name="i-lucide:arrow-down-to-line" class="text-[11px]" /> {{ $t('components.ydAiChat.jumpToBottom') }}
+      <FaIcon name="i-lucide:arrow-down-to-line" class="text-sm" />
     </button>
   </div>
 </template>

@@ -1,6 +1,7 @@
 <script setup lang="ts">
 // 系统工具（智能/系统工具，M31 治理化）：
-// 模块分组工具表（风险徽标 + 开关）+ 确认模式切换（strict / danger_only）+ AI 操作审计。
+// 模块分组工具表（风险徽标 + 开关）+ AI 操作审计。
+// M60：全局「确认模式」卡片移除——写/危险操作确认改由对话发送框的权限档位（四档）决定。
 import { i18n, tr } from '@/locales'
 import aiApi from '@/api/modules/ai'
 import type { AiOperationLog, AiToolInfo } from '@/api/modules/ai'
@@ -35,34 +36,6 @@ async function setFlag(t: AiToolInfo, enabled: boolean) {
   }
   finally {
     savingName.value = ''
-  }
-}
-
-// ---- 确认模式（ask 机制）：strict = 写入+危险都确认；danger_only = 仅危险操作确认 ----
-const askMode = ref<'strict' | 'danger_only'>('strict')
-const askModeSaving = ref(false)
-
-async function loadAskMode() {
-  try {
-    askMode.value = await aiApi.askMode() || 'strict'
-  }
-  catch {}
-}
-
-async function changeAskMode(mode: 'strict' | 'danger_only') {
-  const prev = askMode.value
-  askMode.value = mode
-  askModeSaving.value = true
-  try {
-    await aiApi.setAskMode(mode)
-    toast.success(i18n.global.t(mode === 'strict' ? 'ai.tools.switchedStrict' : 'ai.tools.switchedDangerOnly'))
-  }
-  catch (e: any) {
-    askMode.value = prev
-    toast.error(i18n.global.t('ai.tools.switchFailed'), { description: e?.message })
-  }
-  finally {
-    askModeSaving.value = false
   }
 }
 
@@ -148,12 +121,10 @@ function fmtTime(v: string) {
 
 onMounted(() => {
   loadTools()
-  loadAskMode()
   loadLogs()
 })
 onActivated(() => {
   loadTools()
-  loadAskMode()
 })
 </script>
 
@@ -161,20 +132,9 @@ onActivated(() => {
   <div>
     <FaPageMain>
       <div class="space-y-4">
-        <!-- 顶部：确认模式 + 统计 -->
+        <!-- 顶部：统计 + 搜索（M60：全局确认模式卡片移除，写/危险确认由对话发送框的权限档位决定） -->
         <div class="flex flex-wrap items-center gap-3">
-          <div class="flex items-center gap-2 text-sm">
-            <span class="text-muted-foreground">{{ $t('ai.tools.askMode') }}</span>
-            <YdSelect
-              v-model="askMode"
-              :options="[
-                { value: 'strict', label: $t('ai.tools.strictLabel') },
-                { value: 'danger_only', label: $t('ai.tools.dangerOnlyLabel') },
-              ]"
-              button-class="min-w-56"
-              @update:model-value="v => changeAskMode(v as 'strict' | 'danger_only')"
-            />
-          </div>
+          <span class="text-xs text-muted-foreground">{{ $t('ai.tools.modeHint') }}</span>
           <div class="ml-auto text-xs text-muted-foreground">
             {{ $t('ai.tools.totalTools', { n: tools.length }) }} · {{ $t('ai.tools.enabledPrefix') }} <span class="font-medium text-foreground">{{ enabledCount }}</span> {{ $t('ai.tools.enabledSuffix') }} · {{ $t('ai.tools.dangerTools', { n: riskCount }) }}
           </div>
@@ -193,7 +153,8 @@ onActivated(() => {
               <span class="font-mono text-[10px] text-muted-foreground/60">{{ g.module }}</span>
               <span class="ml-auto">{{ $t('ai.tools.toolCount', { n: moduleTotals.get(g.module) }) }}</span>
             </div>
-            <table class="w-full text-sm">
+            <div class="overflow-x-auto">
+              <table class="w-full text-sm">
               <tbody>
                 <tr v-for="t in g.list" :key="t.name" class="border-b transition-colors last:border-b-0 hover:bg-accent/30">
                   <td class="w-56 px-3 py-2">
@@ -208,7 +169,7 @@ onActivated(() => {
                       </div>
                     </div>
                   </td>
-                  <td class="max-w-0 px-3 py-2">
+                  <td class="min-w-48 px-3 py-2">
                     <div class="truncate text-muted-foreground" :title="t.description">
                       {{ t.description }}
                     </div>
@@ -230,7 +191,8 @@ onActivated(() => {
                   </td>
                 </tr>
               </tbody>
-            </table>
+              </table>
+            </div>
           </div>
         </div>
         <FaPagination v-model:page="page" v-model:size="size" :total="filteredTools.length" />

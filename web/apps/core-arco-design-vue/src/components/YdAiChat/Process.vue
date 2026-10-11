@@ -119,10 +119,10 @@ const stateTextClass: Record<StepState, string> = {
             class="shrink-0 text-[10px] text-muted-foreground"
           />
         </div>
-        <div v-if="s.detail && !expanded.has(i)" class="mt-0.5 truncate text-[11px] text-muted-foreground" :title="s.detail">
+        <div v-if="s.detail && !expanded.has(i)" class="mt-0.5 line-clamp-2 break-words text-[11px] text-muted-foreground" :title="s.detail">
           {{ s.detail }}
         </div>
-        <div v-if="s.summary && !expanded.has(i)" class="truncate text-[11px] text-muted-foreground/80" :class="s.detail ? '' : 'mt-0.5'" :title="s.summary">
+        <div v-if="s.summary && !expanded.has(i)" class="line-clamp-2 break-words text-[11px] text-muted-foreground/80" :class="s.detail ? '' : 'mt-0.5'" :title="s.summary">
           {{ s.summary }}
         </div>
         <!-- 展开态：完整入参与结果 -->

@@ -1,7 +1,8 @@
 <script setup lang="ts">
-// YdAiToolBlock：ZCode 式工具块——对话流内一等块（参数折叠 + 可读摘要 + 原始输出滚动区默认可见），
-// 危险操作挂起时内联批准/拒绝按钮（aiAsk store 驱动）。
-import { computed, ref } from 'vue'
+// YdAiToolBlock：工具调用块（M60.1 参考 YuDream-Admin 胶囊化）——头部为 pill 胶囊
+// （状态色 icon + 工具名 + 摘要 + 状态徽标），点击展开参数/原始输出；危险操作挂起时
+// 内联批准/拒绝提示（aiAsk store 驱动）。
+import { computed, ref, watch } from 'vue'
 import { useAiAskStore } from '@/store/modules/aiAsk'
 import { i18n } from '@/locales'
 
@@ -19,9 +20,16 @@ const props = defineProps<{
 }>()
 
 const askStore = useAiAskStore()
-const collapsed = ref(false)
+const collapsed = ref(true)
 
 const askPending = computed(() => !props.seg.done && askStore.payload?.id === props.seg.askId)
+
+// 危险操作挂起时自动展开参数区，方便核对后到下方批准
+watch(askPending, (v) => {
+  if (v) {
+    collapsed.value = false
+  }
+})
 
 const stateText = computed(() => {
   if (askPending.value) {
@@ -40,6 +48,10 @@ const stateClass = computed(() => {
   if (!props.seg.done) {
     return 'border-primary/40 bg-primary/10 text-primary'
   }
+  // M60：RBAC 无权限单列（区别于普通失败，去角色管理开通即可解决）
+  if (props.seg.status === '无权限') {
+    return 'border-orange-500/50 bg-orange-500/10 text-orange-600'
+  }
   if (props.seg.status === '失败') {
     return 'border-red-500/40 bg-red-500/10 text-red-500'
   }
@@ -53,7 +65,31 @@ const icon = computed(() => {
   if (props.seg.status === '失败') {
     return 'i-lucide:x'
   }
+  if (props.seg.status === '无权限') {
+    return 'i-lucide:lock'
+  }
   return 'i-lucide:check'
+})
+
+const iconClass = computed(() => {
+  if (!props.seg.done) {
+    return 'animate-spin text-primary'
+  }
+  if (props.seg.status === '失败') {
+    return 'text-red-500'
+  }
+  if (props.seg.status === '无权限') {
+    return 'text-orange-500'
+  }
+  return 'text-emerald-600'
+})
+
+// 胶囊上的可读摘要：挂起/运行/失败优先展示，完成态优先展示结果摘要
+const pillText = computed(() => {
+  if (askPending.value || !props.seg.done) {
+    return props.seg.summary || props.seg.name
+  }
+  return props.seg.summary || ''
 })
 
 function prettyArgs(raw: string) {
@@ -67,37 +103,37 @@ function prettyArgs(raw: string) {
 </script>
 
 <template>
-  <div
-    class="w-full overflow-hidden rounded-lg border bg-background/60 transition-colors"
-    :class="askPending ? 'border-amber-500/50' : 'border-border/60'"
-  >
-    <!-- 头部：工具名 + 摘要 + 状态（点击折叠/展开） -->
+  <div class="w-full">
+    <!-- 头部胶囊：状态 icon + 工具名 + 摘要（长结果限三行换行，不横向撑页） + 状态徽标（点击折叠/展开） -->
     <button
       type="button"
-      class="flex w-full cursor-pointer items-center gap-2 px-2.5 py-2 text-left text-xs"
+      class="flex max-w-full cursor-pointer items-start gap-2 rounded-2xl border border-border/60 bg-background/80 py-1.5 pl-2.5 pr-2 text-left text-xs transition-colors hover:border-border"
+      :class="askPending ? 'border-amber-500/50' : ''"
       @click="collapsed = !collapsed"
     >
-      <FaIcon
-        :name="icon"
-        class="shrink-0 text-[11px]"
-        :class="!seg.done ? 'animate-spin text-primary' : seg.status === '失败' ? 'text-red-500' : 'text-emerald-600'"
-      />
-      <span class="shrink-0 font-medium">{{ seg.name }}</span>
-      <span v-if="seg.summary" class="min-w-0 flex-1 truncate text-muted-foreground" :title="seg.summary">
-        {{ seg.summary }}
+      <FaIcon :name="icon" class="mt-0.5 shrink-0 text-[11px]" :class="iconClass" />
+      <span class="shrink-0 font-medium text-foreground">{{ seg.name }}</span>
+      <span v-if="pillText" class="min-w-0 flex-1 line-clamp-3 break-words text-muted-foreground" :title="pillText">
+        {{ pillText }}
       </span>
-      <span class="shrink-0 rounded-full px-2 py-0.5 text-[10px]" :class="stateClass">{{ stateText }}</span>
-      <FaIcon :name="collapsed ? 'i-lucide:chevron-down' : 'i-lucide:chevron-up'" class="shrink-0 text-[10px] text-muted-foreground" />
+      <span class="mt-0.5 shrink-0 rounded-full px-2 py-0.5 text-[10px]" :class="stateClass">{{ stateText }}</span>
+      <FaIcon :name="collapsed ? 'i-lucide:chevron-down' : 'i-lucide:chevron-up'" class="mt-0.5 shrink-0 text-[10px] text-muted-foreground" />
     </button>
-    <!-- 展开区：可读摘要 + 原始输出（默认展开可见，输出区可滚动） -->
-    <div v-if="!collapsed" class="space-y-1.5 border-t border-border/50 px-2.5 py-2">
-      <div v-if="seg.summary" class="text-[11px] leading-relaxed text-muted-foreground">{{ seg.summary }}</div>
+    <!-- 展开区：可读摘要 + 原始输出（默认折叠为胶囊，点开可见） -->
+    <div v-if="!collapsed" class="mt-1.5 space-y-1.5 rounded-lg border border-border/50 bg-muted/20 px-2.5 py-2">
+      <div v-if="seg.summary" class="text-[11px] leading-relaxed text-muted-foreground">
+        {{ seg.summary }}
+      </div>
       <div v-if="seg.output">
-        <div class="mb-0.5 text-[10px] font-medium text-muted-foreground/70">{{ $t('components.ydAiChat.rawOutput') }}</div>
+        <div class="mb-0.5 text-[10px] font-medium text-muted-foreground/70">
+          {{ $t('components.ydAiChat.rawOutput') }}
+        </div>
         <pre class="max-h-52 overflow-y-auto whitespace-pre-wrap break-words rounded bg-muted/50 px-2 py-1.5 font-mono text-[11px] leading-relaxed text-muted-foreground">{{ seg.output }}</pre>
       </div>
       <div v-if="seg.args && seg.args !== seg.output">
-        <div class="mb-0.5 text-[10px] font-medium text-muted-foreground/70">{{ $t('components.ydAiChat.args') }}</div>
+        <div class="mb-0.5 text-[10px] font-medium text-muted-foreground/70">
+          {{ $t('components.ydAiChat.args') }}
+        </div>
         <pre class="max-h-28 overflow-y-auto whitespace-pre-wrap break-words rounded bg-muted/50 px-2 py-1.5 font-mono text-[11px] leading-relaxed text-muted-foreground">{{ prettyArgs(seg.args) }}</pre>
       </div>
       <div v-if="askPending" class="pt-1 text-[11px] text-amber-600">
