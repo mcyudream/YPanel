@@ -223,7 +223,7 @@ func agentUpdate(version string, rest []string) {
 	if err := os.MkdirAll(agentUpdatesDir, 0o755); err != nil {
 		fail(err.Error())
 	}
-	dl := exec.CommandContext(ctx, "sh", "-c", release.DownloadScript(agentUpdatesDir, runtime.GOARCH, rel.AssetURL, rel.SumURL))
+	dl := exec.CommandContext(ctx, "sh", "-c", release.DownloadScript(agentUpdatesDir, runtime.GOARCH, rel.AssetURL, rel.SumURL, release.FallbackAssetURL(rel.AssetURL)))
 	dl.Stdout = os.Stdout
 	dl.Stderr = os.Stderr
 	if err := dl.Run(); err != nil {
