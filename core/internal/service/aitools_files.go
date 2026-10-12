@@ -16,7 +16,7 @@ func (s *AIService) aiToolsFiles(ctx context.Context) []aiToolDef {
 			Name: "list_files", Module: aiModFiles, Risk: aiRiskRead,
 			Desc: "浏览主机目录。input JSON：{\"path\":\"/var/log\",\"search\":\"可选名称关键词\"}",
 			Parameters: schObj(map[string]any{
-				"node": schStr("目标节点 ID（list_nodes 返回数组项的 id；local=本机；不要传节点名）"),,
+				"node": schStr("目标节点 ID（list_nodes 返回数组项的 id；local=本机；不要传节点名）"),
 				"path": schStr("目录绝对路径，默认 /"), "search": schStr("名称关键词过滤"),
 			}),
 			Fn: func(ctx context.Context, input string) (string, error) {
@@ -53,7 +53,7 @@ func (s *AIService) aiToolsFiles(ctx context.Context) []aiToolDef {
 			Name: "search_files", Module: aiModFiles, Risk: aiRiskRead,
 			Desc: "按名称在目录树下搜索文件（最多返回 100 条）。input JSON：{\"dir\":\"起始目录\",\"keyword\":\"文件名关键词\"}",
 			Parameters: schObj(map[string]any{
-				"node": schStr("目标节点 ID（list_nodes 返回数组项的 id；local=本机；不要传节点名）"),,
+				"node": schStr("目标节点 ID（list_nodes 返回数组项的 id；local=本机；不要传节点名）"),
 				"dir": schStr("起始目录，默认 /"), "keyword": schStr("文件名关键词"),
 			}, "keyword"),
 			Fn: func(ctx context.Context, input string) (string, error) {
@@ -112,7 +112,7 @@ func (s *AIService) aiToolsFiles(ctx context.Context) []aiToolDef {
 			Name: "write_file", Module: aiModFiles, Risk: aiRiskWrite,
 			Desc: "写入/覆盖主机文本文件（整个文件内容替换；父目录需已存在）。input JSON：{\"path\":\"绝对路径\",\"content\":\"文本内容\"}",
 			Parameters: schObj(map[string]any{
-				"node": schStr("目标节点 ID（list_nodes 返回数组项的 id；local=本机；不要传节点名）"),,
+				"node": schStr("目标节点 ID（list_nodes 返回数组项的 id；local=本机；不要传节点名）"),
 				"path": schStr("文件绝对路径"), "content": schStr("完整文件文本内容"),
 			}, "path", "content"),
 			Fn: func(ctx context.Context, input string) (string, error) {
@@ -153,7 +153,7 @@ func (s *AIService) aiToolsFiles(ctx context.Context) []aiToolDef {
 			Name: "rename_path", Module: aiModFiles, Risk: aiRiskWrite,
 			Desc: "重命名/移动文件或目录。input JSON：{\"from\":\"原路径\",\"to\":\"新路径\"}",
 			Parameters: schObj(map[string]any{
-				"node": schStr("目标节点 ID（list_nodes 返回数组项的 id；local=本机；不要传节点名）"),,
+				"node": schStr("目标节点 ID（list_nodes 返回数组项的 id；local=本机；不要传节点名）"),
 				"from": schStr("原绝对路径"), "to": schStr("新绝对路径"),
 			}, "from", "to"),
 			Fn: func(ctx context.Context, input string) (string, error) {
@@ -175,7 +175,7 @@ func (s *AIService) aiToolsFiles(ctx context.Context) []aiToolDef {
 			Name: "copy_path", Module: aiModFiles, Risk: aiRiskWrite,
 			Desc: "复制文件/目录（递归）。input JSON：{\"from\":\"源\",\"to\":\"目标\",\"overwrite\":false}",
 			Parameters: schObj(map[string]any{
-				"node": schStr("目标节点 ID（list_nodes 返回数组项的 id；local=本机；不要传节点名）"),,
+				"node": schStr("目标节点 ID（list_nodes 返回数组项的 id；local=本机；不要传节点名）"),
 				"from": schStr("源绝对路径"), "to": schStr("目标绝对路径"), "overwrite": schBool("目标存在时覆盖"),
 			}, "from", "to"),
 			Fn: func(ctx context.Context, input string) (string, error) {
@@ -197,7 +197,7 @@ func (s *AIService) aiToolsFiles(ctx context.Context) []aiToolDef {
 			Name: "compress_files", Module: aiModFiles, Risk: aiRiskWrite,
 			Desc: "打包压缩文件/目录为 tar.gz。input JSON：{\"srcs\":[\"路径\",...],\"dest\":\"/path/out.tar.gz\"}",
 			Parameters: schObj(map[string]any{
-				"node": schStr("目标节点 ID（list_nodes 返回数组项的 id；local=本机；不要传节点名）"),,
+				"node": schStr("目标节点 ID（list_nodes 返回数组项的 id；local=本机；不要传节点名）"),
 				"srcs": schArr("源路径列表", schStr("绝对路径")), "dest": schStr("输出 tar.gz 绝对路径"),
 			}, "srcs", "dest"),
 			Fn: func(ctx context.Context, input string) (string, error) {
@@ -224,7 +224,7 @@ func (s *AIService) aiToolsFiles(ctx context.Context) []aiToolDef {
 			Name: "decompress_file", Module: aiModFiles, Risk: aiRiskWrite,
 			Desc: "解压 tar.gz/zip 等压缩包到目标目录。input JSON：{\"archive\":\"压缩包路径\",\"destDir\":\"目标目录\"}",
 			Parameters: schObj(map[string]any{
-				"node": schStr("目标节点 ID（list_nodes 返回数组项的 id；local=本机；不要传节点名）"),,
+				"node": schStr("目标节点 ID（list_nodes 返回数组项的 id；local=本机；不要传节点名）"),
 				"archive": schStr("压缩包绝对路径"), "destDir": schStr("解压目标目录"),
 			}, "archive", "destDir"),
 			Fn: func(ctx context.Context, input string) (string, error) {
@@ -246,7 +246,7 @@ func (s *AIService) aiToolsFiles(ctx context.Context) []aiToolDef {
 			Name: "change_perms", Module: aiModFiles, Risk: aiRiskDanger,
 			Desc: "修改文件/目录权限（recursive 时影响整个子树，错误权限可能导致服务故障，会先向用户确认）。input JSON：{\"path\":\"路径\",\"mode\":\"0644\",\"recursive\":false}",
 			Parameters: schObj(map[string]any{
-				"node": schStr("目标节点 ID（list_nodes 返回数组项的 id；local=本机；不要传节点名）"),,
+				"node": schStr("目标节点 ID（list_nodes 返回数组项的 id；local=本机；不要传节点名）"),
 				"path": schStr("路径"), "mode": schStr("八进制权限如 0644/0755"), "recursive": schBool("递归应用到子树"),
 			}, "path", "mode"),
 			Fn: func(ctx context.Context, input string) (string, error) {
@@ -268,7 +268,7 @@ func (s *AIService) aiToolsFiles(ctx context.Context) []aiToolDef {
 			Name: "delete_paths", Module: aiModFiles, Risk: aiRiskDanger,
 			Desc: "删除文件/目录（目录递归删除，不可恢复，会先向用户确认）。input JSON：{\"paths\":[\"/path/a\",\"/path/b\"]}",
 			Parameters: schObj(map[string]any{
-				"node": schStr("目标节点 ID（list_nodes 返回数组项的 id；local=本机；不要传节点名）"),,
+				"node": schStr("目标节点 ID（list_nodes 返回数组项的 id；local=本机；不要传节点名）"),
 				"paths": schArr("要删除的绝对路径列表", schStr("绝对路径")),
 			}, "paths"),
 			Fn: func(ctx context.Context, input string) (string, error) {

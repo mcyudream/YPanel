@@ -54,7 +54,7 @@ func (s *AIService) aiToolsMonitor(ctx context.Context) []aiToolDef {
 			Name: "query_metrics_history", Module: aiModMonitor, Risk: aiRiskRead,
 			Desc: "查询节点历史监控指标（CPU/内存/磁盘/网络，按采样点返回）。input JSON：{\"seconds\":3600,\"node\":\"local 可选\"}（seconds 回看秒数，默认 3600）",
 			Parameters: schObj(map[string]any{
-				"seconds": schInt("回看秒数，默认 3600"), "node": schStr("节点 ID，默认 local"),
+				"seconds": schInt("回看秒数，默认 3600"), "node": schStr("目标节点 ID（list_nodes 返回数组项的 id；local=本机）"),
 			}),
 			Fn: func(_ context.Context, input string) (string, error) {
 				p, err := parseToolArgs[struct {

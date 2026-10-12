@@ -133,7 +133,7 @@ func (s *AIService) aiToolsContainers(ctx context.Context) []aiToolDef {
 			Name: "create_container", Module: aiModContainers, Risk: aiRiskWrite,
 			Desc: "创建并启动容器。input JSON：{\"name\":\"容器名\",\"image\":\"镜像:tag\",\"ports\":[{\"hostPort\":8080,\"containerPort\":80,\"proto\":\"tcp\"}],\"mounts\":[\"/host/path:/container/path\"],\"env\":[\"KEY=value\"],\"restart\":\"unless-stopped\",\"network\":\"可选网络名\"}。至少 name+image；建议先 list_images 确认镜像存在（不存在先 pull_image）。",
 			Parameters: schObj(map[string]any{
-					"node": schStr("目标节点 ID（list_nodes 返回数组项的 id；local=本机；不要传节点名）"),,
+					"node": schStr("目标节点 ID（list_nodes 返回数组项的 id；local=本机；不要传节点名）"),
 				"name": schStr("容器名"), "image": schStr("镜像名:标签"),
 				"ports": schArr("端口映射", map[string]any{"type": "object", "properties": map[string]any{
 					"hostPort": schInt("宿主端口"), "containerPort": schInt("容器端口"), "proto": schEnum("协议", "tcp", "udp"),
@@ -212,7 +212,7 @@ func (s *AIService) aiToolsContainers(ctx context.Context) []aiToolDef {
 		{
 			Name: "containers_prune", Module: aiModContainers, Risk: aiRiskDanger,
 			Desc: "清理全部已停止的容器（不可恢复，会先向用户确认）。input 传 {}。",
-			Parameters: schObj(map[string]any{"node": schStr("目标节点 ID（list_nodes 返回数组项的 id；local=本机；不要传节点名）"),,}),
+			Parameters: schObj(map[string]any{"node": schStr("目标节点 ID（list_nodes 返回数组项的 id；local=本机；不要传节点名）"),}),
 			Fn: func(ctx context.Context, input string) (string, error) {
 				p, err := parseToolArgs[struct {
 					Node string `json:"node"`
@@ -242,7 +242,7 @@ func (s *AIService) aiToolsImages(ctx context.Context) []aiToolDef {
 			Name: "list_images", Module: aiModImages, Risk: aiRiskRead,
 			Desc: "列出本机 Docker 镜像（分页/搜索）。input 可选 JSON：{\"search\":\"名称关键词\",\"page\":1,\"pageSize\":20}。返回 {total,page,pageSize,items}。",
 			Parameters: schObj(map[string]any{
-					"node": schStr("目标节点 ID（list_nodes 返回数组项的 id；local=本机；不要传节点名）"),,
+					"node": schStr("目标节点 ID（list_nodes 返回数组项的 id；local=本机；不要传节点名）"),
 				"search": schStr("镜像名关键词"), "page": schInt("页码"), "pageSize": schInt("每页条数"),
 			}),
 			Fn: func(ctx context.Context, input string) (string, error) {
@@ -295,7 +295,7 @@ func (s *AIService) aiToolsImages(ctx context.Context) []aiToolDef {
 			Name: "remove_image", Module: aiModImages, Risk: aiRiskDanger,
 			Desc: "删除镜像（会先向用户确认）。input JSON：{\"id\":\"镜像ID或完整引用名\",\"force\":false}。id 建议传 list_images 返回的 ID（sha256/短 ID），带斜杠的引用名（如 louislam/uptime-kuma:1）亦可",
 			Parameters: schObj(map[string]any{
-					"node": schStr("目标节点 ID（list_nodes 返回数组项的 id；local=本机；不要传节点名）"),,
+					"node": schStr("目标节点 ID（list_nodes 返回数组项的 id；local=本机；不要传节点名）"),
 				"id": schStr("镜像 ID 或名称"), "force": schBool("被容器引用时强制删除"),
 			}, "id"),
 			Fn: func(ctx context.Context, input string) (string, error) {
@@ -320,7 +320,7 @@ func (s *AIService) aiToolsImages(ctx context.Context) []aiToolDef {
 		{
 			Name: "images_prune", Module: aiModImages, Risk: aiRiskDanger,
 			Desc: "清理全部悬空（未被标签引用的）镜像（会先向用户确认）。input 传 {}。",
-			Parameters: schObj(map[string]any{"node": schStr("目标节点 ID（list_nodes 返回数组项的 id；local=本机；不要传节点名）"),,}),
+			Parameters: schObj(map[string]any{"node": schStr("目标节点 ID（list_nodes 返回数组项的 id；local=本机；不要传节点名）"),}),
 			Fn: func(ctx context.Context, input string) (string, error) {
 				p, err := parseToolArgs[struct {
 					Node string `json:"node"`
@@ -349,7 +349,7 @@ func (s *AIService) aiToolsNetworks(ctx context.Context) []aiToolDef {
 		{
 			Name: "list_networks", Module: aiModNetworks, Risk: aiRiskRead,
 			Desc: "列出 Docker 网络。input 传 {}。",
-			Parameters: schObj(map[string]any{"node": schStr("目标节点 ID（list_nodes 返回数组项的 id；local=本机；不要传节点名）"),,}),
+			Parameters: schObj(map[string]any{"node": schStr("目标节点 ID（list_nodes 返回数组项的 id；local=本机；不要传节点名）"),}),
 			Fn: func(ctx context.Context, input string) (string, error) {
 				p, err := parseToolArgs[struct {
 					Node string `json:"node"`
@@ -369,7 +369,7 @@ func (s *AIService) aiToolsNetworks(ctx context.Context) []aiToolDef {
 			Name: "create_network", Module: aiModNetworks, Risk: aiRiskWrite,
 			Desc: "创建 Docker 网络。input JSON：{\"name\":\"网络名\",\"driver\":\"bridge\"}",
 			Parameters: schObj(map[string]any{
-					"node": schStr("目标节点 ID（list_nodes 返回数组项的 id；local=本机；不要传节点名）"),,
+					"node": schStr("目标节点 ID（list_nodes 返回数组项的 id；local=本机；不要传节点名）"),
 				"name": schStr("网络名"), "driver": schEnum("驱动", "bridge", "overlay", "macvlan", "host"),
 			}, "name"),
 			Fn: func(ctx context.Context, input string) (string, error) {
@@ -425,7 +425,7 @@ func (s *AIService) aiToolsVolumes(ctx context.Context) []aiToolDef {
 		{
 			Name: "list_volumes", Module: aiModVolumes, Risk: aiRiskRead,
 			Desc: "列出 Docker 存储卷。input 传 {}。",
-			Parameters: schObj(map[string]any{"node": schStr("目标节点 ID（list_nodes 返回数组项的 id；local=本机；不要传节点名）"),,}),
+			Parameters: schObj(map[string]any{"node": schStr("目标节点 ID（list_nodes 返回数组项的 id；local=本机；不要传节点名）"),}),
 			Fn: func(ctx context.Context, input string) (string, error) {
 				p, err := parseToolArgs[struct {
 					Node string `json:"node"`
@@ -488,7 +488,7 @@ func (s *AIService) aiToolsVolumes(ctx context.Context) []aiToolDef {
 		{
 			Name: "volumes_prune", Module: aiModVolumes, Risk: aiRiskDanger,
 			Desc: "清理全部未被容器引用的存储卷（数据不可恢复，会先向用户确认）。input 传 {}。",
-			Parameters: schObj(map[string]any{"node": schStr("目标节点 ID（list_nodes 返回数组项的 id；local=本机；不要传节点名）"),,}),
+			Parameters: schObj(map[string]any{"node": schStr("目标节点 ID（list_nodes 返回数组项的 id；local=本机；不要传节点名）"),}),
 			Fn: func(ctx context.Context, input string) (string, error) {
 				p, err := parseToolArgs[struct {
 					Node string `json:"node"`

@@ -55,7 +55,7 @@ func (s *AIService) aiToolsNetSec(ctx context.Context) []aiToolDef {
 			Name: "firewall_rule_add", Module: aiModNetSec, Risk: aiRiskWrite,
 			Desc: "放行防火墙端口。input JSON：{\"port\":\"80 或 3000:3010\",\"proto\":\"tcp|udp\"}",
 			Parameters: schObj(map[string]any{
-				"port": schStr("端口或端口段"), "proto": schEnum("协议", "tcp", "udp"), "node": schStr("目标节点 ID（list_nodes 返回数组项的 id；local=本机；不要传节点名）"),,
+				"port": schStr("端口或端口段"), "proto": schEnum("协议", "tcp", "udp"), "node": schStr("目标节点 ID（list_nodes 返回数组项的 id；local=本机；不要传节点名）"),
 			}, "port", "proto", "node"),
 			Fn: func(_ context.Context, input string) (string, error) {
 				p, err := parseToolArgs[struct {
@@ -107,7 +107,7 @@ func (s *AIService) aiToolsNetSec(ctx context.Context) []aiToolDef {
 			Parameters: schObj(map[string]any{
 				"id": schInt("更新已有规则时传"), "name": schStr("规则名"), "protocol": schEnum("协议", "tcp", "udp"),
 				"listenPort": schInt("监听端口"), "targetIp": schStr("目标 IP"), "targetPort": schInt("目标端口"),
-				"enabled": schBool("启用"), "node": schStr("目标节点 ID（list_nodes 返回数组项的 id；local=本机；不要传节点名）"),,
+				"enabled": schBool("启用"), "node": schStr("目标节点 ID（list_nodes 返回数组项的 id；local=本机；不要传节点名）"),
 			}, "name", "protocol", "listenPort", "targetIp", "targetPort", "node"),
 			Fn: func(_ context.Context, input string) (string, error) {
 				p, err := parseToolArgs[struct {

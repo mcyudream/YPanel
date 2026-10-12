@@ -47,7 +47,7 @@ func (s *AIService) aiToolsCompose(ctx context.Context) []aiToolDef {
 			Name: "compose_logs", Module: aiModCompose, Risk: aiRiskRead,
 			Desc: "查看 compose 项目日志（尾部）。input JSON：{\"name\":\"项目名\",\"service\":\"可选服务名\",\"tail\":300}",
 			Parameters: schObj(map[string]any{
-				"node": schStr("目标节点 ID（list_nodes 返回数组项的 id；local=本机；不要传节点名）"),,
+				"node": schStr("目标节点 ID（list_nodes 返回数组项的 id；local=本机；不要传节点名）"),
 				"name": schStr("项目名"), "service": schStr("服务名，可省略"), "tail": schInt("尾部行数，默认 300"),
 			}, "name"),
 			Fn: func(ctx context.Context, input string) (string, error) {
@@ -78,7 +78,7 @@ func (s *AIService) aiToolsCompose(ctx context.Context) []aiToolDef {
 			Name: "get_compose_config", Module: aiModCompose, Risk: aiRiskRead,
 			Desc: "读取 compose 项目 docker-compose.yml 内容（托管项目可编辑，返回内容可直接作为 save_compose_config 的入参）。input JSON：{\"name\":\"项目名\",\"dir\":\"外部项目目录，可省略\"}",
 			Parameters: schObj(map[string]any{
-				"node": schStr("目标节点 ID（list_nodes 返回数组项的 id；local=本机；不要传节点名）"),,
+				"node": schStr("目标节点 ID（list_nodes 返回数组项的 id；local=本机；不要传节点名）"),
 				"name": schStr("项目名"), "dir": schStr("外部项目工作目录，托管项目省略"),
 			}, "name"),
 			Fn: func(ctx context.Context, input string) (string, error) {
@@ -106,7 +106,7 @@ func (s *AIService) aiToolsCompose(ctx context.Context) []aiToolDef {
 			Name: "save_compose_config", Module: aiModCompose, Risk: aiRiskWrite,
 			Desc: "保存托管 compose 项目的 docker-compose.yml（仅托管项目可写；保存后建议 compose_up 生效）。input JSON：{\"name\":\"项目名\",\"content\":\"完整 yaml 文本\"}",
 			Parameters: schObj(map[string]any{
-				"node": schStr("目标节点 ID（list_nodes 返回数组项的 id；local=本机；不要传节点名）"),,
+				"node": schStr("目标节点 ID（list_nodes 返回数组项的 id；local=本机；不要传节点名）"),
 				"name": schStr("托管项目名"), "content": schStr("完整 docker-compose.yml 文本"),
 			}, "name", "content"),
 			Fn: func(ctx context.Context, input string) (string, error) {
@@ -128,7 +128,7 @@ func (s *AIService) aiToolsCompose(ctx context.Context) []aiToolDef {
 			Name: "compose_up", Module: aiModCompose, Risk: aiRiskWrite,
 			Desc: "上线/应用 compose 项目（up -d，创建缺失容器并应用变更）。input JSON：{\"name\":\"项目名\",\"dir\":\"外部项目目录可省略\"}",
 			Parameters: schObj(map[string]any{
-				"node": schStr("目标节点 ID（list_nodes 返回数组项的 id；local=本机；不要传节点名）"),,
+				"node": schStr("目标节点 ID（list_nodes 返回数组项的 id；local=本机；不要传节点名）"),
 				"name": schStr("项目名"), "dir": schStr("外部项目工作目录，托管项目省略"),
 			}, "name"),
 			Fn: func(ctx context.Context, input string) (string, error) {
@@ -154,7 +154,7 @@ func (s *AIService) aiToolsCompose(ctx context.Context) []aiToolDef {
 			Name: "compose_service_action", Module: aiModCompose, Risk: aiRiskWrite,
 			Desc: "对 compose 项目内单个服务执行 start/stop/restart。input JSON：{\"name\":\"项目名\",\"service\":\"服务名\",\"action\":\"start|stop|restart\"}",
 			Parameters: schObj(map[string]any{
-				"node": schStr("目标节点 ID（list_nodes 返回数组项的 id；local=本机；不要传节点名）"),,
+				"node": schStr("目标节点 ID（list_nodes 返回数组项的 id；local=本机；不要传节点名）"),
 				"name": schStr("项目名"), "service": schStr("服务名"), "action": schEnum("操作", "start", "stop", "restart"),
 			}, "name", "service", "action"),
 			Fn: func(ctx context.Context, input string) (string, error) {
@@ -183,7 +183,7 @@ func (s *AIService) aiToolsCompose(ctx context.Context) []aiToolDef {
 			Name: "compose_down", Module: aiModCompose, Risk: aiRiskDanger,
 			Desc: "下线 compose 项目（停止并移除其全部容器，数据卷保留；会先向用户确认）。input JSON：{\"name\":\"项目名\",\"dir\":\"外部项目目录可省略\"}",
 			Parameters: schObj(map[string]any{
-				"node": schStr("目标节点 ID（list_nodes 返回数组项的 id；local=本机；不要传节点名）"),,
+				"node": schStr("目标节点 ID（list_nodes 返回数组项的 id；local=本机；不要传节点名）"),
 				"name": schStr("项目名"), "dir": schStr("外部项目工作目录，托管项目省略"),
 			}, "name"),
 			Fn: func(ctx context.Context, input string) (string, error) {

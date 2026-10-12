@@ -105,7 +105,7 @@ func (s *AIService) aiToolsSnapshot(ctx context.Context) []aiToolDef {
 			Name: "list_config_revisions", Module: aiModPanel, Risk: aiRiskRead,
 			Desc: "列出受管配置路径的历史版本（写盘前自动快照：编排 yaml/daemon.json/站点 conf 等）。input JSON：{\"node\":\"local 可选\",\"path\":\"/opt/ypanel/compose/app-blog/docker-compose.yml\"}",
 			Parameters: schObj(map[string]any{
-				"node": schStr("节点，默认 local"), "path": schStr("配置文件绝对路径"),
+				"node": schStr("目标节点 ID（list_nodes 返回数组项的 id；local=本机）"), "path": schStr("配置文件绝对路径"),
 			}, "path"),
 			Fn: func(_ context.Context, input string) (string, error) {
 				p, err := parseToolArgs[struct {

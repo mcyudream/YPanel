@@ -457,7 +457,7 @@ func (s *AIService) aiToolsStoreExtra(ctx context.Context) []aiToolDef {
 			Desc: "保存已安装应用的 .env 并重建容器生效（KEY=VALUE 每行一条；改错会导致应用起不来，会先向用户确认）。input JSON：{\"project\":\"app-blog\",\"content\":\"KEY=VALUE\\nKEY2=VALUE2\"}",
 			Parameters: schObj(map[string]any{
 				"project": schStr("应用项目名"), "content": schStr("完整 .env 内容（KEY=VALUE 每行一条）"),
-				"node": schStr("目标节点 ID（list_nodes 返回数组项的 id；local=本机；不要传节点名）"),,
+				"node": schStr("目标节点 ID（list_nodes 返回数组项的 id；local=本机；不要传节点名）"),
 			}, "project", "content", "node"),
 			Fn: func(ctx context.Context, input string) (string, error) {
 				p, err := parseToolArgs[struct {

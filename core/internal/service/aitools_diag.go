@@ -29,7 +29,7 @@ func (s *AIService) aiToolsDiag(ctx context.Context) []aiToolDef {
 			Name: "check_port", Module: aiModDiag, Risk: aiRiskRead,
 			Desc: "检查端口监听状态（哪些进程在监听该端口，tcp/udp）。input JSON：{\"port\":8080,\"proto\":\"tcp\"}",
 			Parameters: schObj(map[string]any{
-				"port": schInt("端口号"), "proto": schEnum("协议", "tcp", "udp"), "node": schStr("目标节点 ID（list_nodes 返回数组项的 id；local=本机；不要传节点名）"),,
+				"port": schInt("端口号"), "proto": schEnum("协议", "tcp", "udp"), "node": schStr("目标节点 ID（list_nodes 返回数组项的 id；local=本机；不要传节点名）"),
 			}, "port", "node"),
 			Fn: func(ctx context.Context, input string) (string, error) {
 				p, err := parseToolArgs[struct {
@@ -58,7 +58,7 @@ func (s *AIService) aiToolsDiag(ctx context.Context) []aiToolDef {
 			Name: "http_probe", Module: aiModDiag, Risk: aiRiskRead,
 			Desc: "HTTP 探测：请求 URL 返回状态码与耗时（用于验证服务连通性，支持本机/内网地址）。input JSON：{\"url\":\"http://127.0.0.1:8080/health\",\"timeout\":5}",
 			Parameters: schObj(map[string]any{
-				"url": schStr("完整 URL（http/https）"), "timeout": schInt("超时秒数，默认 5"), "node": schStr("目标节点 ID（list_nodes 返回数组项的 id；local=本机；不要传节点名）"),,
+				"url": schStr("完整 URL（http/https）"), "timeout": schInt("超时秒数，默认 5"), "node": schStr("目标节点 ID（list_nodes 返回数组项的 id；local=本机；不要传节点名）"),
 			}, "url", "node"),
 			Fn: func(ctx context.Context, input string) (string, error) {
 				p, err := parseToolArgs[struct {
@@ -103,7 +103,7 @@ func (s *AIService) aiToolsDiag(ctx context.Context) []aiToolDef {
 			Desc: "查看 systemd 服务日志尾部（服务排障第一入口；配合 list_services 找服务名）。input JSON：{\"unit\":\"nginx\",\"lines\":100}",
 			Parameters: schObj(map[string]any{
 				"unit": schStr("服务单元名（如 nginx / ypanel，@结尾实例如 ssh@）"), "lines": schInt("尾部行数，默认 100"),
-				"node": schStr("目标节点 ID（list_nodes 返回数组项的 id；local=本机；不要传节点名）"),,
+				"node": schStr("目标节点 ID（list_nodes 返回数组项的 id；local=本机；不要传节点名）"),
 			}, "unit"),
 			Fn: func(ctx context.Context, input string) (string, error) {
 				p, err := parseToolArgs[struct {
@@ -131,7 +131,7 @@ func (s *AIService) aiToolsDiag(ctx context.Context) []aiToolDef {
 			Name: "download_file", Module: aiModDiag, Risk: aiRiskWrite,
 			Desc: "从 URL 下载文件到服务器（部署脚本/安装包等，会先向用户确认）。input JSON：{\"url\":\"https://...\",\"path\":\"/opt/down/pkg.tar.gz\"}",
 			Parameters: schObj(map[string]any{
-				"url": schStr("下载地址（http/https）"), "path": schStr("保存绝对路径"), "node": schStr("目标节点 ID（list_nodes 返回数组项的 id；local=本机；不要传节点名）"),,
+				"url": schStr("下载地址（http/https）"), "path": schStr("保存绝对路径"), "node": schStr("目标节点 ID（list_nodes 返回数组项的 id；local=本机；不要传节点名）"),
 			}, "url", "path", "node"),
 			Fn: func(ctx context.Context, input string) (string, error) {
 				p, err := parseToolArgs[struct {
