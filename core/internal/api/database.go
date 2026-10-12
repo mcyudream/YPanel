@@ -50,7 +50,7 @@ func (a *DatabaseAPI) List(c *gin.Context) {
 func (a *DatabaseAPI) Create(c *gin.Context) {
 	req, ok := bind[struct {
 		Name     string `json:"name" binding:"required"`
-		Type     string `json:"type" binding:"required,oneof=mysql postgres redis mongo"`
+		Type     string `json:"type" binding:"required,oneof=mysql postgres redis mongo neo4j s3"`
 		Port     int    `json:"port"`
 		Password string `json:"password"`
 	}](c)
@@ -80,11 +80,12 @@ func (a *DatabaseAPI) CreateExternal(c *gin.Context) {
 		User     string `json:"user"`
 		Password string `json:"password" binding:"required"`
 		Remark   string `json:"remark"`
+		Secure   bool   `json:"secure"` // s3: endpoint 走 https
 	}](c)
 	if !ok {
 		return
 	}
-	inst, err := a.DBS.AddExternalInstance(c.Request.Context(), req.Name, req.Type, req.Host, req.Port, req.User, req.Password, req.Remark)
+	inst, err := a.DBS.AddExternalInstance(c.Request.Context(), req.Name, req.Type, req.Host, req.Port, req.User, req.Password, req.Remark, req.Secure)
 	if err != nil {
 		respErr(c, err)
 		return

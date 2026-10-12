@@ -55,11 +55,12 @@ func (s *AIService) aiToolsDBInstances(ctx context.Context) []aiToolDef {
 					User     string `json:"user"`
 					Password string `json:"password"`
 					Remark   string `json:"remark"`
+					Secure   bool   `json:"secure"`
 				}](input)
 				if err != nil {
 					return "", err
 				}
-				inst, err := s.dbSvc.AddExternalInstance(ctx, p.Name, p.Type, p.Host, p.Port, p.User, p.Password, p.Remark)
+				inst, err := s.dbSvc.AddExternalInstance(ctx, p.Name, p.Type, p.Host, p.Port, p.User, p.Password, p.Remark, p.Secure)
 				if err != nil {
 					return "", err
 				}

@@ -47,6 +47,8 @@ var dbDefaults = map[string]struct {
 	"postgres": {image: "postgres:16", port: 35432, user: "postgres", svcName: "postgres"},
 	"redis":    {image: "redis:7", port: 36379, user: "default", svcName: "redis"},
 	"mongo":    {image: "mongo:7", port: 37017, user: "root", svcName: "mongo"},
+	"neo4j":    {image: "neo4j:5-community", port: 37687, user: "neo4j", svcName: "neo4j"},
+	"s3":       {image: "rustfs/rustfs:latest", port: 39000, user: "rustfsadmin", svcName: "rustfs"},
 }
 
 // DatabaseService 数据库实例管理。
@@ -154,6 +156,10 @@ func composeYAML(inst *model.DatabaseInstance, password string) (string, error) 
 		b.WriteString("    command: [\"redis-server\", \"--requirepass\", \"" + password + "\"]\n")
 	case "mongo":
 		fmt.Fprintf(&b, "    environment:\n      MONGO_INITDB_ROOT_USERNAME: \"%s\"\n      MONGO_INITDB_ROOT_PASSWORD: \"%s\"\n", inst.RootUser, password)
+	case "neo4j":
+		fmt.Fprintf(&b, "    environment:\n      NEO4J_AUTH: \"%s/%s\"\n", inst.RootUser, password)
+	case "s3":
+		fmt.Fprintf(&b, "    environment:\n      RUSTFS_ACCESS_KEY: \"%s\"\n      RUSTFS_SECRET_KEY: \"%s\"\n      RUSTFS_ADDRESS: \"0.0.0.0:%d\"\n", inst.RootUser, password, defPort(inst.Type))
 	}
 	b.WriteString("networks:\n  " + PanelNetwork + ":\n    external: true\n")
 	return b.String(), nil
@@ -169,6 +175,10 @@ func defPort(t string) int {
 		return 6379
 	case "mongo":
 		return 27017
+	case "neo4j":
+		return 7687
+	case "s3":
+		return 9000
 	}
 	return 0
 }
@@ -183,6 +193,8 @@ func dataDirOf(t string) string {
 		return "/data"
 	case "mongo":
 		return "/data/db"
+	case "neo4j":
+		return "/data"
 	}
 	return "/data"
 }
@@ -253,7 +265,7 @@ func (s *DatabaseService) CreateInstance(ctx context.Context, name, dbType strin
 var hostPatternDB = regexp.MustCompile(`^[a-zA-Z0-9._:-]{1,253}$`)
 
 // AddExternalInstance 接入外部数据库实例（直连纳管，不创建容器）。
-func (s *DatabaseService) AddExternalInstance(ctx context.Context, name, dbType, host string, port int, user, password, remark string) (*model.DatabaseInstance, error) {
+func (s *DatabaseService) AddExternalInstance(ctx context.Context, name, dbType, host string, port int, user, password, remark string, secure bool) (*model.DatabaseInstance, error) {
 	if !namePatternDB.MatchString(name) {
 		return nil, errs.Wrap(errs.ErrBadRequest, "实例名不合法（小写字母开头，小写字母/数字/中划线，3-32 位）")
 	}
@@ -286,10 +298,15 @@ func (s *DatabaseService) AddExternalInstance(ctx context.Context, name, dbType,
 	}
 	inst := &model.DatabaseInstance{
 		Name: name, Type: dbType, Origin: "external", Host: host, Port: port,
-		RootUser: user, PasswordEnc: enc, ComposeProject: "-", Remark: truncStr(remark, 255),
+		RootUser: user, PasswordEnc: enc, Secure: secure, ComposeProject: "-", Remark: truncStr(remark, 255),
 	}
-	// 连通性预检
-	drv, err := dbdriver.New(dbType, inst.Host, inst.Port, inst.RootUser, password)
+	// 连通性预检（S3 走带 TLS 开关的构造）
+	var drv dbdriver.Driver
+	if dbType == "s3" {
+		drv, err = dbdriver.NewS3(inst.Host, inst.Port, inst.RootUser, password, secure)
+	} else {
+		drv, err = dbdriver.New(dbType, inst.Host, inst.Port, inst.RootUser, password)
+	}
 	if err == nil {
 		cctx, cancel := context.WithTimeout(ctx, 8*time.Second)
 		perr := drv.Ping(cctx)
@@ -661,6 +678,9 @@ func (s *DatabaseService) driverFor(inst *model.DatabaseInstance) (dbdriver.Driv
 	host := inst.Host
 	if host == "" {
 		host = "127.0.0.1"
+	}
+	if inst.Type == "s3" {
+		return dbdriver.NewS3(host, inst.Port, inst.RootUser, pwd, inst.Secure)
 	}
 	return dbdriver.New(inst.Type, host, inst.Port, inst.RootUser, pwd)
 }

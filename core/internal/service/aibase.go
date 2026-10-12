@@ -75,6 +75,7 @@ type AIService struct {
 	nodes     *NodeService
 	dbSvc     *DatabaseService
 	adminSvc  *DBAdminService
+	mwSvc     *MiddlewareService
 	settings  *SettingService
 	skills    *SkillsManager
 	sites     *SiteService
@@ -110,6 +111,7 @@ type AIDeps struct {
 	Nodes    *NodeService
 	DBSvc    *DatabaseService
 	DBAdmin  *DBAdminService
+	MW       *MiddlewareService
 	Settings *SettingService
 	Skills   *SkillsManager
 	Sites    *SiteService
@@ -140,7 +142,7 @@ type AIDeps struct {
 // NewAIService 创建。
 func NewAIService(db *gorm.DB, deps AIDeps) *AIService {
 	return &AIService{
-		db: db, nodes: deps.Nodes, dbSvc: deps.DBSvc, adminSvc: deps.DBAdmin,
+		db: db, nodes: deps.Nodes, dbSvc: deps.DBSvc, adminSvc: deps.DBAdmin, mwSvc: deps.MW,
 		settings: deps.Settings, skills: deps.Skills,
 		sites: deps.Sites, certs: deps.Certs, runtimes: deps.Runtimes, dockerX: deps.DockerX,
 		fw: deps.FW, nat: deps.NAT, hosts: deps.Hosts, dns: deps.DNS, cron: deps.Cron,
@@ -580,6 +582,7 @@ const (
 	aiModProc       = "processes"
 	aiModExec       = "exec"
 	aiModDB         = "databases"
+	aiModMW         = "middleware"
 	aiModSites      = "sites_certs"
 	aiModRuntime    = "runtimes"
 	aiModNetSec     = "firewall_net"
@@ -612,6 +615,7 @@ var aiModuleRegistry = []aiModule{
 	{aiModProc, "进程服务", "进程与服务列表、终止进程、服务启停重启"},
 	{aiModExec, "命令执行", "主机任意 shell 命令执行与 AI 工作空间执行（最高风险，务必先向用户确认用途）"},
 	{aiModDB, "数据库", "实例/库/表/用户查询与只读 SQL，建库/建用户，行级增删改，删库/删用户"},
+	{aiModMW, "可复用中间件", "RabbitMQ/Memcached 等共享中间件实例清单、连接测试、节点容器扫描发现与纳管"},
 	{aiModSites, "网站证书", "站点列表/访问日志/创建/配置编辑/启停/删除，证书列表/续签/删除"},
 	{aiModRuntime, "运行环境", "PHP 等运行时列表/详情、启停重启、删除"},
 	{aiModNetSec, "网络安全", "防火墙规则、NAT 转发、Hosts 记录、内网 DNS 记录的查询与增删"},
@@ -985,6 +989,7 @@ func (s *AIService) aiToolsAll(ctx context.Context) []aiToolDef {
 	defs = append(defs, s.aiToolsExec(ctx)...)
 	defs = append(defs, s.aiToolsDatabases(ctx)...)
 	defs = append(defs, s.aiToolsDBMore(ctx)...)
+	defs = append(defs, s.aiToolsMiddleware(ctx)...)
 	defs = append(defs, s.aiToolsSites(ctx)...)
 	defs = append(defs, s.aiToolsRuntimes(ctx)...)
 	defs = append(defs, s.aiToolsNetSec(ctx)...)

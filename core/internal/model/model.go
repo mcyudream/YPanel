@@ -306,18 +306,40 @@ type CronTask struct {
 }
 
 // DatabaseInstance 数据库实例元数据（密码 AES-GCM 加密存储）。
+// M68 起 Type 扩 neo4j（Bolt）与 s3（S3 兼容对象存储，bucket≈库）；Secure 为 S3 的 TLS 开关（其余类型忽略）。
 type DatabaseInstance struct {
 	ID             uint      `gorm:"primaryKey" json:"id"`
 	Name           string    `gorm:"uniqueIndex;size:32;not null" json:"name"`
-	Type           string    `gorm:"size:16;not null" json:"type"`                     // mysql / postgres / redis / mongo
+	Type           string    `gorm:"size:16;not null" json:"type"`                     // mysql / postgres / redis / mongo / neo4j / s3
 	Origin         string    `gorm:"size:16;not null;default:container" json:"origin"` // container / external
 	Host           string    `gorm:"size:255;not null;default:127.0.0.1" json:"host"`  // external: 远端主机地址
 	Port           int       `gorm:"not null" json:"port"`
-	RootUser       string    `gorm:"size:32" json:"rootUser"`
+	RootUser       string    `gorm:"size:64" json:"rootUser"` // s3: AccessKey
 	PasswordEnc    string    `gorm:"type:text;not null" json:"-"`
+	Secure         bool      `gorm:"not null;default:false" json:"secure"` // s3: endpoint 走 https
 	Remark         string    `gorm:"size:255" json:"remark"`
 	ComposeProject string    `gorm:"size:64;not null" json:"composeProject"`
 	OwnerID        uint      `gorm:"index;not null;default:0" json:"ownerId"` // M54-P3 数据范围属主（0=公共）
+	CreatedAt      time.Time `json:"createdAt"`
+	UpdatedAt      time.Time `json:"updatedAt"`
+}
+
+// MiddlewareInstance 可复用中间件实例（M68：非数据库类共享中间件的登记表，与数据库域区分）。
+// Version 记录探测所得版本，供复用方与声明 minVersion 比对；密码 AES-GCM 加密存储。
+type MiddlewareInstance struct {
+	ID             uint      `gorm:"primaryKey" json:"id"`
+	Name           string    `gorm:"uniqueIndex;size:32;not null" json:"name"`
+	Type           string    `gorm:"size:24;not null" json:"type"`                    // registry 注册的类型（rabbitmq/memcached/…）
+	Origin         string    `gorm:"size:16;not null;default:external" json:"origin"` // container / external
+	Host           string    `gorm:"size:255;not null" json:"host"`
+	Port           int       `gorm:"not null" json:"port"`
+	User           string    `gorm:"size:64" json:"user"`
+	PasswordEnc    string    `gorm:"type:text" json:"-"`
+	Version        string    `gorm:"size:32" json:"version"`          // 探测所得（空=未知，复用校验跳过）
+	ContainerName  string    `gorm:"size:64" json:"containerName"`    // container origin: 同网络容器名直连
+	ComposeProject string    `gorm:"size:64" json:"composeProject"`
+	OwnerID        uint      `gorm:"index;not null;default:0" json:"ownerId"` // M54-P3 数据范围属主（0=公共）
+	Remark         string    `gorm:"size:255" json:"remark"`
 	CreatedAt      time.Time `json:"createdAt"`
 	UpdatedAt      time.Time `json:"updatedAt"`
 }

@@ -14,6 +14,7 @@ require (
 	github.com/mark3labs/mcp-go v1.1.1
 	github.com/minio/minio-go/v7 v7.3.0
 	github.com/moby/moby/client v0.6.1
+	github.com/neo4j/neo4j-go-driver/v5 v5.28.5
 	github.com/pelletier/go-toml/v2 v2.3.1
 	github.com/pkg/sftp v1.13.11
 	github.com/redis/go-redis/v9 v9.23.0

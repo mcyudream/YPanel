@@ -26,7 +26,7 @@ type Perm struct {
 
 // Groups 分组目录（顺序即授权树展示顺序）。
 var Groups = []Group{
-	{Key: "dashboard"}, {Key: "site"}, {Key: "cert"}, {Key: "runtime"}, {Key: "db"},
+	{Key: "dashboard"}, {Key: "site"}, {Key: "cert"}, {Key: "runtime"}, {Key: "db"}, {Key: "middleware"},
 	{Key: "compose"}, {Key: "docker"}, {Key: "store"}, {Key: "file"}, {Key: "terminal"},
 	{Key: "webgw"}, {Key: "cron"}, {Key: "script"}, {Key: "ai"}, {Key: "monitor"},
 	{Key: "alert"}, {Key: "log"}, {Key: "node"}, {Key: "host"}, {Key: "tools"},
@@ -45,6 +45,8 @@ var Perms = []Perm{
 	{Key: "runtime:write", Group: "runtime"},
 	{Key: "db:read", Group: "db"},
 	{Key: "db:write", Group: "db"},
+	{Key: "middleware:read", Group: "middleware"},
+	{Key: "middleware:write", Group: "middleware"},
 	{Key: "plugin.db-admin:use", Group: "db"},
 
 	{Key: "compose:read", Group: "compose"},
@@ -240,6 +242,7 @@ var aiModulePerm = map[string][2]string{
 	"processes":         {"monitor:read", "host:manage"},
 	"exec":              {"terminal:access", "terminal:access"},
 	"databases":         {"db:read", "db:write"},
+	"middleware":        {"middleware:read", "middleware:write"},
 	"sites_certs":       {"site:read", "site:write"},
 	"runtimes":          {"runtime:read", "runtime:write"},
 	"firewall_net":      {"tool:firewall", "tool:firewall"},

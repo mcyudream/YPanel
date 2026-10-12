@@ -39,6 +39,7 @@ var routeDomainMap = map[string]string{
 	"/sites":            "sites_certs",
 	"/certs":            "sites_certs",
 	"/database":         "databases",
+	"/middleware":       "middleware",
 	"/db-admin":         "databases",
 	"/cron":             "tasks",
 	"/store":            "store",

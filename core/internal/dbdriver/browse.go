@@ -4,6 +4,7 @@ package dbdriver
 
 import (
 	"context"
+	"io"
 	"strings"
 
 	"github.com/ypanel/shared/errs"
@@ -206,6 +207,85 @@ type MongoBrowser interface {
 	CreateCollection(ctx context.Context, database, name string) error
 	DropCollection(ctx context.Context, database, name string) error
 	RenameCollection(ctx context.Context, database, from, to string) error
+}
+
+// ---- Neo4j 能力（M68）----
+
+// Neo4jLabelInfo 标签/关系类型及其元素计数。
+type Neo4jLabelInfo struct {
+	Name  string `json:"name"`
+	Nodes int64  `json:"nodes"`
+}
+
+// Neo4jNodePage 节点分页（每节点一个属性 JSON 字符串，含 _id/_elementId）。
+type Neo4jNodePage struct {
+	Nodes []string `json:"nodes"`
+	Total int64    `json:"total"`
+	Skip  int      `json:"skip"`
+	Limit int      `json:"limit"`
+}
+
+// Neo4jIndexInfo 索引信息。
+type Neo4jIndexInfo struct {
+	Name          string   `json:"name"`
+	Type          string   `json:"type"`       // RANGE / LOOKUP / TEXT / POINT
+	State         string   `json:"state"`      // ONLINE / POPULATING / FAILED
+	EntityType    string   `json:"entityType"` // NODE / RELATIONSHIP
+	LabelsOrTypes []string `json:"labelsOrTypes"`
+	Properties    []string `json:"properties"`
+}
+
+// Neo4jConstraintInfo 约束信息。
+type Neo4jConstraintInfo struct {
+	Name          string   `json:"name"`
+	Type          string   `json:"type"` // UNIQUENESS / NODE_KEY / EXISTS / ...
+	EntityType    string   `json:"entityType"`
+	LabelsOrTypes []string `json:"labelsOrTypes"`
+	Properties    []string `json:"properties"`
+}
+
+// Neo4jBrowser 图结构浏览：标签/关系类型清单、节点分页、Cypher 执行。
+type Neo4jBrowser interface {
+	ListLabels(ctx context.Context, database string) ([]Neo4jLabelInfo, error)
+	ListRelTypes(ctx context.Context, database string) ([]Neo4jLabelInfo, error)
+	RunCypher(ctx context.Context, database, cypher string, limit int) (*QueryResult, error)
+	BrowseNodes(ctx context.Context, database, label string, skip, limit int) (*Neo4jNodePage, error)
+}
+
+// Neo4jEditor 图写路径：节点增删改（属性 JSON 参数化）+ 索引/约束管理（P2）。
+type Neo4jEditor interface {
+	CreateNode(ctx context.Context, database, label, propsJSON string) (int64, error)
+	UpdateNodeProps(ctx context.Context, database, idJSON, propsJSON string) error
+	DeleteNode(ctx context.Context, database, idJSON string, detach bool) error
+	ListIndexes(ctx context.Context, database, label string) ([]Neo4jIndexInfo, error)
+	CreateIndex(ctx context.Context, database, name, label string, props []string, unique bool) error
+	DropIndex(ctx context.Context, database, name string) error
+	ListConstraints(ctx context.Context, database, label string) ([]Neo4jConstraintInfo, error)
+}
+
+// ---- S3 能力（M68：对象存储 bucket≈库、对象≈行）----
+
+// S3Object 对象条目。
+type S3Object struct {
+	Key          string `json:"key"` // 目录条目以 / 结尾（IsDir）
+	Size         int64  `json:"size"`
+	LastModified string `json:"lastModified,omitempty"`
+	IsDir        bool   `json:"isDir"`
+}
+
+// S3ObjectPage 对象分页（前缀即"目录"）。
+type S3ObjectPage struct {
+	Objects   []S3Object `json:"objects"`
+	Prefix    string     `json:"prefix"`
+	Truncated bool       `json:"truncated"`
+}
+
+// S3Browser 对象浏览与读写。
+type S3Browser interface {
+	ListObjects(ctx context.Context, bucket, prefix, startAfter string, limit int) (*S3ObjectPage, error)
+	DeleteObject(ctx context.Context, bucket, key string) error
+	PutObject(ctx context.Context, bucket, key string, r io.Reader, size int64) error
+	GetObject(ctx context.Context, bucket, key string) (io.ReadCloser, int64, error)
 }
 
 // ---- 只读校验（多语句拆分 + 逐句白名单）----

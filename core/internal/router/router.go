@@ -45,6 +45,7 @@ type Deps struct {
 	Hist       *service.HistoryRecorder
 	F2B        *service.Fail2banService
 	DBAdmin    *service.DBAdminService
+	Middleware *service.MiddlewareService
 	SU         *service.SelfUpdateService
 	RT         *service.RuntimeService
 	LogCentral *service.LogCentralService
@@ -115,6 +116,7 @@ func Setup(d *Deps) (*gin.Engine, error) {
 	f2bAPI := &api.Fail2banAPI{F2B: d.F2B}
 	rtAPI := &api.RuntimeAPI{RT: d.RT}
 	dbAdminAPI := &api.DBAdminAPI{Admin: d.DBAdmin}
+	mwAPI := &api.MiddlewareAPI{MW: d.Middleware}
 	suAPI := &api.SelfUpdateAPI{SU: d.SU}
 	notifAPI := &api.NotificationAPI{Notif: d.Notif, ParseToken: func(t string) error { _, err := d.Auth.ParseToken(t); return err }}
 	procExecAPI := &api.NodeExecAPI{Nodes: d.Nodes}
@@ -548,6 +550,19 @@ func Setup(d *Deps) (*gin.Engine, error) {
 				admin.POST("/hosts/apply", pm("tool:hosts"), hostsAPI.Apply)
 				admin.POST("/hosts/remove", pm("tool:hosts"), hostsAPI.Remove)
 
+				// M68 可复用中间件实例
+				admin.GET("/middleware/instances", pm("middleware:read"), mwAPI.List)
+				admin.GET("/middleware/types", pm("middleware:read"), mwAPI.Types)
+				admin.GET("/middleware/reuse", pm("middleware:read"), mwAPI.ReuseOptions)
+				admin.GET("/middleware/scan", pm("middleware:read"), mwAPI.Scan)
+				admin.POST("/middleware/instances", pm("middleware:write"), mwAPI.Create)
+				admin.POST("/middleware/adopt", pm("middleware:write"), mwAPI.Adopt)
+				admin.PUT("/middleware/instances/:id", pm("middleware:write"), mwAPI.Update)
+				admin.DELETE("/middleware/instances/:id", pm("middleware:write"), mwAPI.Delete)
+				admin.POST("/middleware/instances/:id/test", pm("middleware:write"), mwAPI.Test)
+				admin.GET("/middleware/instances/:id/reveal", pm("middleware:write"), mwAPI.Reveal)
+				admin.POST("/middleware/instances/:id/version", pm("middleware:write"), mwAPI.VersionRefresh)
+
 				admin.GET("/system/update/status", pm("update:manage"), suAPI.Status)
 				admin.POST("/system/update/apply", pm("update:manage"), suAPI.Apply)
 				admin.GET("/system/update/check", pm("update:manage"), suAPI.CheckOnline)
@@ -588,6 +603,22 @@ func Setup(d *Deps) (*gin.Engine, error) {
 					dbAdmin.POST("/:id/mongo/indexes/create", pm("plugin.db-admin:use"), dbAdminAPI.MongoIndexCreate)
 					dbAdmin.POST("/:id/mongo/indexes/drop", pm("plugin.db-admin:use"), dbAdminAPI.MongoIndexDrop)
 					dbAdmin.POST("/:id/mongo/collection", pm("plugin.db-admin:use"), dbAdminAPI.MongoCollection)
+					// M68 Neo4j 图工作台
+					dbAdmin.GET("/:id/neo4j/meta", pm("plugin.db-admin:use"), dbAdminAPI.Neo4jMeta)
+					dbAdmin.POST("/:id/neo4j/cypher", pm("plugin.db-admin:use"), dbAdminAPI.Neo4jCypher)
+					dbAdmin.GET("/:id/neo4j/nodes", pm("plugin.db-admin:use"), dbAdminAPI.Neo4jNodes)
+					dbAdmin.POST("/:id/neo4j/node", pm("plugin.db-admin:use"), dbAdminAPI.Neo4jNodeCreate)
+					dbAdmin.POST("/:id/neo4j/node/update", pm("plugin.db-admin:use"), dbAdminAPI.Neo4jNodeUpdate)
+					dbAdmin.POST("/:id/neo4j/node/delete", pm("plugin.db-admin:use"), dbAdminAPI.Neo4jNodeDelete)
+					dbAdmin.GET("/:id/neo4j/indexes", pm("plugin.db-admin:use"), dbAdminAPI.Neo4jIndexes)
+					dbAdmin.GET("/:id/neo4j/constraints", pm("plugin.db-admin:use"), dbAdminAPI.Neo4jConstraints)
+					dbAdmin.POST("/:id/neo4j/index/create", pm("plugin.db-admin:use"), dbAdminAPI.Neo4jIndexCreate)
+					dbAdmin.POST("/:id/neo4j/index/drop", pm("plugin.db-admin:use"), dbAdminAPI.Neo4jIndexDrop)
+					// M68 S3 对象工作台
+					dbAdmin.GET("/:id/s3/objects", pm("plugin.db-admin:use"), dbAdminAPI.S3Objects)
+					dbAdmin.POST("/:id/s3/object/delete", pm("plugin.db-admin:use"), dbAdminAPI.S3ObjectDelete)
+					dbAdmin.POST("/:id/s3/object/upload", pm("plugin.db-admin:use"), dbAdminAPI.S3ObjectUpload)
+					dbAdmin.GET("/:id/s3/object/download", pm("plugin.db-admin:use"), dbAdminAPI.S3ObjectDownload)
 					dbAdmin.POST("/:id/sql/import", pm("plugin.db-admin:use"), dbAdminAPI.ImportSQL)
 					dbAdmin.POST("/:id/mongo/import", pm("plugin.db-admin:use"), dbAdminAPI.MongoImport)
 					dbAdmin.GET("/migrate/preview", pm("plugin.db-admin:use"), dbAdminAPI.MigratePreview)

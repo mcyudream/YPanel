@@ -77,7 +77,17 @@ func New(dbType, host string, port int, user, password string) (Driver, error) {
 		return newRedis(host, port, password)
 	case "mongo":
 		return newMongo(host, port, user, password)
+	case "neo4j":
+		return newNeo4j(host, port, user, password)
+	case "s3":
+		return newS3(host, port, user, password, false)
 	default:
 		return nil, errs.Wrap(errs.ErrBadRequest, "不支持的数据库类型: "+dbType)
 	}
+}
+
+// NewS3 创建 S3 驱动（secure = endpoint 走 https）。M68：S3 兼容对象存储（RustFS/MinIO 等）经
+// DatabaseInstance(type=s3) 纳管，bucket≈库、对象≈行；DB Admin 与商店复用注入共用本驱动。
+func NewS3(host string, port int, accessKey, secretKey string, secure bool) (Driver, error) {
+	return newS3(host, port, accessKey, secretKey, secure)
 }
