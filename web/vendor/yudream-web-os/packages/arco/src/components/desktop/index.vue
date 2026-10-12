@@ -763,6 +763,23 @@ function onChildContextmenu(ev: MouseEvent, folder: RenderItem, child: RenderIte
   })
 }
 
+/**
+ * 桌面根右键分诊：窗口内右键放行给内容（浏览器原生复制/粘贴菜单或业务自绘菜单，
+ * 如文件树的 FaContextMenu），不再弹桌面菜单——此前根上无条件 prevent + 弹菜单，
+ * 窗口内右键被桌面菜单劫持，终端/文本无法右键复制。图标/dock/launchpad 自带
+ * prevent+stopPropagation 不经过这里；defaultPrevented 兜底放行其它已处理来源。
+ * 不在 YwWindow 根上 stopPropagation：reka 系右键菜单靠 document 冒泡监听，拦断
+ * 传播链会误伤窗口内所有自绘右键菜单。
+ */
+function onRootContextmenu(ev: MouseEvent) {
+  if (ev.defaultPrevented || (ev.target as HTMLElement).closest?.('.yw-window')) {
+    return
+  }
+  ev.preventDefault()
+  showDesktopMenu(ev)
+  emit('desktopContextmenu', ev)
+}
+
 /** 桌面右键菜单（带实功能，供模板与宿主复用） */
 function showDesktopMenu(ev: MouseEvent) {
   os.ui.menu({
@@ -792,7 +809,7 @@ defineExpose({ showDesktopMenu })
     class="yw-desktop"
     :style="wallpaperStyle"
     @pointerdown="onDesktopPointerDown"
-    @contextmenu.prevent="showDesktopMenu($event); emit('desktopContextmenu', $event)"
+    @contextmenu="onRootContextmenu"
   >
     <div class="yw-desktop-dim" />
 

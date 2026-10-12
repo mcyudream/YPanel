@@ -371,6 +371,10 @@ function onFocus() {
   overflow: auto;
   color: oklch(var(--yw-foreground));
   background: var(--yw-window-bg);
+
+  /* 窗口内容可选中复制：桌面根为拖图标声明了 user-select:none 会被窗口层继承，
+     业务页面里的普通文本将无法划选；标题栏/桌面图标各自的 none 不受影响 */
+  user-select: text;
 }
 
 .yw-window-empty {
