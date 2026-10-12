@@ -1,6 +1,8 @@
 <script setup lang="ts">
 import type { Certificate, DnsAccount, AcmeAccount } from '@/api/modules/cert'
 import { certApi, parseAltDomains } from '@/api/modules/cert'
+import siteApi from '@/api/modules/site'
+import type { SiteItem } from '@/api/modules/site'
 import { i18n, tr } from '@/locales'
 import { useTaskJob } from '@/composables/useTaskJob'
 
@@ -83,11 +85,17 @@ const statusCls: Record<string, string> = {
 // ---- 申请证书（ACME）----
 
 const issueVisible = ref(false)
-const issueForm = ref({ domain: '', altDomains: '', remark: '', autoRenew: true, acmeAccountId: 0, dnsAccountId: 0 })
+const issueForm = ref({ domain: '', altDomains: '', remark: '', autoRenew: true, acmeAccountId: 0, dnsAccountId: 0, deploySiteIds: [] as number[] })
+const issueSites = ref<SiteItem[]>([])
 
 function openIssue() {
-  issueForm.value = { domain: '', altDomains: '', remark: '', autoRenew: true, acmeAccountId: acmeAccounts.value[0]?.id || 0, dnsAccountId: dnsAccounts.value[0]?.id || 0 }
+  issueForm.value = { domain: '', altDomains: '', remark: '', autoRenew: true, acmeAccountId: acmeAccounts.value[0]?.id || 0, dnsAccountId: dnsAccounts.value[0]?.id || 0, deploySiteIds: [] }
   issueVisible.value = true
+  siteApi.list().then((list: SiteItem[]) => {
+    issueSites.value = list
+  }).catch(() => {
+    issueSites.value = []
+  })
 }
 
 // 申请走任务中心（M65）：秒回 taskId，签发过程 acme.sh 输出实时滚动
@@ -102,7 +110,7 @@ async function doIssue() {
     toast.warning(i18n.global.t('certs.requireDnsAccount'))
     return
   }
-  const out = await runIssueJob(() => certApi.issue(issueForm.value), {
+  const out = await runIssueJob(() => certApi.issue({ ...issueForm.value, deploySiteIds: issueForm.value.deploySiteIds.length ? issueForm.value.deploySiteIds : undefined }), {
     onSuccess: async () => {
       toast.success(i18n.global.t('certs.issued'))
       await load()
@@ -491,6 +499,17 @@ onMounted(() => {
         <div class="flex items-center gap-3">
           <span class="w-20 shrink-0 text-sm text-muted-foreground">{{ $t('common.remark') }}</span>
           <FaInput v-model="issueForm.remark" :placeholder="$t('certs.issueRemarkPlaceholder')" class="flex-1" />
+        </div>
+        <div class="flex flex-col gap-1">
+          <span class="text-sm">{{ $t('certs.deploySites') }}<span class="ml-1 text-xs text-muted-foreground">{{ $t('certs.deploySitesHint') }}</span></span>
+          <div v-if="issueSites.length" class="max-h-36 overflow-y-auto rounded-md border border-input p-2">
+            <label v-for="st in issueSites" :key="st.id" class="flex cursor-pointer items-center gap-2 rounded px-1 py-0.5 text-sm hover:bg-muted/60">
+              <input v-model="issueForm.deploySiteIds" type="checkbox" :value="st.id">
+              <span class="truncate">{{ st.name }}<span class="ml-1 font-mono text-xs text-muted-foreground">{{ st.domain }}</span></span>
+              <span v-if="st.certDomain" class="ml-auto shrink-0 text-xs text-muted-foreground">{{ $t('certs.deployCurrent') }}{{ st.certDomain }}</span>
+            </label>
+          </div>
+          <div v-else class="rounded-md bg-muted/50 p-2 text-xs text-muted-foreground">{{ $t('certs.noSitesHint') }}</div>
         </div>
         <label class="flex cursor-pointer items-center gap-2 text-sm">
           <input v-model="issueForm.autoRenew" type="checkbox"> {{ $t('certs.autoRenew') }}

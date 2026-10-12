@@ -177,10 +177,11 @@ func (s *AIService) aiToolsSites(ctx context.Context) []aiToolDef {
 		},
 		{
 			Name: "issue_cert", Module: aiModSites, Risk: aiRiskWrite,
-			Desc: "签发 HTTPS 证书（异步任务：ACME DNS 挑战，自动附带泛域名；DNS 账号缺省用面板环境变量；耗时 1-10 分钟，返回任务 ID，用 get_task 跟踪）。input JSON：{\"domain\":\"yudream.cn\",\"altDomains\":\"可选，逗号分隔\",\"autoRenew\":true}",
+			Desc: "签发 HTTPS 证书（异步任务：ACME DNS 挑战，自动附带泛域名；DNS 账号缺省用面板环境变量；耗时 1-10 分钟，返回任务 ID，用 get_task 跟踪）。可选 deploySiteIds：签发成功后自动绑定 HTTPS 到这些站点（用 list_sites 查站点 ID）。input JSON：{\"domain\":\"yudream.cn\",\"altDomains\":\"可选，逗号分隔\",\"autoRenew\":true,\"deploySiteIds\":[1,2]}",
 			Parameters: schObj(map[string]any{
 				"domain": schStr("主域名（自动含 *.domain 泛域名）"), "altDomains": schStr("附加域名，逗号分隔"),
 				"autoRenew": schBool("自动续签，缺省视为 true"), "remark": schStr("备注"),
+				"deploySiteIds": schArr("可选：签发成功后部署（启用 HTTPS）到这些站点", schInt("站点 ID")),
 			}, "domain"),
 			Fn: func(_ context.Context, input string) (string, error) {
 				p, err := parseToolArgs[CertIssueInput](input)

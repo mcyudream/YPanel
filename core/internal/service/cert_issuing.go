@@ -24,6 +24,7 @@ type CertIssueInput struct {
 	AutoRenew     bool   `json:"autoRenew"`
 	AcmeAccountID uint   `json:"acmeAccountId"` // 空则用面板环境变量邮箱
 	DnsAccountID  uint   `json:"dnsAccountId"`  // 空则尝试面板环境变量（阿里云）
+	DeploySiteIDs []uint `json:"deploySiteIds"` // 签发成功后一键部署（绑定 HTTPS）到这些站点；空=仅入库
 }
 
 // issuePlan 签发预备产物：校验/凭据/命令装配完成后供 execute 阶段使用。
@@ -166,6 +167,33 @@ func (s *CertificateService) Issue(ctx context.Context, in CertIssueInput) (*mod
 	return s.issueExecute(ctx, nil, p)
 }
 
+// deployCertToSites 签发成功后把证书部署（绑定 HTTPS）到指定站点（多选，1Panel 同语义：
+// 续签覆盖同名证书文件，站点 conf 无需变更）。逐站打点；部分失败任务标 failed（证书已入库的事实不变）。
+func (s *CertificateService) deployCertToSites(ctx context.Context, logf TaskLogf, c *model.Certificate, siteIDs []uint) error {
+	if len(siteIDs) == 0 {
+		return nil
+	}
+	logf("info", "部署证书到 %d 个站点…", len(siteIDs))
+	var failed []string
+	for _, id := range siteIDs {
+		var site model.Site
+		if err := s.db.First(&site, id).Error; err != nil {
+			failed = append(failed, fmt.Sprintf("#%d（站点不存在）", id))
+			continue
+		}
+		if err := s.sites.ApplyCert(ctx, &site, c.ID, c.CertName); err != nil {
+			failed = append(failed, fmt.Sprintf("%s（%v）", site.Name, err))
+			logf("error", "站点 %s 部署失败: %v", site.Name, err)
+			continue
+		}
+		logf("info", "已部署到站点 %s（%s）", site.Name, site.Domain)
+	}
+	if len(failed) > 0 {
+		return errs.Wrapc(errs.CodeFileOpFailed, "证书已签发入库，但部分站点部署失败: "+strings.Join(failed, "；"))
+	}
+	return nil
+}
+
 // IssueTask 创建签发任务（返回任务 ID）：预备段同步快速失败，耗时执行进任务中心实时日志。
 func (s *CertificateService) IssueTask(ctx context.Context, in CertIssueInput) (map[string]any, error) {
 	p, err := s.prepareIssue(ctx, in)
@@ -180,8 +208,11 @@ func (s *CertificateService) IssueTask(ctx context.Context, in CertIssueInput) (
 	}
 	task, err := s.tasks.StartTask(TaskCertIssue, "签发证书 "+p.main, p.main, 15*time.Minute,
 		func(ctx context.Context, logf TaskLogf) error {
-			_, err := s.issueExecute(ctx, logf, p)
-			return err
+			cert, err := s.issueExecute(ctx, logf, p)
+			if err != nil {
+				return err
+			}
+			return s.deployCertToSites(ctx, logf, cert, in.DeploySiteIDs)
 		})
 	if err != nil {
 		return nil, err

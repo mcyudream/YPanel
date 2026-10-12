@@ -67,7 +67,7 @@ export const certApi = {
     return res.data as Certificate[]
   },
   // 签发（任务化：秒回 taskId，进度/结果见任务中心）
-  issue: async (data: { domain: string, altDomains?: string, remark?: string, autoRenew?: boolean, acmeAccountId?: number, dnsAccountId?: number }) => {
+  issue: async (data: { domain: string, altDomains?: string, remark?: string, autoRenew?: boolean, acmeAccountId?: number, dnsAccountId?: number, deploySiteIds?: number[] }) => {
     const res = await api.post('api/v1/certs/issue', data)
     return res.data as { taskId: number }
   },
