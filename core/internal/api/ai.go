@@ -117,6 +117,7 @@ func (a *AIAPI) ChatStart(c *gin.Context) {
 		Messages       []service.ChatMessage `json:"messages"`
 		Scene          string                `json:"scene"`
 		Focus          string                `json:"focus"`
+		MaxRounds      int                   `json:"maxRounds"`
 	}](c)
 	if !ok {
 		return
@@ -138,7 +139,7 @@ func (a *AIAPI) ChatStart(c *gin.Context) {
 		cp.Model = req.Model
 		provider = &cp
 	}
-	convoID, err := a.AI.StartChatRun(callerCtx(c), req.ConversationID, provider, req.Messages, req.Scene, req.Focus, req.Mode)
+	convoID, err := a.AI.StartChatRun(callerCtx(c), req.ConversationID, provider, req.Messages, req.Scene, req.Focus, req.Mode, req.MaxRounds)
 	if err != nil {
 		respErr(c, err)
 		return
@@ -304,6 +305,26 @@ func (a *AIAPI) ResolveAskQuestion(c *gin.Context) {
 		return
 	}
 	respOK(c, gin.H{"resolved": true})
+}
+
+// GetMaxToolRounds GET /api/v1/ai/tools/max-rounds
+func (a *AIAPI) GetMaxToolRounds(c *gin.Context) {
+	respOK(c, gin.H{"rounds": a.AI.MaxToolRoundsForUI()})
+}
+
+// SetMaxToolRounds POST /api/v1/ai/tools/max-rounds {rounds}
+func (a *AIAPI) SetMaxToolRounds(c *gin.Context) {
+	req, ok := bind[struct {
+		Rounds int `json:"rounds"`
+	}](c)
+	if !ok {
+		return
+	}
+	if err := a.AI.SetMaxToolRounds(req.Rounds); err != nil {
+		respErr(c, err)
+		return
+	}
+	respOK(c, gin.H{"rounds": a.AI.MaxToolRoundsForUI()})
 }
 
 // ListOperationLogs GET /api/v1/ai/oplogs（AI 操作审计，分页）

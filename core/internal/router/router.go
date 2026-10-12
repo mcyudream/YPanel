@@ -253,6 +253,8 @@ func Setup(d *Deps) (*gin.Engine, error) {
 			authed.GET("/ai/oplogs", pm("ai:use"), aiAPI.ListOperationLogs)
 			authed.GET("/ai/tools/ask-mode", pm("ai:use"), aiAPI.GetAskMode)
 			authed.POST("/ai/tools/ask-mode", pm("ai:use"), aiAPI.SetAskMode)
+			authed.GET("/ai/tools/max-rounds", pm("ai:use"), aiAPI.GetMaxToolRounds)
+			authed.POST("/ai/tools/max-rounds", pm("ai:use"), aiAPI.SetMaxToolRounds)
 			authed.GET("/ai/conversations", pm("ai:use"), aiAPI.ListConversations)
 			authed.GET("/ai/conversations/:id", pm("ai:use"), aiAPI.GetConversation)
 			authed.POST("/ai/conversations", pm("ai:use"), aiAPI.SaveConversation)

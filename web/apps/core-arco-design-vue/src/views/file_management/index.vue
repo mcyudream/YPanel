@@ -158,6 +158,18 @@ async function doRename() {
   load()
 }
 
+// 删除统一入口：本机走回收站（可恢复），远程节点直删
+async function deletePaths(paths: string[]) {
+  if (nodeId.value === 'local') {
+    await fileExtApi.trash(paths)
+  }
+  else {
+    await apiFile.delete(paths, nodeId.value) // 远程节点暂无回收站通道
+  }
+  useFaToast().success(i18n.global.t('files.list.movedToTrash'))
+  load()
+}
+
 async function doDelete() {
   if (!selected.value.size) {
     return
@@ -167,16 +179,16 @@ async function doDelete() {
   modal.confirm({
     title: i18n.global.t('files.common.deleteConfirmTitle'),
     content: i18n.global.t('files.list.deleteSelectedContent', { n: paths.length }),
-    onConfirm: async () => {
-      if (nodeId.value === 'local') {
-        await fileExtApi.trash(paths)
-      }
-      else {
-        await apiFile.delete(paths, nodeId.value) // 远程节点暂无回收站通道
-      }
-      useFaToast().success(i18n.global.t('files.list.movedToTrash'))
-      load()
-    },
+    onConfirm: () => deletePaths(paths),
+  })
+}
+
+// 右键单项删除（不经勾选集合）
+function confirmDeleteOne(e: FileEntry) {
+  useFaModal().confirm({
+    title: i18n.global.t('files.common.deleteConfirmTitle'),
+    content: i18n.global.t('files.list.deleteSelectedContent', { n: 1 }),
+    onConfirm: () => deletePaths([e.path]),
   })
 }
 
@@ -381,6 +393,43 @@ function rowMenuItems(e: FileEntry) {
   }
   items.push({ label: i18n.global.t('files.common.rename'), icon: 'i-lucide:text-cursor-input', handle: () => openRename(e) })
   return [items]
+}
+
+// 表格行右键菜单（FaContextMenu）：常用文件操作全量，复用行内按钮同一批函数
+function rowContextItems(e: FileEntry) {
+  const main: Array<{ label: string, icon: string, disabled?: boolean, handle: () => void }> = []
+  if (e.isDir) {
+    main.push({ label: i18n.global.t('files.tree.open'), icon: 'i-lucide:folder-open', handle: () => load(e.path) })
+  }
+  else {
+    main.push({ label: i18n.global.t('common.edit'), icon: 'i-lucide:pen-line', handle: () => openEditor(e) })
+  }
+  if (!e.isDir && previewKind(e.name)) {
+    main.push({ label: i18n.global.t('files.preview'), icon: 'i-lucide:eye', handle: () => openPreview(e) })
+  }
+  main.push({ label: i18n.global.t('common.download'), icon: 'i-lucide:download', disabled: e.isDir, handle: () => openDownload(e) })
+  main.push({ label: i18n.global.t(favOf(e.path) ? 'files.list.unfav' : 'files.fav'), icon: 'i-lucide:star', handle: () => toggleFav(e) })
+  if (!e.isDir) {
+    main.push({ label: i18n.global.t('files.shared'), icon: 'i-lucide:share-2', handle: () => quickShare(e) })
+  }
+  main.push({ label: i18n.global.t('files.list.compress'), icon: 'i-lucide:package', handle: () => openCompress([e.path]) })
+  if (isArchive(e)) {
+    main.push({ label: i18n.global.t('files.list.decompress'), icon: 'i-lucide:package-open', handle: () => openDecompress(e) })
+  }
+  main.push({
+    label: i18n.global.t('files.list.copyToNode'),
+    icon: 'i-lucide:copy-plus',
+    handle: () => {
+      // 复制到节点以勾选集为源：右键单项时先将其置为唯一选中
+      selected.value = new Set([e.path])
+      openCopyAcross()
+    },
+  })
+  return [main, [
+    { label: i18n.global.t('files.common.permissions'), icon: 'i-lucide:lock', handle: () => openChmod([e.path], [e]) },
+    { label: i18n.global.t('files.common.rename'), icon: 'i-lucide:text-cursor-input', handle: () => openRename(e) },
+    { label: i18n.global.t('common.delete'), icon: 'i-lucide:trash', variant: 'destructive' as const, handle: () => confirmDeleteOne(e) },
+  ]]
 }
 
 // 预览
@@ -735,6 +784,20 @@ function onFileDragStart(entry: FileEntry, e: DragEvent) {
   }
 }
 
+// dragstart 委托到 tbody：行被 FaContextMenu(reka Slot) 的 cloneVNode 包裹后，
+// 行根上的 listener 有被吞的既往案例（exp 前端坑：转发丢 @click）；委托彻底绕开，
+// draggable 属性不受 cloneVNode 影响
+function onRowDragStart(ev: DragEvent) {
+  const tr = (ev.target as HTMLElement).closest?.('tr[data-fm-path]')
+  if (!tr) {
+    return
+  }
+  const e = entries.value.find(x => x.path === tr.getAttribute('data-fm-path'))
+  if (e) {
+    onFileDragStart(e, ev)
+  }
+}
+
 function onDropToFiles(e: DragEvent) {
   const raw = e.dataTransfer?.getData(DRAG_MIME)
   if (!raw) {
@@ -954,7 +1017,7 @@ onBeforeUnmount(() => {
               <th class="w-48 max-md:w-30 px-3 py-2 text-right">{{ $t('common.operation') }}</th>
             </tr>
           </thead>
-          <tbody>
+          <tbody @dragstart="onRowDragStart">
             <tr v-if="loading">
               <td colspan="6" class="px-3 py-10 text-center text-muted-foreground">
                 {{ $t('common.loading') }}
@@ -972,14 +1035,14 @@ onBeforeUnmount(() => {
                 </button>
               </td>
             </tr>
-            <tr
-              v-for="e in entries"
-              :key="e.path"
-              class="border-t transition-colors hover:bg-accent/30"
-              :class="selected.has(e.path) ? 'bg-primary/5' : ''"
-              draggable="true"
-              @dragstart="onFileDragStart(e, $event)"
-            >
+            <!-- 右键菜单包行（reka as-child：tr 仍是 tbody 直接子元素）；dragstart 经 tbody 委托 -->
+            <FaContextMenu v-for="e in entries" :key="e.path" :items="rowContextItems(e)">
+              <tr
+                :data-fm-path="e.path"
+                class="border-t transition-colors hover:bg-accent/30"
+                :class="selected.has(e.path) ? 'bg-primary/5' : ''"
+                draggable="true"
+              >
               <td class="px-3 py-1.5">
                 <input type="checkbox" :checked="selected.has(e.path)" @change="toggleSelect(e)">
               </td>
@@ -1046,7 +1109,8 @@ onBeforeUnmount(() => {
                   </FaDropdown>
                 </div>
               </td>
-            </tr>
+              </tr>
+            </FaContextMenu>
             <tr v-if="!loading && !entries.length && (!cwd || cwd === '/')">
               <td colspan="6" class="px-3 py-10 text-center text-muted-foreground">
                 {{ $t('files.common.emptyDir') }}

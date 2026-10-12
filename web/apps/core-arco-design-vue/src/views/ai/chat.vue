@@ -71,6 +71,7 @@ const currentProvider = computed(() => providers.value.find(p => p.id === provid
 
 // 权限档位（四档，与后端 aichat.go 枚举对应）：默认变更前确认
 const mode = ref<'read_only' | 'confirm' | 'auto_edit' | 'full'>('confirm')
+const maxRounds = ref(100)
 
 const askStore = useAiAskStore()
 const questionStore = useAiQuestionStore()
@@ -81,6 +82,7 @@ const { messages, streaming, send, stop, regenerate, clear, attachLive, conversa
   providerId: () => providerId.value || undefined,
   model: () => model.value || undefined,
   mode: () => mode.value,
+  maxRounds: () => maxRounds.value,
   onSaved: () => loadConversations(),
 })
 

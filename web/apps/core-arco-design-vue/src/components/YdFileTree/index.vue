@@ -4,6 +4,7 @@ import apiFile from '@/api/modules/file'
 import apiCFile from '@/api/modules/cfile'
 import YdChmodDialog from '@/components/YdChmodDialog/index.vue'
 import { i18n } from '@/locales'
+import { copyText } from '@/utils/clipboard'
 import type { FileTreeApi, FileTreeMenuItem, FileTreeNode } from './types'
 import YdFileTreeNode from './TreeNode.vue'
 
@@ -202,11 +203,49 @@ function menuItems(node: FileTreeNode): FileTreeMenuItem[][] {
       : [
           { label: i18n.global.t('components.ydFileTree.open'), icon: 'i-lucide:external-link', handle: () => treeApi.openFile(node) },
           { label: i18n.global.t('common.download'), icon: 'i-lucide:download', handle: () => download(entry) },
+          // 压缩依赖宿主 tar API（容器文件系统走 docker 归档，无压缩通道）
+          ...(!isContainer.value
+            ? [{ label: i18n.global.t('components.ydFileTree.compress'), icon: 'i-lucide:package', handle: () => compressEntry(entry) }]
+            : []),
         ]),
+    { label: i18n.global.t('components.ydFileTree.copyPath'), icon: 'i-lucide:copy', handle: () => copyAndToast(entry.path) },
+    { label: i18n.global.t('components.ydFileTree.copyName'), icon: 'i-lucide:clipboard-copy', handle: () => copyAndToast(entry.name) },
     { label: i18n.global.t('components.ydFileTree.permissions'), icon: 'i-lucide:lock', handle: () => openChmodDialog(entry) },
     { label: i18n.global.t('components.ydFileTree.rename'), icon: 'i-lucide:text-cursor-input', handle: () => promptRename(entry) },
     { label: i18n.global.t('common.delete'), icon: 'i-lucide:trash', variant: 'destructive' as const, handle: () => confirmDelete(entry) },
   ]]
+}
+
+async function copyAndToast(text: string) {
+  const ok = await copyText(text)
+  if (ok) {
+    useFaToast().success(i18n.global.t('components.ydFileTree.copied'))
+  }
+  else {
+    useFaToast().error(i18n.global.t('components.ydFileTree.copyFailed'))
+  }
+}
+
+// 压缩为同目录下 <名称>.tar.gz（重名递增后缀），完成后刷新所在目录
+async function compressEntry(entry: FileEntry) {
+  const dir = parentOf(entry.path)
+  try {
+    let names = new Set<string>()
+    try {
+      names = new Set((await listDir(dir)).entries.map(x => x.name))
+    }
+    catch {}
+    let name = `${entry.name}.tar.gz`
+    for (let i = 2; names.has(name); i++) {
+      name = `${entry.name}-${i}.tar.gz`
+    }
+    await apiFile.compress([entry.path], join(dir, name), props.node)
+    useFaToast().success(i18n.global.t('components.ydFileTree.compressDone'))
+    await refreshDir(dir)
+  }
+  catch (e: unknown) {
+    useFaToast().error(i18n.global.t('components.ydFileTree.compressFailed'), { description: msg(e) })
+  }
 }
 
 // ---- 上传（目录右键，单文件直传） ----

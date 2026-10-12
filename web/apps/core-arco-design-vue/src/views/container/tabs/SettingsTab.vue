@@ -44,9 +44,10 @@ function onInstalled() {
 
 // ---- M52：镜像加速器卡 ----
 const PRESET_MIRRORS = [
-  { url: 'https://docker.mirrors.ustc.edu.cn', label: '中科大' },
-  { url: 'https://hub-mirror.c.163.com', label: '网易' },
-  { url: 'https://mirror.baidubce.com', label: '百度' },
+  { url: 'https://docker.m.daocloud.io', label: 'DaoCloud' },
+  { url: 'https://docker.1ms.run', label: '1MS' },
+  { url: 'https://docker.1panel.live', label: '1Panel' },
+  { url: 'https://hub.rat.dev', label: 'RAT' },
 ]
 const mirrors = ref<string[]>([])
 const checkedMirrors = ref<string[]>([])

@@ -270,6 +270,7 @@ func (s *AIService) StartChatRun(
 	provider *model.AIProvider,
 	history []ChatMessage,
 	scenePath, focus, mode string,
+	maxRoundsOverride int,
 ) (uint, error) {
 	// 同会话并发拒绝（运行体结束后 10min TTL 内仍可回放，但状态非 running 可再次发起）
 	if v, ok := s.runs.Load(convoID); ok && convoID != 0 {
@@ -314,7 +315,7 @@ func (s *AIService) StartChatRun(
 				run.finish(aiRunStatusError)
 			}
 		}()
-		err := s.RunAgentChat(ctx, run.emit, run.ping, provider, history, scenePath, focus, mode)
+		err := s.RunAgentChat(ctx, run.emit, run.ping, provider, history, scenePath, focus, mode, maxRoundsOverride)
 		status := aiRunStatusDone
 		if err != nil {
 			if ctx.Err() != nil {

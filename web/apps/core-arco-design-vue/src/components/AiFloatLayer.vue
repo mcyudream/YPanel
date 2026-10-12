@@ -35,6 +35,7 @@ const scenePage = computed(() => {
 
 // 权限档位（M60 四档，value 为发后端的枚举值）；默认变更前确认
 const mode = ref<'read_only' | 'confirm' | 'auto_edit' | 'full'>('confirm')
+const maxRounds = ref(100)
 
 const providers = ref<AIProvider[]>([])
 const providerId = ref(0)
@@ -58,6 +59,7 @@ const { messages, streaming, send, stop, regenerate, clear, contextUsage } = use
   providerId: () => providerId.value || undefined,
   model: () => model.value || undefined,
   mode: () => mode.value,
+  maxRounds: () => maxRounds.value,
   contextLimit: () => contextLimitOf(model.value),
 })
 

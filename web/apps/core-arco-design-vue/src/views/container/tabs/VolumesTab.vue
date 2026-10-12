@@ -78,8 +78,8 @@ async function prune() {
   <div>
     <FaPageMain>
   <div>
+    <div class="mb-3 flex flex-wrap items-center gap-2">
       <YdDockerNodeSelect />
-    <div class="mb-3 flex items-center gap-2">
       <FaButton variant="outline" size="sm" @click="prune">
         {{ $t('container.volumes.pruneUnused') }}
       </FaButton>

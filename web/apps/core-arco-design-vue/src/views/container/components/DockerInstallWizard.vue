@@ -37,9 +37,10 @@ let pollTimer: ReturnType<typeof setInterval> | null = null
 // 安装完成后可选配置加速器（服务端合并写 daemon.json + 重启 docker）
 const withMirror = ref(false)
 const PRESET_MIRRORS = [
-  { url: 'https://docker.mirrors.ustc.edu.cn', label: '中科大' },
-  { url: 'https://hub-mirror.c.163.com', label: '网易' },
-  { url: 'https://mirror.baidubce.com', label: '百度' },
+  { url: 'https://docker.m.daocloud.io', label: 'DaoCloud' },
+  { url: 'https://docker.1ms.run', label: '1MS' },
+  { url: 'https://docker.1panel.live', label: '1Panel' },
+  { url: 'https://hub.rat.dev', label: 'RAT' },
 ]
 const checkedMirrors = ref<string[]>([])
 const customMirror = ref('')

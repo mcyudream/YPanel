@@ -5,6 +5,7 @@
 package service
 
 import (
+	"strconv"
 	"context"
 	"encoding/json"
 	"errors"
@@ -20,7 +21,27 @@ import (
 )
 
 // M60：长任务（多步安装/迁移/排查）经常超出小轮次上限后被静默掐断，放宽并配合耗尽提示。
-const maxToolRounds = 100
+// MaxToolRoundsForUI 管理页读取当前轮次上限。
+func (s *AIService) MaxToolRoundsForUI() int {
+	return s.maxToolRoundsOf()
+}
+
+// SetMaxToolRounds 设置轮次上限（10~500）。
+func (s *AIService) SetMaxToolRounds(n int) error {
+	if n < 10 || n > 500 {
+		return fmt.Errorf("轮次上限需在 10~500 之间")
+	}
+	return s.settings.Set("ai.max_tool_rounds", strconv.Itoa(n))
+}
+
+// maxToolRoundsOf 单次任务工具调用轮次上限（settings ai.max_tool_rounds 可配置，10~500，默认 100）。
+func (s *AIService) maxToolRoundsOf() int {
+	n, err := strconv.Atoi(s.settings.Get("ai.max_tool_rounds", "100"))
+	if err != nil || n < 10 || n > 500 {
+		return 100
+	}
+	return n
+}
 
 // errAIPermDenied：RBAC 工具权限拒绝（M60）——调用方按「无权限」步骤呈现，区别于普通失败。
 var errAIPermDenied = errors.New("权限不足")
@@ -101,9 +122,14 @@ func (s *AIService) RunAgentChat(
 	scenePath string,
 	focus string,
 	mode string,
+	maxRoundsOverride int,
 ) error {
 	// 权限档位（M60）：read_only 只读工具集；confirm 变更前确认；auto_edit 自动编辑；full 完全访问
 	mode = normalizeAIMode(mode)
+	rounds := s.maxToolRoundsOf()
+	if maxRoundsOverride >= 10 && maxRoundsOverride <= 500 {
+		rounds = maxRoundsOverride
+	}
 	llm, err := buildLLM(provider)
 	if err != nil {
 		return err
@@ -167,7 +193,7 @@ func (s *AIService) RunAgentChat(
 	// 每轮重建 toolList（load_tools 可能已展开新模块）。
 	// roundsExhausted：跑满轮次上限仍未产出最终回答（M60 之前是静默退出，长任务像「AI 自己断联」）
 	roundsExhausted := true
-	for round := 0; round < maxToolRounds; round++ {
+	for round := 0; round < rounds; round++ {
 		// M42：上下文压缩（超阈值时裁剪历史工具结果，保留最近 4 条完整）
 		msgs = compressContext(msgs)
 		resp, err := llm.GenerateContent(ctx, msgs,
@@ -295,7 +321,7 @@ func (s *AIService) RunAgentChat(
 	if roundsExhausted {
 		emit(map[string]string{"content": fmt.Sprintf(
 			"\n\n> ⚠️ 本次任务已达单次工具调用轮次上限（%d 轮），已暂停。上面的进度是当前已完成的部分；回复「继续」我会接着完成剩余步骤。",
-			maxToolRounds,
+			rounds,
 		)})
 	}
 	emit(map[string]string{"done": "1"})

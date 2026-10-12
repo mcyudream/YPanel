@@ -92,6 +92,8 @@ export function useAiChat(options?: {
   onSaved?: () => void
   /** 权限档位：read_only / confirm / auto_edit / full，随请求传后端 */
   mode?: () => string
+  /** 单次任务工具调用轮次上限（10~500，空=后端默认 100） */
+  maxRounds?: () => number
   /** 上下文窗口上限（按当前模型），供用量估算；默认 128000 */
   contextLimit?: () => number
 }) {
@@ -327,6 +329,7 @@ export function useAiChat(options?: {
           providerId: options?.providerId?.() || undefined,
           model: options?.model?.() || undefined,
           mode: options?.mode?.() || undefined,
+          maxRounds: options?.maxRounds?.() || undefined,
           scene: options?.scenePath?.() || '/',
           focus: options?.sceneFocus?.() || undefined,
           messages: history,

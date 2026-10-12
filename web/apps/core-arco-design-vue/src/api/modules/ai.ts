@@ -111,6 +111,16 @@ export default {
     return res.data as AiOperationLogPage
   },
 
+  // 工具调用轮次上限（单次任务）
+  maxToolRounds: async () => {
+    const res = await api.get('api/v1/ai/tools/max-rounds', { silent: true })
+    return (res.data as any)?.rounds as number
+  },
+  setMaxToolRounds: async (rounds: number) => {
+    const res = await api.post('api/v1/ai/tools/max-rounds', { rounds })
+    return (res.data as any)?.rounds as number
+  },
+
   // 确认模式：strict = 写入+危险都确认（默认）；danger_only = 仅危险操作确认
   askMode: async () => {
     const res = await api.get('api/v1/ai/tools/ask-mode', { silent: true })

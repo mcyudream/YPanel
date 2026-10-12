@@ -88,6 +88,13 @@ export default {
     filterPlaceholder: 'Filter loaded files…',
     emptyDir: 'Directory is empty',
     emptySubdir: '(Empty directory)',
+    copyPath: 'Copy Path',
+    copyName: 'Copy Name',
+    copied: 'Copied',
+    copyFailed: 'Copy failed, please copy manually',
+    compress: 'Compress to tar.gz',
+    compressDone: 'Compressed',
+    compressFailed: 'Compression failed',
   },
   // YdLogViewer log viewer
   ydLogViewer: {
@@ -164,6 +171,13 @@ export default {
   },
   // YdTerminal terminal
   ydTerminal: {
+    copy: 'Copy',
+    paste: 'Paste',
+    selectAll: 'Select All',
+    clearScreen: 'Clear Screen',
+    pasteTitle: 'Manual Paste',
+    pastePlaceholder: 'Paste text here (Ctrl+V), then click Paste to send it to the terminal',
+    copyFailed: 'Copy failed, please copy manually',
     pressEnterRetry: '{reason} · Press Enter to reconnect',
     reconnecting: 'Reconnecting…',
     stateConnected: 'Connected',

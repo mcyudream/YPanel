@@ -88,6 +88,13 @@ export default {
     filterPlaceholder: '过滤已加载文件…',
     emptyDir: '目录为空',
     emptySubdir: '（空目录）',
+    copyPath: '复制路径',
+    copyName: '复制名称',
+    copied: '已复制',
+    copyFailed: '复制失败，请手动选择复制',
+    compress: '压缩为 tar.gz',
+    compressDone: '压缩完成',
+    compressFailed: '压缩失败',
   },
   // YdLogViewer 日志查看器
   ydLogViewer: {
@@ -164,6 +171,13 @@ export default {
   },
   // YdTerminal 终端
   ydTerminal: {
+    copy: '复制',
+    paste: '粘贴',
+    selectAll: '全选',
+    clearScreen: '清屏',
+    pasteTitle: '手动粘贴',
+    pastePlaceholder: '在此粘贴文本（Ctrl+V），点击「粘贴」写入终端',
+    copyFailed: '复制失败，请手动选择复制',
     pressEnterRetry: '{reason} · 按 Enter 重连',
     reconnecting: '正在重新连接…',
     stateConnected: '已连接',
