@@ -167,7 +167,7 @@ func (s *SelfUpdateService) CheckOnline(ctx context.Context) (*OnlineCheck, erro
 	var wg sync.WaitGroup
 	mu := sync.Mutex{}
 	res := map[string]*release.OnlineRelease{}
-	for _, src := range []string{"github", "gitee"} {
+	for _, src := range []string{"github", "gitee", "gitlab"} {
 		wg.Add(1)
 		go func(src string) {
 			defer wg.Done()
@@ -184,7 +184,7 @@ func (s *SelfUpdateService) CheckOnline(ctx context.Context) (*OnlineCheck, erro
 		}
 	}
 	isDev := release.IsDevVersion(s.currentVer)
-	check := &OnlineCheck{CurrentVersion: s.currentVer, CurrentIsDev: isDev, Sources: []OnlineRelease{*res["gitee"], *res["github"]}}
+	check := &OnlineCheck{CurrentVersion: s.currentVer, CurrentIsDev: isDev, Sources: []OnlineRelease{*res["gitee"], *res["github"], *res["gitlab"]}}
 	for _, src := range res {
 		if !src.Reachable {
 			continue
@@ -206,7 +206,7 @@ func (s *SelfUpdateService) CheckOnline(ctx context.Context) (*OnlineCheck, erro
 // 同步段仅做源探测与版本比较（快速失败）；任务体走 core 侧下载（精确 MB/s 进度，与节点
 // agent 升级同款）→ sha256 校验 → 解包 → 推送 updates → 复用本地 Apply 通道（detached 重启）。
 func (s *SelfUpdateService) UpgradeTask(ctx context.Context, source string) (map[string]any, error) {
-	if source != "github" && source != "gitee" {
+	if source != "github" && source != "gitee" && source != "gitlab" {
 		return nil, errs.Wrap(errs.ErrBadRequest, "未知更新源（github|gitee）")
 	}
 	if s.tasks == nil {

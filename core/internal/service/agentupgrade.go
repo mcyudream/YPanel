@@ -87,8 +87,8 @@ func (s *SelfUpdateService) UpgradeAgentTask(nodeId, source string) (map[string]
 	if nodeId == "local" {
 		return nil, svcBadReq("本机 agent 与面板同进程，请走面板在线更新")
 	}
-	if source != "github" && source != "gitee" {
-		return nil, svcBadReq("未知更新源（github|gitee）")
+	if source != "github" && source != "gitee" && source != "gitlab" {
+		return nil, svcBadReq("未知更新源（github|gitee|gitlab）")
 	}
 	if s.tasks == nil {
 		return nil, errs.Wrap(errs.ErrBadRequest, "任务服务不可用")
