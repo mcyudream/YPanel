@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"crypto/subtle"
 	"fmt"
+	"log/slog"
 	"os"
 	"regexp"
 	"strings"
@@ -34,8 +35,9 @@ var nodeNamePattern = regexp.MustCompile(`^[a-z][a-z0-9-]{1,30}[a-z0-9]$`)
 
 // NodeService 节点注册表：local（进程内嵌）+ 远程节点（DB）。
 type NodeService struct {
-	local *Node
-	db    *gorm.DB
+	local      *Node
+	db         *gorm.DB
+	onComeback func(nodeID string) // 离线→在线边沿回调（异步触发；动作方须幂等）
 }
 
 // NewNodeService 启动本机 agent（loopback 随机端口 + 随机 PSK）。
@@ -53,6 +55,10 @@ func NewNodeService(ctx context.Context, db *gorm.DB) (*NodeService, error) {
 
 // Local 本机节点。
 func (s *NodeService) Local() *Node { return s.local }
+
+// SetOnComeback 注册节点离线恢复回调：节点重启/断网后首个重新上线的心跳触发一次。
+// 本机 local 无心跳不经此路径（本机恢复由 core 启动重放覆盖）。
+func (s *NodeService) SetOnComeback(cb func(nodeID string)) { s.onComeback = cb }
 
 // ByID 取节点：local 或 DB 中远程节点。
 func (s *NodeService) ByID(id string) (*Node, error) {
@@ -231,6 +237,7 @@ func (s *NodeService) Pair(code, name, addr, hostname, osName, arch, version str
 }
 
 // Heartbeat 节点心跳（Bearer PSK constant-time 校验）并刷新在线时间。
+// 上次心跳已超出在线窗口时视为「离线→在线」边沿，异步触发 onComeback（NAT 转发重放等自愈动作）。
 func (s *NodeService) Heartbeat(name, token, version string) error {
 	var row model.Node
 	if err := s.db.Where("name = ?", name).First(&row).Error; err != nil {
@@ -239,12 +246,34 @@ func (s *NodeService) Heartbeat(name, token, version string) error {
 	if subtle.ConstantTimeCompare([]byte(token), []byte(row.Token)) != 1 {
 		return errs.ErrForbidden
 	}
+	cameBack := isNodeComeback(row.LastSeenAt)
 	updates := map[string]any{"last_seen_at": time.Now()}
 	// M54：心跳携带 agent 版本（升级重启后首个心跳即同步新版本）；长度截断防滥用
 	if version != "" && len(version) <= 32 {
 		updates["version"] = version
 	}
-	return s.db.Model(&row).Updates(updates).Error
+	if err := s.db.Model(&row).Updates(updates).Error; err != nil {
+		return err
+	}
+	if cameBack && s.onComeback != nil {
+		go s.fireComeback(fmt.Sprintf("%d", row.ID))
+	}
+	return nil
+}
+
+// isNodeComeback 离线恢复判定：上次心跳距今超过在线窗口（节点重启/断网后首个心跳）。
+func isNodeComeback(lastSeen time.Time) bool {
+	return time.Since(lastSeen) >= onlineWindow
+}
+
+// fireComeback 异步执行恢复回调；动作方须幂等（心跳重试可能双触发），panic 防护不波及心跳响应。
+func (s *NodeService) fireComeback(nodeID string) {
+	defer func() {
+		if r := recover(); r != nil {
+			slog.Error("节点上线回调 panic", "node", nodeID, "recover", r)
+		}
+	}()
+	s.onComeback(nodeID)
 }
 
 // DeleteNode 删除远程节点。

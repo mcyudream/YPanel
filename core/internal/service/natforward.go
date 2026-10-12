@@ -13,6 +13,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"gorm.io/gorm"
 
@@ -647,6 +648,21 @@ func (s *NatForwardService) ApplyAll(ctx context.Context) (map[string]error, err
 		}
 	}
 	return fails, nil
+}
+
+// OnNodeBack 节点离线恢复重放（挂 NodeService 心跳边沿）：仅当节点存有规则（含接管 SrcSpec 记录）
+// 时整链重建，补齐启动重放覆盖不到的「远程节点自行重启/断线恢复」缺口；脚本幂等，双触发无害。
+func (s *NatForwardService) OnNodeBack(nodeID string) {
+	var count int64
+	if err := s.db.Model(&model.NatForwardRule{}).Where("node_id = ?", nodeID).Count(&count).Error; err != nil || count == 0 {
+		return
+	}
+	// 独立 ctx：回调运行于心跳 goroutine，不持请求上下文；两地址族各 60s exec 上限 + 余量
+	ctx, cancel := context.WithTimeout(context.Background(), 125*time.Second)
+	defer cancel()
+	if _, err := s.ApplyNode(ctx, nodeID); err != nil {
+		slog.Warn("NAT 转发节点恢复重放失败", "node", nodeID, "err", err.Error())
+	}
 }
 
 // ---------- CRUD ----------
