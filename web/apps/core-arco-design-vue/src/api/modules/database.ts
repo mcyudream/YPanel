@@ -127,8 +127,10 @@ export default {
     return res.data as { taskId: number } // 任务化：秒回 taskId
   },
   deleteBackup: (id: number, file: string) => api.delete(`api/v1/database/instances/${id}/backups?file=${encodeURIComponent(file)}`),
-  restoreBackup: (id: number, file: string) =>
-    api.post(`api/v1/database/instances/${id}/backups/restore?file=${encodeURIComponent(file)}`) as Promise<{ taskId: number }>,
+  restoreBackup: async (id: number, file: string) => {
+    const res = await api.post(`api/v1/database/instances/${id}/backups/restore?file=${encodeURIComponent(file)}`)
+    return res.data as { taskId: number }
+  },
   backupDownloadURL: (path: string, token: string) =>
     `api/v1/files/download?path=${encodeURIComponent(path)}&token=${encodeURIComponent(token)}`,
 }

@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import type { Certificate, DnsAccount, AcmeAccount } from '@/api/modules/cert'
-import { certApi } from '@/api/modules/cert'
+import { certApi, parseAltDomains } from '@/api/modules/cert'
 import { i18n, tr } from '@/locales'
 import { useTaskJob } from '@/composables/useTaskJob'
 
@@ -432,8 +432,8 @@ onMounted(() => {
                 <div class="font-medium">{{ c.domain }}</div>
                 <div v-if="c.sites?.length" class="text-xs text-muted-foreground">{{ $t('certs.boundTo', { sites: c.sites.join('、') }) }}</div>
               </td>
-              <td class="max-w-48 truncate px-3 py-2 font-mono text-xs text-muted-foreground" :title="(c.altDomains || []).join(', ')">
-                {{ (c.altDomains || []).join(', ') || '—' }}
+              <td class="max-w-48 truncate px-3 py-2 font-mono text-xs text-muted-foreground" :title="parseAltDomains(c.altDomains).join(', ')">
+                {{ parseAltDomains(c.altDomains).join(', ') || '—' }}
               </td>
               <td class="px-3 py-2 text-xs">
                 {{ tr(`certs.providerLabel.${c.provider}`, c.provider) }}

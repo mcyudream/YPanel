@@ -2,7 +2,7 @@
 import type { SiteItem } from '@/api/modules/site'
 import type { SiteHTTPSConf, SiteHTTPSUpdate } from '@/api/modules/siteconf'
 import { siteConfApi } from '@/api/modules/siteconf'
-import { certApi } from '@/api/modules/cert'
+import { certApi, parseAltDomains } from '@/api/modules/cert'
 import type { Certificate } from '@/api/modules/cert'
 import { i18n } from '@/locales'
 
@@ -43,7 +43,7 @@ const httpModeOptions = computed(() => [
 const certOptions = computed(() => [
   { label: i18n.global.t('sites.conf.https.pickCert'), value: 0, disabled: true },
   ...certs.value.map(c => ({
-    label: `${c.domain}${c.altDomains?.length ? ` (+${c.altDomains.length})` : ''} · ${c.issuer || c.provider}`,
+    label: `${c.domain}${parseAltDomains(c.altDomains).length ? ` (+${parseAltDomains(c.altDomains).length})` : ''} · ${c.issuer || c.provider}`,
     value: c.id,
   })),
 ])
