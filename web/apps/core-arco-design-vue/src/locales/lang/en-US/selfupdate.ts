@@ -36,7 +36,7 @@ export default {
     hideNotes: 'Hide release notes',
     checkFailed: 'Failed to check for updates',
     upgradeTitle: 'Online Upgrade',
-    upgradeConfirm: 'Download v{version} from {source}, verify, replace and restart (about 5-10 seconds of downtime; ypanel.bak is kept). Continue?',
-    upgradeTo: 'Upgrade to v{version}',
+    upgradeConfirm: 'Download {version} from {source}, verify, replace and restart (about 5-10 seconds of downtime; ypanel.bak is kept). Continue?',
+    upgradeTo: 'Upgrade to {version}', // version is the raw release tag (already has v prefix)
   },
 }
