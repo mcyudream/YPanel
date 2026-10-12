@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net"
 	"strings"
+	"time"
 
 	"github.com/ypanel/core/internal/agentclient"
 	"github.com/ypanel/shared/dto"
@@ -16,12 +17,16 @@ import (
 type Fail2banService struct {
 	nodes *NodeService
 	nodeClient *agentclient.Client // WithNode 绑定的节点客户端（空=本机）
+	tasks *TaskService            // M65：安装任务化（SetTasks 装配，副本经 WithNode 携带）
 }
 
 // NewFail2banService 创建。
 func NewFail2banService(nodes *NodeService) *Fail2banService {
 	return &Fail2banService{nodes: nodes}
 }
+
+// SetTasks 注入任务服务（main 装配，避免构造签名变更）。
+func (s *Fail2banService) SetTasks(t *TaskService) { s.tasks = t }
 
 // WithNode 返回绑定目标节点的副本（M55 主机域节点化：client 按节点路由，方法签名不变）。
 func (s *Fail2banService) WithNode(nodeId string) (*Fail2banService, error) {
@@ -73,30 +78,68 @@ func (s *Fail2banService) execShell(ctx context.Context, cmd string, timeout int
 	return out.Output, nil
 }
 
-// Install 安装 fail2ban（apt/dnf/yum 多通道；RHEL 系经 EPEL；apt 先刷新索引，
+// f2bInstallCmd fail2ban 安装脚本（apt/dnf/yum 多通道；RHEL 系经 EPEL；apt 先刷新索引，
 // 装后以 command -v 回读验证，失败携带真实输出末行）。
-func (s *Fail2banService) Install(ctx context.Context) (map[string]any, error) {
-	out, err := s.execShell(ctx, `export DEBIAN_FRONTEND=noninteractive; `+
-		`if command -v apt-get >/dev/null 2>&1; then apt-get update -qq && apt-get install -y -qq fail2ban; `+
-		`elif command -v dnf >/dev/null 2>&1; then dnf install -y epel-release && dnf install -y fail2ban; `+
-		`elif command -v yum >/dev/null 2>&1; then yum install -y epel-release && yum install -y fail2ban; `+
-		`else echo F2B_NO_PKG_MGR; fi; `+
-		`if command -v fail2ban-client >/dev/null 2>&1; then systemctl enable --now fail2ban && echo F2B_INSTALL_OK; `+
-		`else echo F2B_INSTALL_MISSING; fi`, 600)
+const f2bInstallCmd = `export DEBIAN_FRONTEND=noninteractive; `+
+	`if command -v apt-get >/dev/null 2>&1; then apt-get update -qq && apt-get install -y -qq fail2ban; `+
+	`elif command -v dnf >/dev/null 2>&1; then dnf install -y epel-release && dnf install -y fail2ban; `+
+	`elif command -v yum >/dev/null 2>&1; then yum install -y epel-release && yum install -y fail2ban; `+
+	`else echo F2B_NO_PKG_MGR; fi; `+
+	`if command -v fail2ban-client >/dev/null 2>&1; then systemctl enable --now fail2ban && echo F2B_INSTALL_OK; `+
+	`else echo F2B_INSTALL_MISSING; fi`
+
+// f2bInstallFailMsg 安装失败信息（按标记分类）。
+func f2bInstallFailMsg(out string) error {
+	msg := "安装失败: " + lastLine(tail(out, 300))
+	switch {
+	case strings.Contains(out, "F2B_NO_PKG_MGR"):
+		msg = "安装失败：未识别到 apt/dnf/yum 包管理器，暂不支持该发行版"
+	case strings.Contains(out, "F2B_INSTALL_MISSING"):
+		msg = "安装失败（软件源不可用或安装未成功，RHEL 系需 EPEL 可达）: " + lastLine(tail(out, 300))
+	}
+	return errs.Wrapc(errs.CodeFileOpFailed, msg)
+}
+
+// InstallTask 安装 fail2ban 任务版（返回任务 ID；apt/yum 输出逐行实时进任务日志）。
+// nodeId 仅用于任务标题/防重标识（调用方已 WithNode 绑定执行节点）。
+func (s *Fail2banService) InstallTask(ctx context.Context, nodeId string) (map[string]any, error) {
+	if s.tasks == nil {
+		return nil, errs.Wrap(errs.ErrBadRequest, "任务服务不可用")
+	}
+	if nodeId == "" {
+		nodeId = "local"
+	}
+	if s.tasks.HasRunning([]string{TaskF2bInstall}, nodeId) {
+		return nil, errs.Wrap(errs.ErrBadRequest, "该节点已有安装任务运行中，请稍后再试")
+	}
+	task, err := s.tasks.StartTask(TaskF2bInstall, "安装暴力破解防护（node "+nodeId+"）", nodeId, 12*time.Minute,
+		func(ctx context.Context, logf TaskLogf) error {
+			ac, err := s.client()
+			if err != nil {
+				return err
+			}
+			logf("info", "开始安装 fail2ban（apt/dnf/yum 自动适配，RHEL 系需 EPEL）…")
+			out, code, err := execStreamOrRun(ctx, ac, f2bInstallCmd, 600, logf)
+			if err != nil {
+				return err
+			}
+			if code != 0 || !strings.Contains(out, "F2B_INSTALL_OK") {
+				return f2bInstallFailMsg(out)
+			}
+			logf("info", "安装完成，回读 jail 状态…")
+			st, err := s.Status(ctx)
+			if err != nil {
+				return err
+			}
+			if jails, ok := st["jails"].([]map[string]any); ok {
+				logf("info", "fail2ban 运行中，活跃 jail %d 个", len(jails))
+			}
+			return nil
+		})
 	if err != nil {
 		return nil, err
 	}
-	if !strings.Contains(out, "F2B_INSTALL_OK") {
-		msg := "安装失败: " + lastLine(tail(out, 300))
-		switch {
-		case strings.Contains(out, "F2B_NO_PKG_MGR"):
-			msg = "安装失败：未识别到 apt/dnf/yum 包管理器，暂不支持该发行版"
-		case strings.Contains(out, "F2B_INSTALL_MISSING"):
-			msg = "安装失败（软件源不可用或安装未成功，RHEL 系需 EPEL 可达）: " + lastLine(tail(out, 300))
-		}
-		return nil, errs.Wrapc(errs.CodeFileOpFailed, msg)
-	}
-	return s.Status(ctx)
+	return map[string]any{"taskId": task.ID}, nil
 }
 
 // Status jail 列表与封禁情况。

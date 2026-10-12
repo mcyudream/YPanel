@@ -2,6 +2,7 @@
 import { i18n } from '@/locales'
 import type { DiskGuardConfig, DiskGuardEvent, DiskGuardStatus } from '@/api/modules/diskguard'
 import { diskGuardApi } from '@/api/modules/diskguard'
+import { useTaskJob } from '@/composables/useTaskJob'
 
 defineOptions({
   name: 'DiskGuardIndex',
@@ -10,8 +11,8 @@ defineOptions({
 const status = ref<DiskGuardStatus | null>(null)
 const loading = ref(false)
 const saving = ref(false)
-const restoring = ref(false)
-const restoringId = ref(0)
+// 恢复 loading 由 useTaskJob.running 承载（后端恢复操作全局单飞）
+const { running: restoring } = useTaskJob()
 
 // 配置表单（exclude 以逗号串编辑）
 const form = ref<DiskGuardConfig>({ enabled: true, thresholdGB: 5, exclude: [] })
@@ -57,23 +58,22 @@ async function save() {
   }
 }
 
+// 恢复走任务中心（M65）：恢复全局单飞（后端防重），过程实时进任务日志
+const { run: runRestoreJob } = useTaskJob()
+
 function restoreAll() {
   const modal = useFaModal()
   modal.confirm({
     title: i18n.global.t('diskguard.modal.restoreTitle'),
     content: i18n.global.t('diskguard.modal.restoreAllConfirm', { nodes: activeEvents.value.length }),
     onConfirm: async () => {
-      restoring.value = true
-      try {
-        const r = await diskGuardApi.restore(0)
-        useFaToast().success(i18n.global.t('diskguard.toast.restoreDone', { started: r.started.length, failed: r.failed.length }))
-        await load()
-      }
-      catch (e: any) {
-        useFaToast().error(i18n.global.t('diskguard.toast.restoreFailed'), { description: e?.message })
-      }
-      finally {
-        restoring.value = false
+      // 恢复走任务中心（M65）：逐事件过程实时进任务日志
+      const out = await runRestoreJob(() => diskGuardApi.restore(0), {
+        onSuccess: async () => {
+          await load() // 恢复明细见任务中心日志
+        },
+      })
+      if (out) {
       }
     },
   })
@@ -85,17 +85,12 @@ function restoreOne(ev: DiskGuardEvent) {
     title: i18n.global.t('diskguard.modal.restoreTitle'),
     content: i18n.global.t('diskguard.modal.restoreConfirm', { node: ev.nodeName, count: ev.containers.length }),
     onConfirm: async () => {
-      restoringId.value = ev.id
-      try {
-        const r = await diskGuardApi.restore(ev.id)
-        useFaToast().success(i18n.global.t('diskguard.toast.restoreDone', { started: r.started.length, failed: r.failed.length }))
-        await load()
-      }
-      catch (e: any) {
-        useFaToast().error(i18n.global.t('diskguard.toast.restoreFailed'), { description: e?.message })
-      }
-      finally {
-        restoringId.value = 0
+      const out = await runRestoreJob(() => diskGuardApi.restore(ev.id), {
+        onSuccess: async () => {
+          await load() // 恢复明细见任务中心日志
+        },
+      })
+      if (out) {
       }
     },
   })
@@ -273,7 +268,7 @@ onUnmounted(() => {
               </span>
               <FaButton
                 v-if="!ev.restoredAt" class="ml-auto" size="sm"
-                :loading="restoringId === ev.id" @click="restoreOne(ev)"
+                :loading="restoring" @click="restoreOne(ev)"
               >
                 {{ $t('diskguard.events.restore') }}
               </FaButton>

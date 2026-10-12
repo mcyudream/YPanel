@@ -929,6 +929,42 @@ func (s *DatabaseService) CreateBackup(ctx context.Context, id uint, opts ...Bac
 	return result, nil
 }
 
+// BackupTask 备份任务版（M65：返回任务 ID；同实例备份/恢复互斥，过程与结果任务中心可查）。
+func (s *DatabaseService) BackupTask(ctx context.Context, id uint, opts ...BackupUploadOpts) (map[string]any, error) {
+	inst, err := s.ByID(id)
+	if err != nil {
+		return nil, err
+	}
+	if s.tasks == nil {
+		return nil, errs.Wrap(errs.ErrBadRequest, "任务服务不可用")
+	}
+	ref := fmt.Sprintf("%d", id)
+	if s.tasks.HasRunning([]string{TaskDBBackup, TaskDBRestore}, ref) {
+		return nil, errs.Wrap(errs.ErrBadRequest, "该实例已有备份/恢复任务运行中，请稍后再试")
+	}
+	title := "备份数据库 " + inst.Name
+	if len(opts) > 0 && opts[0].StorageAccountID > 0 {
+		title += "（含远端上传）"
+	}
+	task, err := s.tasks.StartTask(TaskDBBackup, title, ref, 35*time.Minute,
+		func(ctx context.Context, logf TaskLogf) error {
+			logf("info", "开始备份 %s（%s）…", inst.Name, inst.Type)
+			out, err := s.CreateBackup(ctx, id, opts...)
+			if err != nil {
+				return err
+			}
+			logf("info", "备份完成：%s", out["file"])
+			if rk, ok := out["remoteKey"]; ok {
+				logf("info", "远端上传完成：%v", rk)
+			}
+			return nil
+		})
+	if err != nil {
+		return nil, err
+	}
+	return map[string]any{"taskId": task.ID}, nil
+}
+
 // Backups 备份列表（扫目录）。
 func (s *DatabaseService) Backups(ctx context.Context, id uint) ([]map[string]any, error) {
 	inst, err := s.ByID(id)
@@ -1043,6 +1079,38 @@ func (s *DatabaseService) Restore(ctx context.Context, id uint, file string) err
 		return errs.Wrapc(errs.CodeFileOpFailed, "恢复执行失败: "+firstLine(out.Output))
 	}
 	return nil
+}
+
+// RestoreTask 恢复备份任务版（M65：危险操作，确认仍在前端提交前；返回任务 ID，
+// 过程日志任务中心可查；同实例备份/恢复互斥）。
+func (s *DatabaseService) RestoreTask(ctx context.Context, id uint, file string) (map[string]any, error) {
+	inst, err := s.ByID(id)
+	if err != nil {
+		return nil, err
+	}
+	if strings.Contains(file, "/") || strings.Contains(file, "..") {
+		return nil, errs.ErrPathInvalid
+	}
+	if s.tasks == nil {
+		return nil, errs.Wrap(errs.ErrBadRequest, "任务服务不可用")
+	}
+	ref := fmt.Sprintf("%d", id)
+	if s.tasks.HasRunning([]string{TaskDBBackup, TaskDBRestore}, ref) {
+		return nil, errs.Wrap(errs.ErrBadRequest, "该实例已有备份/恢复任务运行中，请稍后再试")
+	}
+	task, err := s.tasks.StartTask(TaskDBRestore, "恢复数据库 "+inst.Name+"（"+file+"）", ref, 35*time.Minute,
+		func(ctx context.Context, logf TaskLogf) error {
+			logf("info", "开始恢复 %s 到 %s（%s）…", file, inst.Name, inst.Type)
+			if err := s.Restore(ctx, id, file); err != nil {
+				return err
+			}
+			logf("info", "恢复完成，实例数据已回滚到备份时点")
+			return nil
+		})
+	if err != nil {
+		return nil, err
+	}
+	return map[string]any{"taskId": task.ID}, nil
 }
 
 // audit 迁移等实例级写操作的审计（DBAdminService.audit 的实例侧对等物）。

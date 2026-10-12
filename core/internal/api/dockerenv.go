@@ -171,7 +171,7 @@ func (a *DockerEnvAPI) EnvImageRemove(c *gin.Context) {
 	respOK(c, struct{}{})
 }
 
-// ImageBuild POST /api/v1/docker/images/build {contextDir,dockerfile,tag}
+// ImageBuild POST /api/v1/docker/images/build {contextDir,dockerfile,tag}（任务化秒回 taskId，构建输出实时进任务日志）
 func (a *DockerEnvAPI) ImageBuild(c *gin.Context) {
 	req, ok := bind[struct {
 		ContextDir string `json:"contextDir" binding:"required"`
@@ -181,7 +181,7 @@ func (a *DockerEnvAPI) ImageBuild(c *gin.Context) {
 	if !ok {
 		return
 	}
-	out, err := a.Img.Build(c.Request.Context(), req.ContextDir, req.Dockerfile, req.Tag)
+	out, err := a.Img.BuildTask(c.Request.Context(), req.ContextDir, req.Dockerfile, req.Tag)
 	if err != nil {
 		respErr(c, err)
 		return
@@ -189,7 +189,7 @@ func (a *DockerEnvAPI) ImageBuild(c *gin.Context) {
 	respOK(c, out)
 }
 
-// ImageSave POST /api/v1/docker/images/save {images[],name}
+// ImageSave POST /api/v1/docker/images/save {images[],name}（任务化秒回 taskId，产物路径随响应返回）
 func (a *DockerEnvAPI) ImageSave(c *gin.Context) {
 	req, ok := bind[struct {
 		Images []string `json:"images" binding:"required,min=1"`
@@ -198,7 +198,7 @@ func (a *DockerEnvAPI) ImageSave(c *gin.Context) {
 	if !ok {
 		return
 	}
-	out, err := a.Img.Save(c.Request.Context(), req.Images, req.Name)
+	out, err := a.Img.SaveTask(c.Request.Context(), req.Images, req.Name)
 	if err != nil {
 		respErr(c, err)
 		return
@@ -230,7 +230,7 @@ func (a *DockerEnvAPI) ImageLoad(c *gin.Context) {
 		respErr(c, err)
 		return
 	}
-	out, err := a.Img.Load(c.Request.Context(), target)
+	out, err := a.Img.LoadTask(c.Request.Context(), target)
 	if err != nil {
 		respErr(c, err)
 		return

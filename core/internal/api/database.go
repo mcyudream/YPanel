@@ -378,7 +378,7 @@ func (a *DatabaseAPI) ExecEnvPull(c *gin.Context) {
 		respErr(c, errs.Wrap(errs.ErrBadRequest, "请指定实例类型"))
 		return
 	}
-	out, err := a.DBS.ExecEnvPull(c.Request.Context(), req.Type)
+	out, err := a.DBS.ExecEnvPullTask(c.Request.Context(), req.Type)
 	if err != nil {
 		respErr(c, err)
 		return
@@ -386,7 +386,7 @@ func (a *DatabaseAPI) ExecEnvPull(c *gin.Context) {
 	respOK(c, out)
 }
 
-// CreateBackup POST /api/v1/database/instances/:id/backups（body 可选 {storageAccountId,keep}）
+// CreateBackup POST /api/v1/database/instances/:id/backups（body 可选 {storageAccountId,keep}；任务化秒回 taskId）
 func (a *DatabaseAPI) CreateBackup(c *gin.Context) {
 	id, err := ownedInstanceID(c, a.DBS)
 	if err != nil {
@@ -403,7 +403,7 @@ func (a *DatabaseAPI) CreateBackup(c *gin.Context) {
 			opts = service.BackupUploadOpts{StorageAccountID: req.StorageAccountId, Keep: req.Keep}
 		}
 	}
-	out, err := a.DBS.CreateBackup(c.Request.Context(), id, opts)
+	out, err := a.DBS.BackupTask(c.Request.Context(), id, opts)
 	if err != nil {
 		respErr(c, err)
 		return
@@ -425,18 +425,19 @@ func (a *DatabaseAPI) DeleteBackup(c *gin.Context) {
 	respOK(c, struct{}{})
 }
 
-// RestoreBackup POST /api/v1/database/instances/:id/backups/restore?file=
+// RestoreBackup POST /api/v1/database/instances/:id/backups/restore?file=（任务化秒回 taskId）
 func (a *DatabaseAPI) RestoreBackup(c *gin.Context) {
 	id, err := ownedInstanceID(c, a.DBS)
 	if err != nil {
 		respErr(c, err)
 		return
 	}
-	if err := a.DBS.Restore(c.Request.Context(), id, c.Query("file")); err != nil {
+	out, err := a.DBS.RestoreTask(c.Request.Context(), id, c.Query("file"))
+	if err != nil {
 		respErr(c, err)
 		return
 	}
-	respOK(c, struct{}{})
+	respOK(c, out)
 }
 
 // ---- M39：MySQL 管理深化 ----

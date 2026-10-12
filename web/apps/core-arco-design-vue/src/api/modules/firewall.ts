@@ -26,7 +26,8 @@ export const fail2banApi = {
     const res = await hnapi.get('api/v1/fail2ban/status', { silent: true })
     return res.data as { available: boolean, hint?: string, jails?: Fail2banJail[] }
   },
-  install: async () => hnapi.post('api/v1/fail2ban/install'),
+  // 安装（任务化：秒回 taskId，apt 输出实时进任务日志）
+  install: async (nodeId?: string) => hnapi.post(`api/v1/fail2ban/install${nodeId ? `?nodeId=${encodeURIComponent(nodeId)}` : ''}`) as Promise<{ taskId: number }>,
   unban: (jail: string, ip: string) => hnapi.post('api/v1/fail2ban/unban', { jail, ip }),
   ban: (jail: string, ip: string) => hnapi.post('api/v1/fail2ban/ban', { jail, ip }),
 }

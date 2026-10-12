@@ -17,7 +17,8 @@ export default {
     const res = await hnapi.get('api/v1/ftp/status', { silent: true })
     return res.data as FtpStatus
   },
-  install: async () => hnapi.post('api/v1/ftp/install'),
+  // 安装（任务化：秒回 taskId，apt 输出实时进任务日志）
+  install: async (nodeId?: string) => hnapi.post(`api/v1/ftp/install${nodeId ? `?nodeId=${encodeURIComponent(nodeId)}` : ''}`) as Promise<{ taskId: number }>,
   power: (action: 'start' | 'stop' | 'restart') => hnapi.post('api/v1/ftp/power', { action }),
   setPort: (port: number, pasvMin: number, pasvMax: number) =>
     hnapi.post('api/v1/ftp/port', { port, pasvMin, pasvMax }),

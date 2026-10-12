@@ -26,8 +26,23 @@ type CertIssueInput struct {
 	DnsAccountID  uint   `json:"dnsAccountId"`  // 空则尝试面板环境变量（阿里云）
 }
 
-// Issue ACME DNS 挑战签发，证书入库并部署到 nginx certs。
-func (s *CertificateService) Issue(ctx context.Context, in CertIssueInput) (*model.Certificate, error) {
+// issuePlan 签发预备产物：校验/凭据/命令装配完成后供 execute 阶段使用。
+type issuePlan struct {
+	in        CertIssueInput
+	main      string
+	alts      []string
+	email     string
+	credEnv   string
+	dnsAPI    string
+	ca        string
+	keylen    string
+	issueCmd  string
+	certName  string
+}
+
+// prepareIssue 签发预备段：入参校验、账户/DNS 凭据装配、重名检查、组 acme.sh 命令。
+// 全部为快速失败检查（同步段执行，域名/账户错误即时报给调用方，不进任务）。
+func (s *CertificateService) prepareIssue(ctx context.Context, in CertIssueInput) (*issuePlan, error) {
 	main := strings.ToLower(strings.TrimSpace(strings.TrimPrefix(in.Domain, "*.")))
 	if !domainPattern.MatchString(main) {
 		return nil, errs.Wrap(errs.ErrBadRequest, "主域名不合法: "+in.Domain)
@@ -81,16 +96,12 @@ func (s *CertificateService) Issue(ctx context.Context, in CertIssueInput) (*mod
 		dnsAPI = "dns_ali"
 	}
 
-	if err := s.ensureInstalled(ctx, email); err != nil {
-		return nil, err
-	}
-
 	certName := main
 	if _, err := s.byName(certName); err == nil {
 		return nil, errs.New(errs.CodeConflict, "error.conflict", "证书已存在（同主域名），请先删除旧证书")
 	}
 
-	// 签发：主域名 + 其他域名 + 泛域名
+	// 签发命令：主域名 + 其他域名 + 泛域名
 	var dArgs strings.Builder
 	fmt.Fprintf(&dArgs, " -d %s", main)
 	for _, d := range alts {
@@ -98,24 +109,40 @@ func (s *CertificateService) Issue(ctx context.Context, in CertIssueInput) (*mod
 	}
 	issue := fmt.Sprintf("%s%s --issue --dns %s%s --server %s --keylength %s",
 		credEnv, acmeBin, dnsAPI, dArgs.String(), ca, keylen)
-	out, err := s.run(ctx, issue, 600)
+	return &issuePlan{in: in, main: main, alts: alts, email: email, credEnv: credEnv,
+		dnsAPI: dnsAPI, ca: ca, keylen: keylen, issueCmd: issue, certName: certName}, nil
+}
+
+// issueExecute 签发执行段：acme.sh 安装检查 → DNS 挑战签发 → 入库 → 钩子/探测。
+// 耗时主体（安装 180s + 签发 600s），logf 非 nil 时全程流式任务日志。
+func (s *CertificateService) issueExecute(ctx context.Context, logf TaskLogf, p *issuePlan) (*model.Certificate, error) {
+	if logf != nil {
+		logf("info", "检查 acme.sh 安装…")
+	}
+	if err := s.ensureInstalled(ctx, p.email); err != nil {
+		return nil, err
+	}
+	if logf != nil {
+		logf("info", "开始签发（DNS 验证，最长 10 分钟）：主域名 %s，共 %d 个域名", p.main, len(p.alts))
+	}
+	out, code, err := s.runStream(ctx, p.issueCmd, 600, logf)
 	if err != nil {
 		return nil, err
 	}
 	c := &model.Certificate{
-		CertName: certName, Domain: main,
-		Provider: "acme", Remark: strings.TrimSpace(in.Remark), AutoRenew: in.AutoRenew,
-		AcmeAccountID: in.AcmeAccountID, DnsAccountID: in.DnsAccountID,
-		Issuer: issuerLabel(ca), IssueLog: out.Output,
+		CertName: p.certName, Domain: p.main,
+		Provider: "acme", Remark: strings.TrimSpace(p.in.Remark), AutoRenew: p.in.AutoRenew,
+		AcmeAccountID: p.in.AcmeAccountID, DnsAccountID: p.in.DnsAccountID,
+		Issuer: issuerLabel(p.ca), IssueLog: out,
 	}
-	c.AltDomains = saveAltDomains(alts)
-	if out.ExitCode != 0 {
+	c.AltDomains = saveAltDomains(p.alts)
+	if code != 0 {
 		c.Status = "error"
 		_ = s.db.Create(c).Error // 失败日志也入库便于排查
-		return nil, errs.New(errs.CodeFileOpFailed, "error.fileOpFailed", "ACME 签发失败: "+firstLine(out.Output))
+		return nil, errs.New(errs.CodeFileOpFailed, "error.fileOpFailed", "ACME 签发失败: "+firstLine(out))
 	}
-	if !in.AutoRenew {
-		_, _ = s.run(ctx, fmt.Sprintf("%s --remove -d %s --ecc", acmeBin, main), 60)
+	if !p.in.AutoRenew {
+		_, _ = s.run(ctx, fmt.Sprintf("%s --remove -d %s --ecc", acmeBin, p.main), 60)
 	} else if err := s.reinstallCertHook(ctx, c); err != nil {
 		return nil, err
 	}
@@ -124,7 +151,42 @@ func (s *CertificateService) Issue(ctx context.Context, in CertIssueInput) (*mod
 	if err := s.db.Create(c).Error; err != nil {
 		return nil, err
 	}
+	if logf != nil {
+		logf("info", "签发完成：%s（颁发者 %s，到期 %s）", c.CertName, c.Issuer, c.NotAfter.Format("2006-01-02"))
+	}
 	return c, nil
+}
+
+// Issue ACME DNS 挑战签发，证书入库并部署到 nginx certs（同步阻塞，供内部复用）。
+func (s *CertificateService) Issue(ctx context.Context, in CertIssueInput) (*model.Certificate, error) {
+	p, err := s.prepareIssue(ctx, in)
+	if err != nil {
+		return nil, err
+	}
+	return s.issueExecute(ctx, nil, p)
+}
+
+// IssueTask 创建签发任务（返回任务 ID）：预备段同步快速失败，耗时执行进任务中心实时日志。
+func (s *CertificateService) IssueTask(ctx context.Context, in CertIssueInput) (map[string]any, error) {
+	p, err := s.prepareIssue(ctx, in)
+	if err != nil {
+		return nil, err
+	}
+	if s.tasks == nil {
+		return nil, errs.Wrap(errs.ErrBadRequest, "任务服务不可用")
+	}
+	if s.tasks.HasRunning([]string{TaskCertIssue}, p.main) {
+		return nil, errs.Wrap(errs.ErrBadRequest, "该域名已有签发任务运行中，请稍后再试")
+	}
+	task, err := s.tasks.StartTask(TaskCertIssue, "签发证书 "+p.main, p.main, 15*time.Minute,
+		func(ctx context.Context, logf TaskLogf) error {
+			_, err := s.issueExecute(ctx, logf, p)
+			return err
+		})
+	if err != nil {
+		return nil, err
+	}
+	return map[string]any{"taskId": task.ID}, nil
 }
 
 // issuerLabel CA server → 展示名。
@@ -418,8 +480,8 @@ type AcmeAccountInput struct {
 	KeyType string `json:"keyType"`
 }
 
-// CreateAcmeAccount 创建 ACME 账户（acme.sh 按需注册到对应 CA）。
-func (s *CertificateService) CreateAcmeAccount(ctx context.Context, in AcmeAccountInput) (*model.AcmeAccount, error) {
+// prepareAcmeAccount ACME 账户输入校验并建库记录（快速段，同步执行）。
+func (s *CertificateService) prepareAcmeAccount(in AcmeAccountInput) (*model.AcmeAccount, error) {
 	in.Email = strings.TrimSpace(in.Email)
 	if !strings.Contains(in.Email, "@") {
 		return nil, errs.Wrap(errs.ErrBadRequest, "邮箱不合法")
@@ -441,12 +503,57 @@ func (s *CertificateService) CreateAcmeAccount(ctx context.Context, in AcmeAccou
 	if err := s.db.Create(acc).Error; err != nil {
 		return nil, err
 	}
-	// 预注册账户（失败不阻断，签发时会再次注册）
-	if err := s.ensureInstalled(ctx, in.Email); err == nil {
-		_, _ = s.run(ctx, fmt.Sprintf("%s --register-account -m %s --server %s --keylength %s",
-			acmeBin, shQuote(in.Email), caServer(in.CAType), in.KeyType), 120)
-	}
 	return acc, nil
+}
+
+// registerAcme 向 CA 预注册账户（acme.sh --register-account，输出全程记日志）。
+// 任务版失败即任务 failed（账户记录已入库，签发时会再次注册的兜底语义不变）。
+func (s *CertificateService) registerAcme(ctx context.Context, logf TaskLogf, email, caType, keyType string) error {
+	if logf != nil {
+		logf("info", "检查 acme.sh 安装…")
+	}
+	if err := s.ensureInstalled(ctx, email); err != nil {
+		return err
+	}
+	if logf != nil {
+		logf("info", "注册 ACME 账户到 %s（%s）…", caType, email)
+	}
+	out, code, err := s.runStream(ctx, fmt.Sprintf("%s --register-account -m %s --server %s --keylength %s",
+		acmeBin, shQuote(email), caServer(caType), keyType), 120, logf)
+	if err != nil {
+		return err
+	}
+	if code != 0 {
+		return errs.New(errs.CodeFileOpFailed, "error.fileOpFailed", "ACME 账户注册失败（签发时会自动重试）: "+firstLine(out))
+	}
+	if logf != nil {
+		logf("info", "ACME 账户注册完成")
+	}
+	return nil
+}
+
+// CreateAcmeAccount 创建 ACME 账户并注册（返回任务 ID；注册过程与结果经任务中心日志可查）。
+func (s *CertificateService) CreateAcmeAccount(ctx context.Context, in AcmeAccountInput) (map[string]any, error) {
+	acc, err := s.prepareAcmeAccount(in)
+	if err != nil {
+		return nil, err
+	}
+	if s.tasks == nil {
+		return nil, errs.Wrap(errs.ErrBadRequest, "任务服务不可用")
+	}
+	ref := in.Email + ":" + in.CAType
+	if s.tasks.HasRunning([]string{TaskAcmeRegister}, ref) {
+		return nil, errs.Wrap(errs.ErrBadRequest, "该邮箱已有注册任务运行中，请稍后再试")
+	}
+	task, err := s.tasks.StartTask(TaskAcmeRegister,
+		fmt.Sprintf("注册 ACME 账户（%s %s）", issuerLabel(caServer(in.CAType)), in.Email), ref, 6*time.Minute,
+		func(ctx context.Context, logf TaskLogf) error {
+			return s.registerAcme(ctx, logf, acc.Email, acc.CAType, acc.KeyType)
+		})
+	if err != nil {
+		return nil, err
+	}
+	return map[string]any{"taskId": task.ID, "accountId": acc.ID}, nil
 }
 
 // DeleteAcmeAccount 删除 ACME 账户（被证书引用时拒绝）。

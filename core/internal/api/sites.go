@@ -69,7 +69,7 @@ func (a *SiteAPI) SetMode(c *gin.Context) {
 	respOK(c, struct{}{})
 }
 
-// IssueACME POST /api/v1/sites/:id/cert/acme {domain?}（B1：DNS API 挑战签发）
+// IssueACME POST /api/v1/sites/:id/cert/acme {domain?}（B1：DNS 挑战签发，任务化秒回 taskId）
 func (a *SiteAPI) IssueACME(c *gin.Context) {
 	id, err := ownedSiteID(c, a.Sites)
 	if err != nil {
@@ -86,7 +86,7 @@ func (a *SiteAPI) IssueACME(c *gin.Context) {
 		respErr(c, errBadRequest("ACME 服务未启用"))
 		return
 	}
-	out, err := a.Acme.IssueACME(c.Request.Context(), uint(id), req.Domain)
+	out, err := a.Acme.IssueACMETask(c.Request.Context(), uint(id), req.Domain)
 	if err != nil {
 		respErr(c, err)
 		return

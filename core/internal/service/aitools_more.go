@@ -186,7 +186,7 @@ func (s *AIService) aiToolsPanelOps(ctx context.Context) []aiToolDef {
 		},
 		{
 			Name: "upgrade_panel", Module: aiModPanel, Risk: aiRiskDanger,
-			Desc: "升级面板到最新版本（重启面板服务，会断开所有会话，会先向用户确认）。input JSON：{\"source\":\"源名可省略（默认可用源）\"}",
+			Desc: "升级面板到最新版本（异步任务：下载校验+应用后自动重启面板、断开所有会话，会先向用户确认；返回任务 ID，用 get_task 跟踪进度）。input JSON：{\"source\":\"源名可省略（默认可用源）\"}",
 			Parameters: schObj(map[string]any{"source": schStr("更新源名，省略则自动")}),
 			Fn: func(_ context.Context, input string) (string, error) {
 				p, err := parseToolArgs[struct {
@@ -195,11 +195,11 @@ func (s *AIService) aiToolsPanelOps(ctx context.Context) []aiToolDef {
 				if err != nil {
 					return "", err
 				}
-				out, err := s.su.Upgrade(ctx, p.Source)
+				out, err := s.su.UpgradeTask(ctx, p.Source)
 				if err != nil {
 					return "", err
 				}
-				return toolOut(map[string]any{"message": "升级任务已触发，面板将自动重启", "detail": out})
+				return toolOut(map[string]any{"message": "升级任务已创建，用 get_task 跟踪进度；应用完成后面板将自动重启", "detail": out})
 			},
 		},
 	}

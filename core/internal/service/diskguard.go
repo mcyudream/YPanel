@@ -87,6 +87,7 @@ type DiskGuardService struct {
 	nodes    *NodeService
 	settings *SettingService
 	notif    *NotificationService
+	tasks    *TaskService // M65：恢复任务化（SetTasks 装配）
 
 	lowStreak map[string]int  // nodeID → 连续低水位周期数
 	tooOld    map[string]bool // nodeID → agent 缺 guard 端点（触发/压制时探得）
@@ -99,6 +100,9 @@ func NewDiskGuardService(db *gorm.DB, nodes *NodeService, settings *SettingServi
 		lowStreak: map[string]int{}, tooOld: map[string]bool{},
 	}
 }
+
+// SetTasks 注入任务服务（main 装配，避免构造签名变更）。
+func (s *DiskGuardService) SetTasks(t *TaskService) { s.tasks = t }
 
 // Start 启动检测循环（60s，启动即先跑一轮）。
 func (s *DiskGuardService) Start(ctx context.Context) {
@@ -325,6 +329,43 @@ func (s *DiskGuardService) Restore(ctx context.Context, eventID uint) (started, 
 		s.notif.Push("info", "磁盘保护已恢复", fmt.Sprintf("已按快照恢复容器：启动 %d 个，失败 %d 个。", len(started), len(failed)))
 	}
 	return started, failed, nil
+}
+
+// RestoreTask 一键恢复任务版（M65：返回任务 ID，逐事件恢复过程任务中心可查；恢复操作全局单飞）。
+func (s *DiskGuardService) RestoreTask(ctx context.Context, eventID uint) (map[string]any, error) {
+	if s.tasks == nil {
+		return nil, errs.Wrap(errs.ErrBadRequest, "任务服务不可用")
+	}
+	if s.tasks.HasRunning([]string{TaskDiskRestore}, "restore") {
+		return nil, errs.Wrap(errs.ErrBadRequest, "已有恢复任务运行中，请稍后再试")
+	}
+	title := "磁盘卫士一键恢复"
+	if eventID != 0 {
+		title += fmt.Sprintf("（事件 #%d）", eventID)
+	}
+	task, err := s.tasks.StartTask(TaskDiskRestore, title, "restore", 15*time.Minute,
+		func(ctx context.Context, logf TaskLogf) error {
+			logf("info", "开始按快照恢复容器（eventID=%d）…", eventID)
+			started, failed, err := s.Restore(ctx, eventID)
+			if err != nil {
+				return err
+			}
+			for _, name := range started {
+				logf("info", "已启动：%s", name)
+			}
+			for _, msg := range failed {
+				logf("error", "%s", msg)
+			}
+			logf("info", "恢复结束：启动 %d 个，失败 %d 个", len(started), len(failed))
+			if len(failed) > 0 {
+				return errs.Wrapc(errs.CodeFileOpFailed, fmt.Sprintf("部分容器恢复失败（%d 个），详见日志", len(failed)))
+			}
+			return nil
+		})
+	if err != nil {
+		return nil, err
+	}
+	return map[string]any{"taskId": task.ID}, nil
 }
 
 // ---- 状态查询 ----

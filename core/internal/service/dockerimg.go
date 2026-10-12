@@ -39,6 +39,7 @@ var pathSafePattern = regexp.MustCompile(`^/[a-zA-Z0-9._/@:+ -]+$`)
 // DockerImgService 镜像生命周期。
 type DockerImgService struct {
 	nodes *NodeService
+	tasks *TaskService // M65：build/save/load 任务化（SetTasks 装配，可 nil=仅同步路径）
 }
 
 // NewDockerImgService 创建。
@@ -46,12 +47,33 @@ func NewDockerImgService(nodes *NodeService) *DockerImgService {
 	return &DockerImgService{nodes: nodes}
 }
 
+// SetTasks 注入任务服务（main 装配，避免构造签名变更）。
+func (s *DockerImgService) SetTasks(t *TaskService) { s.tasks = t }
+
 func (s *DockerImgService) client() (*agentclient.Client, error) {
 	node, err := s.nodes.ByID("local")
 	if err != nil {
 		return nil, err
 	}
 	return agentclient.New(node.BaseURL, node.Token), nil
+}
+
+// streamRun 任务体执行：logf 非 nil 走流式逐行任务日志（旧 agent 回退聚合），否则聚合 exec。
+// 返回（聚合输出, 退出码, 错误）；非零退出由调用方判定。
+func (s *DockerImgService) streamRun(ctx context.Context, cmd string, timeout int, logf TaskLogf) (string, int, error) {
+	ac, err := s.client()
+	if err != nil {
+		return "", 0, err
+	}
+	return execStreamOrRun(ctx, ac, cmd, timeout, logf)
+}
+
+// requireTasks 任务服务可用性守卫。
+func (s *DockerImgService) requireTasks() error {
+	if s.tasks == nil {
+		return errs.Wrap(errs.ErrBadRequest, "任务服务不可用")
+	}
+	return nil
 }
 
 // execRun 执行命令（超时可控），exit!=0 时返回带尾部输出的错误。
@@ -78,36 +100,136 @@ func validateRef(s string, what string) error {
 	return nil
 }
 
-// Build 构建镜像：contextDir 内以 dockerfile 构建为 tag；输出落 build.log（失败保留并返回路径）。
-func (s *DockerImgService) Build(ctx context.Context, contextDir, dockerfile, tag string) (map[string]any, error) {
-	contextDir = strings.TrimSpace(contextDir)
+// validateBuildInput 构建入参校验（同步快速失败段共用）。
+func validateBuildInput(contextDir, dockerfile, tag string) error {
 	if !pathSafePattern.MatchString(contextDir) || strings.Contains(contextDir, "..") {
-		return nil, errs.Wrap(errs.ErrBadRequest, "构建上下文目录不合法（需绝对路径）")
+		return errs.Wrap(errs.ErrBadRequest, "构建上下文目录不合法（需绝对路径）")
 	}
 	if !tagRefPattern.MatchString(tag) || strings.Contains(tag, "..") {
-		return nil, errs.Wrap(errs.ErrBadRequest, "镜像 tag 不合法")
+		return errs.Wrap(errs.ErrBadRequest, "镜像 tag 不合法")
 	}
 	df := dockerfile
 	if df == "" {
 		df = "Dockerfile"
 	}
 	if strings.Contains(df, "..") || strings.ContainsAny(df, "&|;$`") {
-		return nil, errs.Wrap(errs.ErrBadRequest, "Dockerfile 路径不合法")
+		return errs.Wrap(errs.ErrBadRequest, "Dockerfile 路径不合法")
 	}
+	return nil
+}
+
+// buildStreamCmd 构建命令（流式版）：tee 实时滚输出到 stdout（流式任务日志）同时落 build.log，
+// 退出码经文件传递规避管道吞码（POSIX 安全，sh 无 PIPESTATUS）。
+func buildStreamCmd(contextDir, dockerfile, tag string) (cmd, logFile string) {
 	ts := time.Now().Format("20060102-150405")
-	logFile := path.Join(dockerTmpBase, "build-"+ts+".log")
-	cmd := fmt.Sprintf(
-		`mkdir -p %s && cd '%s' && docker build -f '%s' -t '%s' . > %s 2>&1; ec=$?; tail -c 1200 %s; echo BUILD_EXIT=$ec; [ $ec -eq 0 ] && echo OK || exit 1`,
-		dockerTmpBase, contextDir, df, tag, logFile, logFile)
-	out, err := s.execRun(ctx, cmd, 1800)
+	logFile = path.Join(dockerTmpBase, "build-"+ts+".log")
+	ecFile := path.Join(dockerTmpBase, "build-"+ts+".ec")
+	df := dockerfile
+	if df == "" {
+		df = "Dockerfile"
+	}
+	cmd = fmt.Sprintf(
+		`mkdir -p %s && cd '%s' && { docker build -f '%s' -t '%s' . 2>&1; echo $? > '%s'; } | tee '%s'; ec=$(cat '%s' 2>/dev/null || echo 1); rm -f '%s'; echo BUILD_EXIT=$ec; [ "$ec" -eq 0 ] && echo OK || exit 1`,
+		dockerTmpBase, contextDir, df, tag, ecFile, logFile, ecFile, ecFile)
+	return cmd, logFile
+}
+
+// BuildTask 构建镜像任务版（返回任务 ID）：校验同步快速失败，构建输出逐行实时进任务日志。
+func (s *DockerImgService) BuildTask(ctx context.Context, contextDir, dockerfile, tag string) (map[string]any, error) {
+	contextDir = strings.TrimSpace(contextDir)
+	if err := validateBuildInput(contextDir, dockerfile, tag); err != nil {
+		return nil, err
+	}
+	if err := s.requireTasks(); err != nil {
+		return nil, err
+	}
+	if s.tasks.HasRunning([]string{TaskImageBuild}, tag) {
+		return nil, errs.Wrap(errs.ErrBadRequest, "该镜像已有构建任务运行中，请稍后再试")
+	}
+	cmd, logFile := buildStreamCmd(contextDir, dockerfile, tag)
+	task, err := s.tasks.StartTask(TaskImageBuild, "构建镜像 "+tag, tag, 35*time.Minute,
+		func(ctx context.Context, logf TaskLogf) error {
+			logf("info", "开始构建（上下文 %s，Dockerfile %s）", contextDir, mapStr(dockerfile != "", dockerfile, "Dockerfile"))
+			out, code, err := s.streamRun(ctx, cmd, 1800, logf)
+			if err != nil {
+				return err
+			}
+			if code != 0 {
+				return errs.Wrapc(errs.CodeFileOpFailed, fmt.Sprintf("构建失败（完整日志: %s）: %s", logFile, lastLine(tail(out, 400))))
+			}
+			logf("info", "构建完成：%s（构建日志 %s）", tag, logFile)
+			return nil
+		})
 	if err != nil {
+		return nil, err
+	}
+	return map[string]any{"taskId": task.ID}, nil
+}
+
+// Build 构建镜像（同步阻塞，供内部复用）：contextDir 内以 dockerfile 构建为 tag；
+// 输出落 build.log（失败保留并返回路径）。
+func (s *DockerImgService) Build(ctx context.Context, contextDir, dockerfile, tag string) (map[string]any, error) {
+	contextDir = strings.TrimSpace(contextDir)
+	if err := validateBuildInput(contextDir, dockerfile, tag); err != nil {
+		return nil, err
+	}
+	cmd, logFile := buildStreamCmd(contextDir, dockerfile, tag)
+	out, code, err := s.streamRun(ctx, cmd, 1800, nil)
+	if err != nil {
+		return map[string]any{"logFile": logFile, "output": out}, err
+	}
+	if code != 0 {
 		return map[string]any{"logFile": logFile, "output": out},
 			errs.Wrapc(errs.CodeFileOpFailed, fmt.Sprintf("构建失败（完整日志: %s）: %s", logFile, lastLine(tail(out, 400))))
 	}
 	return map[string]any{"tag": tag, "logFile": logFile}, nil
 }
 
-// Save 导出镜像为 tar（多镜像单包），返回文件路径供下载。
+// SaveTask 导出镜像任务版（返回任务 ID；产物 tar 路径记入任务 ref，完成后从任务详情获取）。
+func (s *DockerImgService) SaveTask(ctx context.Context, images []string, name string) (map[string]any, error) {
+	if err := s.requireTasks(); err != nil {
+		return nil, err
+	}
+	if len(images) == 0 || len(images) > 20 {
+		return nil, errs.Wrap(errs.ErrBadRequest, "镜像列表为空或超限")
+	}
+	for _, im := range images {
+		if err := validateRef(im, "镜像引用"); err != nil {
+			return nil, err
+		}
+	}
+	if name == "" {
+		name = "images-" + time.Now().Format("20060102-150405")
+	}
+	if !containerNamePattern.MatchString(name) {
+		return nil, errs.Wrap(errs.ErrBadRequest, "导出名不合法")
+	}
+	target := path.Join(dockerTmpBase, name+".tar")
+	if s.tasks.HasRunning([]string{TaskImageSave}, target) {
+		return nil, errs.Wrap(errs.ErrBadRequest, "同名导出任务运行中，请稍后再试")
+	}
+	cmd := fmt.Sprintf("mkdir -p %s && docker save -o '%s' %s", dockerTmpBase, target,
+		strings.Join(quoteArgs(images), " "))
+	task, err := s.tasks.StartTask(TaskImageSave, fmt.Sprintf("导出镜像 %s（%d 个）", name+".tar", len(images)), target, 35*time.Minute,
+		func(ctx context.Context, logf TaskLogf) error {
+			logf("info", "导出 %d 个镜像到 %s …", len(images), target)
+			_, code, err := s.streamRun(ctx, cmd, 1800, logf)
+			if err != nil {
+				return err
+			}
+			if code != 0 {
+				return errs.Wrapc(errs.CodeFileOpFailed, "镜像导出失败")
+			}
+			logf("info", "导出完成：%s（可在文件管理下载）", target)
+			return nil
+		})
+	if err != nil {
+		return nil, err
+	}
+	return map[string]any{"taskId": task.ID, "file": target, "name": name + ".tar"}, nil
+}
+
+// Save 导出镜像为 tar（同步阻塞，供内部复用），返回文件路径供下载。
 func (s *DockerImgService) Save(ctx context.Context, images []string, name string) (map[string]any, error) {
 	if len(images) == 0 || len(images) > 20 {
 		return nil, errs.Wrap(errs.ErrBadRequest, "镜像列表为空或超限")
@@ -126,20 +248,58 @@ func (s *DockerImgService) Save(ctx context.Context, images []string, name strin
 	target := path.Join(dockerTmpBase, name+".tar")
 	cmd := fmt.Sprintf("mkdir -p %s && docker save -o '%s' %s", dockerTmpBase, target,
 		strings.Join(quoteArgs(images), " "))
-	if _, err := s.execRun(ctx, cmd, 1800); err != nil {
+	_, code, err := s.streamRun(ctx, cmd, 1800, nil)
+	if err != nil {
 		return nil, err
+	}
+	if code != 0 {
+		return nil, errs.Wrapc(errs.CodeFileOpFailed, "镜像导出失败")
 	}
 	return map[string]any{"file": target, "name": name + ".tar"}, nil
 }
 
-// Load 导入镜像（tar 已由调用方上传到 agentPath）。
+// LoadTask 导入镜像任务版（返回任务 ID；tar 已由调用方上传到 agentPath）。
+func (s *DockerImgService) LoadTask(ctx context.Context, agentPath string) (map[string]any, error) {
+	if !pathSafePattern.MatchString(agentPath) || strings.Contains(agentPath, "..") {
+		return nil, errs.Wrap(errs.ErrBadRequest, "导入文件路径不合法")
+	}
+	if err := s.requireTasks(); err != nil {
+		return nil, err
+	}
+	if s.tasks.HasRunning([]string{TaskImageLoad}, agentPath) {
+		return nil, errs.Wrap(errs.ErrBadRequest, "该文件已有导入任务运行中，请稍后再试")
+	}
+	cmd := fmt.Sprintf("docker load -i '%s'", agentPath)
+	task, err := s.tasks.StartTask(TaskImageLoad, "导入镜像 "+path.Base(agentPath), agentPath, 35*time.Minute,
+		func(ctx context.Context, logf TaskLogf) error {
+			logf("info", "从 %s 导入镜像…", agentPath)
+			_, code, err := s.streamRun(ctx, cmd, 1800, logf)
+			if err != nil {
+				return err
+			}
+			if code != 0 {
+				return errs.Wrapc(errs.CodeFileOpFailed, "镜像导入失败")
+			}
+			logf("info", "导入完成，可在镜像列表刷新查看")
+			return nil
+		})
+	if err != nil {
+		return nil, err
+	}
+	return map[string]any{"taskId": task.ID}, nil
+}
+
+// Load 导入镜像（同步阻塞，供内部复用）。
 func (s *DockerImgService) Load(ctx context.Context, agentPath string) (map[string]any, error) {
 	if !pathSafePattern.MatchString(agentPath) || strings.Contains(agentPath, "..") {
 		return nil, errs.Wrap(errs.ErrBadRequest, "导入文件路径不合法")
 	}
-	out, err := s.execRun(ctx, fmt.Sprintf("docker load -i '%s'", agentPath), 1800)
+	out, code, err := s.streamRun(ctx, fmt.Sprintf("docker load -i '%s'", agentPath), 1800, nil)
 	if err != nil {
 		return nil, err
+	}
+	if code != 0 {
+		return nil, errs.Wrapc(errs.CodeFileOpFailed, "镜像导入失败")
 	}
 	return map[string]any{"output": tail(out, 1200)}, nil
 }

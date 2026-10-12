@@ -12,6 +12,7 @@ export default {
   refresh: 'Refresh',
   search: 'Search',
   loading: 'Loading…',
+  taskSubmitted: 'Submitted, track progress in Task Center',
   success: 'Success',
   failed: 'Failed',
   close: 'Close',

@@ -157,8 +157,8 @@ export const storeApi = {
   },
   iconUrl: (sourceId: number, key: string) => appIconSrc(`api/v1/store/apps/${sourceId}/${encodeURIComponent(key)}/icon`),
   sync: async (force = false) => {
-    const res = await api.post(`api/v1/store/sync${force ? '?force=1' : ''}`, null, { timeout: 300000 })
-    return res.data as Record<string, string>
+    const res = await api.post(`api/v1/store/sync${force ? '?force=1' : ''}`)
+    return res.data as { taskId: number } // 任务化：秒回 taskId
   },
   // 源管理
   sources: async () => {
@@ -182,8 +182,8 @@ export const storeApi = {
     return res.data
   },
   syncSource: async (id: number, force = true) => {
-    const res = await api.post(`api/v1/store/sources/${id}/sync${force ? '?force=1' : ''}`, null, { timeout: 300000 })
-    return res.data as { source: string, total: number }
+    const res = await api.post(`api/v1/store/sources/${id}/sync${force ? '?force=1' : ''}`)
+    return res.data as { taskId: number } // 任务化：秒回 taskId
   },
   installed: async () => {
     const res = await api.get('api/v1/store/installed', { silent: true })

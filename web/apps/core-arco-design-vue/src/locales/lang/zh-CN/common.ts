@@ -12,6 +12,7 @@ export default {
   refresh: '刷新',
   search: '搜索',
   loading: '加载中…',
+  taskSubmitted: '已提交，任务中心可看实时进度',
   success: '成功',
   failed: '失败',
   close: '关闭',

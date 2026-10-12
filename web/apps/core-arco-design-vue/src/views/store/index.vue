@@ -15,6 +15,7 @@ import YdLogViewer from '@/components/YdLogViewer/index.vue'
 import YdDangerDelete from '@/components/YdDangerDelete/index.vue'
 import YdNodeSelect from '@/components/YdNodeSelect/index.vue'
 import YdOwnerDialog from '@/components/YdOwnerDialog/index.vue'
+import { useTaskJob } from '@/composables/useTaskJob'
 
 defineOptions({
   name: 'StoreIndex',
@@ -51,7 +52,6 @@ const items = ref<StoreAppItem[]>([])
 const tags = ref<StoreTag[]>([])
 const sources = ref<StoreSource[]>([])
 const loading = ref(false)
-const syncing = ref(false)
 const upgradableCount = ref(0)
 
 async function load() {
@@ -114,19 +114,17 @@ async function loadSources() {
   }
 }
 
+// 同步走任务中心（M65）：逐源进度实时进任务日志
+const { running: syncing, run: runSyncJob } = useTaskJob()
+
 async function syncAll(force = false) {
-  syncing.value = true
-  try {
-    const out = await storeApi.sync(force)
-    const parts = Object.entries(out || {}).map(([k, v]) => `${k}: ${v}`)
-    useFaToast().success(i18n.global.t('store.syncDone', { n: parts.length }), { description: parts.join('，') })
-    await Promise.all([load(), loadTags()])
-  }
-  catch (e: any) {
-    useFaToast().error(i18n.global.t('store.syncFailed'), { description: e?.message })
-  }
-  finally {
-    syncing.value = false
+  const out = await runSyncJob(() => storeApi.sync(force), {
+    onSuccess: async () => {
+      await Promise.all([load(), loadTags()]) // 逐源结果见任务中心日志
+    },
+  })
+  if (out) {
+    useFaToast().info(i18n.global.t('common.taskSubmitted'))
   }
 }
 
@@ -813,15 +811,16 @@ function removeSource(src: StoreSource) {
   })
 }
 
+const { run: runSyncOneJob } = useTaskJob()
+
 async function syncOne(src: StoreSource) {
-  try {
-    const out = await storeApi.syncSource(src.id, true)
-    useFaToast().success(i18n.global.t('store.sourceSyncDone', { name: out.source, n: out.total }))
-    await Promise.all([loadSources(), loadTags()])
-  }
-  catch (e: any) {
-    useFaToast().error(i18n.global.t('store.syncFailed'), { description: e?.message })
-    await loadSources()
+  const out = await runSyncOneJob(() => storeApi.syncSource(src.id, true), {
+    onSuccess: async () => {
+      await Promise.all([loadSources(), loadTags()]) // 结果见任务中心日志
+    },
+  })
+  if (out) {
+    useFaToast().info(i18n.global.t('common.taskSubmitted'))
   }
 }
 

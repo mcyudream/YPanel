@@ -7,6 +7,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/ypanel/shared/errs"
 )
@@ -90,7 +91,7 @@ func (s *DatabaseService) ExecEnvCheck(ctx context.Context) (*execEnvStatus, err
 	return st, nil
 }
 
-// ExecEnvPull 预拉取指定类型的执行镜像（首次使用前缓存到本地，避免操作时等待拉取）。
+// ExecEnvPull 预拉取指定类型的执行镜像（同步阻塞，供内部复用）。
 func (s *DatabaseService) ExecEnvPull(ctx context.Context, typ string) (*execEnvStatus, error) {
 	img, ok := dbClientImage[typ]
 	if !ok {
@@ -104,4 +105,54 @@ func (s *DatabaseService) ExecEnvPull(ctx context.Context, typ string) (*execEnv
 		return nil, errs.Wrapc(errs.CodeFileOpFailed, execFailMsg("镜像拉取", out))
 	}
 	return s.ExecEnvCheck(ctx)
+}
+
+// ExecEnvPullTask 预拉取执行镜像任务版（返回任务 ID；拉取输出逐行实时进任务日志）。
+func (s *DatabaseService) ExecEnvPullTask(ctx context.Context, typ string) (map[string]any, error) {
+	img, ok := dbClientImage[typ]
+	if !ok {
+		return nil, errs.Wrap(errs.ErrBadRequest, "不支持的实例类型: "+typ)
+	}
+	if s.tasks == nil {
+		return nil, errs.Wrap(errs.ErrBadRequest, "任务服务不可用")
+	}
+	if s.tasks.HasRunning([]string{TaskDBExecPull}, typ) {
+		return nil, errs.Wrap(errs.ErrBadRequest, "该类型执行镜像已有拉取任务运行中，请稍后再试")
+	}
+	task, err := s.tasks.StartTask(TaskDBExecPull, "预拉取执行镜像（"+typ+"）", typ, 35*time.Minute,
+		func(ctx context.Context, logf TaskLogf) error {
+			logf("info", "拉取 %s …", img)
+			ac, err := s.client()
+			if err != nil {
+				return err
+			}
+			_, code, err := execStreamOrRun(ctx, ac, "docker pull "+img, 1800, logf)
+			if err != nil {
+				return err
+			}
+			if code != 0 {
+				return errs.Wrapc(errs.CodeFileOpFailed, "执行镜像拉取失败")
+			}
+			st, err := s.ExecEnvCheck(ctx)
+			if err != nil {
+				return err
+			}
+			logf("info", "拉取完成，执行环境就绪 %d/%d", readyCount(st), len(st.Images))
+			return nil
+		})
+	if err != nil {
+		return nil, err
+	}
+	return map[string]any{"taskId": task.ID}, nil
+}
+
+// readyCount 执行环境就绪镜像数。
+func readyCount(st *execEnvStatus) int {
+	n := 0
+	for _, im := range st.Images {
+		if im.Ready {
+			n++
+		}
+	}
+	return n
 }

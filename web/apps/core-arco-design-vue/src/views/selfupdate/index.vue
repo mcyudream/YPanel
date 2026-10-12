@@ -5,6 +5,7 @@ import { i18n } from '@/locales'
 
 import type { OnlineCheck } from '@/api/modules/selfupdate'
 import { selfUpdateApi } from '@/api/modules/selfupdate'
+import { useTaskJob } from '@/composables/useTaskJob'
 
 interface UpdateFile {
   name: string
@@ -25,7 +26,6 @@ const applying = ref('')
 // ---- 在线更新（GitHub/Gitee 双源） ----
 const checking = ref(false)
 const online = ref<OnlineCheck | null>(null)
-const upgrading = ref(false)
 const notesOpen = ref(false)
 
 async function checkOnline() {
@@ -72,6 +72,9 @@ function compareV(a?: string, b?: string) {
   return 0
 }
 
+// 在线升级走任务中心（M65）：秒回 taskId，下载/校验/应用实时日志；任务成功后轮询 /health 确认新版本
+const { running: upgrading, run: runUpgradeJob } = useTaskJob()
+
 function upgrade() {
   const source = bestSource()
   const modal = useFaModal()
@@ -82,36 +85,30 @@ function upgrade() {
       source: source === 'gitee' ? 'Gitee' : 'GitHub',
     }),
     onConfirm: async () => {
-      upgrading.value = true
-      try {
-        await selfUpdateApi.upgrade(source)
-        useFaToast().info(i18n.global.t('selfupdate.toast.updateStarted'))
-        // 轮询 /health 直到恢复
-        let recovered = false
-        for (let i = 0; i < 30; i++) {
-          await new Promise(r => setTimeout(r, 2000))
-          try {
-            const h = await rawApi.get('/health').then(r => r.data)
-            if (h.status === 'ok' && h.version && h.version !== online.value?.currentVersion) {
-              recovered = true
-              useFaToast().success(i18n.global.t('selfupdate.toast.recovered', { version: h.version }))
-              break
+      await runUpgradeJob(() => selfUpdateApi.upgrade(source), {
+        onSuccess: async () => {
+          useFaToast().info(i18n.global.t('selfupdate.toast.updateStarted'))
+          // 面板约 2s 后替换重启：轮询 /health 直到新版本生效
+          let recovered = false
+          for (let i = 0; i < 30; i++) {
+            await new Promise(r => setTimeout(r, 2000))
+            try {
+              const h = await rawApi.get('/health').then(r => r.data)
+              if (h.status === 'ok' && h.version && h.version !== online.value?.currentVersion) {
+                recovered = true
+                useFaToast().success(i18n.global.t('selfupdate.toast.recovered', { version: h.version }))
+                break
+              }
             }
+            catch {}
           }
-          catch {}
-        }
-        if (!recovered) {
-          useFaToast().error(i18n.global.t('selfupdate.toast.notRecovered'))
-        }
-        await load()
-        await checkOnline()
-      }
-      catch (e: any) {
-        useFaToast().error(i18n.global.t('selfupdate.toast.applyFailed'), { description: e?.message })
-      }
-      finally {
-        upgrading.value = false
-      }
+          if (!recovered) {
+            useFaToast().error(i18n.global.t('selfupdate.toast.notRecovered'))
+          }
+          await load()
+          await checkOnline()
+        },
+      })
     },
   })
 }

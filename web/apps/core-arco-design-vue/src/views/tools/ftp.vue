@@ -3,6 +3,7 @@ import type { FtpStatus } from '@/api/modules/ftp'
 // M53 FTP 服务管理（vsftpd，工具分组）——自 system.vue 迁出
 import ftpApi from '@/api/modules/ftp'
 import { i18n } from '@/locales'
+import { useTaskJob } from '@/composables/useTaskJob'
 
 defineOptions({
   name: 'ToolsFtp',
@@ -11,7 +12,6 @@ defineOptions({
 const toast = useFaToast()
 
 const ftp = ref<FtpStatus | null>(null)
-const ftpBusy = ref(false)
 const ftpPort = ref(21)
 const ftpPasv = ref('40000-40100')
 
@@ -24,19 +24,18 @@ async function loadFtp() {
   catch {}
 }
 
+// 安装走任务中心（M65）：apt/yum 输出实时进任务日志，完成后回读状态
+const { running: ftpBusy, run: runFtpInstallJob } = useTaskJob()
+
 async function ftpInstall() {
-  ftpBusy.value = true
-  toast.info(i18n.global.t('tools.ftp.installing'))
-  try {
-    await ftpApi.install()
-    toast.success(i18n.global.t('tools.ftp.installDone'))
-    await loadFtp()
-  }
-  catch (e: any) {
-    toast.error(i18n.global.t('tools.ftp.installFail'), { description: e?.message })
-  }
-  finally {
-    ftpBusy.value = false
+  const out = await runFtpInstallJob(() => ftpApi.install(), {
+    onSuccess: async () => {
+      toast.success(i18n.global.t('tools.ftp.installDone'))
+      await loadFtp()
+    },
+  })
+  if (out) {
+    toast.info(i18n.global.t('common.taskSubmitted'))
   }
 }
 

@@ -7,6 +7,7 @@ import { storeApi } from '@/api/modules/store'
 import YdDangerDelete from '@/components/YdDangerDelete/index.vue'
 import YdOwnerDialog from '@/components/YdOwnerDialog/index.vue'
 import { i18n } from '@/locales'
+import { useTaskJob } from '@/composables/useTaskJob'
 
 defineOptions({
   name: 'DatabaseIndex',
@@ -343,18 +344,21 @@ function openClients() {
   loadClients(true)
 }
 
+// 预拉走任务中心（M65）：docker pull 输出实时进任务日志，完成后回读环境状态
+const { run: runPullJob } = useTaskJob()
+
 async function installClients(type: string) {
   ccInstalling.value = type
-  try {
-    ccEnv.value = await apiDb.execEnvPull(type)
-    toast.success(i18n.global.t('database.clients.installed'))
+  const out = await runPullJob(() => apiDb.execEnvPull(type), {
+    onSuccess: async () => {
+      ccEnv.value = await apiDb.execEnvCheck()
+      toast.success(i18n.global.t('database.clients.installed'))
+    },
+  })
+  if (out) {
+    toast.info(i18n.global.t('common.taskSubmitted'))
   }
-  catch (e: any) {
-    toast.error(i18n.global.t('database.clients.installFailed'), { description: e?.message })
-  }
-  finally {
-    ccInstalling.value = ''
-  }
+  ccInstalling.value = ''
 }
 
 // 迁移链路上涉及外接实例的实例类型（源 dump / 目标导入都在宿主机经临时容器执行）
@@ -397,17 +401,17 @@ async function loadMigrateEnv() {
 
 async function installForMigrate(type: string) {
   mClientsInstalling.value = type
-  try {
-    mEnv.value = await apiDb.execEnvPull(type)
-    ccEnv.value = mEnv.value
-    toast.success(i18n.global.t('database.clients.installed'))
+  const out = await runPullJob(() => apiDb.execEnvPull(type), {
+    onSuccess: async () => {
+      mEnv.value = await apiDb.execEnvCheck()
+      ccEnv.value = mEnv.value
+      toast.success(i18n.global.t('database.clients.installed'))
+    },
+  })
+  if (out) {
+    toast.info(i18n.global.t('common.taskSubmitted'))
   }
-  catch (e: any) {
-    toast.error(i18n.global.t('database.clients.installFailed'), { description: e?.message })
-  }
-  finally {
-    mClientsInstalling.value = ''
-  }
+  mClientsInstalling.value = ''
 }
 
 watch(mTarget, () => loadMigrateEnv())
@@ -624,7 +628,6 @@ async function doChangePwd() {
 }
 
 // 备份操作
-const backupBusy = ref(false)
 // M34：远程上传选项
 const storageAccounts = ref<StorageAccount[]>([])
 const backupStorageId = ref(0)
@@ -639,30 +642,24 @@ async function loadStorageAccounts() {
   }
 }
 
+// 备份走任务中心（M65）：秒回 taskId，耗时与远端上传过程任务日志可查
+const { running: backupBusy, run: runBackupJob } = useTaskJob()
+
 async function doBackup() {
   if (!active.value) {
     return
   }
-  backupBusy.value = true
-  useFaToast().info(i18n.global.t('database.backup.running'))
-  try {
-    const out = await apiDb.createBackup(active.value.id, {
-      storageAccountId: backupStorageId.value || undefined,
-      keep: backupKeep.value || undefined,
-    })
-    if (out.remoteKey) {
-      useFaToast().success(i18n.global.t('database.backup.doneRemote', { file: out.file, remoteKey: out.remoteKey }))
-    }
-    else if (out.file) {
-      useFaToast().success(i18n.global.t('database.backup.done', { file: out.file }))
-    }
-    refreshPanel()
-  }
-  catch (e: any) {
-    useFaToast().error(i18n.global.t('database.backup.failed'), { description: e?.message })
-  }
-  finally {
-    backupBusy.value = false
+  const out = await runBackupJob(() => apiDb.createBackup(active.value!.id, {
+    storageAccountId: backupStorageId.value || undefined,
+    keep: backupKeep.value || undefined,
+  }), {
+    onSuccess: async () => {
+      useFaToast().success(i18n.global.t('database.backup.done'))
+      refreshPanel()
+    },
+  })
+  if (out) {
+    useFaToast().info(i18n.global.t('common.taskSubmitted'))
   }
 }
 
@@ -691,6 +688,9 @@ function removeBackup(b: DbBackup) {
   })
 }
 
+// 恢复走任务中心（M65）
+const { run: runRestoreJob } = useTaskJob()
+
 function restoreBackup(b: DbBackup) {
   const modal = useFaModal()
   modal.confirm({
@@ -700,12 +700,15 @@ function restoreBackup(b: DbBackup) {
       if (!active.value) {
         return
       }
-      try {
-        await apiDb.restoreBackup(active.value.id, b.name)
-        useFaToast().success(i18n.global.t('database.backup.restored'))
-      }
-      catch (e: any) {
-        useFaToast().error(i18n.global.t('database.backup.restoreFailed'), { description: e?.message })
+      // 恢复走任务中心（M65）：危险操作确认仍在弹窗，过程日志任务中心可查
+      const out = await runRestoreJob(() => apiDb.restoreBackup(active.value!.id, b.name), {
+        onSuccess: async () => {
+          useFaToast().success(i18n.global.t('database.backup.restored'))
+          refreshPanel()
+        },
+      })
+      if (out) {
+        useFaToast().info(i18n.global.t('common.taskSubmitted'))
       }
     },
   })

@@ -26,14 +26,14 @@ func (a *Fail2banAPI) Status(c *gin.Context) {
 	respOK(c, out)
 }
 
-// Install POST /api/v1/fail2ban/install（一键安装：apt/dnf/yum 多通道 + enable --now）。
+// Install POST /api/v1/fail2ban/install（一键安装任务化秒回 taskId，安装输出实时进任务日志）。
 func (a *Fail2banAPI) Install(c *gin.Context) {
 	f2b, err := a.F2B.WithNode(c.Query("nodeId"))
 	if err != nil {
 		respErr(c, err)
 		return
 	}
-	out, err := f2b.Install(c.Request.Context())
+	out, err := f2b.InstallTask(c.Request.Context(), c.Query("nodeId"))
 	if err != nil {
 		respErr(c, err)
 		return

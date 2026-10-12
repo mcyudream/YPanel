@@ -31,7 +31,8 @@ func (a *SelfUpdateAPI) CheckOnline(c *gin.Context) {
 	respOK(c, out)
 }
 
-// Upgrade POST /api/v1/system/update/upgrade {source: github|gitee}（下载→校验→替换→重启）
+// Upgrade POST /api/v1/system/update/upgrade {source: github|gitee}（任务化：秒回 taskId，
+// 下载/校验/应用全程任务中心实时日志）
 func (a *SelfUpdateAPI) Upgrade(c *gin.Context) {
 	req, ok := bind[struct {
 		Source string `json:"source" binding:"required"`
@@ -39,7 +40,7 @@ func (a *SelfUpdateAPI) Upgrade(c *gin.Context) {
 	if !ok {
 		return
 	}
-	out, err := a.SU.Upgrade(c.Request.Context(), req.Source)
+	out, err := a.SU.UpgradeTask(c.Request.Context(), req.Source)
 	if err != nil {
 		respErr(c, err)
 		return

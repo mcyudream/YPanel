@@ -57,10 +57,10 @@ func (s *AIService) aiToolsSites(ctx context.Context) []aiToolDef {
 		},
 		{
 			Name: "create_site", Module: aiModSites, Risk: aiRiskWrite,
-				Desc: "创建站点（静态/反向代理/PHP 等，按面板类型体系）。非 80/443 端口自动追加容器映射并放行防火墙（被占用时报错）。input JSON：{\"name\":\"站点名\",\"type\":\"static|proxy|php\",\"domain\":\"主域名\",\"port\":80,\"proxyPass\":\"反代目标 http://127.0.0.1:8080（proxy 类型）\",\"remark\":\"备注\"}",
+				Desc: "创建站点（静态/反向代理/PHP 等，按面板类型体系）。非 80/443 端口自动追加容器映射并放行防火墙（被占用时报错）。反代目标写 localhost/127.0.0.1/0.0.0.0 时自动改写为 host.docker.internal（容器 nginx 指向宿主机服务）。input JSON：{\"name\":\"站点名\",\"type\":\"static|proxy|php\",\"domain\":\"主域名\",\"port\":80,\"proxyPass\":\"反代目标 http://127.0.0.1:8080（proxy 类型）\",\"remark\":\"备注\"}",
 				Parameters: schObj(map[string]any{
 					"name": schStr("站点名"), "type": schStr("类型 static/proxy/php"), "domain": schStr("主域名"),
-					"port": schInt("监听端口，默认 80；非 80/443 会自动映射容器端口并放行防火墙"), "proxyPass": schStr("proxy 类型的反代目标地址"), "remark": schStr("备注"),
+					"port": schInt("监听端口，默认 80；非 80/443 会自动映射容器端口并放行防火墙"), "proxyPass": schStr("proxy 类型的反代目标地址；回环地址自动指向宿主机"), "remark": schStr("备注"),
 				}, "name", "type", "domain"),
 			Fn: func(_ context.Context, input string) (string, error) {
 				p, err := parseToolArgs[SiteCreateInput](input)
@@ -159,7 +159,7 @@ func (s *AIService) aiToolsSites(ctx context.Context) []aiToolDef {
 		},
 		{
 			Name: "renew_cert", Module: aiModSites, Risk: aiRiskWrite,
-			Desc: "手动续签指定证书（走 acme.sh --renew --force）。input JSON：{\"id\":证书ID}",
+			Desc: "手动续签指定证书（异步任务：acme.sh --renew --force，返回任务 ID，用 get_task 跟踪进度与结果）。input JSON：{\"id\":证书ID}",
 			Parameters: schObj(map[string]any{"id": schInt("证书 ID")}, "id"),
 			Fn: func(_ context.Context, input string) (string, error) {
 				p, err := parseToolArgs[struct {
@@ -168,18 +168,19 @@ func (s *AIService) aiToolsSites(ctx context.Context) []aiToolDef {
 				if err != nil {
 					return "", err
 				}
-				if err := s.certs.Renew(ctx, p.ID); err != nil {
+				out, err := s.certs.RenewTask(ctx, p.ID)
+				if err != nil {
 					return "", err
 				}
-				return fmt.Sprintf("证书 %d 续签完成", p.ID), nil
+				return fmt.Sprintf("续签任务已创建（任务 #%v），用 get_task 跟踪进度", out["taskId"]), nil
 			},
 		},
 		{
 			Name: "issue_cert", Module: aiModSites, Risk: aiRiskWrite,
-			Desc: "签发 HTTPS 证书（ACME DNS 挑战，自动附带泛域名；DNS 账号缺省用面板环境变量）。签发耗时 1-3 分钟。input JSON：{\"domain\":\"yudream.cn\",\"altDomains\":\"可选，逗号分隔\",\"autoRenew\":true}",
+			Desc: "签发 HTTPS 证书（异步任务：ACME DNS 挑战，自动附带泛域名；DNS 账号缺省用面板环境变量；耗时 1-10 分钟，返回任务 ID，用 get_task 跟踪）。input JSON：{\"domain\":\"yudream.cn\",\"altDomains\":\"可选，逗号分隔\",\"autoRenew\":true}",
 			Parameters: schObj(map[string]any{
 				"domain": schStr("主域名（自动含 *.domain 泛域名）"), "altDomains": schStr("附加域名，逗号分隔"),
-				"autoRenew": schBool("自动续签，默认 true"), "remark": schStr("备注"),
+				"autoRenew": schBool("自动续签，缺省视为 true"), "remark": schStr("备注"),
 			}, "domain"),
 			Fn: func(_ context.Context, input string) (string, error) {
 				p, err := parseToolArgs[CertIssueInput](input)
@@ -189,11 +190,16 @@ func (s *AIService) aiToolsSites(ctx context.Context) []aiToolDef {
 				if p.Domain == "" {
 					return "", fmt.Errorf("缺少 domain")
 				}
-				cert, err := s.certs.Issue(ctx, p)
+				if s, err := parseToolArgs[struct {
+					AutoRenew *bool `json:"autoRenew"`
+				}](input); err == nil && (s.AutoRenew == nil || *s.AutoRenew) {
+					p.AutoRenew = true // 显式缺省开启自动续签
+				}
+				out, err := s.certs.IssueTask(ctx, p)
 				if err != nil {
 					return "", err
 				}
-				return fmt.Sprintf("证书已签发入库: %s（ID %d，到期 %s）", cert.Domain, cert.ID, cert.NotAfter.Format("2006-01-02")), nil
+				return fmt.Sprintf("签发任务已创建（任务 #%v），用 get_task 跟踪进度", out["taskId"]), nil
 			},
 		},
 		{

@@ -116,6 +116,7 @@ declare global {
   const useRouter: typeof import('vue-router').useRouter
   const useSlots: typeof import('vue').useSlots
   const useTaskCenterStore: typeof import('../store/modules/taskCenter').useTaskCenterStore
+  const useTaskJob: typeof import('../composables/useTaskJob').useTaskJob
   const useTemplateRef: typeof import('vue').useTemplateRef
   const useVpnAccess: typeof import('../composables/useVpnAccess').useVpnAccess
   const watch: typeof import('vue').watch

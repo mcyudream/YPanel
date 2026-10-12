@@ -34,7 +34,7 @@ func (a *DiskGuardAPI) UpdateConfig(c *gin.Context) {
 	respOK(c, cfg)
 }
 
-// Restore POST /api/v1/diskguard/restore {eventId}（0/缺省 = 恢复全部未恢复事件）
+// Restore POST /api/v1/diskguard/restore {eventId}（0/缺省 = 恢复全部未恢复事件；任务化秒回 taskId）
 func (a *DiskGuardAPI) Restore(c *gin.Context) {
 	req, ok := bind[struct {
 		EventID uint `json:"eventId"`
@@ -42,10 +42,10 @@ func (a *DiskGuardAPI) Restore(c *gin.Context) {
 	if !ok {
 		return
 	}
-	started, failed, err := a.G.Restore(c.Request.Context(), req.EventID)
+	out, err := a.G.RestoreTask(c.Request.Context(), req.EventID)
 	if err != nil {
 		respErr(c, err)
 		return
 	}
-	respOK(c, gin.H{"started": started, "failed": failed})
+	respOK(c, out)
 }

@@ -130,6 +130,42 @@ func streamExec(ctx context.Context, ac *agentclient.Client, command string, tim
 	return exit, timedOut, err
 }
 
+// execStreamOrRun 通用命令执行（M65）：logf 非 nil 走流式 exec 逐行回调（输出实时进任务日志，
+// 旧 agent 无流式端点时回退聚合 exec 并按行补写）；logf 为 nil 等价聚合 exec。
+// 返回（聚合输出, 退出码, 错误）；命令非零退出经退出码表达，err 仅启动失败/流中断。
+func execStreamOrRun(ctx context.Context, ac *agentclient.Client, cmd string, timeoutSecs int, logf TaskLogf) (string, int, error) {
+	if logf == nil {
+		out, err := agentclient.DoJSON[dto.ExecReq, dto.ExecResp](ac, ctx, http.MethodPost, "/agent/v1/exec",
+			&dto.ExecReq{Command: cmd, TimeoutSecs: timeoutSecs})
+		if err != nil {
+			return "", 0, err
+		}
+		return out.Output, out.ExitCode, nil
+	}
+	var buf strings.Builder
+	exit, _, serr := streamExec(ctx, ac, cmd, timeoutSecs, func(line string) {
+		buf.WriteString(line + "\n")
+		logf("info", "%s", line)
+	})
+	if serr != nil && isAgentEndpointMissing(serr) {
+		out, eerr := agentclient.DoJSON[dto.ExecReq, dto.ExecResp](ac, ctx, http.MethodPost, "/agent/v1/exec",
+			&dto.ExecReq{Command: cmd, TimeoutSecs: timeoutSecs})
+		if eerr != nil {
+			return "", 0, eerr
+		}
+		for _, line := range strings.Split(strings.TrimRight(out.Output, "\n"), "\n") {
+			if line != "" {
+				logf("info", "%s", line)
+			}
+		}
+		return out.Output, out.ExitCode, nil
+	}
+	if serr != nil {
+		return buf.String(), 0, serr
+	}
+	return buf.String(), exit, nil
+}
+
 // buildStepLine docker build --progress=plain 输出的步骤骨架行过滤：
 // 仅保留 `#N [stage i/j] ...` 步骤开始、DONE/ERROR/CACHED 终态与 writing image/naming to 收尾，
 // 跳过步骤内噪音（apk fetch、编译输出等），任务日志保持可读。

@@ -351,6 +351,82 @@ func (s *StoreService) DeleteSource(id uint) error {
 
 // ---------- 同步 ----------
 
+// SyncAllTask 同步全部启用源任务版（M65：返回任务 ID，逐源进度任务中心可查；全局限流防重）。
+func (s *StoreService) SyncAllTask(ctx context.Context, force bool) (map[string]any, error) {
+	if s.tasks == nil {
+		return nil, errs.Wrap(errs.ErrBadRequest, "任务服务不可用")
+	}
+	if s.tasks.HasRunning([]string{TaskStoreSync}, "all") {
+		return nil, errs.Wrap(errs.ErrBadRequest, "已有商店同步任务运行中，请稍后再试")
+	}
+	task, err := s.tasks.StartTask(TaskStoreSync, "同步应用商店（全部源）", "all", 15*time.Minute,
+		func(ctx context.Context, logf TaskLogf) error {
+			srcs := s.Sources()
+			anyErr := error(nil)
+			synced := 0
+			for _, src := range srcs {
+				if !src.Enabled {
+					continue
+				}
+				if !force && src.LastSyncAt != nil && time.Since(*src.LastSyncAt) < storeSyncTTL {
+					logf("info", "源 %s 在 TTL 内，跳过", src.Name)
+					continue
+				}
+				logf("info", "同步源 %s …", src.Name)
+				out, err := s.SyncSource(ctx, src.ID, true)
+				if err != nil {
+					logf("error", "源 %s 同步失败: %v", src.Name, err)
+					anyErr = err
+					continue
+				}
+				synced++
+				logf("info", "源 %s 同步完成：%v", src.Name, out["total"])
+			}
+			if anyErr != nil {
+				return errs.Wrapc(errs.CodeFileOpFailed, fmt.Sprintf("%d 个源同步成功，部分源失败: %v", synced, anyErr))
+			}
+			logf("info", "全部源同步完成（%d 个）", synced)
+			return nil
+		})
+	if err != nil {
+		return nil, err
+	}
+	return map[string]any{"taskId": task.ID}, nil
+}
+
+// SyncSourceTask 同步单个源任务版（返回任务 ID）。
+func (s *StoreService) SyncSourceTask(ctx context.Context, id uint, force bool) (map[string]any, error) {
+	var src model.AppStoreSource
+	if err := s.db.First(&src, id).Error; err != nil {
+		return nil, errs.New(errs.CodeNotFound, "error.sourceNotFound", "源不存在")
+	}
+	if s.tasks == nil {
+		return nil, errs.Wrap(errs.ErrBadRequest, "任务服务不可用")
+	}
+	ref := fmt.Sprintf("%d", id)
+	if s.tasks.HasRunning([]string{TaskStoreSync}, ref) {
+		return nil, errs.Wrap(errs.ErrBadRequest, "该源已有同步任务运行中，请稍后再试")
+	}
+	task, err := s.tasks.StartTask(TaskStoreSync, "同步应用商店源 "+src.Name, ref, 15*time.Minute,
+		func(ctx context.Context, logf TaskLogf) error {
+			logf("info", "同步源 %s（%s）…", src.Name, src.Type)
+			out, err := s.SyncSource(ctx, id, force)
+			if err != nil {
+				return err
+			}
+			if skipped, ok := out["skipped"].(bool); ok && skipped {
+				logf("info", "源在 TTL 内跳过（可勾选强制同步）")
+				return nil
+			}
+			logf("info", "同步完成：%v 个应用", out["total"])
+			return nil
+		})
+	if err != nil {
+		return nil, err
+	}
+	return map[string]any{"taskId": task.ID}, nil
+}
+
 // SyncAll 同步全部启用源（TTL 内跳过；force 强制）。
 func (s *StoreService) SyncAll(ctx context.Context, force bool) (map[string]any, error) {
 	srcs := s.Sources()

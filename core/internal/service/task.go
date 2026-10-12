@@ -31,6 +31,22 @@ const (
 	TaskImagePull      = "image-pull"
 	TaskDockerInstall  = "docker-install"
 	TaskDockerMirror   = "docker-mirror"
+
+	// M65 耗时操作任务化（证书/面板更新/数据库/镜像/工具安装等）。
+	TaskCertIssue      = "cert-issue"
+	TaskCertRenew      = "cert-renew"
+	TaskAcmeRegister   = "acme-register"
+	TaskPanelUpgrade   = "panel-upgrade"
+	TaskDBBackup       = "db-backup"
+	TaskDBRestore      = "db-restore"
+	TaskDBExecPull     = "db-exec-pull"
+	TaskImageBuild     = "image-build"
+	TaskImageSave      = "image-save"
+	TaskImageLoad      = "image-load"
+	TaskFtpInstall     = "ftp-install"
+	TaskF2bInstall     = "fail2ban-install"
+	TaskDiskRestore    = "diskguard-restore"
+	TaskStoreSync      = "store-sync"
 )
 
 // TaskService 任务服务。
@@ -64,6 +80,16 @@ func NewProgressLogger(logf TaskLogf, minInterval time.Duration) func(format str
 		last, lastMsg = time.Now(), msg
 		logf("info", "%s", msg)
 	}
+}
+
+// HasRunning 防重查询：types 中任一类型存在 ref 相同的运行中任务（如同一实例的备份/恢复互斥、
+// 同域名签发单飞）。低频路径，非原子——竞态窗口可接受（SQLite 单写，任务创建串行化）。
+func (s *TaskService) HasRunning(types []string, ref string) bool {
+	var n int64
+	_ = s.db.Model(&model.AppTask{}).
+		Where("type IN ? AND ref = ? AND status = ?", types, ref, TaskRunning).
+		Count(&n).Error
+	return n > 0
 }
 
 // StartTask 创建任务并异步执行（ctx 独立于请求：协程用 Background + 超时由任务自身控制）。

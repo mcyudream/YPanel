@@ -6,6 +6,7 @@ import { dockerExtApi } from '@/api/modules/dockerext'
 import { dockerImgApi } from '@/api/modules/dockerenv'
 import { taskApi } from '@/api/modules/task'
 import { i18n } from '@/locales'
+import { useTaskJob } from '@/composables/useTaskJob'
 
 // 镜像管理（自 Docker 管理页迁入，M23）：列表 + 拉取 + 删除 + 清理悬空。
 // M35：构建 / 导入 / 导出 / 打标签 / 更新检查。
@@ -157,64 +158,71 @@ function fmtTime(unix: number) {
 
 // ---- M35：构建 ----
 const buildVisible = ref(false)
-const buildBusy = ref(false)
 const buildForm = ref({ contextDir: '', dockerfile: '', tag: '' })
+
+// 构建走任务中心（M65）：docker build 输出逐行实时进任务日志，同 tag 防重复构建
+const { running: buildBusy, run: runBuildJob } = useTaskJob()
 
 async function doBuild() {
   if (!buildForm.value.contextDir || !buildForm.value.tag) {
     toast.warning(i18n.global.t('container.images.buildRequired'))
     return
   }
-  buildBusy.value = true
-  try {
-    await dockerImgApi.build(buildForm.value)
-    toast.success(i18n.global.t('container.images.buildDone', { name: buildForm.value.tag }))
+  const out = await runBuildJob(() => dockerImgApi.build(buildForm.value), {
+    onSuccess: async () => {
+      toast.success(i18n.global.t('container.images.buildDone', { name: buildForm.value.tag }))
+      await load()
+    },
+  })
+  if (out) {
     buildVisible.value = false
-    await load()
-  }
-  catch (e: any) {
-    toast.error(i18n.global.t('container.images.buildFailed'), { description: e?.message })
-  }
-  finally {
-    buildBusy.value = false
+    toast.info(i18n.global.t('common.taskSubmitted'))
   }
 }
 
 // ---- M35：导入 ----
 const importInputRef = ref<HTMLInputElement | null>(null)
 
+// 导入走任务中心（M65）：上传后 docker load 输出实时进任务日志
+const { run: runLoadJob } = useTaskJob()
+
 async function doImport(e: Event) {
   const file = (e.target as HTMLInputElement).files?.[0]
   if (!file) {
     return
   }
-  toast.info(i18n.global.t('container.images.importing'))
-  try {
-    await dockerImgApi.load(file)
-    toast.success(i18n.global.t('container.images.importDone'))
-    await load()
+  const out = await runLoadJob(() => dockerImgApi.load(file), {
+    onSuccess: async () => {
+      toast.success(i18n.global.t('container.images.importDone'))
+      await load()
+    },
+  })
+  if (out) {
+    toast.info(i18n.global.t('common.taskSubmitted'))
   }
-  catch (e: any) {
-    toast.error(i18n.global.t('container.images.importFailed'), { description: e?.message })
-  }
-  finally {
-    if (importInputRef.value) {
-      importInputRef.value.value = ''
-    }
+  if (importInputRef.value) {
+    importInputRef.value.value = ''
   }
 }
 
 // ---- M35：导出 ----
 const saveBusy = ref('')
 
+// 导出走任务中心（M65）：完成后在任务日志给出产物路径（文件管理可下载）
+const { run: runSaveJob } = useTaskJob()
+
 async function doSave(img: DockerImage) {
   const refName = img.tags[0] || img.id
   saveBusy.value = img.id
   try {
-    const out = await dockerImgApi.save([refName])
-    toast.success(i18n.global.t('container.images.exportDone', { file: out.file }))
-    const token = localStorage.getItem('token') || ''
-    window.open(`api/v1/files/download?path=${encodeURIComponent(out.file)}&token=${encodeURIComponent(token)}`)
+    const out = await runSaveJob(() => dockerImgApi.save([refName]), {
+      onSuccess: (_t, o) => {
+        toast.success(i18n.global.t('container.images.exportDone', { file: o.file }))
+      },
+    })
+    if (out) {
+      toast.info(i18n.global.t('common.taskSubmitted'))
+    }
   }
   catch (e: any) {
     toast.error(i18n.global.t('container.images.exportFailed'), { description: e?.message })

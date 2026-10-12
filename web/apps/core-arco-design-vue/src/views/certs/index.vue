@@ -2,6 +2,7 @@
 import type { Certificate, DnsAccount, AcmeAccount } from '@/api/modules/cert'
 import { certApi } from '@/api/modules/cert'
 import { i18n, tr } from '@/locales'
+import { useTaskJob } from '@/composables/useTaskJob'
 
 // B23 证书管理页（对齐 1Panel「网站 → 证书」）：
 // 申请（ACME/DNS 挑战）/ 上传 / 自签 / DNS 账户 / ACME 账户 + 证书全生命周期列表。
@@ -82,13 +83,15 @@ const statusCls: Record<string, string> = {
 // ---- 申请证书（ACME）----
 
 const issueVisible = ref(false)
-const issueSaving = ref(false)
 const issueForm = ref({ domain: '', altDomains: '', remark: '', autoRenew: true, acmeAccountId: 0, dnsAccountId: 0 })
 
 function openIssue() {
   issueForm.value = { domain: '', altDomains: '', remark: '', autoRenew: true, acmeAccountId: acmeAccounts.value[0]?.id || 0, dnsAccountId: dnsAccounts.value[0]?.id || 0 }
   issueVisible.value = true
 }
+
+// 申请走任务中心（M65）：秒回 taskId，签发过程 acme.sh 输出实时滚动
+const { running: issueSaving, run: runIssueJob } = useTaskJob()
 
 async function doIssue() {
   if (!issueForm.value.domain.trim()) {
@@ -99,19 +102,15 @@ async function doIssue() {
     toast.warning(i18n.global.t('certs.requireDnsAccount'))
     return
   }
-  issueSaving.value = true
-  toast.info(i18n.global.t('certs.issuing'))
-  try {
-    await certApi.issue(issueForm.value)
-    toast.success(i18n.global.t('certs.issued'))
+  const out = await runIssueJob(() => certApi.issue(issueForm.value), {
+    onSuccess: async () => {
+      toast.success(i18n.global.t('certs.issued'))
+      await load()
+    },
+  })
+  if (out) {
     issueVisible.value = false
-    await load()
-  }
-  catch (e: any) {
-    toast.error(i18n.global.t('certs.issueFailed'), { description: e?.message })
-  }
-  finally {
-    issueSaving.value = false
+    toast.info(i18n.global.t('common.taskSubmitted'))
   }
 }
 
@@ -228,7 +227,6 @@ function removeDns(a: DnsAccount) {
 // ---- ACME 账户管理 ----
 
 const acmeVisible = ref(false)
-const acmeSaving = ref(false)
 const acmeForm = ref({ email: '', caType: 'letsencrypt', keyType: 'ec-256' })
 
 function openAcme() {
@@ -237,23 +235,23 @@ function openAcme() {
   acmeVisible.value = true
 }
 
+// ACME 注册走任务中心（M65）：注册输出实时可查，失败任务标红
+const { running: acmeSaving, run: runAcmeJob } = useTaskJob()
+
 async function doCreateAcme() {
   if (!acmeForm.value.email.includes('@')) {
     toast.warning(i18n.global.t('certs.requireEmail'))
     return
   }
-  acmeSaving.value = true
-  try {
-    await certApi.createAcmeAccount(acmeForm.value)
-    toast.success(i18n.global.t('certs.acmeCreated'))
+  const out = await runAcmeJob(() => certApi.createAcmeAccount(acmeForm.value), {
+    onSuccess: async () => {
+      toast.success(i18n.global.t('certs.acmeCreated'))
+      await loadAccounts()
+    },
+  })
+  if (out) {
     acmeForm.value = { email: '', caType: 'letsencrypt', keyType: 'ec-256' }
-    await loadAccounts()
-  }
-  catch (e: any) {
-    toast.error(i18n.global.t('certs.createFailed'), { description: e?.message })
-  }
-  finally {
-    acmeSaving.value = false
+    toast.info(i18n.global.t('common.taskSubmitted'))
   }
 }
 
@@ -275,13 +273,15 @@ function removeAcme(a: AcmeAccount) {
 
 // ---- 证书操作 ----
 
+// 续签走任务中心（M65）：同一证书防重复提交（后端同 ref 单飞）
+const { running: renewing, run: runRenewJob } = useTaskJob()
+
 function renew(c: Certificate) {
-  toast.info(i18n.global.t('certs.renewing', { domain: c.domain }))
-  certApi.renew(c.id).then(() => {
-    toast.success(i18n.global.t('certs.renewed'))
-    load()
-  }).catch((e: any) => {
-    toast.error(i18n.global.t('certs.renewFailed'), { description: e?.message })
+  runRenewJob(() => certApi.renew(c.id), {
+    onSuccess: async () => {
+      toast.success(i18n.global.t('certs.renewed'))
+      await load()
+    },
   })
 }
 
@@ -458,7 +458,7 @@ onMounted(() => {
               <td class="px-3 py-2">
                 <div class="flex items-center justify-end gap-1">
                   <FaButton variant="ghost" size="sm" @click="openDetail(c)">{{ $t('common.detail') }}</FaButton>
-                  <FaButton v-if="c.provider === 'acme'" variant="ghost" size="sm" @click="renew(c)">{{ $t('certs.renew') }}</FaButton>
+                  <FaButton v-if="c.provider === 'acme'" variant="ghost" size="sm" :loading="renewing" @click="renew(c)">{{ $t('certs.renew') }}</FaButton>
                   <FaButton variant="ghost" size="sm" @click="openEdit(c)">{{ $t('common.edit') }}</FaButton>
                   <FaButton variant="ghost" size="sm" class="text-red-500!" @click="removeCert(c)">{{ $t('common.delete') }}</FaButton>
                 </div>

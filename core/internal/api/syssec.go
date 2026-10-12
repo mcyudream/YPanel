@@ -28,14 +28,14 @@ func (a *FtpAPI) Status(c *gin.Context) {
 	respOK(c, out)
 }
 
-// Install POST /api/v1/ftp/install
+// Install POST /api/v1/ftp/install（任务化秒回 taskId，安装输出实时进任务日志）
 func (a *FtpAPI) Install(c *gin.Context) {
 	ftp, ferr := a.Ftp.WithNode(c.Query("nodeId"))
 	if ferr != nil {
 		respErr(c, ferr)
 		return
 	}
-	out, err := ftp.Install(c.Request.Context())
+	out, err := ftp.InstallTask(c.Request.Context(), c.Query("nodeId"))
 	if err != nil {
 		respErr(c, err)
 		return

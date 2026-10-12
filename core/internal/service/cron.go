@@ -248,7 +248,7 @@ func (c *Cron) RunTask(t *model.CronTask, trigger string) {
 			output, timedOut, exitFail = res.Output, res.TimedOut, res.ExitCode != 0
 		}
 	case "cert_renew":
-		// M36：证书续期（复用证书库 Renew）
+		// M36：证书续期（M65 起任务化：创建续期任务，过程日志进任务中心）
 		var payload struct {
 			CertId uint `json:"certId"`
 		}
@@ -257,8 +257,12 @@ func (c *Cron) RunTask(t *model.CronTask, trigger string) {
 			execErr = fmt.Errorf("证书服务未就绪")
 			break
 		}
-		execErr = c.Certs.Renew(context.Background(), payload.CertId)
-		output = "证书续期完成"
+		out, err := c.Certs.RenewTask(context.Background(), payload.CertId)
+		if err != nil {
+			execErr = err
+			break
+		}
+		output = fmt.Sprintf("续期任务已创建 #%v，进度见任务中心", out["taskId"])
 	case "container_op":
 		var payload struct {
 			Container string `json:"container"`

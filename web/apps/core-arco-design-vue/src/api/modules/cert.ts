@@ -48,8 +48,9 @@ export const certApi = {
     const res = await api.get('api/v1/certs', { silent: true })
     return res.data as Certificate[]
   },
+  // 签发（任务化：秒回 taskId，进度/结果见任务中心）
   issue: (data: { domain: string, altDomains?: string, remark?: string, autoRenew?: boolean, acmeAccountId?: number, dnsAccountId?: number }) =>
-    api.post('api/v1/certs/issue', data, { timeout: 600000 }),
+    api.post('api/v1/certs/issue', data) as Promise<{ taskId: number }>,
   upload: (data: { certName?: string, domain: string, remark?: string, certPem: string, keyPem: string }) =>
     api.post('api/v1/certs/upload', data),
   selfSigned: (data: { domain: string, remark?: string, days?: number }) =>
@@ -59,7 +60,8 @@ export const certApi = {
     return res.data as { cert: Certificate, altDomains: string[], text: string }
   },
   update: (id: number, data: { remark?: string, autoRenew?: boolean }) => api.put(`api/v1/certs/${id}`, data),
-  renew: (id: number) => api.post(`api/v1/certs/${id}/renew`, {}, { timeout: 600000 }),
+  // 续签（任务化：秒回 taskId）
+  renew: (id: number) => api.post(`api/v1/certs/${id}/renew`, {}) as Promise<{ taskId: number }>,
   remove: (id: number) => api.delete(`api/v1/certs/${id}`),
 
   dnsAccounts: async () => {
@@ -76,8 +78,9 @@ export const certApi = {
     const res = await api.get('api/v1/certs/acme-accounts', { silent: true })
     return res.data as AcmeAccount[]
   },
+  // 注册 ACME 账户（任务化：秒回 taskId，注册输出见任务日志）
   createAcmeAccount: (data: { email: string, caType: string, keyType?: string }) =>
-    api.post('api/v1/certs/acme-accounts', data),
+    api.post('api/v1/certs/acme-accounts', data) as Promise<{ taskId: number, accountId: number }>,
   removeAcmeAccount: (id: number) => api.delete(`api/v1/certs/acme-accounts/${id}`),
 }
 

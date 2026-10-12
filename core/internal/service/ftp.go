@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
+	"time"
 
 	"github.com/ypanel/core/internal/agentclient"
 	"github.com/ypanel/shared/dto"
@@ -17,12 +18,16 @@ import (
 type FtpService struct {
 	nodes *NodeService
 	nodeClient *agentclient.Client // WithNode 绑定的节点客户端（空=本机）
+	tasks *TaskService            // M65：安装任务化（SetTasks 装配，副本经 WithNode 携带）
 }
 
 // NewFtpService 创建。
 func NewFtpService(nodes *NodeService) *FtpService {
 	return &FtpService{nodes: nodes}
 }
+
+// SetTasks 注入任务服务（main 装配，避免构造签名变更）。
+func (s *FtpService) SetTasks(t *TaskService) { s.tasks = t }
 
 // WithNode 返回绑定目标节点的副本（M55 主机域节点化：client 按节点路由，方法签名不变）。
 func (s *FtpService) WithNode(nodeId string) (*FtpService, error) {
@@ -101,31 +106,69 @@ func (s *FtpService) Status(ctx context.Context) (map[string]any, error) {
 	return st, nil
 }
 
-// Install 安装 vsftpd（apt/dnf/yum 多通道；apt 先刷新索引——新机 lists 为空时直接
+// ftpInstallCmd vsftpd 安装脚本（apt/dnf/yum 多通道；apt 先刷新索引——新机 lists 为空时直接
 // install 会报 Unable to locate package；装后以 command -v 回读验证，不依赖管道
 // 退出码（`| tail` 会吞掉 apt 的失败退出码）。
-func (s *FtpService) Install(ctx context.Context) (map[string]any, error) {
-	out, err := s.exec(ctx, `export DEBIAN_FRONTEND=noninteractive; `+
-		`if command -v apt-get >/dev/null 2>&1; then apt-get update -qq && apt-get install -y -qq vsftpd; `+
-		`elif command -v dnf >/dev/null 2>&1; then dnf install -y vsftpd; `+
-		`elif command -v yum >/dev/null 2>&1; then yum install -y vsftpd; `+
-		`else echo FTP_NO_PKG_MGR; fi; `+
-		`if command -v vsftpd >/dev/null 2>&1; then systemctl enable --now vsftpd && echo FTP_INSTALL_OK; `+
-		`else echo FTP_INSTALL_MISSING; fi`, 600)
+const ftpInstallCmd = `export DEBIAN_FRONTEND=noninteractive; `+
+	`if command -v apt-get >/dev/null 2>&1; then apt-get update -qq && apt-get install -y -qq vsftpd; `+
+	`elif command -v dnf >/dev/null 2>&1; then dnf install -y vsftpd; `+
+	`elif command -v yum >/dev/null 2>&1; then yum install -y vsftpd; `+
+	`else echo FTP_NO_PKG_MGR; fi; `+
+	`if command -v vsftpd >/dev/null 2>&1; then systemctl enable --now vsftpd && echo FTP_INSTALL_OK; `+
+	`else echo FTP_INSTALL_MISSING; fi`
+
+// ftpInstallFailMsg 安装失败信息（按标记分类）。
+func ftpInstallFailMsg(out string) error {
+	msg := "安装失败: " + lastLine(tail(out, 300))
+	switch {
+	case strings.Contains(out, "FTP_NO_PKG_MGR"):
+		msg = "安装失败：未识别到 apt/dnf/yum 包管理器，暂不支持该发行版"
+	case strings.Contains(out, "FTP_INSTALL_MISSING"):
+		msg = "安装失败（软件源不可用或安装未成功）: " + lastLine(tail(out, 300))
+	}
+	return errs.Wrapc(errs.CodeFileOpFailed, msg)
+}
+
+// InstallTask 安装 vsftpd 任务版（返回任务 ID；apt/yum 输出逐行实时进任务日志）。
+// nodeId 仅用于任务标题/防重标识（调用方已 WithNode 绑定执行节点）。
+func (s *FtpService) InstallTask(ctx context.Context, nodeId string) (map[string]any, error) {
+	if s.tasks == nil {
+		return nil, errs.Wrap(errs.ErrBadRequest, "任务服务不可用")
+	}
+	if nodeId == "" {
+		nodeId = "local"
+	}
+	if s.tasks.HasRunning([]string{TaskFtpInstall}, nodeId) {
+		return nil, errs.Wrap(errs.ErrBadRequest, "该节点已有 FTP 安装任务运行中，请稍后再试")
+	}
+	task, err := s.tasks.StartTask(TaskFtpInstall, "安装 FTP 服务（node "+nodeId+"）", nodeId, 12*time.Minute,
+		func(ctx context.Context, logf TaskLogf) error {
+			ac, err := s.client()
+			if err != nil {
+				return err
+			}
+			logf("info", "开始安装 vsftpd（apt/dnf/yum 自动适配）…")
+			out, code, err := execStreamOrRun(ctx, ac, ftpInstallCmd, 600, logf)
+			if err != nil {
+				return err
+			}
+			if code != 0 || !strings.Contains(out, "FTP_INSTALL_OK") {
+				return ftpInstallFailMsg(out)
+			}
+			logf("info", "安装完成，回读服务状态…")
+			st, err := s.Status(ctx)
+			if err != nil {
+				return err
+			}
+			if running, ok := st["running"].(bool); ok && running {
+				logf("info", "vsftpd 服务运行中")
+			}
+			return nil
+		})
 	if err != nil {
 		return nil, err
 	}
-	if !strings.Contains(out, "FTP_INSTALL_OK") {
-		msg := "安装失败: " + lastLine(tail(out, 300))
-		switch {
-		case strings.Contains(out, "FTP_NO_PKG_MGR"):
-			msg = "安装失败：未识别到 apt/dnf/yum 包管理器，暂不支持该发行版"
-		case strings.Contains(out, "FTP_INSTALL_MISSING"):
-			msg = "安装失败（软件源不可用或安装未成功）: " + lastLine(tail(out, 300))
-		}
-		return nil, errs.Wrapc(errs.CodeFileOpFailed, msg)
-	}
-	return s.Status(ctx)
+	return map[string]any{"taskId": task.ID}, nil
 }
 
 // Power 启动/停止/重启。

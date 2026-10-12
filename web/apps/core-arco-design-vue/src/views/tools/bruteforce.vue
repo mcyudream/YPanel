@@ -3,6 +3,7 @@ import { fail2banApi } from '@/api/modules/firewall'
 // M53 暴力破解防护（工具分组）：SSH 失败登录聚合 + 手动封禁/解封 + fail2ban 服务状态
 import api from '@/api/modules/ssh'
 import { i18n } from '@/locales'
+import { useTaskJob } from '@/composables/useTaskJob'
 
 defineOptions({
   name: 'ToolsBruteforce',
@@ -58,20 +59,19 @@ async function loadF2b() {
 }
 
 // ---- fail2ban 一键安装 ----
-const f2bInstalling = ref(false)
+
+// 安装走任务中心（M65）：apt/yum 输出实时进任务日志，完成后回读 jail 状态
+const { running: f2bInstalling, run: runF2bInstallJob } = useTaskJob()
 
 async function installF2b() {
-  f2bInstalling.value = true
-  toast.info(i18n.global.t('tools.brute.f2bInstalling'), { duration: 3000 })
-  try {
-    f2b.value = await fail2banApi.install()
-    toast.success(i18n.global.t('tools.brute.f2bInstallDone'))
-  }
-  catch (e: any) {
-    toast.error(i18n.global.t('tools.brute.f2bInstallFail'), { description: e?.message })
-  }
-  finally {
-    f2bInstalling.value = false
+  const out = await runF2bInstallJob(() => fail2banApi.install(), {
+    onSuccess: async () => {
+      f2b.value = await fail2banApi.status()
+      toast.success(i18n.global.t('tools.brute.f2bInstallDone'))
+    },
+  })
+  if (out) {
+    toast.info(i18n.global.t('common.taskSubmitted'))
   }
 }
 

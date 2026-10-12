@@ -479,7 +479,7 @@ func (s *AIService) aiToolsStoreExtra(ctx context.Context) []aiToolDef {
 		},
 		{
 			Name: "sync_store_sources", Module: aiModStore, Risk: aiRiskWrite,
-			Desc: "同步应用商店源（拉取最新应用清单与版本）。input JSON：{\"force\":false}",
+			Desc: "同步应用商店源（异步任务：拉取最新应用清单与版本，返回任务 ID，用 get_task 跟踪进度）。input JSON：{\"force\":false}",
 			Parameters: schObj(map[string]any{"force": schBool("强制同步")}),
 			Fn: func(_ context.Context, input string) (string, error) {
 				p, err := parseToolArgs[struct {
@@ -488,11 +488,11 @@ func (s *AIService) aiToolsStoreExtra(ctx context.Context) []aiToolDef {
 				if err != nil {
 					return "", err
 				}
-				out, err := s.store.SyncAll(ctx, p.Force)
+				out, err := s.store.SyncAllTask(ctx, p.Force)
 				if err != nil {
 					return "", err
 				}
-				return toolOut(map[string]any{"message": "商店源同步完成", "detail": out})
+				return toolOut(map[string]any{"message": "商店同步任务已创建，用 get_task 跟踪进度", "detail": out})
 			},
 		},
 	}

@@ -83,6 +83,7 @@ func run(ctx context.Context, cfg *config.Config) error {
 	siteSvc := service.NewSiteService(gdb, nodes)
 	certSvc := service.NewCertificateService(gdb, nodes, siteSvc, string(auth.Secret()))
 	certSvc.SetEnvGetter(os.Getenv)
+	certSvc.SetTasks(taskSvc) // M65：签发/续签/ACME 注册任务化
 	groupSvc := service.NewSiteGroupService(gdb)
 	acmeSvc := service.NewAcmeService(siteSvc, certSvc)
 
@@ -93,6 +94,7 @@ func run(ctx context.Context, cfg *config.Config) error {
 	backupSvc := service.NewBackupService(nodes, storageSvc)
 	dockerEnvSvc := service.NewDockerEnvService(gdb, nodes, string(auth.Secret()))
 	dockerImgSvc := service.NewDockerImgService(nodes)
+	dockerImgSvc.SetTasks(taskSvc) // M65：镜像 build/save/load 任务化
 	fileExtSvc := service.NewFileExtService(gdb, nodes, taskSvc)
 	fileCrossSvc := service.NewFileCrossService(nodes, taskSvc)
 	sysToolSvc := service.NewSystemToolService(nodes)
@@ -114,6 +116,7 @@ func run(ctx context.Context, cfg *config.Config) error {
 	vpnSvc := service.NewVPNService(gdb, nodes, settings, taskSvc, storeSvc)
 	fwSvc := service.NewFirewallService(gdb, nodes, cfg.Port)
 	f2bSvc := service.NewFail2banService(nodes)
+	f2bSvc.SetTasks(taskSvc) // M65：安装任务化
 	dbAdminSvc := service.NewDBAdminService(gdb, dbSvc)
 	dockerExtSvc := service.NewDockerExtService(nodes, taskSvc)
 	dockerInstallSvc := service.NewDockerInstallService(nodes, taskSvc)
@@ -134,6 +137,7 @@ func run(ctx context.Context, cfg *config.Config) error {
 	histSvc.Start(ctx)
 	// M55 磁盘空间保护：低水位自动停容器强制清理（配置走 SettingService，事件落库）
 	diskGuardSvc := service.NewDiskGuardService(gdb, nodes, settings, notifSvc)
+	diskGuardSvc.SetTasks(taskSvc) // M65：一键恢复任务化
 	diskGuardSvc.Start(ctx)
 	revSvc := service.NewRevisionService(gdb, nodes)
 	natSvc := service.NewNatForwardService(gdb, nodes)
@@ -166,10 +170,13 @@ func run(ctx context.Context, cfg *config.Config) error {
 	snapSvc := service.NewSnapshotService(gdb, nodes, panelBkSvc, settings)
 	sysSnapSvc := service.NewSystemSnapshotService(nodes, taskSvc, dbSvc, gdb, panelBkSvc)
 	ftpSvc := service.NewFtpService(nodes)
+	ftpSvc.SetTasks(taskSvc) // M65：安装任务化
 	sshGSvc := service.NewSshGuardService(nodes)
 	panelBkSvc.SetPruneFn(func(keep int) int { n, _ := snapSvc.Prune(context.Background(), "local", keep); return n })
 	mcpOpSvc := service.NewMCPOperationService(gdb)
 	mcpSvc.RegisterWriteDeps(nodes, panelBkSvc, mcpOpSvc)
+	// NAT 转发节点恢复重放：远程节点重启/断线恢复后首个心跳触发（幂等），与下方启动重放互补
+	nodes.SetOnComeback(natSvc.OnNodeBack)
 	// M24 NAT 转发启动重放：失败仅告警不阻断启动（agent 不可达 / iptables 缺失属预期场景）
 	go func() {
 		fails, err := natSvc.ApplyAll(ctx)

@@ -5,7 +5,9 @@ package service
 
 import (
 	"context"
+	"fmt"
 	"strings"
+	"time"
 
 	"github.com/ypanel/core/internal/model"
 	"github.com/ypanel/shared/errs"
@@ -22,9 +24,13 @@ func NewAcmeService(sites *SiteService, certs *CertificateService) *AcmeService 
 	return &AcmeService{sites: sites, certs: certs}
 }
 
-// IssueACME 为站点签发证书并启用 HTTPS（domain 留空用站点主域名，自动附带泛域名）。
-// DNS 账户优先：站点绑定域名匹配的证书库 DNS 账户不存在时，回退面板环境变量。
-func (s *AcmeService) IssueACME(ctx context.Context, siteID uint, domain string) (map[string]any, error) {
+// IssueACMETask 为站点签发证书并启用 HTTPS（任务版：返回任务 ID，签发过程任务中心实时日志）。
+// domain 留空用站点主域名，自动附带泛域名；DNS 账户优先：站点绑定域名匹配的证书库
+// DNS 账户不存在时，回退面板环境变量。
+func (s *AcmeService) IssueACMETask(ctx context.Context, siteID uint, domain string) (map[string]any, error) {
+	if err := s.ensureService(); err != nil {
+		return nil, err
+	}
 	site, err := s.sites.siteByID(siteID)
 	if err != nil {
 		return nil, err
@@ -40,22 +46,36 @@ func (s *AcmeService) IssueACME(ctx context.Context, siteID uint, domain string)
 	if len(rows) > 0 {
 		dnsAccountID = rows[0].ID
 	}
-	cert, err := s.certs.Issue(ctx, CertIssueInput{
+	in := CertIssueInput{
 		Domain:       domain,
 		AutoRenew:    true,
 		DnsAccountID: dnsAccountID,
-	})
+	}
+	// 预备段同步快速失败（域名/凭据/重名检查），任务体只承载耗时执行 + 站点 HTTPS 绑定
+	p, err := s.certs.prepareIssue(ctx, in)
 	if err != nil {
 		return nil, err
 	}
-	// 启用站点 HTTPS（证书绑定）
-	if err := s.sites.ApplyCert(ctx, site, cert.ID, cert.CertName); err != nil {
+	if s.certs.tasks == nil {
+		return nil, errs.Wrap(errs.ErrBadRequest, "任务服务不可用")
+	}
+	if s.certs.tasks.HasRunning([]string{TaskCertIssue}, p.main) {
+		return nil, errs.Wrap(errs.ErrBadRequest, "该域名已有签发任务运行中，请稍后再试")
+	}
+	task, err := s.certs.tasks.StartTask(TaskCertIssue,
+		fmt.Sprintf("站点签发证书 %s（%s）", p.main, site.Name), p.main, 15*time.Minute,
+		func(ctx context.Context, logf TaskLogf) error {
+			cert, err := s.certs.issueExecute(ctx, logf, p)
+			if err != nil {
+				return err
+			}
+			logf("info", "绑定站点 HTTPS（site #%d %s）…", siteID, site.Name)
+			return s.sites.ApplyCert(ctx, site, cert.ID, cert.CertName)
+		})
+	if err != nil {
 		return nil, err
 	}
-	return map[string]any{
-		"domain": cert.Domain, "certDomain": cert.CertName,
-		"issuer": cert.Issuer, "certId": cert.ID,
-	}, nil
+	return map[string]any{"taskId": task.ID}, nil
 }
 
 // ensureService 校验证书库可用（未装配时报错）。

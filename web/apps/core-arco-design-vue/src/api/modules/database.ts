@@ -63,8 +63,8 @@ export default {
     return res.data as DbExecEnvStatus
   },
   execEnvPull: async (type: string) => {
-    const res = await api.post('api/v1/database/execenv/pull', { type }, { timeout: 620000 })
-    return res.data as DbExecEnvStatus
+    const res = await api.post('api/v1/database/execenv/pull', { type })
+    return res.data as { taskId: number } // 任务化：秒回 taskId
   },
   migratePreview: async (src: number, target: number) => {
     const res = await api.get(`api/v1/plugin/db-admin/migrate/preview?src=${src}&target=${target}`, { silent: true })
@@ -124,10 +124,11 @@ export default {
   createBackup: async (id: number, opts?: { storageAccountId?: number, keep?: number }) => {
     const body = opts && (opts.storageAccountId || opts.keep) ? opts : undefined
     const res = await api.post(`api/v1/database/instances/${id}/backups`, body)
-    return res.data as { file?: string, output?: string, remoteKey?: string }
+    return res.data as { taskId: number } // 任务化：秒回 taskId
   },
   deleteBackup: (id: number, file: string) => api.delete(`api/v1/database/instances/${id}/backups?file=${encodeURIComponent(file)}`),
-  restoreBackup: (id: number, file: string) => api.post(`api/v1/database/instances/${id}/backups/restore?file=${encodeURIComponent(file)}`),
+  restoreBackup: (id: number, file: string) =>
+    api.post(`api/v1/database/instances/${id}/backups/restore?file=${encodeURIComponent(file)}`) as Promise<{ taskId: number }>,
   backupDownloadURL: (path: string, token: string) =>
     `api/v1/files/download?path=${encodeURIComponent(path)}&token=${encodeURIComponent(token)}`,
 }

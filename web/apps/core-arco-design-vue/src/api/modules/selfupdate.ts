@@ -27,9 +27,9 @@ export const selfUpdateApi = {
     const res = await api.get('api/v1/system/update/check', { silent: true })
     return res.data as OnlineCheck
   },
-  // 一键升级（下载→sha256 校验→替换→重启）
+  // 一键升级（任务化：秒回 taskId，下载/校验/应用进度见任务中心，应用后面板自动重启）
   upgrade: async (source: 'github' | 'gitee') => {
-    const res = await api.post('api/v1/system/update/upgrade', { source }, { timeout: 600000 })
-    return res.data as { message: string, version?: string }
+    const res = await api.post('api/v1/system/update/upgrade', { source })
+    return res.data as { taskId: number }
   },
 }

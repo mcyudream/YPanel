@@ -36,13 +36,13 @@ func (a *CertAPI) List(c *gin.Context) {
 	respOK(c, out)
 }
 
-// Issue POST /api/v1/certs/issue（ACME，长耗时）
+// Issue POST /api/v1/certs/issue（ACME，任务化：秒回 taskId，进度与结果由任务中心承载）
 func (a *CertAPI) Issue(c *gin.Context) {
 	req, ok := bind[service.CertIssueInput](c)
 	if !ok {
 		return
 	}
-	out, err := a.Certs.Issue(c.Request.Context(), *req)
+	out, err := a.Certs.IssueTask(c.Request.Context(), *req)
 	if err != nil {
 		respErr(c, err)
 		return
@@ -109,17 +109,18 @@ func (a *CertAPI) Update(c *gin.Context) {
 	respOK(c, struct{}{})
 }
 
-// Renew POST /api/v1/certs/:id/renew（ACME，长耗时）
+// Renew POST /api/v1/certs/:id/renew（ACME，任务化：秒回 taskId）
 func (a *CertAPI) Renew(c *gin.Context) {
 	id, ok := certIDParam(c, "证书")
 	if !ok {
 		return
 	}
-	if err := a.Certs.Renew(c.Request.Context(), id); err != nil {
+	out, err := a.Certs.RenewTask(c.Request.Context(), id)
+	if err != nil {
 		respErr(c, err)
 		return
 	}
-	respOK(c, struct{}{})
+	respOK(c, out)
 }
 
 // Remove DELETE /api/v1/certs/:id
@@ -203,7 +204,7 @@ func (a *CertAPI) ListAcmeAccounts(c *gin.Context) {
 	respOK(c, out)
 }
 
-// CreateAcmeAccount POST /api/v1/certs/acme-accounts
+// CreateAcmeAccount POST /api/v1/certs/acme-accounts（任务化：注册过程任务中心日志可查）
 func (a *CertAPI) CreateAcmeAccount(c *gin.Context) {
 	req, ok := bind[service.AcmeAccountInput](c)
 	if !ok {

@@ -31,6 +31,7 @@ type CertificateService struct {
 	db     *gorm.DB
 	nodes  *NodeService
 	sites  *SiteService
+	tasks  *TaskService // M65：签发/续签/注册任务化（SetTasks 装配，可 nil=仅同步路径）
 	aesKey []byte
 	envf   func(string) string // 环境变量读取（面板 systemd 注入路径，可选）
 }
@@ -40,6 +41,9 @@ func NewCertificateService(db *gorm.DB, nodes *NodeService, sites *SiteService, 
 	sum := sha256.Sum256([]byte("ypanel-dnscred:" + jwtSecret))
 	return &CertificateService{db: db, nodes: nodes, sites: sites, aesKey: sum[:]}
 }
+
+// SetTasks 注入任务服务（main 装配，避免构造签名变更）。
+func (s *CertificateService) SetTasks(t *TaskService) { s.tasks = t }
 
 var certNamePattern = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9.-]{0,253}$`)
 
@@ -53,6 +57,17 @@ func (s *CertificateService) run(ctx context.Context, cmd string, timeout int) (
 	ac := agentclient.New(node.BaseURL, node.Token)
 	return agentclient.DoJSON[dto.ExecReq, dto.ExecResp](ac, ctx, "POST", "/agent/v1/exec",
 		&dto.ExecReq{Command: cmd, TimeoutSecs: timeout})
+}
+
+// runStream 执行命令：logf 非 nil 走 agent 流式 exec 逐行写任务日志（acme.sh 输出实时滚动），
+// 旧 agent 无流式端点时回退聚合 exec；logf 为 nil 等价聚合 run。
+// 返回聚合输出与退出码（err 仅启动失败/流中断，非零退出经 exitCode 表达）。
+func (s *CertificateService) runStream(ctx context.Context, cmd string, timeout int, logf TaskLogf) (string, int, error) {
+	node, err := s.nodes.ByID("local")
+	if err != nil {
+		return "", 0, err
+	}
+	return execStreamOrRun(ctx, agentclient.New(node.BaseURL, node.Token), cmd, timeout, logf)
 }
 
 // shQuote shell 单引号安全包裹。
@@ -341,8 +356,8 @@ func (s *CertificateService) Delete(ctx context.Context, id uint) error {
 	return s.db.Delete(c).Error
 }
 
-// Renew 手动续签（ACME 证书）。
-func (s *CertificateService) Renew(ctx context.Context, id uint) error {
+// renewCore 续签内核：校验、签发、钩子重挂、探测入库。logf 非 nil 走流式任务日志。
+func (s *CertificateService) renewCore(ctx context.Context, logf TaskLogf, id uint) error {
 	c, err := s.byID(id)
 	if err != nil {
 		return err
@@ -350,25 +365,62 @@ func (s *CertificateService) Renew(ctx context.Context, id uint) error {
 	if c.Provider != "acme" {
 		return errs.Wrap(errs.ErrBadRequest, "仅 ACME 证书支持续签（上传/自签证书请重新上传或签发）")
 	}
+	if logf != nil {
+		logf("info", "续签证书 %s（主域名 %s）", c.CertName, c.Domain)
+	}
 	creds, err := s.dnsCredsFor(c)
 	if err != nil {
 		return err
 	}
-	out, err := s.run(ctx, creds+fmt.Sprintf("%s --renew -d %s --ecc --force", acmeBin, c.Domain), 600)
+	if logf != nil {
+		logf("info", "调用 acme.sh 强制续签（DNS 验证，最长 10 分钟）…")
+	}
+	out, code, err := s.runStream(ctx, creds+fmt.Sprintf("%s --renew -d %s --ecc --force", acmeBin, c.Domain), 600, logf)
 	if err != nil {
 		return err
 	}
-	c.IssueLog = out.Output
-	if out.ExitCode != 0 {
+	c.IssueLog = out
+	if code != 0 {
 		s.db.Save(c)
-		return errs.New(errs.CodeFileOpFailed, "error.fileOpFailed", "续签失败: "+firstLine(out.Output))
+		return errs.New(errs.CodeFileOpFailed, "error.fileOpFailed", "续签失败: "+firstLine(out))
+	}
+	if logf != nil {
+		logf("info", "签发成功，重新挂载续期钩子并部署到 nginx…")
 	}
 	if err := s.reinstallCertHook(ctx, c); err != nil {
 		return err
 	}
 	s.probe(ctx, c)
 	refreshCertStatus(c)
+	if logf != nil {
+		logf("info", "续签完成：%s（到期 %s）", c.CertName, c.NotAfter.Format("2006-01-02"))
+	}
 	return s.db.Save(c).Error
+}
+
+// RenewTask 创建续签任务（返回任务 ID；cron 自动续签与手动续签共用，全程日志可查）。
+func (s *CertificateService) RenewTask(ctx context.Context, id uint) (map[string]any, error) {
+	c, err := s.byID(id)
+	if err != nil {
+		return nil, err
+	}
+	if c.Provider != "acme" {
+		return nil, errs.Wrap(errs.ErrBadRequest, "仅 ACME 证书支持续签（上传/自签证书请重新上传或签发）")
+	}
+	if s.tasks == nil {
+		return nil, errs.Wrap(errs.ErrBadRequest, "任务服务不可用")
+	}
+	if s.tasks.HasRunning([]string{TaskCertRenew}, fmt.Sprintf("%d", id)) {
+		return nil, errs.Wrap(errs.ErrBadRequest, "该证书已有续签任务运行中，请稍后再试")
+	}
+	task, err := s.tasks.StartTask(TaskCertRenew, "续签证书 "+c.CertName, fmt.Sprintf("%d", id), 15*time.Minute,
+		func(ctx context.Context, logf TaskLogf) error {
+			return s.renewCore(ctx, logf, id)
+		})
+	if err != nil {
+		return nil, err
+	}
+	return map[string]any{"taskId": task.ID}, nil
 }
 
 // dnsCredsFor 生成证书续签所需的 DNS 凭据环境前缀。

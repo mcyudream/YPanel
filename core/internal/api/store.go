@@ -89,7 +89,7 @@ func (a *StoreAPI) SyncSource(c *gin.Context) {
 		respErr(c, errBadRequest("参数不合法"))
 		return
 	}
-	out, err := a.Store.SyncSource(c.Request.Context(), uint(id), c.Query("force") == "1")
+	out, err := a.Store.SyncSourceTask(c.Request.Context(), uint(id), c.Query("force") == "1")
 	if err != nil {
 		respErr(c, err)
 		return
@@ -99,7 +99,7 @@ func (a *StoreAPI) SyncSource(c *gin.Context) {
 
 // Sync POST /api/v1/store/sync?force= （全部启用源）
 func (a *StoreAPI) Sync(c *gin.Context) {
-	out, err := a.Store.SyncAll(c.Request.Context(), c.Query("force") == "1")
+	out, err := a.Store.SyncAllTask(c.Request.Context(), c.Query("force") == "1")
 	if err != nil {
 		respErr(c, err)
 		return

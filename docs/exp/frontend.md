@@ -711,3 +711,17 @@
 - **换装期的三个坑**：① **`:model-value` 单向绑定漏写 `@update:model-value` 监听**——选择器看起来正常、点击后值静默不写回（cron/sites/store 三处中招），表单内一律直接 `v-model`（与 `local-value` 不冲突）；② **truncate span（overflow:hidden）使 flex item 的 min-content 归零**——触发器无显式宽度时塌缩到外部容器宽（cron 表单里 96px 截成「no...」），对策：组件给默认宽度 `w-36`（buttonClass 显式宽度经 tailwind-merge 覆盖）；③ **存量模板把选择器嵌在 `w-24` label span 里**（cron「命令」行的畸形单行结构），`max-w-full` 被压成 96px——排查宽度塌缩先量父链（getBoundingClientRect 逐层向上），模板结构歪的先理直再换装。
 - **思想**：实体身份的显示规则（哪个字段是身份、哪个字段易重复只能做副文本）是**单点知识**，必须收敛到一个组件/一个助手函数维护；新页面选实体一律用统一选择器，禁止各处手拼 label。同类候选：数据库实例、站点、容器等若有「多字段可作 label」的歧义，同法收敛。
 - **来源**：2026-10-12，用户生产环境截图反馈（M63 节点选择统一组件，142 真机验收 20261012.0018-dev：终端/容器/DNS 下拉、cron 表单写回、节点卡片全 PASS）。
+
+### webos 改动不进构建：alias 指 vendor 快照而非兄弟仓库——改完兄弟仓库必须同步 vendor
+
+- **现象**：在兄弟仓库 `../yudream-web-os` 改了 window/desktop 组件（窗口可选字、右键分诊），vue-tsc/生产构建全绿、部署后面板行为依旧——窗口内 `user-select` 仍是 none，右键仍弹桌面菜单。dev 也正常？不——**生产构建与 dev 都不读兄弟仓库**，表现是完全没改。
+- **根因**：M53 起为让 CI 可独立构建，webos 源码 vendor 进了仓库 `web/vendor/yudream-web-os/`，`apps/core-arco-design-vue/vite.config.ts` 的 alias 指向 **vendor 目录**（`../../vendor/yudream-web-os/packages/*/src`）。M29 期 exp 条目「alias 指兄弟仓库 packages/*/src」已过时：现在兄弟仓库只是开发源头，**构建输入是 vendor 快照**，改兄弟仓库不进任何产物。
+- **规避/解决**：改 webos 后必须把改动同步到 `web/vendor/yudream-web-os/` 对应文件（最小 diff 应用，不整体覆盖——兄弟仓库可能有其它会话未同步的改动，整体覆盖会夹带）；同步后重新构建。判别手法：构建产物 CSS/JS 里 grep 目标规则/类名（本次 `.yw-window-body{...user-select:text` 缺失，一眼定位到构建输入不对）。
+- **来源**：2026-10-12，桌面工作台窗口选字/右键分诊（改兄弟仓库部署两轮无效，产物 grep 定位 vendor 不同步）。
+
+### 本机内存紧张时 vite8/rolldown 构建在 rendering chunks 原生崩溃：ROLLDOWN_THREADS=2 可过
+
+- **现象**：`pnpm build`（vite v8 + rolldown）类型检查通过、6926 模块 transform 完成，`rendering chunks` 阶段反复 `memory allocation of N bytes failed` / exit 134（原生 SIGABRT）退出，重试不稳定。
+- **根因**：rolldown（Rust 原生）chunk 渲染默认多线程并行，峰值内存叠加系统占用（VMware 虚拟机 2.5GB + 浏览器 2GB+，空闲仅 5GB）触发原生分配失败——与 Node 堆无关，`NODE_OPTIONS=--max-old-space-size` 无效。
+- **规避/解决**：`ROLLDOWN_THREADS=2 pnpm build`（限制 rolldown 并行线程，代价是打包稍慢）；根治是关掉大内存进程再构建。判定特征：失败点固定在 `rendering chunks...` 之后且报 Rust 风格 memory allocation，即套此招。
+- **来源**：2026-10-12，M65 任务化改造前端构建验证（本机 VMware 开虚拟机状态下构建）。

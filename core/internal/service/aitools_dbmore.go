@@ -3,6 +3,7 @@ package service
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/ypanel/core/internal/dbdriver"
 )
@@ -262,7 +263,7 @@ func (s *AIService) aiToolsDBMore(ctx context.Context) []aiToolDef {
 		},
 		{
 			Name: "create_db_backup", Module: aiModDB, Risk: aiRiskWrite,
-			Desc: "创建数据库实例备份（mysqldump/pg_dump/redis·mongo 导出，任务化）。input JSON：{\"instanceId\":1}",
+			Desc: "创建数据库实例备份（异步任务：mysqldump/pg_dump/redis·mongo 导出，返回任务 ID，用 get_task 跟踪进度与产物路径）。input JSON：{\"instanceId\":1}",
 			Parameters: schObj(map[string]any{"instanceId": schInt("实例 ID")}, "instanceId"),
 			Fn: func(_ context.Context, input string) (string, error) {
 				p, err := parseToolArgs[struct {
@@ -271,11 +272,11 @@ func (s *AIService) aiToolsDBMore(ctx context.Context) []aiToolDef {
 				if err != nil {
 					return "", err
 				}
-				out, err := s.dbSvc.CreateBackup(ctx, p.InstanceID)
+				out, err := s.dbSvc.BackupTask(ctx, p.InstanceID)
 				if err != nil {
 					return "", err
 				}
-				return toolOut(map[string]any{"message": "备份完成", "detail": out})
+				return toolOut(map[string]any{"message": "备份任务已创建，用 get_task 跟踪进度", "detail": out})
 			},
 		},
 		{
@@ -333,10 +334,11 @@ func (s *AIService) aiToolsDBMore(ctx context.Context) []aiToolDef {
 				if err != nil {
 					return "", err
 				}
-				if err := s.dbSvc.Restore(ctx, p.InstanceID, p.File); err != nil {
+				out, err := s.dbSvc.RestoreTask(ctx, p.InstanceID, p.File)
+				if err != nil {
 					return "", err
 				}
-				return "备份恢复已触发: " + p.File, nil
+				return fmt.Sprintf("恢复任务已创建（任务 #%v），用 get_task 跟踪进度: %s", out["taskId"], p.File), nil
 			},
 		},
 	}

@@ -79,16 +79,17 @@ export interface ImageUpdateCheck {
 export const dockerImgApi = {
   build: async (data: { contextDir: string, dockerfile?: string, tag: string }) => {
     const res = await api.post('api/v1/docker/images/build', data)
-    return res.data as { tag?: string, logFile?: string, output?: string }
+    return res.data as { taskId: number } // 任务化：秒回 taskId，构建输出实时进任务日志
   },
   save: async (images: string[], name?: string) => {
     const res = await api.post('api/v1/docker/images/save', { images, name })
-    return res.data as { file: string, name: string }
+    return res.data as { taskId: number, file: string, name: string } // 任务化：秒回 taskId
   },
-  load: (file: File) => {
+  load: async (file: File) => {
     const form = new FormData()
     form.append('file', file)
-    return api.post('api/v1/docker/images/load', form, { headers: { 'Content-Type': 'multipart/form-data' } })
+    const res = await api.post('api/v1/docker/images/load', form, { headers: { 'Content-Type': 'multipart/form-data' } })
+    return res.data as { taskId: number } // 任务化：秒回 taskId
   },
   tag: (src: string, dst: string) => api.post('api/v1/docker/images/tag', { src, dst }),
   checkUpdates: async (images: string[]) => {

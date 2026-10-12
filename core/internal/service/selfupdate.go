@@ -7,9 +7,11 @@ package service
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
+	"os"
 	"path"
-	"runtime"
+	"path/filepath"
 	"sort"
 	"strings"
 	"sync"
@@ -200,10 +202,18 @@ func (s *SelfUpdateService) CheckOnline(ctx context.Context) (*OnlineCheck, erro
 	return check, nil
 }
 
-// Upgrade 在线升级：agent 主机侧下载（curl 重试）→ sha256 校验 → 解包 → 复用本地 Apply 通道。
-func (s *SelfUpdateService) Upgrade(ctx context.Context, source string) (map[string]any, error) {
+// UpgradeTask 在线升级任务版（M65：秒回 taskId，下载/校验/应用全程任务中心实时日志）。
+// 同步段仅做源探测与版本比较（快速失败）；任务体走 core 侧下载（精确 MB/s 进度，与节点
+// agent 升级同款）→ sha256 校验 → 解包 → 推送 updates → 复用本地 Apply 通道（detached 重启）。
+func (s *SelfUpdateService) UpgradeTask(ctx context.Context, source string) (map[string]any, error) {
 	if source != "github" && source != "gitee" {
 		return nil, errs.Wrap(errs.ErrBadRequest, "未知更新源（github|gitee）")
+	}
+	if s.tasks == nil {
+		return nil, errs.Wrap(errs.ErrBadRequest, "任务服务不可用")
+	}
+	if s.tasks.HasRunning([]string{TaskPanelUpgrade}, "panel") {
+		return nil, errs.Wrap(errs.ErrBadRequest, "已有面板更新任务运行中，请稍后再试")
 	}
 	rel := release.FetchLatestRelease(ctx, source)
 	if !rel.Reachable {
@@ -212,28 +222,96 @@ func (s *SelfUpdateService) Upgrade(ctx context.Context, source string) (map[str
 	if rel.AssetURL == "" {
 		return nil, errs.Wrap(errs.ErrBadRequest, rel.Error)
 	}
-	if !release.IsDevVersion(s.currentVer) {
-		if release.CompareVersions(s.currentVer, rel.Version) >= 0 {
-			return map[string]any{"message": "已是最新版本 " + s.currentVer, "version": rel.Version}, nil
-		}
-	}
 	// 资产域名白名单（URL 来自 Release API 响应，防注入重定向到任意主机）
 	if err := release.ValidateAssetURL(rel.AssetURL); err != nil {
 		return nil, errs.Wrap(errs.ErrBadRequest, err.Error())
 	}
+	upToDate := !release.IsDevVersion(s.currentVer) && release.CompareVersions(s.currentVer, rel.Version) >= 0
+		task, err := s.tasks.StartTask(TaskPanelUpgrade, "面板在线更新 "+rel.Version+"（"+source+"）", "panel",
+		time.Duration(updateTimeoutSecs+300)*time.Second,
+		func(ctx context.Context, logf TaskLogf) error {
+			return s.runPanelUpgrade(ctx, logf, &rel, upToDate)
+		})
+	if err != nil {
+		return nil, err
+	}
+	return map[string]any{"taskId": task.ID}, nil
+}
+
+// runPanelUpgrade 任务体：已是最新直接终态；否则下载校验解包推送并应用（应用后面板约 2s 后重启）。
+func (s *SelfUpdateService) runPanelUpgrade(ctx context.Context, logf TaskLogf, rel *release.OnlineRelease, upToDate bool) error {
+	if upToDate {
+		logf("info", "已是最新版本 %s，无需更新", s.currentVer)
+		return nil
+	}
+	logf("info", "目标版本 %s（%s）", rel.Version, rel.AssetURL)
+
+	// 1) core 侧下载 tar.gz + sha256 校验（进度节流 2s）
+	logf("info", "[1/4] 下载并校验…")
+	tmpDir, err := os.MkdirTemp("", "yp-panel-upd-")
+	if err != nil {
+		return err
+	}
+	defer func() { _ = os.RemoveAll(tmpDir) }()
+	assetName := rel.AssetURL[strings.LastIndex(rel.AssetURL, "/")+1:]
+	tarPath := filepath.Join(tmpDir, assetName)
+	plog := NewProgressLogger(logf, 2*time.Second)
+	var lastDone int64
+	last := time.Now()
+	dlStart := last
+	err = httpDownload(ctx, rel.AssetURL, tarPath, func(done, total int64) {
+		span := time.Since(last).Seconds()
+		if span <= 0 || done < lastDone {
+			return
+		}
+		speed := float64(done-lastDone) / span / 1048576
+		if total > 0 {
+			plog("下载中 %.1f/%.1f MB（%.1f MB/s，%.0f%%）", float64(done)/1048576, float64(total)/1048576, speed, float64(done)/float64(total)*100)
+		} else {
+			plog("已下载 %.1f MB（%.1f MB/s）", float64(done)/1048576, speed)
+		}
+		lastDone, last = done, time.Now()
+	})
+	if err != nil {
+		return fmt.Errorf("下载失败: %w", err)
+	}
+	if fi, ferr := os.Stat(tarPath); ferr == nil {
+		logf("info", "下载完成 %.1f MB（用时 %s）", float64(fi.Size())/1048576, time.Since(dlStart).Round(time.Second))
+	}
+	if rel.SumURL != "" {
+		sumPath := filepath.Join(tmpDir, "sha256sums.txt")
+		if err := httpDownload(ctx, rel.SumURL, sumPath, nil); err == nil {
+			if err := verifySha256File(tarPath, sumPath); err != nil {
+				return fmt.Errorf("sha256 校验失败: %w", err)
+			}
+			logf("info", "tar sha256 校验通过")
+		} else {
+			logf("info", "sha256sums.txt 获取失败，跳过整包校验")
+		}
+	}
+
+	// 2) 解包 ypanel 二进制
+	bin, err := extractFromTar(tarPath, "ypanel")
+	if err != nil {
+		return err
+	}
+	logf("info", "[2/4] ypanel 就绪（%.1f MB）", float64(len(bin))/1048576)
+
+	// 3) 推送到 updates 目录（本地 apply 通道的应用源）
+	logf("info", "[3/4] 推送到更新通道…")
 	ac, err := s.client()
 	if err != nil {
-		return nil, err
+		return err
 	}
-	script := release.DownloadScript(UpdateChannelDir, runtime.GOARCH, rel.AssetURL, rel.SumURL, release.FallbackAssetURL(rel.AssetURL))
-	out, err := agentclient.DoJSON[dto.ExecReq, dto.ExecResp](ac, ctx, "POST", "/agent/v1/exec",
-		&dto.ExecReq{Command: script, TimeoutSecs: updateTimeoutSecs})
-	if err != nil {
-		return nil, err
+	if err := agentUploadFile(ctx, ac, UpdateChannelDir, "ypanel", bin); err != nil {
+		return fmt.Errorf("推送失败: %w", err)
 	}
-	if out.ExitCode != 0 || strings.Contains(out.Output, "YPSUMFAIL") {
-		return map[string]any{"output": tailStr(out.Output, 1000)}, errs.New(errs.CodeFileOpFailed, "error.badRequest", "下载/校验失败，请稍后重试或更换更新源")
+
+	// 4) 应用更新（detached 脚本：备份→替换→重启；core 将在约 2s 后被重启）
+	logf("info", "[4/4] 应用更新…")
+	if _, err := s.Apply(ctx, "ypanel"); err != nil {
+		return err
 	}
-	// 解包产物名固定 ypanel（与 CI 打包一致），走既有本地 apply 通道
-	return s.Apply(ctx, "ypanel")
+	logf("info", "更新已应用：面板即将自动重启，请稍后刷新页面确认新版本 %s", rel.Version)
+	return nil
 }

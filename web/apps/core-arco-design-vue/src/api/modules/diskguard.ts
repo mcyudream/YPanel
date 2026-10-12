@@ -61,6 +61,6 @@ export const diskGuardApi = {
   },
   restore: async (eventId = 0) => {
     const res = await api.post('api/v1/diskguard/restore', { eventId })
-    return res.data as { started: string[], failed: string[] }
+    return res.data as { taskId: number }
   },
 }
