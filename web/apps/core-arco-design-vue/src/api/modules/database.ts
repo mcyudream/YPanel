@@ -4,7 +4,7 @@ export interface DbInstance {
   ownerId?: number
   id: number
   name: string
-  type: 'mysql' | 'postgres' | 'redis' | 'mongo'
+  type: 'mysql' | 'postgres' | 'redis' | 'mongo' | 'neo4j' | 's3'
   origin: 'container' | 'external' | 'store'
   host: string
   port: number

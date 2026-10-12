@@ -25,6 +25,7 @@ import {
   ContainerSettings,
   ContainerVolumes,
 } from './modules/container'
+import { ContainerMiddleware } from './modules/middleware'
 import ContainerAppRoutes from './modules/container-app'
 import ContainerDetailRoutes from './modules/container-detail'
 import CronRoutes from './modules/cron'
@@ -172,6 +173,7 @@ const asyncRoutes: RouteRecordMainRaw[] = [
       ContainerVolumes,
       ContainerEnvs,
       ContainerSettings,
+      ContainerMiddleware,
       ContainerRoot,
       ContainerDetailRoutes,
       ContainerAppRoutes,

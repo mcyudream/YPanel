@@ -103,6 +103,16 @@ fa 基座默认放行移动端（`mobile: true`），业务层按「桌面布局
 - **默认值**：compose 应用默认「应用自带」；php 应用（app.json `database.create: true`）默认「纳管实例」。
 - 应用自带数据库的 compose 应用（如 element-skin）：内置服务密码字段用 `random: true` 自动随机，不走纳管下拉。
 
+### 5.5 可复用中间件复用与可选伴生服务（M68）
+
+应用需要**非数据库类中间件**（对象存储/MQ/缓存等）时，按标准声明复用已有实例（只查找注入，不创建）：
+
+- **声明**（compose 应用在 `index.json` 版本项）：`"middleware": [{"type","prefix","required","label","minVersion"}]`——安装向导出现「中间件」下拉。`type=s3/neo4j` 走**数据库纳管实例**（s3 选中自动建桶、注入三层地址端点与凭据；neo4j 注入 bolt URI）；其余 type 走**「容器 → 中间件」页登记实例**（MiddlewareInstance），按 `prefix` 填充应用实际引用的 `*_HOST/_PORT/_USER/_PASSWORD/_ENDPOINT` 键（密码取实例 reveal）。无实例时回退「应用自带」手填。
+- **版本基线**：`minVersion`（声明）> 描述符基线（`middlewareRegistry`）> 实例探测版本，语义化逐段比较，低于基线的候选禁选；任一版本未知跳过校验。新增可复用中间件类型 = 在 `middlewareRegistry` 注册一项 descriptor（镜像匹配/凭据 env 键/默认端口/连通测试/注入前缀），扫描发现、版本校验、复用注入全链自动生效。
+- **可选伴生服务**：`"optionalServices": [{"id","label","compose","env"}]`——向导「可选组件」勾选后，附加 compose 合并进主编排（services/volumes/networks 深合并，网络占位 `1panel-network` 照常替换）+ `env` 开关注入 .env（如 `PLATFORM_X_ENABLED=true`）。
+- **URI 形态键集**：`MONGO_URI` / `NEO4J_URI`（词干含 MONGO/NEO4J 的 `*_URI`）与 `S3_ENDPOINT`（对象存储 ENDPOINT 锚键）均触发向导纳管下拉；Mongo URI 键集由面板生成完整连接串（含 `authSource=admin`）。
+- **Neo4j / S3 纳管**：`DatabaseInstance.Type` 扩 `neo4j`（Bolt 7687）与 `s3`（S3 兼容，`Secure`=TLS）；DB Admin 提供 Neo4j 图工作台（标签/节点/Cypher/索引约束）与 S3 对象工作台（桶/对象/上传下载）。
+
 ### 5.2 php 站点 nginx 模板
 
 php 站点 fastcgi 段**必须显式包含** `fastcgi_param CONTENT_TYPE $content_type;` 与 `fastcgi_param CONTENT_LENGTH $content_length;`——nginx 的 `fastcgi_params` 文件不含这两条（在 fastcgi.conf 里），缺失会导致 **PHP 收不到任何 POST body**（GET 正常，极难察觉）。修改 conf 后存量站点需重新生成或 sed 补行 + reload。

@@ -3,7 +3,9 @@ import type { DbAdminInstance, DbAuditItem } from '@/api/modules/dbadmin'
 import apiDBA from '@/api/modules/dbadmin'
 import InstanceTree, { type TreeSelection } from './components/InstanceTree.vue'
 import MongoWorkbench from './components/MongoWorkbench.vue'
+import Neo4jWorkbench from './components/Neo4jWorkbench.vue'
 import RedisWorkbench from './components/RedisWorkbench.vue'
+import S3Workbench from './components/S3Workbench.vue'
 import SqlWorkbench from './components/SqlWorkbench.vue'
 import { i18n, tr } from '@/locales'
 
@@ -14,7 +16,7 @@ defineOptions({
 })
 
 const TYPE_LABEL: Record<string, string> = {
-  mysql: 'MySQL', postgres: 'PostgreSQL', redis: 'Redis', mongo: 'MongoDB',
+  mysql: 'MySQL', postgres: 'PostgreSQL', redis: 'Redis', mongo: 'MongoDB', neo4j: 'Neo4j', s3: 'S3 对象存储',
 }
 
 const instances = ref<DbAdminInstance[]>([])
@@ -182,6 +184,16 @@ onMounted(loadInstances)
                 :instance-id="sel.instanceId"
                 :db="sel.db"
                 :collection="sel.table"
+              />
+              <Neo4jWorkbench
+                v-else-if="activeInst.type === 'neo4j'"
+                :instance-id="sel.instanceId"
+                :db="sel.db || 'neo4j'"
+              />
+              <S3Workbench
+                v-else-if="activeInst.type === 's3'"
+                :instance-id="sel.instanceId"
+                :db="sel.db"
               />
             </div>
           </template>

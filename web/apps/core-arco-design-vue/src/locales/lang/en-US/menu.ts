@@ -32,6 +32,7 @@ export default {
   containerVolumes: 'Volumes',
   containerEnvs: 'Environments',
   containerSettings: 'Settings',
+  containerMiddleware: 'Middleware',
   containerDetail: 'Container Detail',
   containerAppDetail: 'App Detail',
   compose: 'Compose',

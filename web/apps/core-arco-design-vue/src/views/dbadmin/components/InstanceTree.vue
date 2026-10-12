@@ -28,6 +28,8 @@ const TYPE_DOT: Record<string, string> = {
   postgres: 'bg-teal-500',
   redis: 'bg-rose-500',
   mongo: 'bg-emerald-500',
+  neo4j: 'bg-sky-500',
+  s3: 'bg-amber-500',
 }
 
 const instances = ref<DbAdminInstance[]>([])
@@ -95,7 +97,8 @@ async function toggleInstance(inst: DbAdminInstance, forceSelect = false) {
 
 async function toggleDb(inst: DbAdminInstance, dbName: string) {
   // Redis 库是纯叶子：只选中（右侧进入 key 浏览工作台），不展开、不请求表清单
-  if (inst.type === 'redis') {
+  // M68：S3 的桶同为纯叶子（右侧进入对象工作台）
+  if (inst.type === 'redis' || inst.type === 's3') {
     emitSelect(inst.id, inst.type, dbName, '', '', '', 0)
     return
   }

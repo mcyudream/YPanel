@@ -30,6 +30,22 @@ export function isPortField(f: StoreFormField) {
   return f.rule === 'paramPort' || f.rule === 'paramPortRange' || (f.envKey || '').toUpperCase().includes('PORT')
 }
 
+export interface StoreMiddlewareDecl {
+  type: string
+  prefix: string
+  required?: boolean
+  label?: string
+  minVersion?: string
+  endpoint?: string
+}
+
+export interface StoreOptionalSvc {
+  id: string
+  label: string
+  compose?: string
+  env?: Record<string, string>
+}
+
 export interface StoreVersion {
   id: string
   name: string
@@ -37,6 +53,8 @@ export interface StoreVersion {
   localDir?: string
   releaseNotes?: string
   formFields: StoreFormField[]
+  middleware?: StoreMiddlewareDecl[]
+  optionalServices?: StoreOptionalSvc[]
 }
 
 export interface StoreApp {
@@ -200,7 +218,7 @@ export const storeApi = {
   },
   saveInstallEnv: (project: string, content: string) =>
     api.put(`api/v1/store/installed/${encodeURIComponent(project)}/env`, { content }, { timeout: 300000 }),
-  install: async (data: { sourceId: number, key: string, version: string, name: string, params: Record<string, string>, domain?: string, nodeId?: string, network?: string, createNetwork?: boolean, timezone?: string, extraHosts?: string[], mountHostsFile?: boolean, externalDB?: { instanceId: number, database?: string, user?: string, createIfMissing?: boolean, redisInstanceId?: number } }) => {
+  install: async (data: { sourceId: number, key: string, version: string, name: string, params: Record<string, string>, domain?: string, nodeId?: string, network?: string, createNetwork?: boolean, timezone?: string, extraHosts?: string[], mountHostsFile?: boolean, externalDB?: { instanceId: number, database?: string, user?: string, createIfMissing?: boolean, redisInstanceId?: number, neo4jInstanceId?: number, s3InstanceId?: number, middlewareInstanceIds?: Record<string, number>, optionalServices?: string[] } }) => {
     const res = await api.post('api/v1/store/install', data, { timeout: 60000 })
     return res.data as { taskId: number, project: string }
   },

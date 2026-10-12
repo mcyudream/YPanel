@@ -4,7 +4,7 @@ import api from '../index'
 export interface DbAdminInstance {
   id: number
   name: string
-  type: 'mysql' | 'postgres' | 'redis' | 'mongo'
+  type: 'mysql' | 'postgres' | 'redis' | 'mongo' | 'neo4j' | 's3'
   origin: string
   host: string
   port: number
@@ -222,5 +222,70 @@ export default {
   audits: async (instanceId?: number, page = 1, size = 20) => {
     const res = await api.get(`${GET}/audits${q({ instanceId, page, size })}`, { silent: true })
     return res.data as { items: DbAuditItem[], total: number }
+  },
+
+  // ---- M68 Neo4j 图工作台 ----
+  neo4jMeta: async (id: number, db: string) => {
+    const res = await api.get(`${GET}/${id}/neo4j/meta${q({ db })}`, { silent: true })
+    return res.data as { labels: { name: string, nodes: number }[], relTypes: { name: string, nodes: number }[] }
+  },
+  neo4jCypher: async (id: number, db: string, cypher: string, limit?: number) => {
+    const res = await api.post(`${GET}/${id}/neo4j/cypher`, { db, cypher, limit }, { timeout: 60000 })
+    return res.data as DbQueryResult
+  },
+  neo4jNodes: async (id: number, db: string, label: string, skip = 0, limit = 50) => {
+    const res = await api.get(`${GET}/${id}/neo4j/nodes${q({ db, label, skip, limit })}`, { silent: true })
+    return res.data as { nodes: string[], total: number, skip: number, limit: number }
+  },
+  neo4jNodeCreate: async (id: number, req: { db: string, label: string, props: string }) => {
+    const res = await api.post(`${GET}/${id}/neo4j/node`, req)
+    return res.data as { id: number }
+  },
+  neo4jNodeUpdate: async (id: number, req: { db: string, id: string, props: string }) => {
+    await api.post(`${GET}/${id}/neo4j/node/update`, req)
+  },
+  neo4jNodeDelete: async (id: number, req: { db: string, id: string, detach?: boolean }) => {
+    await api.post(`${GET}/${id}/neo4j/node/delete`, req)
+  },
+  neo4jIndexes: async (id: number, db: string, label?: string) => {
+    const res = await api.get(`${GET}/${id}/neo4j/indexes${q({ db, label })}`, { silent: true })
+    return res.data as Record<string, unknown>[]
+  },
+  neo4jConstraints: async (id: number, db: string, label?: string) => {
+    const res = await api.get(`${GET}/${id}/neo4j/constraints${q({ db, label })}`, { silent: true })
+    return res.data as Record<string, unknown>[]
+  },
+  neo4jIndexCreate: async (id: number, req: { db: string, name?: string, label: string, props: string[], unique?: boolean }) => {
+    await api.post(`${GET}/${id}/neo4j/index/create`, req)
+  },
+  neo4jIndexDrop: async (id: number, req: { db: string, name: string }) => {
+    await api.post(`${GET}/${id}/neo4j/index/drop`, req)
+  },
+
+  // ---- M68 S3 对象工作台 ----
+  s3Objects: async (id: number, bucket: string, prefix = '', startAfter = '', limit = 200) => {
+    const res = await api.get(`${GET}/${id}/s3/objects${q({ db: bucket, prefix, startAfter, limit })}`, { silent: true })
+    return res.data as { objects: { key: string, size: number, lastModified?: string, isDir: boolean }[], prefix: string, truncated: boolean }
+  },
+  s3ObjectDelete: async (id: number, bucket: string, key: string) => {
+    await api.post(`${GET}/${id}/s3/object/delete`, { db: bucket, key })
+  },
+  s3ObjectDownload: async (id: number, bucket: string, key: string) => {
+    const res = await api.get(`${GET}/${id}/s3/object/download${q({ db: bucket, key })}`, { responseType: 'blob', timeout: 600000 })
+    const blob = res.data as Blob
+    const name = key.split('/').pop() || key
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = name
+    a.click()
+    URL.revokeObjectURL(url)
+  },
+  s3ObjectUpload: async (id: number, bucket: string, key: string, file: File) => {
+    const form = new FormData()
+    form.append('db', bucket)
+    form.append('key', key)
+    form.append('file', file)
+    await api.post(`${GET}/${id}/s3/object/upload`, form, { headers: { 'Content-Type': 'multipart/form-data' }, timeout: 600000 })
   },
 }

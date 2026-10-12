@@ -14,6 +14,8 @@ import { i18n, tr } from '@/locales'
 import YdLogViewer from '@/components/YdLogViewer/index.vue'
 import YdDangerDelete from '@/components/YdDangerDelete/index.vue'
 import YdNodeSelect from '@/components/YdNodeSelect/index.vue'
+import mwApi from '@/api/modules/middleware'
+import type { MiddlewareReuseOption } from '@/api/modules/middleware'
 import YdOwnerDialog from '@/components/YdOwnerDialog/index.vue'
 import { useTaskJob } from '@/composables/useTaskJob'
 
@@ -206,6 +208,79 @@ const redisSource = ref<'default' | 'external'>('default')
 const redisInstances = ref<DbInstance[]>([])
 const redisTarget = ref<{ instanceId: number }>({ instanceId: 0 })
 
+// M68：可复用中间件声明驱动——s3/neo4j 走数据库纳管实例，registry 类型走中间件登记实例
+const mwDecls = computed(() => {
+  const v = detailVersions.value.find(x => x.id === installForm.value.version)
+  return v?.middleware || []
+})
+const s3Decl = computed(() => mwDecls.value.find(d => d.type === 's3'))
+const neo4jDecl = computed(() => mwDecls.value.find(d => d.type === 'neo4j'))
+const regDecls = computed(() => mwDecls.value.filter(d => d.type !== 's3' && d.type !== 'neo4j'))
+const optSvcs = computed(() => {
+  const v = detailVersions.value.find(x => x.id === installForm.value.version)
+  return v?.optionalServices || []
+})
+const s3Source = ref<'default' | 'external'>('default')
+const s3Target = ref<{ instanceId: number }>({ instanceId: 0 })
+const s3Instances = ref<DbInstance[]>([])
+const neo4jSource = ref<'default' | 'external'>('default')
+const neo4jTarget = ref<{ instanceId: number }>({ instanceId: 0 })
+const neo4jInstances = ref<DbInstance[]>([])
+const mwTargets = ref<Record<string, number>>({})
+const mwCandidates = ref<Record<string, MiddlewareReuseOption[]>>({})
+const optSelected = ref<string[]>([])
+
+async function loadMWData() {
+  if (s3Decl.value && !s3Instances.value.length) {
+    try {
+      s3Instances.value = ((await dbApi.list()) || []).filter(i => i.type === 's3')
+    }
+    catch {}
+  }
+  if (neo4jDecl.value && !neo4jInstances.value.length) {
+    try {
+      neo4jInstances.value = ((await dbApi.list()) || []).filter(i => i.type === 'neo4j')
+    }
+    catch {}
+  }
+  for (const d of regDecls.value) {
+    if (mwCandidates.value[d.type])
+      continue
+    try {
+      const res = await mwApi.reuseOptions(d.type, d.prefix)
+      mwCandidates.value[d.type] = (res.data ?? []) as MiddlewareReuseOption[]
+    }
+    catch {
+      mwCandidates.value[d.type] = []
+    }
+  }
+}
+
+// registry 中间件候选下拉选项（版本不达标禁选）
+function mwOptions(type: string) {
+  const list = mwCandidates.value[type] || []
+  return [
+    { label: '应用自带 / 手填', value: 0 },
+    ...list.map(i => ({ label: `${i.name}（${i.host}:${i.port}${i.version ? ` v${i.version}` : ''}）${i.reusable ? '' : ' — 版本低于基线'}`, value: i.id, disabled: !i.reusable })),
+  ]
+}
+
+// M68 接管字段：勾选复用后，对应前缀的原始连接字段隐藏
+function isMwManagedField(envKey?: string) {
+  const k = (envKey || '').toUpperCase()
+  if (!k)
+    return false
+  if (s3Decl.value && s3Source.value === 'external' && k.startsWith(s3Decl.value.prefix.toUpperCase() + '_'))
+    return true
+  if (neo4jDecl.value && neo4jSource.value === 'external' && k.startsWith(neo4jDecl.value.prefix.toUpperCase() + '_'))
+    return true
+  for (const d of regDecls.value) {
+    if ((mwTargets.value[d.type] || 0) > 0 && k.startsWith(d.prefix.toUpperCase() + '_'))
+      return true
+  }
+  return false
+}
+
 const dbHostKey = computed(() => {
   for (const f of installFields.value) {
     const k = (f.envKey || '').toUpperCase()
@@ -244,7 +319,7 @@ function isDbManagedField(envKey?: string) {
       return true
     }
   }
-  return false
+  return isMwManagedField(envKey)
 }
 
 // 数据库键集类型：mongo 键集只能配 mongo 实例，其余（mysql/pg）混列
@@ -404,7 +479,15 @@ async function openInstall(item: StoreAppItem, versionId = '') {
   installTZValue.value = 'Asia/Shanghai'
   installMountHosts.value = false
   installHosts.value = []
+  // M68 重置复用与可选组件状态
+  s3Source.value = 'default'
+  s3Target.value = { instanceId: 0 }
+  neo4jSource.value = 'default'
+  neo4jTarget.value = { instanceId: 0 }
+  mwTargets.value = {}
+  optSelected.value = []
   void loadNetworks()
+  void loadMWData()
   installForm.value = { version: versionId || item.latestVersion || '', name: item.key, domain: '', params: {} }
   installTaskId.value = 0
   installTask.value = null
@@ -461,6 +544,10 @@ async function doInstall() {
             user: dbTarget.value.user || undefined,
             createIfMissing: dbTarget.value.createIfMissing,
             redisInstanceId: redisSource.value === 'external' ? redisTarget.value.instanceId : 0,
+            neo4jInstanceId: neo4jSource.value === 'external' ? neo4jTarget.value.instanceId : 0,
+            s3InstanceId: s3Source.value === 'external' ? s3Target.value.instanceId : 0,
+            middlewareInstanceIds: Object.fromEntries(Object.entries(mwTargets.value).filter(([, v]) => v > 0)),
+            optionalServices: optSelected.value.length ? optSelected.value : undefined,
           }
         : undefined,
     })
@@ -1294,6 +1381,68 @@ function statusText(s: StoreSource) {
               :options="[{ label: $t('store.redisPick'), value: 0, disabled: true }, ...redisInstances.map(i => ({ label: `${i.name}（:${i.port}）`, value: i.id }))]"
               button-class="w-full"
             />
+          </div>
+        </div>
+        <!-- M68：可复用中间件（声明驱动；只查找复用，不创建） -->
+        <div v-if="s3Decl" class="flex items-start gap-3">
+          <span class="w-28 shrink-0 pt-2 text-sm text-muted-foreground">{{ s3Decl.label || '对象存储(S3)' }}</span>
+          <div class="flex min-w-0 flex-1 flex-col gap-2">
+            <YdSelect
+              v-model="s3Source"
+              :options="[
+                { label: '应用自带 / 手填', value: 'default' },
+                { label: '复用已有对象存储实例（自动建桶）', value: 'external' },
+              ]"
+              button-class="w-full"
+            />
+            <YdSelect
+              v-if="s3Source === 'external'"
+              v-model="s3Target.instanceId"
+              :options="[{ label: '选择 s3 实例', value: 0, disabled: true }, ...s3Instances.map(i => ({ label: `${i.name}（${i.host}:${i.port}）`, value: i.id }))]"
+              button-class="w-full"
+            />
+          </div>
+        </div>
+        <div v-if="neo4jDecl" class="flex items-start gap-3">
+          <span class="w-28 shrink-0 pt-2 text-sm text-muted-foreground">{{ neo4jDecl.label || 'Neo4j' }}</span>
+          <div class="flex min-w-0 flex-1 flex-col gap-2">
+            <YdSelect
+              v-model="neo4jSource"
+              :options="[
+                { label: '应用自带 / 手填', value: 'default' },
+                { label: '复用已有 Neo4j 实例', value: 'external' },
+              ]"
+              button-class="w-full"
+            />
+            <YdSelect
+              v-if="neo4jSource === 'external'"
+              v-model="neo4jTarget.instanceId"
+              :options="[{ label: '选择 Neo4j 实例', value: 0, disabled: true }, ...neo4jInstances.map(i => ({ label: `${i.name}（${i.host}:${i.port}）`, value: i.id }))]"
+              button-class="w-full"
+            />
+          </div>
+        </div>
+        <div v-for="d in regDecls" :key="d.type" class="flex items-start gap-3">
+          <span class="w-28 shrink-0 pt-2 text-sm text-muted-foreground">{{ d.label || d.type }}</span>
+          <div class="flex min-w-0 flex-1 flex-col gap-1">
+            <YdSelect
+              v-model="mwTargets[d.type]"
+              :options="mwOptions(d.type)"
+              button-class="w-full"
+            />
+            <span class="text-[10px] text-muted-foreground">
+              复用已有实例自动注入 {{ d.prefix.toUpperCase() }}_HOST/PORT/USER/PASSWORD 等参数；无实例请先在「容器 → 中间件」登记<template v-if="d.minVersion">（最低可复用版本 {{ d.minVersion }}）</template>
+            </span>
+          </div>
+        </div>
+        <!-- M68：可选伴生服务 -->
+        <div v-if="optSvcs.length" class="flex items-start gap-3">
+          <span class="w-28 shrink-0 pt-2 text-sm text-muted-foreground">可选组件</span>
+          <div class="flex min-w-0 flex-1 flex-wrap gap-3">
+            <label v-for="svc in optSvcs" :key="svc.id" class="flex cursor-pointer items-center gap-1.5 text-sm">
+              <input v-model="optSelected" type="checkbox" :value="svc.id" class="accent-[var(--primary)]" />
+              {{ svc.label }}
+            </label>
           </div>
         </div>
         <template v-for="f in installFields" :key="f.envKey">

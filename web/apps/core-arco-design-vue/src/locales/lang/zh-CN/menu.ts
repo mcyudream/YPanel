@@ -32,6 +32,7 @@ export default {
   containerVolumes: '卷',
   containerEnvs: '环境',
   containerSettings: '配置',
+  containerMiddleware: '中间件',
   containerDetail: '容器详情',
   containerAppDetail: '应用详情',
   compose: 'Compose 编排',
