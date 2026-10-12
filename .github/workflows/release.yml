@@ -21,6 +21,7 @@ jobs:
     env:
       # job 级注入：step 的 if 才能读到（step 自身 env 在 if 中不可见）
       GITEE_TOKEN: ${{ secrets.GITEE_TOKEN }}
+      GITLAB_TOKEN: ${{ secrets.GITLAB_TOKEN }}
     steps:
       - uses: actions/checkout@v4
 
@@ -121,3 +122,37 @@ jobs:
             echo " <- $f"
           done
           echo "若附件缺失：本地执行 GITEE_TOKEN=xxx bash deploy/mirror-release.sh ${TAG} 完成镜像"
+
+      # 自建 GitLab 兜底源同步（gitlab.yudream.online）：把三资产挂到同 tag Release（匿名可读）。
+      # 需在 GitHub repo secrets 配置 GITLAB_TOKEN（GitLab project maintainers token），未配置自动跳过。
+      - name: Sync to GitLab release
+        if: ${{ env.GITLAB_TOKEN != '' }}
+        continue-on-error: true
+        run: |
+          set -e
+          TAG="${GITHUB_REF_NAME}"
+          BASE="https://gitlab.yudream.online/api/v4/projects/yudream%2Fypanel"
+          AUTH="PRIVATE-TOKEN: ${GITLAB_TOKEN}"
+          # 幂等：同 tag Release 存在则复用，否则创建
+          CODE=$(curl -sS --max-time 20 -o /dev/null -w '%{http_code}' -H "$AUTH" "${BASE}/releases/${TAG}")
+          if [ "$CODE" != "200" ]; then
+            curl -sS --max-time 30 -X POST -H "$AUTH" -H "Content-Type: application/json" \
+              -d "{\"tag_name\":\"${TAG}\",\"name\":\"YPanel ${TAG}\",\"description\":\"YPanel ${TAG} - synced from the GitHub release\"}" \
+              "${BASE}/releases" -o /dev/null
+            echo "gitlab release created: ${TAG}"
+          fi
+          # 逐个上传（GitLab uploads 端点）并把返回的相对路径登记为 Release 直链
+          for f in build/ypanel-linux-amd64.tar.gz build/ypanel-linux-arm64.tar.gz build/sha256sums.txt; do
+            NAME=$(basename "$f")
+            UP=$(curl -sS --max-time 300 -H "$AUTH" -F "file=@${f}" "${BASE}/uploads")
+            RELURL=$(echo "$UP" | grep -o '"url":"[^"]*"' | head -1 | cut -d'"' -f4)
+            if [ -z "$RELURL" ]; then
+              echo "upload failed: ${NAME}: ${UP}"
+              continue
+            fi
+            curl -sS --max-time 30 -X POST -H "$AUTH" -H "Content-Type: application/json" \
+              -d "{\"name\":\"${NAME}\",\"url\":\"https://gitlab.yudream.online${RELURL}\",\"direct_asset_path\":\"/${NAME}\"}" \
+              "${BASE}/releases/${TAG}/assets/links" -o /dev/null
+            echo "linked: ${NAME}"
+          done
+          echo "gitlab sync done: ${BASE}/-/releases/${TAG}"

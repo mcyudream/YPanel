@@ -42,7 +42,7 @@ async function checkOnline() {
   }
 }
 
-function bestSource(): 'github' | 'gitee' {
+function bestSource(): 'github' | 'gitee' | 'gitlab' {
   if (!online.value) {
     return 'gitee'
   }
@@ -50,13 +50,14 @@ function bestSource(): 'github' | 'gitee' {
   if (!ok.length) {
     return 'gitee'
   }
-  // 版本相同优先 gitee（国内下载快），否则选版本更高的源
+  // 版本相同优先 gitee（国内下载快）> gitlab（自建兜底）> github，否则选版本更高的源
+  const prefer: Record<string, number> = { gitee: 0, gitlab: 1, github: 2 }
   const sorted = [...ok].sort((a, b) => {
     const cmp = compareV(b.version, a.version)
     if (cmp !== 0) {
       return cmp
     }
-    return a.source === 'gitee' ? -1 : 1
+    return prefer[a.source] - prefer[b.source]
   })
   return sorted[0].source
 }
@@ -215,7 +216,7 @@ onMounted(load)
               :class="src.reachable ? (src.assetUrl ? 'bg-emerald-500/10 text-emerald-600' : 'bg-amber-500/10 text-amber-600') : 'bg-muted text-muted-foreground'"
               :title="src.error || ''"
             >
-              {{ src.source === 'gitee' ? 'Gitee' : 'GitHub' }}: {{ !src.reachable ? $t('selfupdate.online.unreachable') : src.assetUrl ? src.version : $t('selfupdate.online.noAsset') }}
+              {{ src.source === 'gitee' ? 'Gitee' : src.source === 'gitlab' ? 'GitLab' : 'GitHub' }}: {{ !src.reachable ? $t('selfupdate.online.unreachable') : src.assetUrl ? src.version : $t('selfupdate.online.noAsset') }}
             </span>
             <span v-if="online.currentIsDev" class="rounded-full bg-sky-500/10 px-2 py-0.5 text-sky-600">{{ $t('selfupdate.online.devVersion') }}</span>
             <span v-else-if="!online.updatable && online.latest" class="rounded-full bg-emerald-500/10 px-2 py-0.5 text-emerald-600">{{ $t('selfupdate.online.upToDate') }}</span>

@@ -17,7 +17,7 @@ func (s *AIService) aiToolsNetSec(ctx context.Context) []aiToolDef {
 		{
 			Name: "get_network_security", Module: aiModNetSec, Risk: aiRiskRead,
 			Desc: "聚合查询网络安全配置：防火墙状态与放行规则、NAT 转发规则、Hosts 解析记录、内网 DNS 记录。input 传 {}。",
-			Parameters: schObj(map[string]any{"node": schStr("目标节点，默认 local")}),
+			Parameters: schObj(map[string]any{"node": schStr("目标节点 ID（list_nodes 返回数组项的 id；local=本机；不要传节点名）"),}),
 			Fn: func(ctx context.Context, input string) (string, error) {
 				p, err := parseToolArgs[struct {
 					Node string `json:"node"`
@@ -55,7 +55,7 @@ func (s *AIService) aiToolsNetSec(ctx context.Context) []aiToolDef {
 			Name: "firewall_rule_add", Module: aiModNetSec, Risk: aiRiskWrite,
 			Desc: "放行防火墙端口。input JSON：{\"port\":\"80 或 3000:3010\",\"proto\":\"tcp|udp\"}",
 			Parameters: schObj(map[string]any{
-				"port": schStr("端口或端口段"), "proto": schEnum("协议", "tcp", "udp"), "node": schStr("目标节点，默认 local"),
+				"port": schStr("端口或端口段"), "proto": schEnum("协议", "tcp", "udp"), "node": schStr("目标节点 ID（list_nodes 返回数组项的 id；local=本机；不要传节点名）"),,
 			}, "port", "proto", "node"),
 			Fn: func(_ context.Context, input string) (string, error) {
 				p, err := parseToolArgs[struct {
@@ -82,7 +82,7 @@ func (s *AIService) aiToolsNetSec(ctx context.Context) []aiToolDef {
 		{
 			Name: "firewall_rule_remove", Module: aiModNetSec, Risk: aiRiskDanger,
 			Desc: "删除防火墙放行规则（编号见 get_network_security，误删可能锁死访问，会先向用户确认）。input JSON：{\"number\":规则编号}",
-			Parameters: schObj(map[string]any{"number": schInt("规则编号"), "node": schStr("目标节点，默认 local")}, "number", "node"),
+			Parameters: schObj(map[string]any{"number": schInt("规则编号"), "node": schStr("目标节点 ID（list_nodes 返回数组项的 id；local=本机；不要传节点名）"),}, "number", "node"),
 			Fn: func(_ context.Context, input string) (string, error) {
 				p, err := parseToolArgs[struct {
 					Number int    `json:"number"`
@@ -107,7 +107,7 @@ func (s *AIService) aiToolsNetSec(ctx context.Context) []aiToolDef {
 			Parameters: schObj(map[string]any{
 				"id": schInt("更新已有规则时传"), "name": schStr("规则名"), "protocol": schEnum("协议", "tcp", "udp"),
 				"listenPort": schInt("监听端口"), "targetIp": schStr("目标 IP"), "targetPort": schInt("目标端口"),
-				"enabled": schBool("启用"), "node": schStr("目标节点 ID，默认 local"),
+				"enabled": schBool("启用"), "node": schStr("目标节点 ID（list_nodes 返回数组项的 id；local=本机；不要传节点名）"),,
 			}, "name", "protocol", "listenPort", "targetIp", "targetPort", "node"),
 			Fn: func(_ context.Context, input string) (string, error) {
 				p, err := parseToolArgs[struct {

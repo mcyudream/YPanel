@@ -24,11 +24,14 @@ const (
 	GiteeLatestPageURL = "https://gitee.com/mcyudream/ypanel/releases/latest"
 	GiteeRepoBase      = "https://gitee.com/mcyudream/ypanel"
 	GithubRepoBase     = "https://github.com/mcyudream/YPanel"
+	// 自建 GitLab 兜底源（yudream 团队私有实例；CI 从 GitHub Release 自动同步资产）。
+	GitlabBase      = "https://gitlab.yudream.online"
+	GitlabLatestURL = GitlabBase + "/api/v4/projects/yudream%2Fypanel/releases?per_page=1"
 )
 
 // OnlineRelease 单一源的最新 Release 信息。
 type OnlineRelease struct {
-	Source    string `json:"source"` // github|gitee
+	Source    string `json:"source"` // github|gitee|gitlab
 	Reachable bool   `json:"reachable"`
 	Version   string `json:"version,omitempty"` // tag
 	Name      string `json:"name,omitempty"`
@@ -73,6 +76,9 @@ func fetchViaAPI(ctx context.Context, source string) OnlineRelease {
 	if source == "gitee" {
 		url = GiteeLatestURL
 	}
+	if source == "gitlab" {
+		return fetchViaGitlab(ctx)
+	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		out.Error = err.Error()
@@ -116,6 +122,74 @@ func fetchViaAPI(ctx context.Context, source string) OnlineRelease {
 	return out
 }
 
+// gitlabReleasePayload 自建 GitLab Release 响应子集（assets.links 结构与 GitHub 不同）。
+type gitlabReleasePayload struct {
+	TagName     string `json:"tag_name"`
+	Name        string `json:"name"`
+	Description string `json:"description"`
+	ReleasedAt  string `json:"released_at"`
+	Assets      struct {
+		Links []struct {
+			Name string `json:"name"`
+			URL  string `json:"url"`
+		} `json:"links"`
+	} `json:"assets"`
+}
+
+// fetchViaGitlab 自建 GitLab 兜底源（匿名可读；资产由 GitHub CI 自动同步）。
+func fetchViaGitlab(ctx context.Context) OnlineRelease {
+	out := OnlineRelease{Source: "gitlab"}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, GitlabLatestURL, nil)
+	if err != nil {
+		out.Error = err.Error()
+		return out
+	}
+	req.Header.Set("Accept", "application/json")
+	client := &http.Client{Timeout: 12 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		out.Error = err.Error()
+		return out
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusOK {
+		out.Error = fmt.Sprintf("HTTP %d", resp.StatusCode)
+		return out
+	}
+	var list []gitlabReleasePayload
+	if err := json.NewDecoder(resp.Body).Decode(&list); err != nil {
+		out.Error = err.Error()
+		return out
+	}
+	if len(list) == 0 {
+		out.Error = "GitLab 暂无 Release（等 CI 同步）"
+		return out
+	}
+	gl := list[0]
+	out.Reachable = true
+	out.Version = normalizeTag(gl.TagName)
+	out.Name = gl.Name
+	out.Notes = gl.Description
+	out.Published = gl.ReleasedAt
+	asset := "ypanel-linux-" + runtime.GOARCH + ".tar.gz"
+	for _, a := range gl.Assets.Links {
+		u := a.URL
+		if u != "" && !strings.HasPrefix(u, "http") {
+			u = GitlabBase + u
+		}
+		if a.Name == asset && out.AssetURL == "" {
+			out.AssetURL = u
+		}
+		if a.Name == "sha256sums.txt" && out.SumURL == "" {
+			out.SumURL = u
+		}
+	}
+	if out.AssetURL == "" {
+		out.Error = "Release 中缺少资产 " + asset
+	}
+	return out
+}
+
 // giteeProbeViaRedirect latest 页 302 探测（HTTP 200/302 均取 Location；无 API 限额）。
 func giteeProbeViaRedirect(ctx context.Context) *OnlineRelease {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, GiteeLatestPageURL, nil)
@@ -148,16 +222,30 @@ func giteeProbeViaRedirect(ctx context.Context) *OnlineRelease {
 	}
 }
 
-// FallbackAssetURL 双源互备：解析资产 URL 的 tag 与文件名，拼出对端源等价 URL
-// （Gitee 下载超时切 GitHub、反之亦然；解析失败返回空）。
+// FallbackAssetURL 多源互备：解析资产 URL 的 tag 与文件名，拼出对端源等价 URL
+// （Gitee 下载超时切 GitHub/GitLab，反之亦然；解析失败返回空）。
 func FallbackAssetURL(assetURL string) string {
-	for _, pair := range [][2]string{{GiteeRepoBase + "/releases/download/", GithubRepoBase + "/releases/download/"}} {
-		from, to := pair[0], pair[1]
-		if strings.HasPrefix(assetURL, from) {
-			return to + strings.TrimPrefix(assetURL, from)
+	file := ""
+	for _, base := range []string{
+		GiteeRepoBase + "/releases/download/",
+		GithubRepoBase + "/releases/download/",
+		GitlabBase + "/yudream/ypanel/-/releases/download/",
+	} {
+		if strings.HasPrefix(assetURL, base) {
+			file = strings.TrimPrefix(assetURL, base)
+			break
 		}
-		if strings.HasPrefix(assetURL, to) {
-			return from + strings.TrimPrefix(assetURL, to)
+	}
+	if file == "" {
+		return ""
+	}
+	for _, alt := range []string{
+		GiteeRepoBase + "/releases/download/" + file,
+		GithubRepoBase + "/releases/download/" + file,
+		GitlabBase + "/yudream/ypanel/-/releases/download/" + file,
+	} {
+		if alt != assetURL {
+			return alt
 		}
 	}
 	return ""
@@ -209,7 +297,8 @@ func ApplyDetachedCommand(applyScript, logFile string) string {
 // ValidateAssetURL 资产域名白名单校验（URL 来自 Release API 响应，防注入重定向到任意主机）。
 func ValidateAssetURL(assetURL string) error {
 	if strings.HasPrefix(assetURL, "https://gitee.com/") || strings.HasPrefix(assetURL, "https://github.com/") ||
-		strings.HasPrefix(assetURL, "https://objects.githubusercontent.com/") {
+		strings.HasPrefix(assetURL, "https://objects.githubusercontent.com/") ||
+		strings.HasPrefix(assetURL, GitlabBase+"/") {
 		return nil
 	}
 	return fmt.Errorf("资产地址域名不在白名单: %s", assetURL)
