@@ -108,7 +108,7 @@ func (s *CertificateService) prepareIssue(ctx context.Context, in CertIssueInput
 	for _, d := range alts {
 		fmt.Fprintf(&dArgs, " -d %s", d)
 	}
-	issue := fmt.Sprintf("%s%s --issue --dns %s%s --server %s --keylength %s",
+	issue := fmt.Sprintf(acmeEnv+"%s%s --issue --dns %s%s --server %s --keylength %s",
 		credEnv, acmeBin, dnsAPI, dArgs.String(), ca, keylen)
 	return &issuePlan{in: in, main: main, alts: alts, email: email, credEnv: credEnv,
 		dnsAPI: dnsAPI, ca: ca, keylen: keylen, issueCmd: issue, certName: certName}, nil
@@ -117,10 +117,7 @@ func (s *CertificateService) prepareIssue(ctx context.Context, in CertIssueInput
 // issueExecute 签发执行段：acme.sh 安装检查 → DNS 挑战签发 → 入库 → 钩子/探测。
 // 耗时主体（安装 180s + 签发 600s），logf 非 nil 时全程流式任务日志。
 func (s *CertificateService) issueExecute(ctx context.Context, logf TaskLogf, p *issuePlan) (*model.Certificate, error) {
-	if logf != nil {
-		logf("info", "检查 acme.sh 安装…")
-	}
-	if err := s.ensureInstalled(ctx, p.email); err != nil {
+	if err := s.ensureInstalled(ctx, logf, p.email); err != nil {
 		return nil, err
 	}
 	if logf != nil {
@@ -143,7 +140,7 @@ func (s *CertificateService) issueExecute(ctx context.Context, logf TaskLogf, p 
 		return nil, errs.New(errs.CodeFileOpFailed, "error.fileOpFailed", "ACME 签发失败: "+firstLine(out))
 	}
 	if !p.in.AutoRenew {
-		_, _ = s.run(ctx, fmt.Sprintf("%s --remove -d %s --ecc", acmeBin, p.main), 60)
+		_, _ = s.run(ctx, fmt.Sprintf(acmeEnv+"%s --remove -d %s --ecc", acmeBin, p.main), 60)
 	} else if err := s.reinstallCertHook(ctx, c); err != nil {
 		return nil, err
 	}
@@ -540,17 +537,14 @@ func (s *CertificateService) prepareAcmeAccount(in AcmeAccountInput) (*model.Acm
 // registerAcme 向 CA 预注册账户（acme.sh --register-account，输出全程记日志）。
 // 任务版失败即任务 failed（账户记录已入库，签发时会再次注册的兜底语义不变）。
 func (s *CertificateService) registerAcme(ctx context.Context, logf TaskLogf, email, caType, keyType string) error {
-	if logf != nil {
-		logf("info", "检查 acme.sh 安装…")
-	}
-	if err := s.ensureInstalled(ctx, email); err != nil {
+	if err := s.ensureInstalled(ctx, logf, email); err != nil {
 		return err
 	}
 	if logf != nil {
 		logf("info", "注册 ACME 账户到 %s（%s）…", caType, email)
 	}
-	out, code, err := s.runStream(ctx, fmt.Sprintf("%s --register-account -m %s --server %s --keylength %s",
-		acmeBin, shQuote(email), caServer(caType), keyType), 120, logf)
+	out, code, err := s.runStream(ctx, acmeEnv+fmt.Sprintf("%s --register-account -m %s --server %s --keylength %s",
+		acmeBin, shQuote(email), caServer(caType), keyType), 180, logf)
 	if err != nil {
 		return err
 	}

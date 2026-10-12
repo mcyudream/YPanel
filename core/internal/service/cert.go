@@ -140,17 +140,36 @@ func dnsProviderOf(p, accessKey, secret string) (dnsProviderEnv, error) {
 
 const acmeBin = "/root/.acme.sh/acme.sh"
 
-func (s *CertificateService) ensureInstalled(ctx context.Context, email string) error {
+// acmeEnv agent exec 的 sh 环境 HOME 为空（systemd 不回填，见 exp/go-backend.md），
+// acme.sh 安装/运行都依赖 $HOME 定位 ~/.acme.sh——所有 acme 命令统一显式 HOME。
+const acmeEnv = "export HOME=/root; "
+
+// ensureInstalled 确保 acme.sh 就绪（签发/续签/注册共用）。logf 非 nil 时安装过程进任务日志。
+func (s *CertificateService) ensureInstalled(ctx context.Context, logf TaskLogf, email string) error {
 	out, err := s.run(ctx, fmt.Sprintf("test -x %s && echo ok", acmeBin), 15)
 	if err == nil && strings.TrimSpace(out.Output) == "ok" {
 		return nil
 	}
-	install, ierr := s.run(ctx, fmt.Sprintf("curl -s https://get.acme.sh | sh -s email=%s", email), 180)
+	if logf != nil {
+		logf("info", "未检测到 acme.sh，开始安装（get.acme.sh 引导，需可达 github；国内网络可能较慢）…")
+	}
+	// 教训（生产 web-server 实锤）：①curl|sh 管道退出码是 sh 的——curl 失败输出空、sh 执行空输入
+	// 照样退出 0，网络不通被静默成"已安装"，注册/签发才报 acme.sh: not found；②agent exec 环境
+	// HOME 为空，acme.sh 会被装到 /.acme.sh。对策：落文件 -f 分步、显式 HOME、装后回读验证。
+	const installScript = "/tmp/yp-acme-install.sh"
+	out2, code, ierr := s.runStream(ctx, fmt.Sprintf(
+		"curl -fsSL https://get.acme.sh -o %s && HOME=/root sh %s email=%s; rc=$?; rm -f %s; test -x %s && echo YPACMEOK; exit $rc",
+		installScript, installScript, shQuote(email), installScript, acmeBin), 600, logf)
 	if ierr != nil {
 		return ierr
 	}
-	if install.ExitCode != 0 {
-		return errs.New(errs.CodeFileOpFailed, "error.fileOpFailed", "acme.sh 安装失败: "+firstLine(install.Output))
+	if code != 0 || !strings.Contains(out2, "YPACMEOK") {
+		return errs.New(errs.CodeFileOpFailed, "error.fileOpFailed",
+			"acme.sh 安装失败（需可达 get.acme.sh/github）: "+firstLine(tail(out2, 300))+
+			"；网络受限环境可在服务器执行：git clone https://gitee.com/neilpang/acme.sh.git && cd acme.sh && HOME=/root ./acme.sh --install --home /root/.acme.sh -m 邮箱")
+	}
+	if logf != nil {
+		logf("info", "acme.sh 安装完成")
 	}
 	return nil
 }
@@ -348,7 +367,7 @@ func (s *CertificateService) Delete(ctx context.Context, id uint) error {
 		return errs.Wrap(errs.ErrBadRequest, fmt.Sprintf("证书仍被 %d 个站点绑定，请先在站点 HTTPS 设置中解绑", n))
 	}
 	if c.Provider == "acme" {
-		_, _ = s.run(ctx, fmt.Sprintf("%s --remove -d %s --ecc", acmeBin, c.Domain), 60)
+		_, _ = s.run(ctx, fmt.Sprintf(acmeEnv+"%s --remove -d %s --ecc", acmeBin, c.Domain), 60)
 	}
 	_, _ = s.run(ctx, fmt.Sprintf("rm -f %s %s",
 		shQuote(path.Join(nginxCertDir, c.CertName+".crt")),
@@ -375,7 +394,7 @@ func (s *CertificateService) renewCore(ctx context.Context, logf TaskLogf, id ui
 	if logf != nil {
 		logf("info", "调用 acme.sh 强制续签（DNS 验证，最长 10 分钟）…")
 	}
-	out, code, err := s.runStream(ctx, creds+fmt.Sprintf("%s --renew -d %s --ecc --force", acmeBin, c.Domain), 600, logf)
+	out, code, err := s.runStream(ctx, acmeEnv+creds+fmt.Sprintf("%s --renew -d %s --ecc --force", acmeBin, c.Domain), 600, logf)
 	if err != nil {
 		return err
 	}

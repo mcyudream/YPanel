@@ -403,3 +403,10 @@
 - **根因**：GORM v2 出于安全拦截不带条件的全表删除——`db.Delete(&Model{})` 返回 `ErrMissingWhereClause`（WHERE conditions required）。该错误非业务 `*Error`，被 `errs.From` 兜底成 code 1000「系统内部错误」，真实原因只留在日志里。
 - **规避/解决**：①清空类操作显式条件：`db.Where("1 = 1").Delete(&Model{})`；②全仓排查同款：`grep "\.Delete(&model\." -A0` 后确认每个调用都带主键或条件；③**内部错误透传设计变更**（respErr）：YPanel 是自托管管理员面板，内部错误信封 message 追加真实原因摘要（截 160 字符，`系统内部错误: WHERE conditions required`），完整细节仍打日志——否则用户只见六个字无法反馈，排查全靠猜。
 - **来源**：2026-10-11 深夜，M62 验收期用户报「清空记忆失败 + 系统内部错误不能透传」（aiext.go DeleteAllMemories）。
+
+### curl|sh 安装管道吞退出码 + agent exec 无 HOME：acme.sh「装成功」实为装错位，签发时才报 not found
+
+- **现象**：生产机面板注册 ACME 账户报 `/root/.acme.sh/acme.sh: not found`；但 ensureInstalled 此前判定"已安装"通过。实机排查：`/root/.acme.sh` 根本不存在，acme.sh 被装到了 `/.acme.sh`，cron 也是 `"/.acme.sh"/acme.sh`。
+- **根因**（两坑叠加）：①`curl -s https://get.acme.sh | sh -s email=xx` 的退出码是**管道最后一个命令 sh 的**——curl 超时/失败输出空、sh 执行空输入照样退出 0，且装后不回读验证 → 网络失败（raw.githubusercontent 不通，实测 20s 超时）被静默成"安装成功"；②agent exec 的 sh 环境 **HOME 为空**（同上条 systemd 坑的 exec 通道变体），acme.sh 安装脚本按 `$HOME/.acme.sh` 落位 → 装到 `/.acme.sh`，而面板命令写死 `/root/.acme.sh`。
+- **规避/解决**：安装类命令一律**落文件分步**（`curl -fsSL URL -o /tmp/x.sh && sh /tmp/x.sh`，-f 使 HTTP 错误非零退出）+ **显式 HOME**（`export HOME=/root;` 前缀或 `HOME=/root sh`）+ **装后回读验证**（`test -x` 判标记串），三者缺一不可；acme.sh 网络受限环境的官方后门：`git clone https://gitee.com/neilpang/acme.sh.git && cd acme.sh && HOME=/root ./acme.sh --install --home /root/.acme.sh -m 邮箱`（gitee 官方镜像）。 ZeroSSL 注册 v3.1.5 会自动获取 EAB，首次冷启动可到 50s+，任务超时给足余量。
+- **来源**：2026-10-12 晚，生产 web-server 注册 ZeroSSL 失败排查（M65 任务化让失败日志首次可见；v0.9.24 修复）。
