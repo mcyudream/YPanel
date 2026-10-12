@@ -725,3 +725,10 @@
 - **根因**：rolldown（Rust 原生）chunk 渲染默认多线程并行，峰值内存叠加系统占用（VMware 虚拟机 2.5GB + 浏览器 2GB+，空闲仅 5GB）触发原生分配失败——与 Node 堆无关，`NODE_OPTIONS=--max-old-space-size` 无效。
 - **规避/解决**：`ROLLDOWN_THREADS=2 pnpm build`（限制 rolldown 并行线程，代价是打包稍慢）；根治是关掉大内存进程再构建。判定特征：失败点固定在 `rendering chunks...` 之后且报 Rust 风格 memory allocation，即套此招。
 - **来源**：2026-10-12，M65 任务化改造前端构建验证（本机 VMware 开虚拟机状态下构建）。
+
+### 后端 JSON 落库字符串直接当数组渲染：`(c.altDomains || []).join()` 在列表出现非空值即崩；任务化接口漏解信封是静默坏
+
+- **现象**：v0.9.21 升级后证书页白屏 `TypeError: (intermediate value).join is not a function`（渲染 effect 里崩，堆栈指向页面 chunk 的 render 函数）；同时 M65 任务化接口「看似提交成功」但任务中心轮询打 `/tasks/undefined`。
+- **根因**：①后端 `Certificate.AltDomains` 是 `gorm:"type:text"` 的 **JSON 数组字符串**（如 `["a.com","*.b.com"]`）直接 json 序列化，前端接口却声明 `altDomains: string[]`——类型谎报掩盖了模板对字符串调 join；空值时代码侥幸不崩（`'' || []`），列表出现带附加域名的证书即触发。同类暗雷：凡后端「JSON 落库字符串」字段（Site.Domains、AltDomains 这类），前端拿到的是 string 不是 array。②M65 新写的任务化 API 六处写成 `await api.post(...) as Promise<{taskId}>`——api 实例响应拦截器返回的是 `{code,...,data}` **信封**，仓库惯例必须 `const res = await api.post(...); return res.data`（见 dockerinstall.setMirrors 范式）；`as` 类型断言骗过 vue-tsc，运行时 taskId=undefined。
+- **规避/解决**：①API 模块导出解析助手（cert.ts `parseAltDomains(raw: unknown): string[]`：数组直返、字符串 JSON.parse 兜底空数组），渲染处统一走助手；接口类型按后端实态声明，不为渲染方便谎报。②新写 api 方法一律抄仓库既有 `res.data` 范式，禁止 `await axios调用 as Promise<T>` 直断言（断言只能骗类型不能改运行时）；review 时 grep `as Promise<{` 可一次性揪出。
+- **来源**：2026-10-12 晚，v0.9.21 发布后 142 生产证书页崩溃（v0.9.22 修复）。
