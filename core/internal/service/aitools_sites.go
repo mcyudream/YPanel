@@ -4,6 +4,8 @@ package service
 import (
 	"context"
 	"fmt"
+
+	"github.com/ypanel/core/internal/model"
 )
 
 // aiToolsSites 网站与证书工具集。
@@ -177,10 +179,11 @@ func (s *AIService) aiToolsSites(ctx context.Context) []aiToolDef {
 		},
 		{
 			Name: "issue_cert", Module: aiModSites, Risk: aiRiskWrite,
-			Desc: "签发 HTTPS 证书（异步任务：ACME DNS 挑战，自动附带泛域名；DNS 账号缺省用面板环境变量；耗时 1-10 分钟，返回任务 ID，用 get_task 跟踪）。可选 deploySiteIds：签发成功后自动绑定 HTTPS 到这些站点（用 list_sites 查站点 ID）。input JSON：{\"domain\":\"yudream.cn\",\"altDomains\":\"可选，逗号分隔\",\"autoRenew\":true,\"deploySiteIds\":[1,2]}",
+			Desc: "签发 HTTPS 证书（异步任务：ACME DNS 挑战，自动附带泛域名；dnsAccountId 缺省自动使用面板第一个 DNS 账户，无账户才回落面板环境变量；耗时 1-10 分钟，返回任务 ID，用 get_task 跟踪）。可选 deploySiteIds：签发成功后自动绑定 HTTPS 到这些站点（用 list_sites 查站点 ID）。input JSON：{\"domain\":\"yudream.cn\",\"altDomains\":\"可选，逗号分隔\",\"autoRenew\":true,\"dnsAccountId\":可选,\"deploySiteIds\":[1,2]}",
 			Parameters: schObj(map[string]any{
 				"domain": schStr("主域名（自动含 *.domain 泛域名）"), "altDomains": schStr("附加域名，逗号分隔"),
 				"autoRenew": schBool("自动续签，缺省视为 true"), "remark": schStr("备注"),
+				"dnsAccountId": schInt("可选 DNS 账户 ID（list_dns_accounts 可查；缺省自动用第一个账户）"),
 				"deploySiteIds": schArr("可选：签发成功后部署（启用 HTTPS）到这些站点", schInt("站点 ID")),
 			}, "domain"),
 			Fn: func(_ context.Context, input string) (string, error) {
@@ -195,6 +198,14 @@ func (s *AIService) aiToolsSites(ctx context.Context) []aiToolDef {
 					AutoRenew *bool `json:"autoRenew"`
 				}](input); err == nil && (s.AutoRenew == nil || *s.AutoRenew) {
 					p.AutoRenew = true // 显式缺省开启自动续签
+				}
+				if p.DnsAccountID == 0 {
+					// 缺省自动选第一个 DNS 账户（环境变量兜底仅在无任何账户时生效；与站点级签发同语义）
+					var rows []model.DnsAccount
+					_ = s.certs.db.Order("id").Limit(1).Find(&rows).Error
+					if len(rows) > 0 {
+						p.DnsAccountID = rows[0].ID
+					}
 				}
 				out, err := s.certs.IssueTask(ctx, p)
 				if err != nil {
