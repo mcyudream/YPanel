@@ -78,6 +78,30 @@ func TestNginxComposeTemplatePorts(t *testing.T) {
 	if idxPorts := strings.Index(extra, "ports:"); idxPorts < 0 || strings.Index(extra, `- "8080:8080"`) < idxPorts {
 		t.Fatalf("附加端口未落在 ports 段:\n%s", extra)
 	}
+	// 反代回环目标依赖宿主代指：模板必须带 host-gateway 解析（存量容器由 compose up 差异重建补齐）
+	if !strings.Contains(base, `extra_hosts:`) || !strings.Contains(base, `"host.docker.internal:host-gateway"`) {
+		t.Fatalf("模板缺 extra_hosts host-gateway:\n%s", base)
+	}
+}
+
+func TestNormalizeProxyTarget(t *testing.T) {
+	cases := []struct{ in, want string }{
+		{"http://localhost:3000", "http://host.docker.internal:3000"},
+		{"http://127.0.0.1:8080", "http://host.docker.internal:8080"},
+		{"http://0.0.0.0", "http://host.docker.internal"},
+		{"https://LOCALHOST", "https://host.docker.internal"},
+		{"http://localhost/path", "http://host.docker.internal/path"},
+		{"http://192.168.1.2:2001", "http://192.168.1.2:2001"},   // LAN IP 原样保留
+		{"http://app:8000", "http://app:8000"},                   // 容器名原样保留
+		{"https://demo.example.com", "https://demo.example.com"}, // 域名原样保留
+		{"ftp://127.0.0.1", "ftp://127.0.0.1"},                   // 非 http(s) 不动
+		{"", ""},
+	}
+	for _, c := range cases {
+		if got := normalizeProxyTarget(c.in); got != c.want {
+			t.Fatalf("normalizeProxyTarget(%q) = %q, want %q", c.in, got, c.want)
+		}
+	}
 }
 
 func TestIntsEqual(t *testing.T) {

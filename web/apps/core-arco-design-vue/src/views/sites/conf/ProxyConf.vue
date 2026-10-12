@@ -79,7 +79,7 @@ onMounted(load)
       <div v-for="(r, i) in edit.rules" :key="i" class="mb-2 flex items-center gap-2">
         <FaInput v-model="r.prefix" placeholder="/" class="w-32" />
         <span class="shrink-0 text-muted-foreground">→</span>
-        <FaInput v-model="r.target" placeholder="http://172.17.0.1:3000" class="flex-1" />
+        <FaInput v-model="r.target" placeholder="http://host.docker.internal:3000" class="flex-1" />
         <label class="flex w-14 shrink-0 cursor-pointer items-center justify-center gap-1 text-xs">
           <input v-model="r.ws" type="checkbox"> WS
         </label>

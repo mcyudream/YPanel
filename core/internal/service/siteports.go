@@ -93,6 +93,8 @@ func nginxComposeTemplate(extraPorts []int) string {
       - /opt/ypanel/nginx/cache:/var/cache/nginx
     networks:
       - ypanel_default
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     restart: unless-stopped
 
 networks:

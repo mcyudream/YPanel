@@ -292,6 +292,16 @@ func (s *SiteService) UpdateProxyConf(ctx context.Context, id uint, conf SitePro
 			return SiteProxyConf{}, errs.Wrap(errs.ErrBadRequest, "转发目标需为 http(s):// 地址: "+r.Target)
 		}
 	}
+	// 容器 nginx：回环目标改写为宿主代指，并确保 nginx 容器带 host-gateway（存量容器缺失时
+	// 由 compose up 检测配置差异自动重建，闪断数秒；host 模式回环语义本就正确，均跳过）
+	if s.nginxMode() != "host" {
+		for i := range conf.Rules {
+			conf.Rules[i].Target = normalizeProxyTarget(conf.Rules[i].Target)
+		}
+		if err := s.ensureNginx(ctx); err != nil {
+			return SiteProxyConf{}, err
+		}
+	}
 	if conf.CacheDuration == "" {
 		conf.CacheDuration = "12h"
 	}

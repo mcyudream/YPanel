@@ -33,6 +33,39 @@ var domainPattern = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9
 var siteNamePattern = regexp.MustCompile(`^[a-z][a-z0-9-]{1,30}[a-z0-9]$`)
 var proxyTargetPattern = regexp.MustCompile(`^https?://[a-zA-Z0-9._-]+(:[0-9]{1,5})?$`)
 
+// loopbackProxyHosts 反代目标中的回环地址（大小写不敏感）。容器 nginx 下 loopback 解析到
+// nginx 容器自身（0.0.0.0 作为目标地址不可路由，nginx -t 直接失败），无法表达「宿主机上的服务」。
+var loopbackProxyHosts = map[string]bool{"localhost": true, "127.0.0.1": true, "0.0.0.0": true}
+
+// proxyLoopbackRewritten 容器 nginx 的宿主代指地址，依赖 ypanel-nginx 的
+// extra_hosts host-gateway 解析到宿主机网桥 IP（与外接数据库三层地址策略同一口径）。
+const proxyLoopbackRewritten = "host.docker.internal"
+
+// normalizeProxyTarget 把反代目标中的回环地址改写为宿主代指（仅容器 nginx 场景调用，
+// 接管宿主 nginx 时回环语义本就正确；LAN IP 等可路由地址原样保留）。
+func normalizeProxyTarget(target string) string {
+	scheme, rest, ok := strings.Cut(target, "://")
+	if !ok || (scheme != "http" && scheme != "https") {
+		return target
+	}
+	host := rest
+	if i := strings.IndexByte(host, '/'); i >= 0 {
+		host = host[:i]
+	}
+	h, port, hasPort := strings.Cut(host, ":")
+	if !loopbackProxyHosts[strings.ToLower(h)] {
+		return target
+	}
+	rewritten := scheme + "://" + proxyLoopbackRewritten
+	if hasPort {
+		rewritten += ":" + port
+	}
+	if i := strings.IndexByte(rest, '/'); i >= 0 {
+		rewritten += rest[i:]
+	}
+	return rewritten
+}
+
 // SiteService 站点服务。
 type SiteService struct {
 	db    *gorm.DB
@@ -117,6 +150,11 @@ func (s *SiteService) ensureNginx(ctx context.Context) error {
 			&dto.ComposeActionReq{Name: nginxProject}); err != nil {
 			return err
 		}
+		// compose up 可能因模板差异（如 extra_hosts）重建容器，等 nginx 就绪再继续——
+		// 后续 writeConf 的 docker exec nginx -t 打进未 running 的容器会报 daemon 错误
+		if err := s.waitNginxReady(ctx); err != nil {
+			return err
+		}
 	}
 	// 默认配置（仅首次）
 	if _, err := agentclient.GetJSON[dto.FileReadResp](ac, ctx, "/agent/v1/files/read?path="+escapeURL(path.Join(nginxConfDir, "default.conf"))); err == nil {
@@ -141,6 +179,28 @@ server {
 	}
 	// 默认自签证书（保证 443 default_server 可启动）
 	return s.selfSign(ctx, "default", nil)
+}
+
+// waitNginxReady 等 nginx 容器就绪（compose up 因模板差异重建容器后，docker exec 需等容器
+// running 且 nginx 可校验；crash loop 等异常超时后显式报错，避免撞上模糊的 daemon 状态错误）。
+func (s *SiteService) waitNginxReady(ctx context.Context) error {
+	ac, err := s.client()
+	if err != nil {
+		return err
+	}
+	for i := 0; i < 15; i++ {
+		out, err := agentclient.DoJSON[dto.ExecReq, dto.ExecResp](ac, ctx, "POST", "/agent/v1/exec",
+			&dto.ExecReq{Command: "docker exec " + nginxContainer + " nginx -t", TimeoutSecs: 15})
+		if err == nil && out.ExitCode == 0 {
+			return nil
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(2 * time.Second):
+		}
+	}
+	return errs.Wrapc(errs.CodeFileOpFailed, "nginx 容器未就绪（重建后持续重启？请检查 conf.d 内失效的 upstream/proxy_pass 配置）")
 }
 
 // nginx 模式 setting key（container=面板容器 / host=接管本机 nginx）。
@@ -1330,6 +1390,13 @@ func (s *SiteService) Create(ctx context.Context, req SiteCreateInput) (*model.S
 				return nil, errs.Wrap(errs.ErrBadRequest, "反代目标不合法: "+r.Target)
 			}
 		}
+		// 容器 nginx：回环目标落库前改写为宿主代指（所见即所得，conf 与库存一致）
+		if s.nginxMode() != "host" {
+			req.ProxyPass = normalizeProxyTarget(req.ProxyPass)
+			for i := range req.ProxyRules {
+				req.ProxyRules[i].Target = normalizeProxyTarget(req.ProxyRules[i].Target)
+			}
+		}
 	}
 	port, err := validateSitePort(req.Port)
 	if err != nil {
@@ -1383,19 +1450,29 @@ func (s *SiteService) Create(ctx context.Context, req SiteCreateInput) (*model.S
 		return nil, err
 	}
 	if err := s.writeConf(ctx, site, confTemplate(site, false, parseWaf(site))); err != nil {
+		s.abortCreate(ctx, site)
 		return nil, err
 	}
 	if req.Type == "static" {
 		if err := s.writeStaticIndex(ctx, site); err != nil {
+			s.abortCreate(ctx, site)
 			return nil, err
 		}
 	}
 	if req.Type == "php" {
 		if err := s.writePhpProbe(ctx, site); err != nil {
+			s.abortCreate(ctx, site)
 			return nil, err
 		}
 	}
 	return site, nil
+}
+
+// abortCreate 补偿回滚半截站点：删记录 + 端口对账收回已落地的映射/放行。
+// （conf 写入失败不回滚会留下「库里有记录、conf 不存在」的半截站点，重建即撞重名。）
+func (s *SiteService) abortCreate(ctx context.Context, site *model.Site) {
+	_ = s.db.Delete(site).Error
+	_ = s.ReconcilePorts(ctx)
 }
 
 // writePhpProbe 写 PHP 探针（验收 php-fpm 链路）。

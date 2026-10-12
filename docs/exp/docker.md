@@ -93,3 +93,18 @@
 - **根因**：agent 编排列表按容器 label `com.docker.compose.project.working_dir` 分组发现外部项目，详情页把该目录透传给 `resolveProject`，后者只在该目录下按四个固定文件名（compose.yaml/compose.yml/docker-compose.yaml/docker-compose.yml）找文件。但 **working_dir 记录的是 `docker compose` 启动时的工作目录**，不保证文件在此：`docker compose -f <别处的文件>`（注意 v2 默认 working_dir=首个 -f 文件所在目录，显式 `--project-directory` 或 v1/第三方面板的启动方式会让两者背离）、up 后文件被挪走/清理，都会造成「label 指向的目录没有编排文件」。日志走容器级通道不受影响——「日志正常但编排报错」即此症。
 - **规避/解决（2026-10-12 已实现）**：`resolveProject` 目录白名单未命中时，**从项目容器的 `com.docker.compose.project.config_files` label 反查真实编排文件**（compose v2 起容器记录实际 -f 清单，多文件逗号分隔、首个为主文件；逐个 os.Stat 取第一个存在且非目录的）。142 E2E：`docker compose -p ext-e2e -f /tmp/xx.yaml --project-directory /opt/ext-e2e up -d` 精确复刻（working_dir=空目录、真实文件在 /tmp），修复前 topology 1002、修复后 topology/config 均正常返回 /tmp 文件。**局限**：文件被彻底删除（label 路径也不存在）时反查同样失败，只能引导重新纳管/重装。**复刻手法**：v2 默认 working_dir 跟 -f 文件走，直接 `-f 别处` 复刻不出用户场景，必须加 `--project-directory <空目录>`。
 - **来源**：2026-10-12，用户生产子节点应用详情报错（方案 A：label 反查，agent/internal/compose/compose.go resolveProject + compose_test.go 两用例）。
+
+### nginx 只在启动/重载时解析 proxy_pass/fastcgi_pass 静态主机名：老容器「带病存活」，一 recreate 就 crash loop
+
+- **现象**：142 的 ypanel-nginx 容器因模板变更被 compose up recreate 后陷入 crash loop（restarts 持续上涨），日志 `nginx: [emerg] host not found in upstream "php-app-adminer-test" in app-adminer-test.conf:10`；但改造前该容器已稳定运行数周。同时段面板创建站点报 `Container ... is restarting, wait until the container is running`（3004）。
+- **根因**：nginx 对 `proxy_pass`/`fastcgi_pass` 的**静态主机名只在启动和 reload 时解析**（容器名走 docker embedded DNS，只解析运行中容器；容器停止/删除后不可解析）。旧容器只要不重启，坏配置永远不会暴露；而任何触发容器重建的动作（模板差异 recreate、升级、迁移）都会让 nginx 重新读全部 conf.d——引用已停/已删容器的站点配置（商店测试应用停止后留下站点 conf 是高发源）立刻变成 emerg。即「能跑 ≠ 配置干净」。
+- **规避/解决**：① recreate 前先全量体检：`grep -hoE '(proxy_pass|fastcgi_pass)[[:space:]]+[^;]+' conf.d/*.conf` **人工对照** `docker ps` 运行中容器——注意正则贪婪坑：`[a-z0-9.:-]*` 类字符组会把 `php-app-xxx:` 整段吃掉导致交替匹配漏检，不要用「字符组+交替」试图一次匹配容器名；② 坏站点用面板删除（purgeFiles=false 只摘 conf 不动文件）；③ 容器处于 crash loop 时 docker restart 也无效（起来又崩），先清坏配置再 restart；④ 程序侧 compose up 重建容器后必须等就绪再 docker exec（见下条）。
+- **来源**：2026-10-12，站点反代回环地址改写方案 A 真机验收（142 三处存量毒配置：app-adminer-test / app-bs-test / rewrite-test 绑定已停容器）。
+
+### compose up 因模板差异重建容器后：立即 docker exec 会撞「is restarting」，必须轮询等就绪
+
+- **现象**：`docker compose up -d`（recreate）同步返回后立刻 `docker exec <c> nginx -t` 报 `Error response from daemon: Container ... is restarting, wait until the container is running`，操作失败且留下「站点记录已落库、conf 被回滚删除」的半截状态（Create 的 writeConf 失败分支不回滚站点记录——补偿缺口另行记录）。
+- **根因**：compose up 检测到配置差异（本次是给 ypanel-nginx 新增 `extra_hosts: host.docker.internal:host-gateway`）会 stop+rm+create+start；`up -d` 返回不等容器内服务可用，容器健康前 exec 一律 daemon 报错。若容器因坏配置 crash loop，则永远等不到。
+- **规避/解决**：up 后轮询 `docker exec <c> nginx -t`（或 inspect .State.Status）直至成功/超时（YPanel 实现 `SiteService.waitNginxReady`，15 次×2s，超时报「重建后持续重启？检查 conf.d 内失效 upstream」的明确错误而非 daemon 原文）。**设计含义**：给共享容器追加 extra_hosts 之类「必须 recreate 才生效」的字段要选好挂点——YPanel 挂在 ensureNginx（每次站点 Create/UpdateProxyConf 幂等执行，模板差异只在首次触发一次重建，之后 up 恒 no-op）。
+- **来源**：2026-10-12，同上（waitNginxReady 修复 + 1907-dev 真机复验通过）。
+- **补充（同日，1953-dev）**：proxy_pass 静态**域名**（不止容器名）在 nginx -t 时同样做 DNS 解析——用户手输「格式合法但不存在的域名」即触发 writeConf 失败。创建链路已补 abortCreate 补偿（删站点记录 + ReconcilePorts 收回端口落点），E2E 实锤：3004 错误后列表零残留，不再留「库里有记录、conf 不存在」的半截站点。

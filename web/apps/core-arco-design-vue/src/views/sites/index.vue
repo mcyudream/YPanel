@@ -723,7 +723,7 @@ onMounted(() => {
           <div v-for="(r, idx) in proxyRules" :key="idx" class="mb-2 flex items-center gap-2">
             <FaInput v-model="r.prefix" :placeholder="$t('sites.dialogs.create.prefixPlaceholder')" class="w-32" />
             <span class="text-muted-foreground">→</span>
-            <FaInput v-model="r.target" placeholder="http://172.17.0.1:3000" class="flex-1" />
+            <FaInput v-model="r.target" placeholder="http://host.docker.internal:3000" class="flex-1" />
             <label class="flex shrink-0 cursor-pointer items-center gap-1 text-xs">
               <input v-model="r.ws" type="checkbox"> WS
             </label>

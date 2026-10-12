@@ -111,6 +111,10 @@ php 站点 fastcgi 段**必须显式包含** `fastcgi_param CONTENT_TYPE $conten
 
 重装语义=站点目录原位保留 + 源码覆盖（.env/storage 不丢）；app.json `upgrade.backup=true` 时重装前自动 tar 站点目录（备份失败即中止），`upgrade.commands` 在版本变更时替代 install 命令执行。
 
+### 5.4 反代目标回环地址改写（容器 nginx）
+
+反代目标写 `localhost`/`127.0.0.1`/`0.0.0.0` 时，容器 nginx 下指向容器自身（loopback 出不了容器网络命名空间；0.0.0.0 作为目标地址不可路由，nginx -t 直接失败）——**落库入口（Create/UpdateProxyConf）统一改写为 `host.docker.internal`**（host-gateway 代指宿主机，同 §5.1 三层地址口径；scheme/端口/路径保留，LAN IP/容器名等可路由地址原样不动）。接管宿主 nginx 模式回环语义本就正确，不改写（远端节点副本强制 host 模式天然豁免）。配套约束：ypanel-nginx 模板必须带 `extra_hosts: host.docker.internal:host-gateway`（存量容器由 ensureNginx 的 compose up 检测模板差异自动重建补齐）；重建后必须等容器就绪（waitNginxReady）再 docker exec，且 nginx 只在启动/重载时解析静态 upstream——引用已停容器的站点配置会在任何一次容器重建时爆发 crash loop（见 docs/exp/docker.md）。
+
 ## 6. AI 工具同步规范（M33 固化）
 
 面板功能与 AI 工具注册表**必须同步维护**——功能上线而工具缺失 = 功能不完整：
