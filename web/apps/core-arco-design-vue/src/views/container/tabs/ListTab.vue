@@ -5,6 +5,8 @@ import apiContainer from '@/api/modules/container'
 import { dockerExtApi } from '@/api/modules/dockerext'
 import { dockerImgApi } from '@/api/modules/dockerenv'
 import YdDangerDelete from '@/components/YdDangerDelete/index.vue'
+import YdDataTable from '@/components/YdDataTable/index.vue'
+import type { YdDataTableColumn } from '@/components/YdDataTable/index.vue'
 import ContainerForm from '../components/ContainerForm.vue'
 import DockerInstallWizard from '../components/DockerInstallWizard.vue'
 import { i18n, tr } from '@/locales'
@@ -86,6 +88,17 @@ const filtered = computed(() => {
 })
 
 const allChecked = computed(() => filtered.value.length > 0 && filtered.value.every(c => selected.value.has(c.id)))
+
+// ---- 列定义（M67 YdDataTable）----
+const listColumns: YdDataTableColumn[] = [
+  { key: 'select', label: '', width: 36, fixed: 'left' },
+  { key: 'name', label: i18n.global.t('common.name'), width: 240, fixed: 'left' },
+  { key: 'image', label: i18n.global.t('container.common.image') },
+  { key: 'state', label: i18n.global.t('common.status'), width: 130 },
+  { key: 'ports', label: i18n.global.t('container.common.ports'), hidden: 'lg' },
+  { key: 'project', label: i18n.global.t('container.list.project'), hidden: 'xl' },
+  { key: 'actions', label: i18n.global.t('container.list.quickActions'), width: 330, fixed: 'right', align: 'right' },
+]
 
 // ---- 分页（筛选/搜索变化自动回第 1 页） ----
 const page = ref(1)
@@ -434,123 +447,103 @@ onBeforeUnmount(() => {
     </div>
     <DockerInstallWizard v-model="installVisible" @installed="onInstalled" />
 
-    <!-- 列表 -->
-    <div class="overflow-x-auto rounded-lg border">
-      <table class="w-full min-w-200 text-sm">
-        <thead class="bg-muted/50 text-left text-xs text-muted-foreground">
-          <tr>
-            <th class="w-9 px-3 py-2">
-              <input type="checkbox" :checked="allChecked" class="accent-[var(--primary)]" @change="toggleAll">
-            </th>
-            <th class="px-3 py-2">{{ $t('common.name') }}</th>
-            <th class="px-3 py-2">{{ $t('container.common.image') }}</th>
-            <th class="px-3 py-2">{{ $t('common.status') }}</th>
-            <th class="hidden px-3 py-2 lg:table-cell">{{ $t('container.common.ports') }}</th>
-            <th class="hidden px-3 py-2 xl:table-cell">{{ $t('container.list.project') }}</th>
-            <th class="px-3 py-2 text-right">{{ $t('container.list.quickActions') }}</th>
-          </tr>
-        </thead>
-        <tbody>
-          <tr v-if="loading && !filtered.length">
-            <td colspan="7" class="px-3 py-10 text-center text-muted-foreground">
-              {{ $t('common.loading') }}
-            </td>
-          </tr>
-          <tr v-else-if="!filtered.length">
-            <td colspan="7" class="px-3 py-10 text-center text-muted-foreground">
-              {{ $t('container.common.noContainers') }}
-            </td>
-          </tr>
-          <tr v-for="c in paged" :key="c.id" class="border-t transition-colors hover:bg-accent/30" :class="selected.has(c.id) ? 'bg-primary/5' : ''">
-            <td class="px-3 py-2">
-              <input type="checkbox" :checked="selected.has(c.id)" class="accent-[var(--primary)]" @change="toggle(c.id)">
-            </td>
-            <td class="max-w-64 px-3 py-2">
-              <div class="flex items-center gap-2">
-                <YdAppIcon :name="c.image" :size="20" />
-                <button type="button" class="cursor-pointer truncate font-mono text-[13px] font-medium hover:text-primary" :title="c.name" @click="openContainerDetailWin(c.id, c.name)">
-                  {{ c.name }}
-                </button>
-              </div>
-            </td>
-            <td class="max-w-48 truncate px-3 py-2 font-mono text-xs text-muted-foreground" :title="c.image">
-              {{ c.image }}
-            </td>
-            <td class="px-3 py-2">
-              <span class="inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-xs whitespace-nowrap" :class="stateStyle[c.state] || stateStyle.exited">
-                <span class="inline-block size-1.5 rounded-full" :class="c.state === 'running' ? 'animate-pulse bg-current' : 'bg-current'" />
-                {{ tr(`container.state.${c.state}`) }}<span v-if="c.status" class="hidden opacity-70 xl:inline">· {{ c.status }}</span>
-              </span>
-            </td>
-            <td class="hidden px-3 py-2 font-mono text-xs text-muted-foreground lg:table-cell">
-              <template v-if="c.ports?.some(p => p.hostPort)">
-                <span v-for="(p, i) in c.ports.filter(x => x.hostPort)" :key="i" class="mr-2 inline-flex items-center gap-0.5 whitespace-nowrap">
-                  {{ p.hostPort }}→{{ p.containerPort }}/{{ p.proto }}
-                  <button
-                    v-if="portJumpUrl(p.hostIp, p.hostPort, p.proto)" type="button"
-                    class="cursor-pointer text-muted-foreground transition-colors hover:text-primary"
-                    :title="$t('container.common.portJumpTip', { url: portJumpUrl(p.hostIp, p.hostPort, p.proto) })"
-                    @click="openPortJump(portJumpUrl(p.hostIp, p.hostPort, p.proto))"
-                  >
-                    <FaIcon name="i-lucide:external-link" class="size-3 shrink-0" />
-                  </button>
-                </span>
-              </template>
-              <span v-else>—</span>
-            </td>
-            <td class="hidden px-3 py-2 xl:table-cell">
-              <button
-                v-if="projectOf(c)" type="button"
-                class="cursor-pointer rounded-full bg-primary/10 px-2 py-0.5 text-xs text-primary hover:bg-primary/20"
-                @click="openAppDetailWin(projectOf(c))"
-              >
-                {{ projectOf(c) }}
-              </button>
-              <span v-else class="text-xs text-muted-foreground">—</span>
-            </td>
-            <td class="px-3 py-2">
-              <div class="flex items-center justify-end gap-1">
-                <FaButton v-if="c.state !== 'running'" variant="outline" size="sm" :disabled="acting === c.id + 'start'" @click="action(c, 'start')">
-                  {{ $t('common.start') }}
-                </FaButton>
-                <template v-else>
-                  <FaButton variant="outline" size="sm" :disabled="acting === c.id + 'stop'" @click="action(c, 'stop')">
-                    {{ $t('common.stop') }}
-                  </FaButton>
-                  <FaButton variant="outline" size="sm" :disabled="acting === c.id + 'restart'" @click="action(c, 'restart')">
-                    {{ $t('common.restart') }}
-                  </FaButton>
-                </template>
-                <FaButton v-if="c.state === 'running'" variant="ghost" size="icon-sm" :title="$t('container.list.terminalAndFiles')" @click="openExec(c)">
-                  <FaIcon name="i-lucide:square-terminal" class="text-sm" />
-                </FaButton>
-                <FaButton variant="ghost" size="icon-sm" :title="$t('container.list.commitTitle')" :disabled="acting === c.id + 'commit'" @click="commitOne(c)">
-                  <FaIcon name="i-lucide:camera" class="text-sm" />
-                </FaButton>
-                <FaButton variant="ghost" size="icon-sm" :title="$t('container.list.backupTitle')" :disabled="acting === c.id + 'backup'" @click="backupOne(c)">
-                  <FaIcon name="i-lucide:package" class="text-sm" />
-                </FaButton>
-                <FaButton
-                  variant="ghost" size="icon-sm"
-                  :class="isCompose(c) ? 'cursor-not-allowed opacity-40' : ''"
-                  :disabled="isCompose(c)" :title="isCompose(c) ? $t('container.common.managedByCompose') : $t('common.edit')"
-                  @click="!isCompose(c) && openEdit(c)"
-                >
-                  <FaIcon name="i-lucide:pencil" class="text-sm" />
-                </FaButton>
-                <FaButton variant="ghost" size="icon-sm" :title="$t('common.detail')" @click="openContainerDetailWin(c.id, c.name)">
-                  <FaIcon name="i-lucide:info" class="text-sm" />
-                </FaButton>
-                <FaButton variant="ghost" size="icon-sm" :title="$t('common.delete')" class="text-red-500!" :disabled="acting === c.id + 'rm'" @click="removeOne(c)">
-                  <FaIcon name="i-lucide:trash" class="text-sm" />
-                </FaButton>
-              </div>
-            </td>
-          </tr>
-        </tbody>
-      </table>
-    </div>
-    <FaPagination v-model:page="page" v-model:size="size" :total="filtered.length" class="mt-3" />
+    <!-- 列表（M67 YdDataTable：勾选/名称左固定，快捷操作右固定，中间列可拖拽换序） -->
+    <YdDataTable
+      :columns="listColumns"
+      :rows="paged"
+      storage-key="container-list"
+      :loading="loading && !filtered.length"
+      :row-class="(c: any) => (selected.has(c.id) ? 'bg-primary/5' : '')"
+      :empty-text="$t('container.common.noContainers')"
+    >
+      <template #head-select>
+        <input type="checkbox" :checked="allChecked" class="accent-[var(--primary)]" @change="toggleAll">
+      </template>
+      <template #cell-select="{ item: c }">
+        <input type="checkbox" :checked="selected.has(c.id)" class="accent-[var(--primary)]" @change="toggle(c.id)">
+      </template>
+      <template #cell-name="{ item: c }">
+        <div class="flex max-w-64 items-center gap-2">
+          <YdAppIcon :name="c.image" :size="20" />
+          <button type="button" class="cursor-pointer truncate font-mono text-[13px] font-medium hover:text-primary" :title="c.name" @click="openContainerDetailWin(c.id, c.name)">
+            {{ c.name }}
+          </button>
+        </div>
+      </template>
+      <template #cell-image="{ item: c }">
+        <span class="block max-w-48 truncate font-mono text-xs text-muted-foreground" :title="c.image">{{ c.image }}</span>
+      </template>
+      <template #cell-state="{ item: c }">
+        <span class="inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-xs whitespace-nowrap" :class="stateStyle[c.state] || stateStyle.exited">
+          <span class="inline-block size-1.5 rounded-full" :class="c.state === 'running' ? 'animate-pulse bg-current' : 'bg-current'" />
+          {{ tr(`container.state.${c.state}`) }}<span v-if="c.status" class="hidden opacity-70 xl:inline">· {{ c.status }}</span>
+        </span>
+      </template>
+      <template #cell-ports="{ item: c }">
+        <template v-if="c.ports?.some((p: any) => p.hostPort)">
+          <span v-for="(p, i) in c.ports.filter((x: any) => x.hostPort)" :key="i" class="mr-2 inline-flex items-center gap-0.5 whitespace-nowrap font-mono text-xs text-muted-foreground">
+            {{ p.hostPort }}→{{ p.containerPort }}/{{ p.proto }}
+            <button
+              v-if="portJumpUrl(p.hostIp, p.hostPort, p.proto)" type="button"
+              class="cursor-pointer text-muted-foreground transition-colors hover:text-primary"
+              :title="$t('container.common.portJumpTip', { url: portJumpUrl(p.hostIp, p.hostPort, p.proto) })"
+              @click="openPortJump(portJumpUrl(p.hostIp, p.hostPort, p.proto))"
+            >
+              <FaIcon name="i-lucide:external-link" class="size-3 shrink-0" />
+            </button>
+          </span>
+        </template>
+        <span v-else class="text-xs text-muted-foreground">—</span>
+      </template>
+      <template #cell-project="{ item: c }">
+        <button
+          v-if="projectOf(c)" type="button"
+          class="cursor-pointer rounded-full bg-primary/10 px-2 py-0.5 text-xs text-primary hover:bg-primary/20"
+          @click="openAppDetailWin(projectOf(c))"
+        >
+          {{ projectOf(c) }}
+        </button>
+        <span v-else class="text-xs text-muted-foreground">—</span>
+      </template>
+      <template #cell-actions="{ item: c }">
+        <div class="flex items-center justify-end gap-1">
+          <FaButton v-if="c.state !== 'running'" variant="outline" size="sm" :disabled="acting === c.id + 'start'" @click="action(c, 'start')">
+            {{ $t('common.start') }}
+          </FaButton>
+          <template v-else>
+            <FaButton variant="outline" size="sm" :disabled="acting === c.id + 'stop'" @click="action(c, 'stop')">
+              {{ $t('common.stop') }}
+            </FaButton>
+            <FaButton variant="outline" size="sm" :disabled="acting === c.id + 'restart'" @click="action(c, 'restart')">
+              {{ $t('common.restart') }}
+            </FaButton>
+          </template>
+          <FaButton v-if="c.state === 'running'" variant="ghost" size="icon-sm" :title="$t('container.list.terminalAndFiles')" @click="openExec(c)">
+            <FaIcon name="i-lucide:square-terminal" class="text-sm" />
+          </FaButton>
+          <FaButton variant="ghost" size="icon-sm" :title="$t('container.list.commitTitle')" :disabled="acting === c.id + 'commit'" @click="commitOne(c)">
+            <FaIcon name="i-lucide:camera" class="text-sm" />
+          </FaButton>
+          <FaButton variant="ghost" size="icon-sm" :title="$t('container.list.backupTitle')" :disabled="acting === c.id + 'backup'" @click="backupOne(c)">
+            <FaIcon name="i-lucide:package" class="text-sm" />
+          </FaButton>
+          <FaButton
+            variant="ghost" size="icon-sm"
+            :class="isCompose(c) ? 'cursor-not-allowed opacity-40' : ''"
+            :disabled="isCompose(c)" :title="isCompose(c) ? $t('container.common.managedByCompose') : $t('common.edit')"
+            @click="!isCompose(c) && openEdit(c)"
+          >
+            <FaIcon name="i-lucide:pencil" class="text-sm" />
+          </FaButton>
+          <FaButton variant="ghost" size="icon-sm" :title="$t('common.detail')" @click="openContainerDetailWin(c.id, c.name)">
+            <FaIcon name="i-lucide:info" class="text-sm" />
+          </FaButton>
+          <FaButton variant="ghost" size="icon-sm" :title="$t('common.delete')" class="text-red-500!" :disabled="acting === c.id + 'rm'" @click="removeOne(c)">
+            <FaIcon name="i-lucide:trash" class="text-sm" />
+          </FaButton>
+        </div>
+      </template>
+    </YdDataTable>
 
     <ContainerForm v-model="createVisible" mode="create" @created="load(true)" />
     <ContainerForm v-model="editVisible" mode="edit" :container-id="editId" @saved="load(true)" />

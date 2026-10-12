@@ -19,7 +19,7 @@ export interface YdDataTableColumn {
   fixed?: 'left' | 'right'
   align?: 'left' | 'right' | 'center'
   /** 移动端隐藏（hidden md:table-cell）；平板隐藏用 'lg'。固定列不适用 */
-  hidden?: 'md' | 'lg'
+  hidden?: 'md' | 'lg' | 'xl'
 }
 
 const props = withDefaults(defineProps<{
@@ -33,6 +33,8 @@ const props = withDefaults(defineProps<{
   // 受控排序（箭头显示）
   sortKey?: string
   sortOrder?: 'asc' | 'desc'
+  /** 行附加类（如选中背景） */
+  rowClass?: (item: Row) => string
   // 受控分页：三者齐备渲染页脚
   page?: number
   pageSize?: number
@@ -44,6 +46,7 @@ const props = withDefaults(defineProps<{
   emptyText: '',
   sortKey: '',
   sortOrder: 'asc',
+  rowClass: undefined,
   page: undefined,
   pageSize: undefined,
   total: undefined,
@@ -193,7 +196,7 @@ const hasPager = computed(() => props.page !== undefined && props.pageSize !== u
         </thead>
         <tbody>
           <template v-if="rows.length">
-            <tr v-for="item in rows" :key="String(item[rowKey])" class="border-b border-border/60 hover:bg-muted/40">
+            <tr v-for="item in rows" :key="String(item[rowKey])" class="border-b border-border/60 hover:bg-muted/40" :class="rowClass?.(item)">
               <td
                 v-for="col in orderedColumns"
                 :key="col.key"

@@ -1,6 +1,8 @@
 <script setup lang="ts">
 import type { HostNodeState, HostNodeStatus, HostRecord } from '@/api/modules/hosts'
 import apiHosts from '@/api/modules/hosts'
+import YdDataTable from '@/components/YdDataTable/index.vue'
+import type { YdDataTableColumn } from '@/components/YdDataTable/index.vue'
 import nodeApi, { type NodeItem } from '@/api/modules/node'
 import { i18n, tr } from '@/locales'
 
@@ -22,6 +24,15 @@ function emptyForm(): HostForm {
 
 const nodes = ref<NodeItem[]>([])
 const records = ref<HostRecord[]>([])
+
+// ---- 列定义（M67 YdDataTable）：IP 左固定，操作右固定，中间列可拖拽换序 ----
+const recordColumns: YdDataTableColumn[] = [
+  { key: 'ip', label: 'IP', width: 150, fixed: 'left' },
+  { key: 'hostnames', label: i18n.global.t('hosts.hostnameCol') },
+  { key: 'status', label: i18n.global.t('common.status'), width: 110 },
+  { key: 'comment', label: i18n.global.t('common.remark'), width: 180 },
+  { key: 'actions', label: i18n.global.t('common.operation'), width: 140, fixed: 'right', align: 'right' },
+]
 const loading = ref(false)
 const statuses = ref<HostNodeStatus[]>([])
 const statusLoading = ref(false)
@@ -311,56 +322,41 @@ onMounted(() => {
       </div>
 
       <!-- 解析记录表 -->
-      <div class="mt-4 overflow-x-auto rounded-lg border">
-        <table class="w-full text-sm">
-          <thead class="bg-muted/50 text-left text-xs text-muted-foreground">
-            <tr>
-              <th class="px-3 py-2">IP</th>
-              <th class="px-3 py-2">{{ $t('hosts.hostnameCol') }}</th>
-              <th class="px-3 py-2">{{ $t('common.status') }}</th>
-              <th class="px-3 py-2">{{ $t('common.remark') }}</th>
-              <th class="px-3 py-2 text-right">{{ $t('common.operation') }}</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr v-if="!records.length">
-              <td colspan="5" class="px-3 py-10 text-center text-muted-foreground">
-                {{ $t('hosts.noRecords') }}
-              </td>
-            </tr>
-            <tr v-for="r in records" :key="r.id" class="border-t hover:bg-accent/30">
-              <td class="px-3 py-2 font-mono text-xs">
-                {{ r.ip }}
-              </td>
-              <td class="px-3 py-2">
-                <span class="font-mono text-xs">{{ r.hostnames }}</span>
-              </td>
-              <td class="px-3 py-2">
-                <span class="inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-xs" :class="r.enabled ? 'bg-emerald-500/10 text-emerald-600' : 'bg-muted text-muted-foreground'">
-                  <span class="inline-block size-1.5 rounded-full bg-current" :class="r.enabled ? 'animate-pulse' : ''" />
-                  {{ r.enabled ? $t('common.enabled') : $t('common.disabled') }}
-                </span>
-              </td>
-              <td class="max-w-48 truncate px-3 py-2 text-xs text-muted-foreground" :title="r.comment">
-                {{ r.comment || '—' }}
-              </td>
-              <td class="px-3 py-2">
-                <div class="flex items-center justify-end gap-1">
-                  <FaButton variant="ghost" size="icon-sm" :title="r.enabled ? $t('common.disabled') : $t('common.enabled')" @click="toggle(r)">
-                    <FaIcon :name="r.enabled ? 'i-lucide:pause' : 'i-lucide:play'" class="text-sm" />
-                  </FaButton>
-                  <FaButton variant="ghost" size="icon-sm" :title="$t('common.edit')" @click="openEdit(r)">
-                    <FaIcon name="i-lucide:pen-line" class="text-sm" />
-                  </FaButton>
-                  <FaButton variant="ghost" size="icon-sm" :title="$t('common.delete')" @click="remove(r)">
-                    <FaIcon name="i-lucide:trash" class="text-sm" />
-                  </FaButton>
-                </div>
-              </td>
-            </tr>
-          </tbody>
-        </table>
-      </div>
+      <YdDataTable
+        :columns="recordColumns"
+        :rows="records"
+        storage-key="hosts"
+        :empty-text="$t('hosts.noRecords')"
+      >
+        <template #cell-ip="{ item: r }">
+          <span class="font-mono text-xs">{{ r.ip }}</span>
+        </template>
+        <template #cell-hostnames="{ item: r }">
+          <span class="font-mono text-xs">{{ r.hostnames }}</span>
+        </template>
+        <template #cell-status="{ item: r }">
+          <span class="inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-xs" :class="r.enabled ? 'bg-emerald-500/10 text-emerald-600' : 'bg-muted text-muted-foreground'">
+            <span class="inline-block size-1.5 rounded-full bg-current" :class="r.enabled ? 'animate-pulse' : ''" />
+            {{ r.enabled ? $t('common.enabled') : $t('common.disabled') }}
+          </span>
+        </template>
+        <template #cell-comment="{ item: r }">
+          <span class="block max-w-48 truncate text-xs text-muted-foreground" :title="r.comment">{{ r.comment || '—' }}</span>
+        </template>
+        <template #cell-actions="{ item: r }">
+          <div class="flex items-center justify-end gap-1">
+            <FaButton variant="ghost" size="icon-sm" :title="r.enabled ? $t('common.disabled') : $t('common.enabled')" @click="toggle(r)">
+              <FaIcon :name="r.enabled ? 'i-lucide:pause' : 'i-lucide:play'" class="text-sm" />
+            </FaButton>
+            <FaButton variant="ghost" size="icon-sm" :title="$t('common.edit')" @click="openEdit(r)">
+              <FaIcon name="i-lucide:pen-line" class="text-sm" />
+            </FaButton>
+            <FaButton variant="ghost" size="icon-sm" :title="$t('common.delete')" @click="remove(r)">
+              <FaIcon name="i-lucide:trash" class="text-sm" />
+            </FaButton>
+          </div>
+        </template>
+      </YdDataTable>
       <div class="mt-3 text-xs text-muted-foreground">
         {{ $t('hosts.footNote') }}
       </div>

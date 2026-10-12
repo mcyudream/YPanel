@@ -3,6 +3,8 @@ import type { NatExternalRule, NatInterface, NatRule } from '@/api/modules/nat'
 import apiNat from '@/api/modules/nat'
 import { i18n } from '@/locales'
 import YdNodeSelect from '@/components/YdNodeSelect/index.vue'
+import YdDataTable from '@/components/YdDataTable/index.vue'
+import type { YdDataTableColumn } from '@/components/YdDataTable/index.vue'
 
 defineOptions({
   name: 'NatIndex',
@@ -34,6 +36,17 @@ function emptyForm(): NatForm {
 
 const nodeId = ref('local')
 const rules = ref<NatRule[]>([])
+
+// ---- 列定义（M67 YdDataTable）：名称左固定，操作右固定，中间列可拖拽换序 ----
+const ruleColumns: YdDataTableColumn[] = [
+  { key: 'name', label: i18n.global.t('common.name'), width: 200, fixed: 'left' },
+  { key: 'forward', label: i18n.global.t('nat.forwardCol') },
+  { key: 'proto', label: i18n.global.t('nat.protoFamilyCol'), width: 140 },
+  { key: 'iface', label: i18n.global.t('nat.ifaceCol'), width: 120 },
+  { key: 'sort', label: i18n.global.t('nat.sortCol'), width: 70 },
+  { key: 'status', label: i18n.global.t('common.status'), width: 100 },
+  { key: 'actions', label: i18n.global.t('common.operation'), width: 140, fixed: 'right', align: 'right' },
+]
 const loading = ref(false)
 
 const modalVisible = ref(false)
@@ -425,73 +438,56 @@ onMounted(() => {
     </FaPageHeader>
 
     <FaPageMain>
-      <div class="overflow-x-auto rounded-lg border">
-        <table class="w-full text-sm">
-          <thead class="bg-muted/50 text-left text-xs text-muted-foreground">
-            <tr>
-              <th class="px-3 py-2">{{ $t('common.name') }}</th>
-              <th class="px-3 py-2">{{ $t('nat.forwardCol') }}</th>
-              <th class="px-3 py-2">{{ $t('nat.protoFamilyCol') }}</th>
-              <th class="px-3 py-2">{{ $t('nat.ifaceCol') }}</th>
-              <th class="px-3 py-2">{{ $t('nat.sortCol') }}</th>
-              <th class="px-3 py-2">{{ $t('common.status') }}</th>
-              <th class="px-3 py-2 text-right">{{ $t('common.operation') }}</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr v-if="!rules.length">
-              <td colspan="7" class="px-3 py-10 text-center text-muted-foreground">
-                {{ $t('nat.noRules') }}
-              </td>
-            </tr>
-            <tr v-for="r in rules" :key="r.id" class="border-t hover:bg-accent/30">
-              <td class="px-3 py-2">
-                <div class="flex items-center gap-1.5">
-                  <span class="font-medium">{{ r.name }}</span>
-                  <span v-if="r.srcSpec" class="rounded-full bg-amber-500/10 px-2 py-0.5 text-xs text-amber-600" :title="r.srcSpec">{{ $t('nat.badgeTakeover') }}</span>
-                </div>
-                <div v-if="r.iface" class="font-mono text-xs text-muted-foreground">via {{ r.iface }}</div>
-              </td>
-              <td class="px-3 py-2">
-                <span class="font-mono text-xs">
-                  <span class="rounded bg-muted px-1.5 py-0.5">:{{ fmtPort(r.listenPort, r.listenPortEnd) }}</span>
-                  <FaIcon name="i-lucide:arrow-right" class="mx-1 text-muted-foreground" />
-                  <span class="rounded bg-muted px-1.5 py-0.5">{{ r.targetIp }}:{{ fmtPort(r.targetPort, r.targetPortEnd) }}</span>
-                </span>
-              </td>
-              <td class="px-3 py-2">
-                <span class="rounded-full bg-blue-500/10 px-2 py-0.5 text-xs text-blue-600">{{ r.protocol }}</span>
-                <span class="ml-1 rounded-full bg-muted px-2 py-0.5 text-xs text-muted-foreground">IPv{{ r.ipFamily }}</span>
-              </td>
-              <td class="px-3 py-2 text-xs text-muted-foreground">
-                {{ r.iface || $t('nat.allIfaces') }}
-              </td>
-              <td class="px-3 py-2 tabular-nums text-xs text-muted-foreground">
-                {{ r.sort }}
-              </td>
-              <td class="px-3 py-2">
-                <span class="inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-xs" :class="r.enabled ? 'bg-emerald-500/10 text-emerald-600' : 'bg-muted text-muted-foreground'">
-                  <span class="inline-block size-1.5 rounded-full bg-current" :class="r.enabled ? 'animate-pulse' : ''" />
-                  {{ r.enabled ? $t('common.enabled') : $t('common.disabled') }}
-                </span>
-              </td>
-              <td class="px-3 py-2">
-                <div class="flex items-center justify-end gap-1">
-                  <FaButton variant="ghost" size="icon-sm" :title="r.enabled ? $t('common.disabled') : $t('common.enabled')" @click="toggle(r)">
-                    <FaIcon :name="r.enabled ? 'i-lucide:pause' : 'i-lucide:play'" class="text-sm" />
-                  </FaButton>
-                  <FaButton variant="ghost" size="icon-sm" :title="$t('common.edit')" @click="openEdit(r)">
-                    <FaIcon name="i-lucide:pen-line" class="text-sm" />
-                  </FaButton>
-                  <FaButton variant="ghost" size="icon-sm" :title="$t('common.delete')" @click="remove(r)">
-                    <FaIcon name="i-lucide:trash" class="text-sm" />
-                  </FaButton>
-                </div>
-              </td>
-            </tr>
-          </tbody>
-        </table>
-      </div>
+      <YdDataTable
+        :columns="ruleColumns"
+        :rows="rules"
+        storage-key="nat"
+        :empty-text="$t('nat.noRules')"
+      >
+        <template #cell-name="{ item: r }">
+          <div class="flex items-center gap-1.5">
+            <span class="font-medium">{{ r.name }}</span>
+            <span v-if="r.srcSpec" class="rounded-full bg-amber-500/10 px-2 py-0.5 text-xs text-amber-600" :title="r.srcSpec">{{ $t('nat.badgeTakeover') }}</span>
+          </div>
+          <div v-if="r.iface" class="font-mono text-xs text-muted-foreground">via {{ r.iface }}</div>
+        </template>
+        <template #cell-forward="{ item: r }">
+          <span class="font-mono text-xs">
+            <span class="rounded bg-muted px-1.5 py-0.5">:{{ fmtPort(r.listenPort, r.listenPortEnd) }}</span>
+            <FaIcon name="i-lucide:arrow-right" class="mx-1 text-muted-foreground" />
+            <span class="rounded bg-muted px-1.5 py-0.5">{{ r.targetIp }}:{{ fmtPort(r.targetPort, r.targetPortEnd) }}</span>
+          </span>
+        </template>
+        <template #cell-proto="{ item: r }">
+          <span class="rounded-full bg-blue-500/10 px-2 py-0.5 text-xs text-blue-600">{{ r.protocol }}</span>
+          <span class="ml-1 rounded-full bg-muted px-2 py-0.5 text-xs text-muted-foreground">IPv{{ r.ipFamily }}</span>
+        </template>
+        <template #cell-iface="{ item: r }">
+          <span class="text-xs text-muted-foreground">{{ r.iface || $t('nat.allIfaces') }}</span>
+        </template>
+        <template #cell-sort="{ item: r }">
+          <span class="tabular-nums text-xs text-muted-foreground">{{ r.sort }}</span>
+        </template>
+        <template #cell-status="{ item: r }">
+          <span class="inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-xs" :class="r.enabled ? 'bg-emerald-500/10 text-emerald-600' : 'bg-muted text-muted-foreground'">
+            <span class="inline-block size-1.5 rounded-full bg-current" :class="r.enabled ? 'animate-pulse' : ''" />
+            {{ r.enabled ? $t('common.enabled') : $t('common.disabled') }}
+          </span>
+        </template>
+        <template #cell-actions="{ item: r }">
+          <div class="flex items-center justify-end gap-1">
+            <FaButton variant="ghost" size="icon-sm" :title="r.enabled ? $t('common.disabled') : $t('common.enabled')" @click="toggle(r)">
+              <FaIcon :name="r.enabled ? 'i-lucide:pause' : 'i-lucide:play'" class="text-sm" />
+            </FaButton>
+            <FaButton variant="ghost" size="icon-sm" :title="$t('common.edit')" @click="openEdit(r)">
+              <FaIcon name="i-lucide:pen-line" class="text-sm" />
+            </FaButton>
+            <FaButton variant="ghost" size="icon-sm" :title="$t('common.delete')" @click="remove(r)">
+              <FaIcon name="i-lucide:trash" class="text-sm" />
+            </FaButton>
+          </div>
+        </template>
+      </YdDataTable>
       <div class="mt-3 text-xs text-muted-foreground">
         {{ $t('nat.footNote') }}
       </div>

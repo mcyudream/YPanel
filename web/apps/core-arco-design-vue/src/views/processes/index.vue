@@ -2,6 +2,8 @@
 import type { ProcessItem, ProcessSort, ServiceItem } from '@/api/modules/nodeexec'
 import { procApi } from '@/api/modules/nodeexec'
 import apiNode from '@/api/modules/node'
+import YdDataTable from '@/components/YdDataTable/index.vue'
+import type { YdDataTableColumn } from '@/components/YdDataTable/index.vue'
 import type { NodeItem } from '@/api/modules/node'
 import { i18n } from '@/locales'
 import YdNodeSelect from '@/components/YdNodeSelect/index.vue'
@@ -43,6 +45,17 @@ async function loadNodes() {
 type ProcSortKey = ProcessSort
 const procSortKey = ref<ProcSortKey>('cpu')
 const procSortOrder = ref<'asc' | 'desc'>('desc')
+
+// ---- 列定义（M67 YdDataTable）：PID 左固定，操作右固定，中间列可拖拽换序 ----
+const procColumns: YdDataTableColumn[] = [
+  { key: 'pid', label: 'PID', width: 90, sortable: true, fixed: 'left' },
+  { key: 'name', label: i18n.global.t('common.name'), width: 220, sortable: true },
+  { key: 'cpu', label: 'CPU%', width: 90, sortable: true, align: 'right' },
+  { key: 'mem', label: i18n.global.t('processes.memCol'), width: 100, sortable: true, align: 'right' },
+  { key: 'rss', label: 'RSS', width: 110, sortable: true, align: 'right', hidden: 'md' },
+  { key: 'user', label: i18n.global.t('processes.userCol'), width: 140, hidden: 'lg' },
+  { key: 'actions', label: i18n.global.t('common.operation'), width: 100, fixed: 'right', align: 'right' },
+]
 const svcSortKey = ref<'name' | 'active'>('name')
 const svcSortOrder = ref<'asc' | 'desc'>('asc')
 
@@ -251,70 +264,43 @@ onBeforeUnmount(() => {
 
       <!-- 进程 -->
       <template v-if="tab === 'processes'">
-        <div class="mt-3 overflow-x-auto rounded-lg border">
-          <table class="w-full text-sm">
-            <thead class="bg-muted/50 text-left text-xs text-muted-foreground">
-              <tr>
-                <th class="px-3 py-2">
-                  <button type="button" class="inline-flex cursor-pointer items-center gap-0.5 select-none hover:text-foreground" @click="toggleProcSort('pid')">
-                    PID
-                    <FaIcon v-if="procSortKey === 'pid'" :name="procSortOrder === 'asc' ? 'i-lucide:arrow-up' : 'i-lucide:arrow-down'" class="text-[11px]" />
-                  </button>
-                </th>
-                <th class="px-3 py-2">
-                  <button type="button" class="inline-flex cursor-pointer items-center gap-0.5 select-none hover:text-foreground" @click="toggleProcSort('name')">
-                    {{ $t('common.name') }}
-                    <FaIcon v-if="procSortKey === 'name'" :name="procSortOrder === 'asc' ? 'i-lucide:arrow-up' : 'i-lucide:arrow-down'" class="text-[11px]" />
-                  </button>
-                </th>
-                <th class="px-3 py-2">
-                  <button type="button" class="inline-flex cursor-pointer items-center gap-0.5 select-none hover:text-foreground" @click="toggleProcSort('cpu')">
-                    CPU%
-                    <FaIcon v-if="procSortKey === 'cpu'" :name="procSortOrder === 'asc' ? 'i-lucide:arrow-up' : 'i-lucide:arrow-down'" class="text-[11px]" />
-                  </button>
-                </th>
-                <th class="px-3 py-2">
-                  <button type="button" class="inline-flex cursor-pointer items-center gap-0.5 select-none hover:text-foreground" @click="toggleProcSort('mem')">
-                    {{ $t('processes.memCol') }}
-                    <FaIcon v-if="procSortKey === 'mem'" :name="procSortOrder === 'asc' ? 'i-lucide:arrow-up' : 'i-lucide:arrow-down'" class="text-[11px]" />
-                  </button>
-                </th>
-                <th class="hidden px-3 py-2 md:table-cell">
-                  <button type="button" class="inline-flex cursor-pointer items-center gap-0.5 select-none hover:text-foreground" @click="toggleProcSort('rss')">
-                    RSS
-                    <FaIcon v-if="procSortKey === 'rss'" :name="procSortOrder === 'asc' ? 'i-lucide:arrow-up' : 'i-lucide:arrow-down'" class="text-[11px]" />
-                  </button>
-                </th>
-                <th class="hidden px-3 py-2 lg:table-cell">{{ $t('processes.userCol') }}</th>
-                <th class="px-3 py-2 text-right">{{ $t('common.operation') }}</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr v-if="loading && !pagedProcesses.length">
-                <td colspan="7" class="px-3 py-10 text-center text-muted-foreground">
-                  {{ $t('common.loading') }}
-                </td>
-              </tr>
-              <tr v-else-if="!pagedProcesses.length">
-                <td colspan="7" class="px-3 py-10 text-center text-muted-foreground">
-                  {{ $t('processes.noProcesses') }}
-                </td>
-              </tr>
-              <tr v-for="p in pagedProcesses" :key="p.pid" class="border-t hover:bg-accent/30">
-                <td class="px-3 py-1.5 font-mono text-xs">{{ p.pid }}</td>
-                <td class="max-w-40 truncate px-3 py-1.5 font-mono text-[13px]" :title="p.cmdline">{{ p.name }}</td>
-                <td class="px-3 py-1.5 text-xs tabular-nums">{{ p.cpu.toFixed(1) }}</td>
-                <td class="px-3 py-1.5 text-xs tabular-nums">{{ p.mem.toFixed(1) }}</td>
-                <td class="hidden px-3 py-1.5 text-xs tabular-nums text-muted-foreground md:table-cell">{{ fmtRss(p.memRss) }}</td>
-                <td class="hidden px-3 py-1.5 font-mono text-xs text-muted-foreground lg:table-cell">{{ p.user }}</td>
-                <td class="px-3 py-1.5 text-right">
-                  <FaButton variant="outline" size="sm" @click="kill(p)">{{ $t('processes.kill') }}</FaButton>
-                </td>
-              </tr>
-            </tbody>
-          </table>
+        <div class="mt-3">
+          <YdDataTable
+            :columns="procColumns"
+            :rows="pagedProcesses"
+            storage-key="processes"
+            :loading="loading && !pagedProcesses.length"
+            :empty-text="$t('processes.noProcesses')"
+            :sort-key="procSortKey"
+            :sort-order="procSortOrder"
+            v-model:page="page"
+            v-model:size="size"
+            :total="filteredProcesses.length"
+            @sort="key => toggleProcSort(key as ProcSortKey)"
+          >
+            <template #cell-pid="{ item: p }">
+              <span class="font-mono text-xs">{{ p.pid }}</span>
+            </template>
+            <template #cell-name="{ item: p }">
+              <span class="block max-w-40 truncate font-mono text-[13px]" :title="p.cmdline">{{ p.name }}</span>
+            </template>
+            <template #cell-cpu="{ item: p }">
+              <span class="text-xs tabular-nums">{{ p.cpu.toFixed(1) }}</span>
+            </template>
+            <template #cell-mem="{ item: p }">
+              <span class="text-xs tabular-nums">{{ p.mem.toFixed(1) }}</span>
+            </template>
+            <template #cell-rss="{ item: p }">
+              <span class="text-xs tabular-nums text-muted-foreground">{{ fmtRss(p.memRss) }}</span>
+            </template>
+            <template #cell-user="{ item: p }">
+              <span class="font-mono text-xs text-muted-foreground">{{ p.user }}</span>
+            </template>
+            <template #cell-actions="{ item: p }">
+              <FaButton variant="outline" size="sm" @click="kill(p)">{{ $t('processes.kill') }}</FaButton>
+            </template>
+          </YdDataTable>
         </div>
-        <FaPagination v-model:page="page" v-model:size="size" :total="filteredProcesses.length" class="mt-3" />
       </template>
 
       <!-- 服务 -->

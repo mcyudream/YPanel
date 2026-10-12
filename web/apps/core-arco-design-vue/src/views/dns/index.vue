@@ -3,6 +3,8 @@ import type { DnsConfig, DnsOverview, DnsRecord, DnsRecordType } from '@/api/mod
 import apiDns from '@/api/modules/dns'
 import { i18n, tr } from '@/locales'
 import YdNodeSelect from '@/components/YdNodeSelect/index.vue'
+import YdDataTable from '@/components/YdDataTable/index.vue'
+import type { YdDataTableColumn } from '@/components/YdDataTable/index.vue'
 
 defineOptions({
   name: 'DnsIndex',
@@ -25,6 +27,16 @@ const nodeId = ref('local')
 const ov = ref<DnsOverview | null>(null)
 const ovLoading = ref(false)
 const records = ref<DnsRecord[]>([])
+
+// ---- 列定义（M67 YdDataTable）：域名左固定，操作右固定，中间列可拖拽换序 ----
+const recordColumns: YdDataTableColumn[] = [
+  { key: 'domain', label: i18n.global.t('dns.records.domain'), width: 220, fixed: 'left' },
+  { key: 'type', label: i18n.global.t('common.type'), width: 100 },
+  { key: 'target', label: i18n.global.t('dns.records.target') },
+  { key: 'status', label: i18n.global.t('common.status'), width: 110 },
+  { key: 'comment', label: i18n.global.t('common.remark'), width: 160 },
+  { key: 'actions', label: i18n.global.t('common.operation'), width: 140, fixed: 'right', align: 'right' },
+]
 const loading = ref(false)
 
 const recordModal = ref(false)
@@ -497,60 +509,44 @@ onMounted(() => {
           <FaIcon name="i-lucide:plus" class="mr-1" /> {{ $t('dns.records.create') }}
         </FaButton>
       </div>
-      <div class="mt-2 overflow-x-auto rounded-lg border">
-        <table class="w-full text-sm">
-          <thead class="bg-muted/50 text-left text-xs text-muted-foreground">
-            <tr>
-              <th class="px-3 py-2">{{ $t('dns.records.domain') }}</th>
-              <th class="px-3 py-2">{{ $t('common.type') }}</th>
-              <th class="px-3 py-2">{{ $t('dns.records.target') }}</th>
-              <th class="px-3 py-2">{{ $t('common.status') }}</th>
-              <th class="px-3 py-2">{{ $t('common.remark') }}</th>
-              <th class="px-3 py-2 text-right">{{ $t('common.operation') }}</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr v-if="!records.length">
-              <td colspan="6" class="px-3 py-10 text-center text-muted-foreground">
-                {{ $t('dns.records.empty') }}
-              </td>
-            </tr>
-            <tr v-for="r in records" :key="r.id" class="border-t hover:bg-accent/30">
-              <td class="px-3 py-2 font-mono text-xs">
-                {{ r.domain }}
-              </td>
-              <td class="px-3 py-2">
-                <span class="rounded-full px-2 py-0.5 text-xs" :class="typeBadge(r.type)">{{ r.type }}</span>
-              </td>
-              <td class="px-3 py-2">
-                <span class="font-mono text-xs">{{ r.target }}</span>
-              </td>
-              <td class="px-3 py-2">
-                <span class="inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-xs" :class="r.enabled ? 'bg-emerald-500/10 text-emerald-600' : 'bg-muted text-muted-foreground'">
-                  <span class="inline-block size-1.5 rounded-full bg-current" :class="r.enabled ? 'animate-pulse' : ''" />
-                  {{ r.enabled ? $t('common.enabled') : $t('common.disabled') }}
-                </span>
-              </td>
-              <td class="max-w-48 truncate px-3 py-2 text-xs text-muted-foreground" :title="r.comment">
-                {{ r.comment || '—' }}
-              </td>
-              <td class="px-3 py-2">
-                <div class="flex items-center justify-end gap-1">
-                  <FaButton variant="ghost" size="icon-sm" :title="r.enabled ? $t('common.disabled') : $t('common.enabled')" @click="toggle(r)">
-                    <FaIcon :name="r.enabled ? 'i-lucide:pause' : 'i-lucide:play'" class="text-sm" />
-                  </FaButton>
-                  <FaButton variant="ghost" size="icon-sm" :title="$t('common.edit')" @click="openEdit(r)">
-                    <FaIcon name="i-lucide:pen-line" class="text-sm" />
-                  </FaButton>
-                  <FaButton variant="ghost" size="icon-sm" :title="$t('common.delete')" @click="remove(r)">
-                    <FaIcon name="i-lucide:trash" class="text-sm" />
-                  </FaButton>
-                </div>
-              </td>
-            </tr>
-          </tbody>
-        </table>
-      </div>
+      <YdDataTable
+        :columns="recordColumns"
+        :rows="records"
+        storage-key="dns-records"
+        :empty-text="$t('dns.records.empty')"
+      >
+        <template #cell-domain="{ item: r }">
+          <span class="font-mono text-xs">{{ r.domain }}</span>
+        </template>
+        <template #cell-type="{ item: r }">
+          <span class="rounded-full px-2 py-0.5 text-xs" :class="typeBadge(r.type)">{{ r.type }}</span>
+        </template>
+        <template #cell-target="{ item: r }">
+          <span class="font-mono text-xs">{{ r.target }}</span>
+        </template>
+        <template #cell-status="{ item: r }">
+          <span class="inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-xs" :class="r.enabled ? 'bg-emerald-500/10 text-emerald-600' : 'bg-muted text-muted-foreground'">
+            <span class="inline-block size-1.5 rounded-full bg-current" :class="r.enabled ? 'animate-pulse' : ''" />
+            {{ r.enabled ? $t('common.enabled') : $t('common.disabled') }}
+          </span>
+        </template>
+        <template #cell-comment="{ item: r }">
+          <span class="block max-w-48 truncate text-xs text-muted-foreground" :title="r.comment">{{ r.comment || '—' }}</span>
+        </template>
+        <template #cell-actions="{ item: r }">
+          <div class="flex items-center justify-end gap-1">
+            <FaButton variant="ghost" size="icon-sm" :title="r.enabled ? $t('common.disabled') : $t('common.enabled')" @click="toggle(r)">
+              <FaIcon :name="r.enabled ? 'i-lucide:pause' : 'i-lucide:play'" class="text-sm" />
+            </FaButton>
+            <FaButton variant="ghost" size="icon-sm" :title="$t('common.edit')" @click="openEdit(r)">
+              <FaIcon name="i-lucide:pen-line" class="text-sm" />
+            </FaButton>
+            <FaButton variant="ghost" size="icon-sm" :title="$t('common.delete')" @click="remove(r)">
+              <FaIcon name="i-lucide:trash" class="text-sm" />
+            </FaButton>
+          </div>
+        </template>
+      </YdDataTable>
 
       <!-- 接入指引 -->
       <div class="mt-4 rounded-lg border border-amber-500/30 bg-amber-500/5 p-3 text-xs leading-relaxed text-muted-foreground">

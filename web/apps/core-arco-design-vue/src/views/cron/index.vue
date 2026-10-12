@@ -5,6 +5,8 @@ import type { StorageAccount } from '@/api/modules/storage'
 import type { ScriptItem } from '@/api/modules/cron'
 import apiCron, { scriptApi, scriptRunApi } from '@/api/modules/cron'
 import { storageApi } from '@/api/modules/storage'
+import YdDataTable from '@/components/YdDataTable/index.vue'
+import type { YdDataTableColumn } from '@/components/YdDataTable/index.vue'
 import { i18n } from '@/locales'
 import YdNodeSelect from '@/components/YdNodeSelect/index.vue'
 
@@ -13,6 +15,16 @@ defineOptions({
 })
 
 const tasks = ref<CronTask[]>([])
+
+// ---- 列定义（M67 YdDataTable）：任务名左固定，操作右固定，中间列可拖拽换序 ----
+const taskColumns: YdDataTableColumn[] = [
+  { key: 'name', label: i18n.global.t('cron.task'), width: 220, fixed: 'left' },
+  { key: 'cron', label: 'cron', width: 140 },
+  { key: 'command', label: i18n.global.t('cron.command'), hidden: 'lg' },
+  { key: 'status', label: i18n.global.t('common.status'), width: 150 },
+  { key: 'lastRun', label: i18n.global.t('cron.lastRun'), hidden: 'xl' },
+  { key: 'actions', label: i18n.global.t('common.operation'), width: 250, fixed: 'right', align: 'right' },
+]
 const loading = ref(false)
 
 async function load() {
@@ -374,79 +386,59 @@ async function runScript(s: ScriptItem) {
     </FaPageHeader>
 
     <FaPageMain>
-      <div class="overflow-x-auto rounded-lg border">
-        <table class="w-full text-sm">
-          <thead class="bg-muted/50 text-left text-xs text-muted-foreground">
-            <tr>
-              <th class="px-3 py-2">{{ $t('cron.task') }}</th>
-              <th class="px-3 py-2">cron</th>
-              <th class="hidden px-3 py-2 lg:table-cell">{{ $t('cron.command') }}</th>
-              <th class="px-3 py-2">{{ $t('common.status') }}</th>
-              <th class="hidden px-3 py-2 xl:table-cell">{{ $t('cron.lastRun') }}</th>
-              <th class="px-3 py-2 text-right">{{ $t('common.operation') }}</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr v-if="loading && !tasks.length">
-              <td colspan="6" class="px-3 py-10 text-center text-muted-foreground">
-                {{ $t('common.loading') }}
-              </td>
-            </tr>
-            <tr v-else-if="!tasks.length">
-              <td colspan="6" class="px-3 py-10 text-center text-muted-foreground">
-                {{ $t('cron.noTasks') }}
-              </td>
-            </tr>
-            <tr v-for="t in tasks" :key="t.id" class="border-t transition-colors hover:bg-accent/30">
-              <td class="px-3 py-2">
-                <div class="font-medium">{{ t.name }}</div>
-                <div class="text-xs text-muted-foreground">{{ $t('cron.timeout', { n: t.timeoutSecs }) }}</div>
-              </td>
-              <td class="px-3 py-2 font-mono text-xs">
-                {{ t.cron }}
-              </td>
-              <td class="hidden max-w-72 truncate px-3 py-2 font-mono text-xs text-muted-foreground lg:table-cell" :title="t.command">
-                {{ t.command }}
-              </td>
-              <td class="px-3 py-2">
-                <span class="inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-xs" :class="t.enabled ? 'bg-emerald-500/10 text-emerald-600' : 'bg-muted text-muted-foreground'">
-                  <span class="inline-block size-1.5 rounded-full" :class="t.enabled ? 'animate-pulse bg-current' : 'bg-current'" />
-                  {{ t.enabled ? $t('common.enabled') : $t('common.disabled') }}
-                </span>
-                <span
-                  v-if="t.lastSuccess !== null && t.lastSuccess !== undefined"
-                  class="ml-1.5 rounded-full px-2 py-0.5 text-xs"
-                  :class="t.lastSuccess ? 'bg-emerald-500/10 text-emerald-600' : 'bg-red-500/10 text-red-600'"
-                >
-                  {{ t.lastSuccess ? $t('common.success') : $t('common.failed') }}
-                </span>
-              </td>
-              <td class="hidden px-3 py-2 text-xs tabular-nums text-muted-foreground xl:table-cell">
-                {{ fmtTime(t.lastRunAt) }}
-              </td>
-              <td class="px-3 py-2">
-                <div class="flex items-center justify-end gap-1">
-                  <FaButton v-auth="['cron:write']" variant="outline" size="sm" @click="runNow(t)">
-                    {{ $t('cron.run') }}
-                  </FaButton>
-                  <FaButton variant="ghost" size="sm" @click="openLogs(t.id)">
-                    {{ $t('cron.record') }}
-                  </FaButton>
-                  <FaButton variant="ghost" size="icon-sm" :title="t.enabled ? $t('common.disabled') : $t('common.enabled')" @click="toggle(t)">
-                    <FaIcon :name="t.enabled ? 'i-lucide:pause' : 'i-lucide:play'" class="text-sm" />
-                  </FaButton>
-                  <FaButton variant="ghost" size="icon-sm" :title="$t('common.edit')" @click="openEdit(t)">
-                    <FaIcon name="i-lucide:pen-line" class="text-sm" />
-                  </FaButton>
-                  <FaButton variant="ghost" size="icon-sm" :title="$t('common.delete')" @click="remove(t)">
-                    <FaIcon name="i-lucide:trash" class="text-sm" />
-                  </FaButton>
-                </div>
-              </td>
-            </tr>
-          </tbody>
-        </table>
-      </div>
+      <YdDataTable
+        :columns="taskColumns"
+        :rows="tasks"
+        storage-key="cron"
+        :loading="loading && !tasks.length"
+        :empty-text="$t('cron.noTasks')"
+      >
+        <template #cell-name="{ item: t }">
+          <div class="font-medium">{{ t.name }}</div>
+          <div class="text-xs text-muted-foreground">{{ $t('cron.timeout', { n: t.timeoutSecs }) }}</div>
+        </template>
+        <template #cell-cron="{ item: t }">
+          <span class="font-mono text-xs">{{ t.cron }}</span>
+        </template>
+        <template #cell-command="{ item: t }">
+          <span class="block max-w-72 truncate font-mono text-xs text-muted-foreground" :title="t.command">{{ t.command }}</span>
+        </template>
+        <template #cell-status="{ item: t }">
+          <span class="inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-xs" :class="t.enabled ? 'bg-emerald-500/10 text-emerald-600' : 'bg-muted text-muted-foreground'">
+            <span class="inline-block size-1.5 rounded-full" :class="t.enabled ? 'animate-pulse bg-current' : 'bg-current'" />
+            {{ t.enabled ? $t('common.enabled') : $t('common.disabled') }}
+          </span>
+          <span
+            v-if="t.lastSuccess !== null && t.lastSuccess !== undefined"
+            class="ml-1.5 rounded-full px-2 py-0.5 text-xs"
+            :class="t.lastSuccess ? 'bg-emerald-500/10 text-emerald-600' : 'bg-red-500/10 text-red-600'"
+          >
+            {{ t.lastSuccess ? $t('common.success') : $t('common.failed') }}
+          </span>
+        </template>
+        <template #cell-lastRun="{ item: t }">
+          <span class="text-xs tabular-nums text-muted-foreground">{{ fmtTime(t.lastRunAt) }}</span>
+        </template>
+        <template #cell-actions="{ item: t }">
+          <div class="flex items-center justify-end gap-1">
+            <FaButton v-auth="['cron:write']" variant="outline" size="sm" @click="runNow(t)">
+              {{ $t('cron.run') }}
+            </FaButton>
+            <FaButton variant="ghost" size="sm" @click="openLogs(t.id)">
+              {{ $t('cron.record') }}
+            </FaButton>
+            <FaButton variant="ghost" size="icon-sm" :title="t.enabled ? $t('common.disabled') : $t('common.enabled')" @click="toggle(t)">
+              <FaIcon :name="t.enabled ? 'i-lucide:pause' : 'i-lucide:play'" class="text-sm" />
+            </FaButton>
+            <FaButton variant="ghost" size="icon-sm" :title="$t('common.edit')" @click="openEdit(t)">
+              <FaIcon name="i-lucide:pen-line" class="text-sm" />
+            </FaButton>
+            <FaButton variant="ghost" size="icon-sm" :title="$t('common.delete')" @click="remove(t)">
+              <FaIcon name="i-lucide:trash" class="text-sm" />
+            </FaButton>
+          </div>
+        </template>
+      </YdDataTable>
     </FaPageMain>
 
     <!-- 创建/编辑 -->

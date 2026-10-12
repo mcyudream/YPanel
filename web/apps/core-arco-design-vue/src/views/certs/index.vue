@@ -1,6 +1,8 @@
 <script setup lang="ts">
 import type { Certificate, DnsAccount, AcmeAccount } from '@/api/modules/cert'
 import { certApi, parseAltDomains } from '@/api/modules/cert'
+import YdDataTable from '@/components/YdDataTable/index.vue'
+import type { YdDataTableColumn } from '@/components/YdDataTable/index.vue'
 import siteApi from '@/api/modules/site'
 import type { SiteItem } from '@/api/modules/site'
 import { i18n, tr } from '@/locales'
@@ -97,6 +99,20 @@ function openIssue() {
     issueSites.value = []
   })
 }
+
+// ---- 列定义（M67 YdDataTable）：证书名左固定，操作右固定，中间列可拖拽换序 ----
+const certColumns: YdDataTableColumn[] = [
+  { key: 'id', label: 'ID', width: 60 },
+  { key: 'domain', label: i18n.global.t('certs.domainCol'), width: 220, fixed: 'left' },
+  { key: 'altDomains', label: i18n.global.t('certs.altDomainsCol') },
+  { key: 'provider', label: i18n.global.t('certs.providerCol'), width: 150 },
+  { key: 'status', label: i18n.global.t('common.status'), width: 90 },
+  { key: 'issuer', label: i18n.global.t('certs.issuerCol'), width: 120 },
+  { key: 'remark', label: i18n.global.t('common.remark'), hidden: 'lg' },
+  { key: 'autoRenew', label: i18n.global.t('certs.autoRenewCol'), width: 90 },
+  { key: 'expiry', label: i18n.global.t('certs.expiryCol'), width: 110, sortable: true },
+  { key: 'actions', label: i18n.global.t('common.operation'), width: 260, fixed: 'right', align: 'right' },
+]
 
 // 申请走任务中心（M65）：秒回 taskId，签发过程 acme.sh 输出实时滚动
 const { running: issueSaving, run: runIssueJob } = useTaskJob()
@@ -406,75 +422,65 @@ onMounted(() => {
         <span class="ml-auto text-xs text-muted-foreground">{{ $t('common.total', { n: filteredCerts.length }) }}</span>
       </div>
 
-      <div class="overflow-x-auto rounded-lg border">
-        <table class="w-full text-sm">
-          <thead class="bg-muted/50 text-left text-xs text-muted-foreground">
-            <tr>
-              <th class="px-3 py-2">ID</th>
-              <th class="px-3 py-2">{{ $t('certs.domainCol') }}</th>
-              <th class="px-3 py-2">{{ $t('certs.altDomainsCol') }}</th>
-              <th class="px-3 py-2">{{ $t('certs.providerCol') }}</th>
-              <th class="px-3 py-2">{{ $t('common.status') }}</th>
-              <th class="px-3 py-2">{{ $t('certs.issuerCol') }}</th>
-              <th class="hidden px-3 py-2 lg:table-cell">{{ $t('common.remark') }}</th>
-              <th class="px-3 py-2">{{ $t('certs.autoRenewCol') }}</th>
-              <th class="cursor-pointer px-3 py-2 select-none" :title="$t('certs.sortToggle')" @click="sortAsc = !sortAsc">
-                {{ $t('certs.expiryCol') }}
-                <FaIcon :name="sortAsc ? 'i-lucide:chevron-up' : 'i-lucide:chevron-down'" class="text-[10px]" />
-              </th>
-              <th class="px-3 py-2 text-right">{{ $t('common.operation') }}</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr v-if="loading && !certs.length">
-              <td colspan="10" class="px-3 py-10 text-center text-muted-foreground">{{ $t('common.loading') }}</td>
-            </tr>
-            <tr v-else-if="!filteredCerts.length">
-              <td colspan="10" class="px-3 py-10 text-center text-muted-foreground">
-                {{ $t('certs.noCerts') }}
-              </td>
-            </tr>
-            <tr v-for="c in filteredCerts" :key="c.id" class="border-t transition-colors hover:bg-accent/30">
-              <td class="px-3 py-2 text-xs text-muted-foreground">{{ c.id }}</td>
-              <td class="px-3 py-2">
-                <div class="font-medium">{{ c.domain }}</div>
-                <div v-if="c.sites?.length" class="text-xs text-muted-foreground">{{ $t('certs.boundTo', { sites: c.sites.join('、') }) }}</div>
-              </td>
-              <td class="max-w-48 truncate px-3 py-2 font-mono text-xs text-muted-foreground" :title="parseAltDomains(c.altDomains).join(', ')">
-                {{ parseAltDomains(c.altDomains).join(', ') || '—' }}
-              </td>
-              <td class="px-3 py-2 text-xs">
-                {{ tr(`certs.providerLabel.${c.provider}`, c.provider) }}
-                <span v-if="c.provider === 'acme'" class="text-muted-foreground">
-                  {{ $t('certs.providerHint', { via: c.dnsAccountId ? $t('certs.viaDns') : $t('certs.viaEnv') }) }}
-                </span>
-              </td>
-              <td class="px-3 py-2">
-                <span class="rounded-full px-2 py-0.5 text-xs" :class="statusCls[c.status] || 'bg-muted text-muted-foreground'">
-                  {{ tr(`certs.status.${c.status}`, c.status) }}
-                </span>
-              </td>
-              <td class="px-3 py-2 text-xs text-muted-foreground">{{ c.issuer || '—' }}</td>
-              <td class="hidden max-w-32 truncate px-3 py-2 text-xs lg:table-cell" :title="c.remark">{{ c.remark || '—' }}</td>
-              <td class="px-3 py-2">
-                <label v-if="c.provider === 'acme'" class="inline-flex cursor-pointer items-center">
-                  <input type="checkbox" :checked="c.autoRenew" @change="toggleAutoRenew(c)">
-                </label>
-                <span v-else class="text-xs text-muted-foreground">—</span>
-              </td>
-              <td class="px-3 py-2 text-xs" :class="expiry(c).cls">{{ expiry(c).text }}</td>
-              <td class="px-3 py-2">
-                <div class="flex items-center justify-end gap-1">
-                  <FaButton variant="ghost" size="sm" @click="openDetail(c)">{{ $t('common.detail') }}</FaButton>
-                  <FaButton v-if="c.provider === 'acme'" variant="ghost" size="sm" :loading="renewing" @click="renew(c)">{{ $t('certs.renew') }}</FaButton>
-                  <FaButton variant="ghost" size="sm" @click="openEdit(c)">{{ $t('common.edit') }}</FaButton>
-                  <FaButton variant="ghost" size="sm" class="text-red-500!" @click="removeCert(c)">{{ $t('common.delete') }}</FaButton>
-                </div>
-              </td>
-            </tr>
-          </tbody>
-        </table>
-      </div>
+      <YdDataTable
+        :columns="certColumns"
+        :rows="filteredCerts"
+        storage-key="certs"
+        :loading="loading && !certs.length"
+        :empty-text="$t('certs.noCerts')"
+        sort-key="expiry"
+        :sort-order="sortAsc ? 'asc' : 'desc'"
+        @sort="sortAsc = !sortAsc"
+      >
+        <template #cell-id="{ item: c }">
+          <span class="text-xs text-muted-foreground">{{ c.id }}</span>
+        </template>
+        <template #cell-domain="{ item: c }">
+          <div class="font-medium">{{ c.domain }}</div>
+          <div v-if="c.sites?.length" class="text-xs text-muted-foreground">{{ $t('certs.boundTo', { sites: c.sites.join('、') }) }}</div>
+        </template>
+        <template #cell-altDomains="{ item: c }">
+          <span class="block max-w-48 truncate font-mono text-xs text-muted-foreground" :title="parseAltDomains(c.altDomains).join(', ')">
+            {{ parseAltDomains(c.altDomains).join(', ') || '—' }}
+          </span>
+        </template>
+        <template #cell-provider="{ item: c }">
+          <span class="text-xs">
+            {{ tr(`certs.providerLabel.${c.provider}`, c.provider) }}
+            <span v-if="c.provider === 'acme'" class="text-muted-foreground">
+              {{ $t('certs.providerHint', { via: c.dnsAccountId ? $t('certs.viaDns') : $t('certs.viaEnv') }) }}
+            </span>
+          </span>
+        </template>
+        <template #cell-status="{ item: c }">
+          <span class="rounded-full px-2 py-0.5 text-xs" :class="statusCls[c.status] || 'bg-muted text-muted-foreground'">
+            {{ tr(`certs.status.${c.status}`, c.status) }}
+          </span>
+        </template>
+        <template #cell-issuer="{ item: c }">
+          <span class="text-xs text-muted-foreground">{{ c.issuer || '—' }}</span>
+        </template>
+        <template #cell-remark="{ item: c }">
+          <span class="block max-w-32 truncate text-xs" :title="c.remark">{{ c.remark || '—' }}</span>
+        </template>
+        <template #cell-autoRenew="{ item: c }">
+          <label v-if="c.provider === 'acme'" class="inline-flex cursor-pointer items-center">
+            <input type="checkbox" :checked="c.autoRenew" @change="toggleAutoRenew(c)">
+          </label>
+          <span v-else class="text-xs text-muted-foreground">—</span>
+        </template>
+        <template #cell-expiry="{ item: c }">
+          <span class="text-xs" :class="expiry(c).cls">{{ expiry(c).text }}</span>
+        </template>
+        <template #cell-actions="{ item: c }">
+          <div class="flex items-center justify-end gap-1">
+            <FaButton variant="ghost" size="sm" @click="openDetail(c)">{{ $t('common.detail') }}</FaButton>
+            <FaButton v-if="c.provider === 'acme'" variant="ghost" size="sm" :loading="renewing" @click="renew(c)">{{ $t('certs.renew') }}</FaButton>
+            <FaButton variant="ghost" size="sm" @click="openEdit(c)">{{ $t('common.edit') }}</FaButton>
+            <FaButton variant="ghost" size="sm" class="text-red-500!" @click="removeCert(c)">{{ $t('common.delete') }}</FaButton>
+          </div>
+        </template>
+      </YdDataTable>
     </FaPageMain>
 
     <!-- 申请证书 -->
