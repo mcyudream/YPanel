@@ -71,6 +71,17 @@ func (s *CertificateService) runStream(ctx context.Context, cmd string, timeout 
 }
 
 // shQuote shell 单引号安全包裹。
+
+// acmeErrLine 从 acme.sh 输出提取真实错误行（含 [Error]/Error: 的行优先，
+// firstLine 常抓到 "Using CA:" 这类前置信息行；无匹配退回输出末行）。
+func acmeErrLine(out string) string {
+	for _, l := range strings.Split(out, "\n") {
+		if strings.Contains(l, "[Error]") || strings.Contains(l, "Error:") {
+			return strings.TrimSpace(l)
+		}
+	}
+	return lastLine(tail(out, 300))
+}
 func shQuote(v string) string {
 	return "'" + strings.ReplaceAll(v, "'", `'"'"'`) + "'"
 }
@@ -368,6 +379,8 @@ func (s *CertificateService) Delete(ctx context.Context, id uint) error {
 	}
 	if c.Provider == "acme" {
 		_, _ = s.run(ctx, fmt.Sprintf(acmeEnv+"%s --remove -d %s --ecc", acmeBin, c.Domain), 60)
+		// --remove 不删物理文件（key/conf 残留会让同域名重签撞 "Domain key exists"），补清残留目录
+		_, _ = s.run(ctx, fmt.Sprintf("rm -rf %s %s", shQuote("/root/.acme.sh/"+c.Domain+"_ecc"), shQuote("/root/.acme.sh/"+c.Domain)), 30)
 	}
 	_, _ = s.run(ctx, fmt.Sprintf("rm -f %s %s",
 		shQuote(path.Join(nginxCertDir, c.CertName+".crt")),
@@ -401,7 +414,7 @@ func (s *CertificateService) renewCore(ctx context.Context, logf TaskLogf, id ui
 	c.IssueLog = out
 	if code != 0 {
 		s.db.Save(c)
-		return errs.New(errs.CodeFileOpFailed, "error.fileOpFailed", "续签失败: "+firstLine(out))
+		return errs.New(errs.CodeFileOpFailed, "error.fileOpFailed", "续签失败: "+acmeErrLine(out))
 	}
 	if logf != nil {
 		logf("info", "签发成功，重新挂载续期钩子并部署到 nginx…")
@@ -478,7 +491,7 @@ func (s *CertificateService) reinstallCertHook(ctx context.Context, c *model.Cer
 		return err
 	}
 	if out.ExitCode != 0 {
-		return errs.New(errs.CodeFileOpFailed, "error.fileOpFailed", "证书部署钩子安装失败: "+firstLine(out.Output))
+		return errs.New(errs.CodeFileOpFailed, "error.fileOpFailed", "证书部署钩子安装失败: "+acmeErrLine(out.Output))
 	}
 	return nil
 }

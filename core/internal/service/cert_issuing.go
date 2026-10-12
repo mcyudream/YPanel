@@ -137,7 +137,7 @@ func (s *CertificateService) issueExecute(ctx context.Context, logf TaskLogf, p 
 	if code != 0 && !strings.Contains(out, "Skipping. Next renewal time is") {
 		c.Status = "error"
 		_ = s.db.Create(c).Error // 失败日志也入库便于排查
-		return nil, errs.New(errs.CodeFileOpFailed, "error.fileOpFailed", "ACME 签发失败: "+firstLine(out))
+		return nil, errs.New(errs.CodeFileOpFailed, "error.fileOpFailed", "ACME 签发失败: "+acmeErrLine(out))
 	}
 	if code != 0 {
 		// acme.sh 对已有有效证书重签会 skip（exit 2）——证书文件在，直接走部署钩子入库（重建面板/换机重签场景）
@@ -555,7 +555,7 @@ func (s *CertificateService) registerAcme(ctx context.Context, logf TaskLogf, em
 		return err
 	}
 	if code != 0 {
-		return errs.New(errs.CodeFileOpFailed, "error.fileOpFailed", "ACME 账户注册失败（签发时会自动重试）: "+firstLine(out))
+		return errs.New(errs.CodeFileOpFailed, "error.fileOpFailed", "ACME 账户注册失败（签发时会自动重试）: "+acmeErrLine(out))
 	}
 	if logf != nil {
 		logf("info", "ACME 账户注册完成")
