@@ -36,6 +36,7 @@ export default {
     listenIp: 'Listen IP',
     port53: 'Port 53',
     upstreams: 'Upstreams',
+    recordsBreakdown: '{manual} manual + {derived} site-aligned',
     records: 'Records',
   },
   state: {

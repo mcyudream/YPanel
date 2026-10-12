@@ -454,8 +454,9 @@ onMounted(() => {
         </div>
         <div>
           <div class="text-xs text-muted-foreground">{{ $t('dns.card.records') }}</div>
-          <div class="mt-1 tabular-nums text-sm">
-            {{ ov?.recordCount ?? 0 }}
+          <div class="mt-1 tabular-nums text-sm" :title="ov?.siteAlign ? $t('dns.card.recordsBreakdown', { manual: ov?.recordCount ?? 0, derived: ov?.siteAlignCount ?? 0 }) : undefined">
+            {{ ov?.effectiveCount ?? ov?.recordCount ?? 0 }}
+            <span v-if="ov?.siteAlign" class="text-[11px] text-muted-foreground">{{ $t('dns.card.recordsBreakdown', { manual: ov?.recordCount ?? 0, derived: ov?.siteAlignCount ?? 0 }) }}</span>
           </div>
         </div>
       </div>

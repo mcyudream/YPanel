@@ -37,6 +37,7 @@ export interface DnsOverview {
   listenIp: string
   upstreams: string[]
   recordCount: number
+  effectiveCount: number
   siteAlign: boolean
   siteAlignIp: string // 生效指向（未单设时=监听 IP）
   siteAlignCount: number

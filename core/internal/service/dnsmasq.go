@@ -400,7 +400,8 @@ type DnsOverview struct {
 	Port53Note       string              `json:"port53Note"`
 	ListenIP         string              `json:"listenIp"`
 	Upstreams        []string            `json:"upstreams"`
-	RecordCount      int64               `json:"recordCount"`
+	RecordCount      int64               `json:"recordCount"` // 手动记录数
+	EffectiveCount   int64               `json:"effectiveCount"` // 生效总数（手动 + 站点对齐派生）
 	SiteAlign        bool                `json:"siteAlign"`
 	SiteAlignIP      string              `json:"siteAlignIp"` // 生效指向（未单设时=监听 IP）
 	SiteAlignCount   int                 `json:"siteAlignCount"`
@@ -454,12 +455,14 @@ func (s *DnsService) Overview(ctx context.Context, nodeId string) (*DnsOverview,
 			names[e.SiteName] = true
 		}
 		ov.SiteAlignSites = len(names)
+		ov.EffectiveCount = ov.RecordCount + int64(ov.SiteAlignCount)
 		if len(derived) > 200 {
 			derived = derived[:200]
 		}
 		ov.SiteAlignPreview = derived
 	} else {
 		ov.SiteAlignPreview = []DnsSiteAlignEntry{}
+		ov.EffectiveCount = ov.RecordCount
 	}
 	return ov, nil
 }

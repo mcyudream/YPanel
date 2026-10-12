@@ -36,6 +36,7 @@ export default {
     listenIp: '监听 IP',
     port53: '53 端口',
     upstreams: '上游',
+    recordsBreakdown: '手动 {manual} + 站点对齐 {derived}',
     records: '记录数',
   },
   state: {
