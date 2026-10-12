@@ -227,7 +227,7 @@ const hasPager = computed(() => props.page !== undefined && props.size !== undef
 
     <div v-if="hasPager" class="flex flex-wrap items-center justify-between gap-2">
       <div class="flex items-center gap-3 text-xs text-muted-foreground">
-        <span>{{ t('common.totalItems', { n: total }) }}</span>
+        <!-- 总数由 FaPagination 自带显示，此处只放页脚左侧扩展（如批量操作） -->
         <slot name="footerLeft" />
       </div>
       <FaPagination v-model:page="pageModel" v-model:size="sizeModel" :total="total || 0" />
