@@ -199,6 +199,14 @@ func (s *CertificateService) deployCertToSites(ctx context.Context, logf TaskLog
 
 // IssueTask 创建签发任务（返回任务 ID）：预备段同步快速失败，耗时执行进任务中心实时日志。
 func (s *CertificateService) IssueTask(ctx context.Context, in CertIssueInput) (map[string]any, error) {
+	if in.DnsAccountID == 0 {
+		// dnsAccountId 缺省自动选第一个 DNS 账户（无任何账户才回落环境变量兜底；UI 有账户时必选非 0，语义不变）
+		var rows []model.DnsAccount
+		_ = s.db.Order("id").Limit(1).Find(&rows).Error
+		if len(rows) > 0 {
+			in.DnsAccountID = rows[0].ID
+		}
+	}
 	p, err := s.prepareIssue(ctx, in)
 	if err != nil {
 		return nil, err

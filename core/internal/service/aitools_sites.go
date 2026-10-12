@@ -4,8 +4,6 @@ package service
 import (
 	"context"
 	"fmt"
-
-	"github.com/ypanel/core/internal/model"
 )
 
 // aiToolsSites 网站与证书工具集。
@@ -198,14 +196,6 @@ func (s *AIService) aiToolsSites(ctx context.Context) []aiToolDef {
 					AutoRenew *bool `json:"autoRenew"`
 				}](input); err == nil && (s.AutoRenew == nil || *s.AutoRenew) {
 					p.AutoRenew = true // 显式缺省开启自动续签
-				}
-				if p.DnsAccountID == 0 {
-					// 缺省自动选第一个 DNS 账户（环境变量兜底仅在无任何账户时生效；与站点级签发同语义）
-					var rows []model.DnsAccount
-					_ = s.certs.db.Order("id").Limit(1).Find(&rows).Error
-					if len(rows) > 0 {
-						p.DnsAccountID = rows[0].ID
-					}
 				}
 				out, err := s.certs.IssueTask(ctx, p)
 				if err != nil {
