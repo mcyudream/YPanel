@@ -346,7 +346,7 @@ func (s *CertificateService) Update(ctx context.Context, id uint, in CertUpdateI
 				return err
 			}
 		} else {
-			if out, err := s.run(ctx, fmt.Sprintf("%s --remove -d %s --ecc", acmeBin, c.Domain), 60); err == nil && out.ExitCode != 0 {
+			if out, err := s.run(ctx, fmt.Sprintf(acmeEnv+"%s --remove -d %s --ecc", acmeBin, c.Domain), 60); err == nil && out.ExitCode != 0 {
 				// 移除失败不阻断（可能本就未挂载）
 				_ = out
 			}
@@ -470,8 +470,9 @@ func (s *CertificateService) dnsCredsFor(c *model.Certificate) (string, error) {
 func (s *CertificateService) reinstallCertHook(ctx context.Context, c *model.Certificate) error {
 	keyPath := path.Join(nginxCertDir, c.CertName+".key")
 	crtPath := path.Join(nginxCertDir, c.CertName+".crt")
+	// acmeEnv 必带：HOME 为空时 acme.sh 找 /.acme.sh（生产事故——签发成功而钩子报 not a cert name）
 	out, err := s.run(ctx, fmt.Sprintf(
-		"%s --install-cert -d %s --ecc --key-file %s --fullchain-file %s --reloadcmd 'docker exec ypanel-nginx nginx -s reload'",
+		acmeEnv+"%s --install-cert -d %s --ecc --key-file %s --fullchain-file %s --reloadcmd 'docker exec ypanel-nginx nginx -s reload'",
 		acmeBin, c.Domain, keyPath, crtPath), 120)
 	if err != nil {
 		return err

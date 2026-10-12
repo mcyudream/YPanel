@@ -410,3 +410,10 @@
 - **根因**（两坑叠加）：①`curl -s https://get.acme.sh | sh -s email=xx` 的退出码是**管道最后一个命令 sh 的**——curl 超时/失败输出空、sh 执行空输入照样退出 0，且装后不回读验证 → 网络失败（raw.githubusercontent 不通，实测 20s 超时）被静默成"安装成功"；②agent exec 的 sh 环境 **HOME 为空**（同上条 systemd 坑的 exec 通道变体），acme.sh 安装脚本按 `$HOME/.acme.sh` 落位 → 装到 `/.acme.sh`，而面板命令写死 `/root/.acme.sh`。
 - **规避/解决**：安装类命令一律**落文件分步**（`curl -fsSL URL -o /tmp/x.sh && sh /tmp/x.sh`，-f 使 HTTP 错误非零退出）+ **显式 HOME**（`export HOME=/root;` 前缀或 `HOME=/root sh`）+ **装后回读验证**（`test -x` 判标记串），三者缺一不可；acme.sh 网络受限环境的官方后门：`git clone https://gitee.com/neilpang/acme.sh.git && cd acme.sh && HOME=/root ./acme.sh --install --home /root/.acme.sh -m 邮箱`（gitee 官方镜像）。 ZeroSSL 注册 v3.1.5 会自动获取 EAB，首次冷启动可到 50s+，任务超时给足余量。
 - **来源**：2026-10-12 晚，生产 web-server 注册 ZeroSSL 失败排查（M65 任务化让失败日志首次可见；v0.9.24 修复）。
+
+### acme 命令 HOME 前缀补丁漏打一处：签发成功而「部署钩子」报 not a cert name——同坑修复必须 grep 全量核对
+
+- **现象**：生产签发 yudream.online 成功（LE 证书落盘 /root/.acme.sh/yudream.online_ecc/），任务却在最后一步失败：`--install-cert` 报 "The domain 'yudream.online' is not a cert name"。命令明明带了 --ecc。
+- **根因**：HOME 空时 acme.sh 的证书目录解析落到 `/.acme.sh/<domain>_ecc`（生产机无此目录）——即前一条 acme HOME 坑的余波。修复日给「全部 acme 命令」加 `acmeEnv` 前缀时凭清单记忆改了 5 处，漏了 2 处（reinstallCertHook 的 install-cert、Delete 里的 remove），事故正中漏网处。
+- **规避/解决**：同坑批量修复后必须 `grep -n "<关键字>" 全量` 逐处核对（本次 `grep acmeBin` 一眼揪出 2 处漏网），清单记忆不可靠；更彻底的做法是把命令拼装收敛到单一入口（如 acmeCmd(args) 助手统一加前缀），消灭「每处手拼」的散布。
+- **来源**：2026-10-12 深夜，生产签发成功钩子失败排查（v0.9.27 修复）。
