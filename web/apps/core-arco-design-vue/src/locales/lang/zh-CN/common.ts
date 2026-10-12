@@ -34,6 +34,8 @@ export default {
   all: '全部',
   none: '无',
   noData: '暂无数据',
+  dragToReorder: '拖拽调整列序',
+  totalItems: '共 {n} 条',
   more: '更多',
   copy: '复制',
   copied: '已复制',

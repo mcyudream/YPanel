@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"path"
 	"regexp"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -1277,10 +1278,14 @@ func (s *SiteService) List(ctx context.Context) ([]map[string]any, error) {
 	}
 	// 分组名与证书过期时间映射（B23）
 	groupNames := map[uint]string{}
+	defaultGroupID := uint(0)
 	var groups []model.SiteGroup
 	_ = s.db.Find(&groups).Error
 	for _, g := range groups {
 		groupNames[g.ID] = g.Name
+		if g.IsDefault {
+			defaultGroupID = g.ID
+		}
 	}
 	certExpiry := map[uint]*time.Time{}
 	var certs []model.Certificate
@@ -1314,6 +1319,11 @@ func (s *SiteService) List(ctx context.Context) ([]map[string]any, error) {
 		if groupName == "" {
 			groupName = "默认"
 		}
+		// 分组 id 归一：GroupID=0（未设）映射到默认组真实 id，前端分组过滤口径一致
+		listGroupID := r.GroupID
+		if listGroupID == 0 {
+			listGroupID = defaultGroupID
+		}
 		var notAfter *time.Time
 		if r.CertID != 0 {
 			notAfter = certExpiry[r.CertID]
@@ -1323,7 +1333,7 @@ func (s *SiteService) List(ctx context.Context) ([]map[string]any, error) {
 			"domain": r.Domain, "domains": extra,
 			"port": r.Port, "proxyPass": r.ProxyPass, "certDomain": r.CertDomain,
 			"indexFiles": r.IndexFiles, "logsEnabled": r.LogsEnabled,
-			"groupId": r.GroupID, "groupName": groupName, "remark": r.Remark,
+			"groupId": listGroupID, "groupName": groupName, "remark": r.Remark,
 			"runDir": r.RunDir, "certId": r.CertID, "certNotAfter": notAfter,
 			"isDefault": r.IsDefault, "expireAt": r.ExpireAt, "ownerId": r.OwnerID,
 			"enabled": r.Enabled, "onDisk": onDisk, "nginxRunning": nginxRunning,
@@ -1331,6 +1341,108 @@ func (s *SiteService) List(ctx context.Context) ([]map[string]any, error) {
 		})
 	}
 	return out, nil
+}
+
+// SiteListQuery 站点列表分页查询（M67：网站页后端分页；keyword/group/enabled 过滤，sort 白名单排序）。
+type SiteListQuery struct {
+	Keyword  string // 名称/主域名/附加域名/备注 子串（大小写不敏感）
+	GroupID  *uint  // 非 nil 精确分组（groupId 已归一默认组真实 id）
+	Type     string // static / proxy / php；空=全部
+	Enabled  string // ""=全部 / "on" / "off"
+	Sort     string // 白名单：name/type/enabled/expire；空=默认 id 升序
+	Order    string // asc / desc（默认 asc）
+	Page     int
+	PageSize int
+}
+
+// ListPaged 分页站点列表：复用 List 的全量组装（含 onDisk/证书到期加工），内存过滤+排序+切片。
+// 站点量级（几百）下全量组装成本可接受，分页收益主要在传输与前端渲染。
+func (s *SiteService) ListPaged(ctx context.Context, q SiteListQuery) (map[string]any, error) {
+	all, err := s.List(ctx)
+	if err != nil {
+		return nil, err
+	}
+	kw := strings.ToLower(strings.TrimSpace(q.Keyword))
+	kept := make([]map[string]any, 0, len(all))
+	for _, it := range all {
+		if q.Type != "" && it["type"] != q.Type {
+			continue
+		}
+		if kw != "" {
+			domains, _ := it["domains"].([]string)
+			hay := strings.ToLower(fmt.Sprintf("%v %v %v %v", it["name"], it["domain"], it["remark"], strings.Join(domains, " ")))
+			if !strings.Contains(hay, kw) {
+				continue
+			}
+		}
+		if q.GroupID != nil {
+			gid, _ := it["groupId"].(uint)
+			if gid != *q.GroupID {
+				continue
+			}
+		}
+		if q.Enabled == "on" || q.Enabled == "off" {
+			on, _ := it["enabled"].(bool)
+			if (q.Enabled == "on") != on {
+				continue
+			}
+		}
+		kept = append(kept, it)
+	}
+	if q.Sort != "" {
+		less := func(a, b map[string]any) bool { return false }
+		switch q.Sort {
+		case "name", "type":
+			less = func(a, b map[string]any) bool {
+				return fmt.Sprint(a[q.Sort]) < fmt.Sprint(b[q.Sort])
+			}
+		case "enabled":
+			less = func(a, b map[string]any) bool {
+				av, _ := a["enabled"].(bool)
+				bv, _ := b["enabled"].(bool)
+				return bv && !av // false 在前（asc）
+			}
+		case "expire":
+			less = func(a, b map[string]any) bool {
+				at, aok := a["certNotAfter"].(*time.Time)
+				bt, bok := b["certNotAfter"].(*time.Time)
+				if aok != bok {
+					return !aok // 无证书排前
+				}
+				return aok && at.Before(*bt)
+			}
+		default:
+			q.Sort = ""
+		}
+		if q.Sort != "" {
+			desc := q.Order == "desc"
+			sort.SliceStable(kept, func(i, j int) bool {
+				if desc {
+					return less(kept[j], kept[i])
+				}
+				return less(kept[i], kept[j])
+			})
+		}
+	}
+	page, pageSize := q.Page, q.PageSize
+	if page < 1 {
+		page = 1
+	}
+	if pageSize < 1 || pageSize > 100 {
+		pageSize = 20
+	}
+	total := len(kept)
+	start := (page - 1) * pageSize
+	if start > total {
+		start = total
+	}
+	end := start + pageSize
+	if end > total {
+		end = total
+	}
+	items := make([]map[string]any, 0, end-start)
+	items = append(items, kept[start:end]...)
+	return map[string]any{"total": total, "page": page, "pageSize": pageSize, "items": items}, nil
 }
 
 // Create 创建站点（M13：多域名/反代规则/默认文档/日志）。

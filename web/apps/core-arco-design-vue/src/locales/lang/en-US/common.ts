@@ -34,6 +34,8 @@ export default {
   all: 'All',
   none: 'None',
   noData: 'No data',
+  dragToReorder: 'Drag to reorder columns',
+  totalItems: '{n} items',
   more: 'More',
   copy: 'Copy',
   copied: 'Copied',

@@ -112,6 +112,21 @@ export default {
     const res = await api.get('api/v1/sites', { silent: true })
     return res.data as SiteItem[]
   },
+  // 分页列表（M67：不带 page 的 list() 保持全量数组，供下拉等全量场景）
+  listPaged: async (q: { page: number, pageSize?: number, keyword?: string, groupId?: number, type?: string, sort?: string, order?: string }) => {
+    const p = new URLSearchParams({ page: String(q.page) })
+    if (q.pageSize) {
+      p.set('pageSize', String(q.pageSize))
+    }
+    for (const k of ['keyword', 'groupId', 'type', 'sort', 'order'] as const) {
+      const v = q[k]
+      if (v !== undefined && v !== '') {
+        p.set(k, String(v))
+      }
+    }
+    const res = await api.get(`api/v1/sites?${p.toString()}`, { silent: true })
+    return res.data as { total: number, page: number, pageSize: number, items: SiteItem[] }
+  },
   siteLogs: async (id: number, type = 'access', tail = 200) => {
     const res = await api.get(`api/v1/sites/${id}/logs?type=${type}&tail=${tail}`, { silent: true })
     return (res.data as { content: string }).content

@@ -7,6 +7,8 @@ import apiRuntime from '@/api/modules/runtime'
 import YdDangerDelete from '@/components/YdDangerDelete/index.vue'
 import YdOwnerDialog from '@/components/YdOwnerDialog/index.vue'
 import YdNodeSelect from '@/components/YdNodeSelect/index.vue'
+import YdDataTable from '@/components/YdDataTable/index.vue'
+import type { YdDataTableColumn } from '@/components/YdDataTable/index.vue'
 import { siteGroupApi } from '@/api/modules/cert'
 import type { SiteGroup } from '@/api/modules/cert'
 import { useYwEmbed } from '@/views/desktop/embed'
@@ -54,7 +56,10 @@ function openSiteConfig(id: number, domain: string) {
 }
 
 const status = ref<{ installed: boolean, running: boolean, sites: number, mode?: 'container' | 'host' }>()
-const sites = ref<SiteItem[]>([])
+const sites = ref<SiteItem[]>([]) // 当前页行（M67 后端分页）
+const siteTotal = ref(0)
+const sitePage = ref(1)
+const sitePageSize = ref(20)
 const loading = ref(false)
 const installing = ref(false)
 
@@ -82,44 +87,54 @@ function setSort(key: 'name' | 'type' | 'enabled') {
     sortKey.value = key
     sortOrder.value = 1
   }
+  sitePage.value = 1
+  load()
 }
 
-const filteredSites = computed(() => {
-  let list = [...sites.value]
-  if (filterType.value)
-    list = list.filter(s => s.type === filterType.value)
-  if (filterGroup.value !== '') {
-    list = list.filter((s) => {
-      const gid = s.groupId || groups.value.find(g => g.isDefault)?.id || 0
-      return gid === filterGroup.value
-    })
-  }
-  if (keyword.value.trim()) {
-    const k = keyword.value.trim().toLowerCase()
-    list = list.filter(s => s.name.includes(k) || s.domain.includes(k) || (s.remark || '').toLowerCase().includes(k))
-  }
-  if (sortKey.value) {
-    list.sort((a, b) => {
-      const va = String(a[sortKey.value as 'name' | 'type' | 'enabled'] ?? '')
-      const vb = String(b[sortKey.value as 'name' | 'type' | 'enabled'] ?? '')
-      return va.localeCompare(vb) * sortOrder.value
-    })
-  }
-  return list
-})
-
+// 过滤/排序/分页全部后端承载（M67）；filterType/filterGroup/keyword 变化经 watch 防抖回查
 async function load() {
   loading.value = true
   try {
     status.value = await apiSite.status()
-    if (status.value.installed) {
-      sites.value = await apiSite.list()
+    if (!status.value.installed) {
+      return
+    }
+    const out = await apiSite.listPaged({
+      page: sitePage.value,
+      pageSize: sitePageSize.value,
+      keyword: keyword.value.trim() || undefined,
+      groupId: filterGroup.value === '' ? undefined : filterGroup.value,
+      type: filterType.value || undefined,
+      sort: sortKey.value || undefined,
+      order: sortKey.value ? (sortOrder.value === 1 ? 'asc' : 'desc') : undefined,
+    })
+    sites.value = out.items
+    siteTotal.value = out.total
+    // 删除/过滤收缩后当前页越界回退
+    if (!out.items.length && out.total > 0 && sitePage.value > 1) {
+      sitePage.value = Math.ceil(out.total / sitePageSize.value)
+      await load()
     }
   }
   finally {
     loading.value = false
   }
 }
+
+let kwTimer: ReturnType<typeof setTimeout> | null = null
+watch([filterType, filterGroup], () => {
+  sitePage.value = 1
+  load()
+})
+watch(keyword, () => {
+  if (kwTimer) {
+    clearTimeout(kwTimer)
+  }
+  kwTimer = setTimeout(() => {
+    sitePage.value = 1
+    load()
+  }, 300)
+})
 
 async function install() {
   installing.value = true
@@ -442,6 +457,32 @@ async function saveExpire() {
   }
 }
 
+// ---- 表格列定义（M67 YdDataTable）：勾选+名称左固定，操作右固定，中间列可拖拽换序（记忆）----
+const siteColumns = computed<YdDataTableColumn[]>(() => [
+  { key: 'select', label: '', width: 36, fixed: 'left' },
+  { key: 'name', label: i18n.global.t('common.name'), width: 200, sortable: true, fixed: 'left' },
+  { key: 'type', label: i18n.global.t('common.type'), width: 90, sortable: true },
+  { key: 'group', label: i18n.global.t('sites.list.group'), hidden: 'md' },
+  { key: 'domain', label: i18n.global.t('sites.list.domain') },
+  { key: 'protocol', label: i18n.global.t('sites.list.protocol'), width: 90 },
+  { key: 'expire', label: i18n.global.t('sites.list.certExpire'), width: 110 },
+  { key: 'enabled', label: i18n.global.t('common.status'), width: 84, sortable: true },
+  { key: 'remark', label: i18n.global.t('common.remark'), hidden: 'lg' },
+  { key: 'actions', label: i18n.global.t('common.operation'), width: 330, fixed: 'right', align: 'right' },
+])
+
+const allPageSelected = computed(() => sites.value.length > 0 && sites.value.every(s => siteSelected.value.has(s.id)))
+
+function toggleAllPage() {
+  siteSelected.value = allPageSelected.value ? new Set() : new Set(sites.value.map(s => s.id))
+}
+
+function onSort(key: string) {
+  if (key === 'name' || key === 'type' || key === 'enabled') {
+    setSort(key)
+  }
+}
+
 onMounted(() => {
   api.get('api/v1/nodes', { silent: true }).then((r) => {
     siteNodes.value = (r.data as any[]).map((x: any) => ({ id: x.id, name: x.name, hostname: x.hostname }))
@@ -508,119 +549,104 @@ onMounted(() => {
             :options="[{ label: $t('sites.list.allGroups'), value: '' }, ...groups.map(g => ({ label: `${g.name}（${g.sites}）`, value: g.id }))]"
           />
           <FaInput v-model="keyword" :placeholder="$t('sites.list.searchPlaceholder')" class="w-56!" />
-          <span class="ml-auto text-xs text-muted-foreground">{{ $t('common.total', { n: filteredSites.length }) }}</span>
-          <template v-if="siteSelected.size">
-            <span class="text-xs text-primary">{{ $t('sites.list.selectedCount', { n: siteSelected.size }) }}</span>
-            <FaButton variant="outline" size="sm" @click="batchSites('enable')">{{ $t('sites.list.batchEnable') }}</FaButton>
-            <FaButton variant="outline" size="sm" @click="batchSites('disable')">{{ $t('sites.list.batchDisable') }}</FaButton>
-            <FaButton variant="outline" size="sm" class="text-red-500!" @click="batchSites('delete')">{{ $t('sites.list.batchDelete') }}</FaButton>
-          </template>
         </div>
 
-        <div class="overflow-x-auto rounded-lg border">
-          <table class="w-full text-sm">
-            <thead class="bg-muted/50 text-left text-xs text-muted-foreground">
-              <tr>
-                <th class="w-8 px-3 py-2"><input type="checkbox" :checked="siteSelected.size > 0 && siteSelected.size === filteredSites.length" @change="siteSelected = siteSelected.size ? new Set() : new Set(filteredSites.map(x => x.id))"></th>
-                <th class="cursor-pointer px-3 py-2 select-none" @click="setSort('name')">
-                  {{ $t('common.name') }}
-                  <FaIcon v-if="sortKey === 'name'" :name="sortOrder === 1 ? 'i-lucide:chevron-up' : 'i-lucide:chevron-down'" class="text-[10px]" />
-                </th>
-                <th class="cursor-pointer px-3 py-2 select-none" @click="setSort('type')">
-                  {{ $t('common.type') }}
-                  <FaIcon v-if="sortKey === 'type'" :name="sortOrder === 1 ? 'i-lucide:chevron-up' : 'i-lucide:chevron-down'" class="text-[10px]" />
-                </th>
-                <th class="hidden px-3 py-2 md:table-cell">{{ $t('sites.list.group') }}</th>
-                <th class="px-3 py-2">{{ $t('sites.list.domain') }}</th>
-                <th class="px-3 py-2">{{ $t('sites.list.protocol') }}</th>
-                <th class="px-3 py-2">{{ $t('sites.list.certExpire') }}</th>
-                <th class="cursor-pointer px-3 py-2 select-none" @click="setSort('enabled')">
-                  {{ $t('common.status') }}
-                  <FaIcon v-if="sortKey === 'enabled'" :name="sortOrder === 1 ? 'i-lucide:chevron-up' : 'i-lucide:chevron-down'" class="text-[10px]" />
-                </th>
-                <th class="hidden px-3 py-2 lg:table-cell">{{ $t('common.remark') }}</th>
-                <th class="px-3 py-2 text-right">{{ $t('common.operation') }}</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr v-if="loading && !sites.length">
-                <td colspan="10" class="px-3 py-10 text-center text-muted-foreground">{{ $t('common.loading') }}</td>
-              </tr>
-              <tr v-else-if="!filteredSites.length">
-                <td colspan="10" class="px-3 py-10 text-center text-muted-foreground">{{ $t('sites.list.noSites') }}</td>
-              </tr>
-              <tr v-for="s in filteredSites" :key="s.id" class="border-t transition-colors hover:bg-accent/30">
-                <td class="px-3 py-2"><input type="checkbox" :checked="siteSelected.has(s.id)" @change="toggleSiteSelect(s.id)"></td>
-                <td class="px-3 py-2 font-medium">
-                  {{ s.name }}
-                  <span v-if="s.isDefault" class="ml-1 rounded-full bg-sky-500/10 px-1.5 py-0.5 text-[10px] text-sky-600">{{ $t('common.default') }}</span>
-                  <a v-if="s.enabled" :href="`http://${s.domain}`" target="_blank" rel="noopener" class="ml-1 text-primary opacity-60" :title="$t('sites.list.visit')">↗</a>
-                </td>
-                <td class="px-3 py-2">
-                  <span class="rounded-full px-2 py-0.5 text-xs" :class="{ static: 'bg-blue-500/10 text-blue-600', proxy: 'bg-purple-500/10 text-purple-600', php: 'bg-emerald-500/10 text-emerald-600' }[s.type] || 'bg-muted text-muted-foreground'">
-                    {{ typeLabel(s.type) }}
-                  </span>
-                </td>
-                <td class="hidden px-3 py-2 text-xs text-muted-foreground md:table-cell">{{ groupNameOf(s) }}</td>
-                <td class="px-3 py-2 font-mono text-[13px]">
-                  {{ s.domain }}
-                  <span v-if="s.domains?.length" class="text-muted-foreground"> +{{ s.domains.length }}</span>
-                </td>
-                <td class="px-3 py-2">
-                  <span v-if="s.certDomain" class="rounded-full bg-emerald-500/10 px-2 py-0.5 text-xs text-emerald-600">HTTPS</span>
-                  <span v-else class="text-xs text-muted-foreground">HTTP</span>
-                </td>
-                <td class="px-3 py-2 text-xs">
-                  <template v-if="s.certDomain && s.certNotAfter">
-                    <span :class="(new Date(s.certNotAfter).getTime() - Date.now()) < 0 ? 'text-red-500' : (new Date(s.certNotAfter).getTime() - Date.now()) < 15 * 86400000 ? 'text-amber-500' : 'text-muted-foreground'">
-                      {{ new Date(s.certNotAfter).toISOString().slice(0, 10) }}
-                    </span>
-                  </template>
-                  <span v-else class="text-muted-foreground">—</span>
-                </td>
-                <td class="px-3 py-2">
-                  <button
-                    type="button"
-                    class="cursor-pointer rounded-full px-2 py-0.5 text-xs transition-colors"
-                    :class="s.enabled ? 'bg-emerald-500/10 text-emerald-600' : 'bg-muted text-muted-foreground'"
-                    @click="toggle(s)"
-                  >
-                    {{ s.enabled ? $t('sites.list.started') : $t('sites.list.stopped') }}
-                  </button>
-                </td>
-                <td class="hidden max-w-40 px-3 py-2 lg:table-cell">
-                  <template v-if="remarkEditing === s.id">
-                    <input
-                      v-model="remarkEditingVal"
-                      class="h-7 w-full rounded border border-input bg-background px-1.5 text-xs outline-none focus:border-primary"
-                      @keyup.enter="saveRemark(s)"
-                      @blur="saveRemark(s)"
-                    >
-                  </template>
-                  <template v-else>
-                    <span
-                      class="cursor-pointer truncate text-xs" :class="s.remark ? 'text-foreground' : 'text-muted-foreground/50'"
-                      :title="$t('sites.list.clickEditRemark')"
-                      @click="startEditRemark(s)"
-                    >
-                      {{ s.remark || $t('sites.list.remarkPlaceholder') }}
-                    </span>
-                  </template>
-                </td>
-                <td class="px-3 py-2">
-                  <div class="flex items-center justify-end gap-1">
-                    <FaButton size="sm" @click="openSiteConfig(s.id, s.domain)">{{ $t('sites.list.config') }}</FaButton>
-                    <FaButton v-if="!s.isDefault" variant="ghost" size="sm" :title="$t('sites.list.setDefaultTip')" @click="setDefault(s)">{{ $t('sites.list.setDefault') }}</FaButton>
-                    <FaButton variant="ghost" size="sm" :title="$t('sites.list.setExpireTip')" @click="openExpire(s)">{{ $t('sites.list.expire') }}</FaButton>
-                    <FaButton variant="outline" size="sm" @click="toggle(s)">{{ s.enabled ? $t('sites.list.disable') : $t('common.enabled') }}</FaButton>
-                    <FaButton variant="ghost" size="sm" :title="$t('common.owner.title')" @click="openOwner(s.id, s.ownerId)">{{ $t('common.owner.short') }}</FaButton>
-                    <FaButton variant="outline" size="sm" class="text-red-500!" @click="remove(s)">{{ $t('common.delete') }}</FaButton>
-                  </div>
-                </td>
-              </tr>
-            </tbody>
-          </table>
-        </div>
+        <YdDataTable
+          :columns="siteColumns"
+          :rows="sites"
+          storage-key="sites"
+          :loading="loading && !sites.length"
+          :sort-key="sortKey"
+          :sort-order="sortOrder === 1 ? 'asc' : 'desc'"
+          v-model:page="sitePage"
+          v-model:size="sitePageSize"
+          :total="siteTotal"
+          :empty-text="$t('sites.list.noSites')"
+          @sort="onSort"
+          @update:page="load"
+          @update:size="sitePage = 1; load()"
+        >
+          <template #head-select>
+            <input type="checkbox" :checked="allPageSelected" @change="toggleAllPage">
+          </template>
+          <template #cell-select="{ item }">
+            <input type="checkbox" :checked="siteSelected.has(item.id)" @change="toggleSiteSelect(item.id)">
+          </template>
+          <template #cell-name="{ item }">
+            <span class="font-medium">{{ item.name }}</span>
+            <span v-if="item.isDefault" class="ml-1 rounded-full bg-sky-500/10 px-1.5 py-0.5 text-[10px] text-sky-600">{{ $t('common.default') }}</span>
+            <a v-if="item.enabled" :href="`http://${item.domain}`" target="_blank" rel="noopener" class="ml-1 text-primary opacity-60" :title="$t('sites.list.visit')">↗</a>
+          </template>
+          <template #cell-type="{ item }">
+            <span class="rounded-full px-2 py-0.5 text-xs" :class="{ static: 'bg-blue-500/10 text-blue-600', proxy: 'bg-purple-500/10 text-purple-600', php: 'bg-emerald-500/10 text-emerald-600' }[item.type] || 'bg-muted text-muted-foreground'">
+              {{ typeLabel(item.type) }}
+            </span>
+          </template>
+          <template #cell-group="{ item }">
+            <span class="text-xs text-muted-foreground">{{ groupNameOf(item) }}</span>
+          </template>
+          <template #cell-domain="{ item }">
+            <span class="font-mono text-[13px]">{{ item.domain }}</span>
+            <span v-if="item.domains?.length" class="text-xs text-muted-foreground"> +{{ item.domains.length }}</span>
+          </template>
+          <template #cell-protocol="{ item }">
+            <span v-if="item.certDomain" class="rounded-full bg-emerald-500/10 px-2 py-0.5 text-xs text-emerald-600">HTTPS</span>
+            <span v-else class="text-xs text-muted-foreground">HTTP</span>
+          </template>
+          <template #cell-expire="{ item }">
+            <template v-if="item.certDomain && item.certNotAfter">
+              <span class="text-xs" :class="(new Date(item.certNotAfter).getTime() - Date.now()) < 0 ? 'text-red-500' : (new Date(item.certNotAfter).getTime() - Date.now()) < 15 * 86400000 ? 'text-amber-500' : 'text-muted-foreground'">
+                {{ new Date(item.certNotAfter).toISOString().slice(0, 10) }}
+              </span>
+            </template>
+            <span v-else class="text-xs text-muted-foreground">—</span>
+          </template>
+          <template #cell-enabled="{ item }">
+            <button
+              type="button"
+              class="cursor-pointer rounded-full px-2 py-0.5 text-xs transition-colors"
+              :class="item.enabled ? 'bg-emerald-500/10 text-emerald-600' : 'bg-muted text-muted-foreground'"
+              @click="toggle(item)"
+            >
+              {{ item.enabled ? $t('sites.list.started') : $t('sites.list.stopped') }}
+            </button>
+          </template>
+          <template #cell-remark="{ item }">
+            <input
+              v-if="remarkEditing === item.id"
+              v-model="remarkEditingVal"
+              class="h-7 w-full rounded border border-input bg-background px-1.5 text-xs outline-none focus:border-primary"
+              @keyup.enter="saveRemark(item)"
+              @blur="saveRemark(item)"
+            >
+            <span
+              v-else
+              class="block max-w-40 cursor-pointer truncate text-xs" :class="item.remark ? 'text-foreground' : 'text-muted-foreground/50'"
+              :title="$t('sites.list.clickEditRemark')"
+              @click="startEditRemark(item)"
+            >
+              {{ item.remark || $t('sites.list.remarkPlaceholder') }}
+            </span>
+          </template>
+          <template #cell-actions="{ item }">
+            <div class="flex items-center justify-end gap-1">
+              <FaButton size="sm" @click="openSiteConfig(item.id, item.domain)">{{ $t('sites.list.config') }}</FaButton>
+              <FaButton v-if="!item.isDefault" variant="ghost" size="sm" :title="$t('sites.list.setDefaultTip')" @click="setDefault(item)">{{ $t('sites.list.setDefault') }}</FaButton>
+              <FaButton variant="ghost" size="sm" :title="$t('sites.list.setExpireTip')" @click="openExpire(item)">{{ $t('sites.list.expire') }}</FaButton>
+              <FaButton variant="outline" size="sm" @click="toggle(item)">{{ item.enabled ? $t('sites.list.disable') : $t('common.enabled') }}</FaButton>
+              <FaButton variant="ghost" size="sm" :title="$t('common.owner.title')" @click="openOwner(item.id, item.ownerId)">{{ $t('common.owner.short') }}</FaButton>
+              <FaButton variant="outline" size="sm" class="text-red-500!" @click="remove(item)">{{ $t('common.delete') }}</FaButton>
+            </div>
+          </template>
+          <template #footerLeft>
+            <template v-if="siteSelected.size">
+              <span class="text-xs text-primary">{{ $t('sites.list.selectedCount', { n: siteSelected.size }) }}</span>
+              <FaButton variant="outline" size="sm" @click="batchSites('enable')">{{ $t('sites.list.batchEnable') }}</FaButton>
+              <FaButton variant="outline" size="sm" @click="batchSites('disable')">{{ $t('sites.list.batchDisable') }}</FaButton>
+              <FaButton variant="outline" size="sm" class="text-red-500!" @click="batchSites('delete')">{{ $t('sites.list.batchDelete') }}</FaButton>
+            </template>
+          </template>
+        </YdDataTable>
 
         <!-- 扫描识别结果 -->
         <div v-if="scanVisible" class="mt-4 rounded-lg border bg-background p-4">

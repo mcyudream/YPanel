@@ -1,6 +1,8 @@
 package api
 
 import (
+	"strconv"
+
 	"github.com/gin-gonic/gin"
 	"log/slog"
 
@@ -186,7 +188,28 @@ func (a *SiteAPI) SetOwner(c *gin.Context) {
 
 // List GET /api/v1/sites
 func (a *SiteAPI) List(c *gin.Context) {
-	out, err := a.Sites.List(c.Request.Context())
+	// M67：带 page 参数走分页信封 {total,page,pageSize,items}；不带保持全量数组（既有调用方兼容）
+	if c.Query("page") == "" {
+		out, err := a.Sites.List(c.Request.Context())
+		if err != nil {
+			respErr(c, err)
+			return
+		}
+		respOK(c, out)
+		return
+	}
+	q := service.SiteListQuery{Keyword: c.Query("keyword"), Enabled: c.Query("enabled"), Sort: c.Query("sort"), Order: c.Query("order")}
+	if g := c.Query("groupId"); g != "" {
+		gid, err := strconv.ParseUint(g, 10, 64)
+		if err == nil {
+			uid := uint(gid)
+			q.GroupID = &uid
+		}
+	}
+	page, _ := strconv.Atoi(c.Query("page"))
+	pageSize, _ := strconv.Atoi(c.Query("pageSize"))
+	q.Page, q.PageSize = page, pageSize
+	out, err := a.Sites.ListPaged(c.Request.Context(), q)
 	if err != nil {
 		respErr(c, err)
 		return
