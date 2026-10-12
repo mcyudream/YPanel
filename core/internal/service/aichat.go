@@ -20,7 +20,7 @@ import (
 )
 
 // M60：长任务（多步安装/迁移/排查）经常超出小轮次上限后被静默掐断，放宽并配合耗尽提示。
-const maxToolRounds = 30
+const maxToolRounds = 100
 
 // errAIPermDenied：RBAC 工具权限拒绝（M60）——调用方按「无权限」步骤呈现，区别于普通失败。
 var errAIPermDenied = errors.New("权限不足")
