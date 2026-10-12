@@ -45,6 +45,15 @@ func Open(dataDir string) (*gorm.DB, error) {
 			return nil, fmt.Errorf("迁移站点索引失败: %w", err)
 		}
 	}
+	// GORM 升级改变了 HTTPSJSON 的蛇形转换（老库 http_s_json → 新命名 https_json），
+	// AutoMigrate 不会重命名既有列（只会加新列，老列数据滞留），启动时对齐老库列名（生产生产库实证）。
+	if gdb.Migrator().HasTable(&model.Site{}) &&
+		!gdb.Migrator().HasColumn(&model.Site{}, "https_json") &&
+		gdb.Migrator().HasColumn(&model.Site{}, "http_s_json") {
+		if err := gdb.Exec("ALTER TABLE sites RENAME COLUMN http_s_json TO https_json").Error; err != nil {
+			return nil, fmt.Errorf("迁移站点 https_json 列失败: %w", err)
+		}
+	}
 	if err := gdb.AutoMigrate(&model.User{}, &model.Role{}, &model.RolePermission{}, &model.RoleNode{}, &model.LoginLog{}, &model.Setting{}, &model.CronTask{}, &model.CronTaskLog{}, &model.DatabaseInstance{}, &model.Site{}, &model.SiteGroup{}, &model.SitePortLease{}, &model.Certificate{}, &model.DnsAccount{}, &model.AcmeAccount{}, &model.Node{}, &model.PairingCode{}, &model.AlertRule{}, &model.Notification{}, &model.AuditLog{}, &model.MetricRecord{}, &model.AppStoreSource{}, &model.AppStoreApp{}, &model.AppStoreInstall{}, &model.Runtime{}, &model.Script{}, &model.AIProvider{}, &model.AIKnowledge{}, &model.AIKnowledgeDoc{}, &model.AIKnowledgeChunk{}, &model.AIMemory{}, &model.AIConversation{}, &model.AIToolFlag{}, &model.AIOperationLog{}, &model.ConfigRevision{}, &model.NatForwardRule{}, &model.AppTask{}, &model.GitCredential{}, &model.DnsRecord{}, &model.HostRecord{}, &model.HostTarget{}, &model.DatabaseAuditLog{}, &model.MonitorProbe{}, &model.StorageAccount{}, &model.DockerEnvironment{}, &model.LogSearchQuery{}, &model.MetricHourly{}, &model.FileFavorite{}, &model.FileShare{}, &model.MCPOperation{}, &model.DiskGuardEvent{}); err != nil {
 		return nil, fmt.Errorf("数据库迁移失败: %w", err)
 	}

@@ -423,3 +423,10 @@
 - **余波**：证书已签发但钩子未装时，面板重签会撞 acme.sh 的既有证书保护——`--issue` 输出 "Domains not changed. / Skipping. Next renewal time is: ..." 且 **exit 2**，面板按退出码判「签发失败」还落了一条 error 记录，而证书文件明明健康。acme.sh 的 skip 语义是「证书有效、未到续期窗口」。
 - **规避/解决**：issueExecute 对 exit!=0 且输出含 "Skipping. Next renewal time is" 的场景视为成功继续走部署钩子入库（重建面板/换机重签的正常路径）；真正的失败才落 error 记录。恢复现场最省路径：手动 `install-cert`（HOME=/root + --ecc + reloadcmd）把证书装进 nginx certs 并写续期钩子，面板 List 的 openssl 探测自动把状态刷正，不消耗 LE 签发配额。
 - **来源**：2026-10-12 深夜，v0.9.27 后生产重签实测（v0.9.28 修复 skip 语义）。
+
+### GORM 升级改了连续大写驼峰的蛇形转换：HTTPSJSON 老库列 http_s_json vs 新代码 https_json——AutoMigrate 只加列不改名
+
+- **现象**：生产（v0.9.11 时代建的老库）站点 HTTPS 设置保存报 `SQL logic error: no such column: https_json`。PRAGMA 一看：列名是 `http_s_json`——老 GORM NamingStrategy 把 `HTTPSJSON` 分词为 HTTP_S_JSON，GORM 升级后同一字段生成 `https_json`（HTTPS 整体切分）。142 等新库列名已是新形态，两代库列名不一致。
+- **根因**：AutoMigrate 对已存在的表**只 ADD 缺失列、不改名不搬数据**——老列 http_s_json 原地滞留（数据也在老列里），新代码 SQL 引用 https_json 即炸。
+- **规避/解决**：①Open 迁移序列里、AutoMigrate 之前做条件 rename（HasTable sites && !HasColumn https_json && HasColumn http_s_json → ALTER TABLE RENAME COLUMN，SQLite 3.25+ 支持，数据随列走）；②给连续大写字段（尤其 HTTPS/HTTP/URL/ID 前缀类）显式 `gorm:"column:..."` 锁定列名，杜绝依赖 NamingStrategy 版本行为；③排查手法：nodes/exec + python3 sqlite3 PRAGMA table_info 直接对比生产列集合与模型期望。
+- **来源**：2026-10-13，生产 HTTPS 保存报错（v0.9.30 修复，生产已手动 RENAME 恢复 + 启动补丁兜底其他老库）。
