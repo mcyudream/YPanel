@@ -417,3 +417,9 @@
 - **根因**：HOME 空时 acme.sh 的证书目录解析落到 `/.acme.sh/<domain>_ecc`（生产机无此目录）——即前一条 acme HOME 坑的余波。修复日给「全部 acme 命令」加 `acmeEnv` 前缀时凭清单记忆改了 5 处，漏了 2 处（reinstallCertHook 的 install-cert、Delete 里的 remove），事故正中漏网处。
 - **规避/解决**：同坑批量修复后必须 `grep -n "<关键字>" 全量` 逐处核对（本次 `grep acmeBin` 一眼揪出 2 处漏网），清单记忆不可靠；更彻底的做法是把命令拼装收敛到单一入口（如 acmeCmd(args) 助手统一加前缀），消灭「每处手拼」的散布。
 - **来源**：2026-10-12 深夜，生产签发成功钩子失败排查（v0.9.27 修复）。
+
+### 同坑复犯教训与 acme.sh「重签 skip」语义：skip（exit 2）是成功不是失败
+
+- **余波**：证书已签发但钩子未装时，面板重签会撞 acme.sh 的既有证书保护——`--issue` 输出 "Domains not changed. / Skipping. Next renewal time is: ..." 且 **exit 2**，面板按退出码判「签发失败」还落了一条 error 记录，而证书文件明明健康。acme.sh 的 skip 语义是「证书有效、未到续期窗口」。
+- **规避/解决**：issueExecute 对 exit!=0 且输出含 "Skipping. Next renewal time is" 的场景视为成功继续走部署钩子入库（重建面板/换机重签的正常路径）；真正的失败才落 error 记录。恢复现场最省路径：手动 `install-cert`（HOME=/root + --ecc + reloadcmd）把证书装进 nginx certs 并写续期钩子，面板 List 的 openssl 探测自动把状态刷正，不消耗 LE 签发配额。
+- **来源**：2026-10-12 深夜，v0.9.27 后生产重签实测（v0.9.28 修复 skip 语义）。

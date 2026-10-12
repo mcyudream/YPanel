@@ -134,10 +134,16 @@ func (s *CertificateService) issueExecute(ctx context.Context, logf TaskLogf, p 
 		Issuer: issuerLabel(p.ca), IssueLog: out,
 	}
 	c.AltDomains = saveAltDomains(p.alts)
-	if code != 0 {
+	if code != 0 && !strings.Contains(out, "Skipping. Next renewal time is") {
 		c.Status = "error"
 		_ = s.db.Create(c).Error // 失败日志也入库便于排查
 		return nil, errs.New(errs.CodeFileOpFailed, "error.fileOpFailed", "ACME 签发失败: "+firstLine(out))
+	}
+	if code != 0 {
+		// acme.sh 对已有有效证书重签会 skip（exit 2）——证书文件在，直接走部署钩子入库（重建面板/换机重签场景）
+		if logf != nil {
+			logf("info", "acme.sh 检测到有效证书未到续期窗口，复用现有证书继续部署")
+		}
 	}
 	if !p.in.AutoRenew {
 		_, _ = s.run(ctx, fmt.Sprintf(acmeEnv+"%s --remove -d %s --ecc", acmeBin, p.main), 60)
