@@ -18,7 +18,7 @@ import (
 // 两个命令都显式传 --project-name（项目名取编排文件目录名时会静默查空，见 exp）。
 // ps 失败不阻塞：拓扑仍可展示编排结构，只是无实时状态。
 func (m *Manager) Topology(ctx context.Context, name, dir string) (dto.ComposeTopology, error) {
-	cfg, err := m.resolveProject(name, dir)
+	cfg, err := m.resolveProject(ctx, name, dir)
 	if err != nil {
 		return dto.ComposeTopology{}, err
 	}

@@ -86,3 +86,10 @@
 
 - **现象**：`docker compose build --progress=plain` 在 142 的 compose v2.39+ 报 `--progress is a global compose flag, better use 'docker compose --progress xx build'`，构建直接失败（脚本/面板老代码原本能跑，docker 升级后静默变砖）。
 - **规避/解决**：非 TTY 场景 buildkit 输出本来就是 plain 格式，直接去掉 `--progress=plain` 即可；需要显式控制时用全局位 `docker compose --progress plain build`。凡是 compose 子命令 flag，升级 docker 后要复查一遍是否被收编/废弃。
+
+### working_dir label 只是启动时的工作目录：目录里没有 compose 文件不等于查不到——config_files label 才是真实文件清单
+
+- **现象**：用户生产**子节点**的外部 compose 项目（工作目录 /opt/hzyDockerCompose）在面板应用详情里日志正常、但拓扑/编排内容报 `1002 未在 /opt/hzyDockerCompose 找到 compose 配置文件（compose.yaml/docker-compose.yml 等）`。
+- **根因**：agent 编排列表按容器 label `com.docker.compose.project.working_dir` 分组发现外部项目，详情页把该目录透传给 `resolveProject`，后者只在该目录下按四个固定文件名（compose.yaml/compose.yml/docker-compose.yaml/docker-compose.yml）找文件。但 **working_dir 记录的是 `docker compose` 启动时的工作目录**，不保证文件在此：`docker compose -f <别处的文件>`（注意 v2 默认 working_dir=首个 -f 文件所在目录，显式 `--project-directory` 或 v1/第三方面板的启动方式会让两者背离）、up 后文件被挪走/清理，都会造成「label 指向的目录没有编排文件」。日志走容器级通道不受影响——「日志正常但编排报错」即此症。
+- **规避/解决（2026-10-12 已实现）**：`resolveProject` 目录白名单未命中时，**从项目容器的 `com.docker.compose.project.config_files` label 反查真实编排文件**（compose v2 起容器记录实际 -f 清单，多文件逗号分隔、首个为主文件；逐个 os.Stat 取第一个存在且非目录的）。142 E2E：`docker compose -p ext-e2e -f /tmp/xx.yaml --project-directory /opt/ext-e2e up -d` 精确复刻（working_dir=空目录、真实文件在 /tmp），修复前 topology 1002、修复后 topology/config 均正常返回 /tmp 文件。**局限**：文件被彻底删除（label 路径也不存在）时反查同样失败，只能引导重新纳管/重装。**复刻手法**：v2 默认 working_dir 跟 -f 文件走，直接 `-f 别处` 复刻不出用户场景，必须加 `--project-directory <空目录>`。
+- **来源**：2026-10-12，用户生产子节点应用详情报错（方案 A：label 反查，agent/internal/compose/compose.go resolveProject + compose_test.go 两用例）。

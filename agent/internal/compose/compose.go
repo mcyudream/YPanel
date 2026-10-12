@@ -23,6 +23,7 @@ var managedFileNames = []string{"compose.yaml", "compose.yml", "docker-compose.y
 const (
 	composeProjectLabel     = "com.docker.compose.project"
 	composeWorkdirLabel     = "com.docker.compose.project.working_dir"
+	composeConfigFilesLabel = "com.docker.compose.project.config_files"
 	composeServiceLabel     = "com.docker.compose.service"
 )
 
@@ -70,7 +71,10 @@ func findConfig(dir string) (string, bool) {
 }
 
 // resolveProject 解析项目配置文件：dir 非空视为外部项目目录，否则 baseDir/name（托管）。
-func (m *Manager) resolveProject(name, dir string) (configFile string, err error) {
+// 目录里没有白名单文件名时，从项目容器的 config_files label 反查真实编排文件——
+// working_dir label 只是启动时的工作目录，`docker compose -f <别处的文件>` 起的项目
+// 或事后文件被挪走的项目，文件并不在 working_dir 下。
+func (m *Manager) resolveProject(ctx context.Context, name, dir string) (configFile string, err error) {
 	if err := ValidateName(name); err != nil {
 		return "", err
 	}
@@ -78,11 +82,40 @@ func (m *Manager) resolveProject(name, dir string) (configFile string, err error
 	if dir != "" {
 		workDir = filepath.Clean(dir)
 	}
-	cfg, ok := findConfig(workDir)
-	if !ok {
-		return "", errs.Wrap(errs.ErrNotFound, "未在 "+workDir+" 找到 compose 配置文件（compose.yaml/docker-compose.yml 等）")
+	if cfg, ok := findConfig(workDir); ok {
+		return cfg, nil
 	}
-	return cfg, nil
+	if cfg, ok := m.configFileFromLabels(ctx, name); ok {
+		return cfg, nil
+	}
+	return "", errs.Wrap(errs.ErrNotFound, "未在 "+workDir+" 找到 compose 配置文件（compose.yaml/docker-compose.yml 等）")
+}
+
+// configFileFromLabels 按项目名匹配容器，取其 config_files label（docker compose v2 记录的
+// 实际 -f 文件清单，多文件逗号分隔、首个为主文件）中第一个存在且非目录的路径。
+func (m *Manager) configFileFromLabels(ctx context.Context, name string) (string, bool) {
+	if m.docker == nil {
+		return "", false
+	}
+	containers, err := m.docker.List(ctx)
+	if err != nil {
+		return "", false
+	}
+	for _, c := range containers {
+		if c.Labels[composeProjectLabel] != name {
+			continue
+		}
+		for _, f := range strings.Split(c.Labels[composeConfigFilesLabel], ",") {
+			f = strings.TrimSpace(f)
+			if f == "" {
+				continue
+			}
+			if st, err := os.Stat(f); err == nil && !st.IsDir() {
+				return f, true
+			}
+		}
+	}
+	return "", false
 }
 
 // composeArgs 组装 docker compose 基础参数。
@@ -107,7 +140,6 @@ func runDocker(ctx context.Context, args ...string) (string, int, error) {
 	}
 	return string(out), 0, nil
 }
-
 
 // ServiceAction 单服务操作（start/stop/restart/pull；up=按当前编排定义重建该服务）。
 func (m *Manager) ServiceAction(ctx context.Context, project, service, action string) (string, error) {
@@ -240,8 +272,8 @@ func (m *Manager) List(ctx context.Context) ([]dto.ComposeProject, error) {
 }
 
 // Config 读取项目 yaml。
-func (m *Manager) Config(name, dir string) (dto.ComposeConfigResp, error) {
-	cfg, err := m.resolveProject(name, dir)
+func (m *Manager) Config(ctx context.Context, name, dir string) (dto.ComposeConfigResp, error) {
+	cfg, err := m.resolveProject(ctx, name, dir)
 	if err != nil {
 		return dto.ComposeConfigResp{}, err
 	}
@@ -273,7 +305,7 @@ func (m *Manager) WriteConfig(name, content string) error {
 
 // Up 启动项目（up -d）。
 func (m *Manager) Up(ctx context.Context, name, dir string) (string, error) {
-	cfg, err := m.resolveProject(name, dir)
+	cfg, err := m.resolveProject(ctx, name, dir)
 	if err != nil {
 		return "", err
 	}
@@ -289,7 +321,7 @@ func (m *Manager) Up(ctx context.Context, name, dir string) (string, error) {
 
 // Down 停止并移除项目。
 func (m *Manager) Down(ctx context.Context, name, dir string) (string, error) {
-	cfg, err := m.resolveProject(name, dir)
+	cfg, err := m.resolveProject(ctx, name, dir)
 	if err != nil {
 		return "", err
 	}
@@ -305,7 +337,7 @@ func (m *Manager) Down(ctx context.Context, name, dir string) (string, error) {
 
 // Logs 输出项目日志到 w；follow 时持续直到 ctx 取消。
 func (m *Manager) Logs(ctx context.Context, name, dir, tail, service string, w io.Writer) error {
-	cfg, err := m.resolveProject(name, dir)
+	cfg, err := m.resolveProject(ctx, name, dir)
 	if err != nil {
 		return err
 	}

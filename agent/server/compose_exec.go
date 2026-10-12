@@ -49,7 +49,7 @@ func (s *Server) handleComposeConfig(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, errs.ErrAgentDisabled)
 		return
 	}
-	out, err := s.compose.Config(qParam(r, "name"), qParam(r, "dir"))
+	out, err := s.compose.Config(r.Context(), qParam(r, "name"), qParam(r, "dir"))
 	if err != nil {
 		writeErr(w, err)
 		return
