@@ -35,8 +35,10 @@ const props = withDefaults(defineProps<{
   sortOrder?: 'asc' | 'desc'
   /** 行附加类（如选中背景） */
   rowClass?: (item: Row) => string
-  // 受控分页：三者齐备渲染页脚
+  // 受控分页：三者齐备渲染页脚（size 为 v-model:size 的 prop 部分，必须声明否则
+  // 透传到根元素，[size] 属性会触发布局塌缩——生产网站页实证）
   page?: number
+  size?: number
   pageSize?: number
   total?: number
 }>(), {
@@ -48,6 +50,7 @@ const props = withDefaults(defineProps<{
   sortOrder: 'asc',
   rowClass: undefined,
   page: undefined,
+  size: undefined,
   pageSize: undefined,
   total: undefined,
 })
@@ -154,14 +157,14 @@ const pageModel = computed({
   set: (v: number) => emit('update:page', v),
 })
 const sizeModel = computed({
-  get: () => props.pageSize ?? 20,
+  get: () => props.size ?? props.pageSize ?? 20,
   set: (v: number) => emit('update:size', v),
 })
-const hasPager = computed(() => props.page !== undefined && props.pageSize !== undefined && props.total !== undefined)
+const hasPager = computed(() => props.page !== undefined && props.size !== undefined && props.total !== undefined)
 </script>
 
 <template>
-  <div class="flex flex-col gap-2">
+  <div class="flex w-full flex-col gap-2">
     <div class="relative overflow-x-auto">
       <table class="w-full text-sm">
         <thead class="bg-muted/50 text-left text-xs text-muted-foreground">

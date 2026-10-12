@@ -732,3 +732,10 @@
 - **根因**：①后端 `Certificate.AltDomains` 是 `gorm:"type:text"` 的 **JSON 数组字符串**（如 `["a.com","*.b.com"]`）直接 json 序列化，前端接口却声明 `altDomains: string[]`——类型谎报掩盖了模板对字符串调 join；空值时代码侥幸不崩（`'' || []`），列表出现带附加域名的证书即触发。同类暗雷：凡后端「JSON 落库字符串」字段（Site.Domains、AltDomains 这类），前端拿到的是 string 不是 array。②M65 新写的任务化 API 六处写成 `await api.post(...) as Promise<{taskId}>`——api 实例响应拦截器返回的是 `{code,...,data}` **信封**，仓库惯例必须 `const res = await api.post(...); return res.data`（见 dockerinstall.setMirrors 范式）；`as` 类型断言骗过 vue-tsc，运行时 taskId=undefined。
 - **规避/解决**：①API 模块导出解析助手（cert.ts `parseAltDomains(raw: unknown): string[]`：数组直返、字符串 JSON.parse 兜底空数组），渲染处统一走助手；接口类型按后端实态声明，不为渲染方便谎报。②新写 api 方法一律抄仓库既有 `res.data` 范式，禁止 `await axios调用 as Promise<T>` 直断言（断言只能骗类型不能改运行时）；review 时 grep `as Promise<{` 可一次性揪出。
 - **来源**：2026-10-12 晚，v0.9.21 发布后 142 生产证书页崩溃（v0.9.22 修复）。
+
+### v-model:size 未声明 prop：fallthrough 的 size="20" 被 UnoCSS attributify 解释为 size-20 工具类（5rem 方块）——表格容器缩成 80×80
+
+- **现象**：v0.9.25 上线后网站页「表格消失」，只剩左右两个 sticky 列各露一角（左固定勾选框 + 右固定「配置」按钮各占 80px 角落）；DOM 完整（表头/6 行都在），仅视觉塌缩，无任何 console 报错。容器/进程两个带分页的表格页同病。
+- **根因**：YdDataTable 分页接口设计为 `v-model:size`（每页条数），但组件 props 只声明了 `pageSize` 没声明 `size`——Vue 把 `size="20"` 当 **fallthrough attribute** 渲染到组件根 `<div size="20">`；fa 基座 UnoCSS 开着 **attributify preset**，`size="20"` 被解释为属性化工具类 `size-20`（= w-20 h-20 = 5rem×5rem = 80px 正方），把 flex 容器整个压成 80×80。排查弯路：getComputedStyle 的 width 是 used value（80px）、遍历 styleSheets 匹配不到来源规则（attributify 规则选择器格式特殊），几何量宽（逐层 parentElement 量 getBoundingClientRect）+ 移除属性实证（80→1634 瞬间恢复）才定位。
+- **规避/解决**：①组件凡是 `v-model:xxx`，props 必须同名声明 `xxx`（哪怕语义重复如 size/pageSize 并存），否则 fallthrough 上根元素——不止布局，还可能撞上 attributify/属性选择器；②通用组件根元素加 `w-full` 防御；③「DOM 完整但视觉缺一块」优先量几何（各层 width）而不是找 JS 报错——渲染没崩，是 CSS 把容器压小了。
+- **来源**：2026-10-12 深夜，v0.9.25 生产网站页塌缩（v0.9.26 修复，生产机经面板 API+浏览器自动化实证）。
