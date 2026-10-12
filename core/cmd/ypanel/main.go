@@ -112,13 +112,13 @@ func run(ctx context.Context, cfg *config.Config) error {
 	}
 	defer cronSvc.Stop()
 	rtSvc := service.NewRuntimeService(gdb, nodes, taskSvc)
-	storeSvc := service.NewStoreService(gdb, nodes, siteSvc, taskSvc, dbSvc, rtSvc, cfg.DataDir)
+	mwSvc := service.NewMiddlewareService(gdb, dbSvc, nodes)
+	storeSvc := service.NewStoreService(gdb, nodes, siteSvc, taskSvc, dbSvc, mwSvc, rtSvc, cfg.DataDir)
 	vpnSvc := service.NewVPNService(gdb, nodes, settings, taskSvc, storeSvc)
 	fwSvc := service.NewFirewallService(gdb, nodes, cfg.Port)
 	f2bSvc := service.NewFail2banService(nodes)
 	f2bSvc.SetTasks(taskSvc) // M65：安装任务化
 	dbAdminSvc := service.NewDBAdminService(gdb, dbSvc)
-	mwSvc := service.NewMiddlewareService(gdb, dbSvc, nodes)
 	dockerExtSvc := service.NewDockerExtService(nodes, taskSvc)
 	dockerInstallSvc := service.NewDockerInstallService(nodes, taskSvc)
 	suSvc := service.NewSelfUpdateService(nodes, taskSvc, version)

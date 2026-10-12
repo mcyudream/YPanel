@@ -61,6 +61,9 @@ type StoreVersion struct {
 	ReleaseNotes string           `json:"releaseNotes"`
 	FormFields   []StoreFormField `json:"formFields"`
 	PGExtensions []string         `json:"pgExtensions,omitempty"` // 纳管 PG 需自动创建的扩展（建库后 CREATE EXTENSION IF NOT EXISTS）
+	// M68：可复用中间件复用声明（向导「中间件」区块）与可选伴生服务声明（向导「可选组件」勾选）
+	Middleware       []StoreMiddlewareDecl `json:"middleware,omitempty"`
+	OptionalServices []StoreOptionalSvc    `json:"optionalServices,omitempty"`
 }
 
 // StoreFormField 版本参数定义（兼容 1Panel formFields 全量形态）。
@@ -140,12 +143,14 @@ type ypApps struct {
 }
 
 type ypVerion struct {
-	ID           string      `json:"id"`
-	Package      string      `json:"package"`
-	ReleaseNotes string      `json:"releaseNotes"`
-	Env          []ypEnvItem `json:"env"`
-	Ports        []ypPortDef `json:"ports"`
-	PGExtensions []string    `json:"pgExtensions"` // 纳管 PG 自动建扩展声明
+	ID               string                `json:"id"`
+	Package          string                `json:"package"`
+	ReleaseNotes     string                `json:"releaseNotes"`
+	Env              []ypEnvItem           `json:"env"`
+	Ports            []ypPortDef           `json:"ports"`
+	PGExtensions     []string              `json:"pgExtensions"`     // 纳管 PG 自动建扩展声明
+	Middleware       []StoreMiddlewareDecl `json:"middleware"`       // M68 可复用中间件复用声明
+	OptionalServices []StoreOptionalSvc    `json:"optionalServices"` // M68 可选伴生服务声明
 }
 
 // ypAdminUI 内网管理界面声明：安装后注册到桌面工作台，点击经内网浏览器（gw 会话式反代）打开。
@@ -211,6 +216,7 @@ type StoreService struct {
 	sites    *SiteService
 	tasks    *TaskService
 	dbs      *DatabaseService
+	mws      *MiddlewareService // M68 可复用中间件（复用注入）
 	runtimes *RuntimeService // php 应用安装时复用/创建 PHP 运行时
 	http     *http.Client
 	mu       sync.Mutex
@@ -222,9 +228,9 @@ type StoreService struct {
 }
 
 // NewStoreService 创建（dataDir 为面板数据目录；sites 用于一键反代、tasks 用于任务中心、runtimes 用于 php 应用，均可为 nil）。
-func NewStoreService(db *gorm.DB, nodes *NodeService, sites *SiteService, tasks *TaskService, dbs *DatabaseService, runtimes *RuntimeService, dataDir string) *StoreService {
+func NewStoreService(db *gorm.DB, nodes *NodeService, sites *SiteService, tasks *TaskService, dbs *DatabaseService, mws *MiddlewareService, runtimes *RuntimeService, dataDir string) *StoreService {
 	return &StoreService{
-		db: db, nodes: nodes, sites: sites, tasks: tasks, dbs: dbs, runtimes: runtimes,
+		db: db, nodes: nodes, sites: sites, tasks: tasks, dbs: dbs, mws: mws, runtimes: runtimes,
 		http: &http.Client{Timeout: 5 * time.Minute},
 		dir:  filepath.Join(dataDir, storeSourceDirName),
 	}
@@ -636,7 +642,7 @@ func (s *StoreService) syncYpManifest(src *model.AppStoreSource, raw []byte, loc
 			if v.ID == "" || v.Package == "" {
 				continue
 			}
-			sv := StoreVersion{ID: v.ID, Name: v.ID, ReleaseNotes: v.ReleaseNotes, PGExtensions: v.PGExtensions}
+			sv := StoreVersion{ID: v.ID, Name: v.ID, ReleaseNotes: v.ReleaseNotes, PGExtensions: v.PGExtensions, Middleware: middlewareDeclsWithDefaults(v.Middleware), OptionalServices: v.OptionalServices}
 			switch {
 			case localRoot != "":
 				sv.LocalDir = v.Package
@@ -995,19 +1001,25 @@ type StoreInstallInput struct {
 }
 
 // StoreExternalDB 安装时外接数据库实例选项（SQL 与 Redis 可并存——双键集应用如 harbor 各选各的实例）。
+// M68 扩展：Neo4j/S3 走数据库纳管实例，其余可复用中间件走 MiddlewareInstance（复用只注入不创建）。
 type StoreExternalDB struct {
-	InstanceID      uint     `json:"instanceId"`      // SQL 实例（mysql/postgres）；0 = SQL 用应用自带/手填
-	RedisInstanceID uint     `json:"redisInstanceId"` // Redis 实例；0 = Redis 用应用自带/手填
-	Database        string   `json:"database"`        // 目标库名；空 = 应用 key
-	User            string   `json:"user"`            // 应用账号名；空 = <key>_user
-	CreateIfMissing bool     `json:"createIfMissing"` // 库/账号不存在时自动创建
-	Extensions      []string `json:"extensions"`      // PG 实例附加扩展（与应用包 pgExtensions 声明合并去重）
+	InstanceID       uint            `json:"instanceId"`      // SQL 实例（mysql/postgres）；0 = SQL 用应用自带/手填
+	RedisInstanceID  uint            `json:"redisInstanceId"` // Redis 实例；0 = Redis 用应用自带/手填
+	Neo4jInstanceID  uint            `json:"neo4jInstanceId"` // M68 Neo4j 实例；0 = 用应用自带/手填
+	S3InstanceID     uint            `json:"s3InstanceId"`    // M68 对象存储(s3)实例；0 = 用应用自带/手填
+	MiddlewareIDs    map[string]uint `json:"middlewareInstanceIds"` // M68 registry 类型 → MiddlewareInstance ID
+	Database         string          `json:"database"`        // 目标库名；空 = 应用 key
+	User             string          `json:"user"`            // 应用账号名；空 = <key>_user
+	CreateIfMissing  bool            `json:"createIfMissing"` // 库/账号不存在时自动创建
+	Extensions       []string        `json:"extensions"`      // PG 实例附加扩展（与应用包 pgExtensions 声明合并去重）
+	OptionalServices []string        `json:"optionalServices"` // M68 勾选的可选伴生服务 id（合并 compose + 注入开关 env）
 }
 
 // dbFieldSet 应用包数据库参数键集（由 formFields 识别）。
 type dbFieldSet struct {
 	Host, Port, Name, User, Password string
-	Kind                             string // sql（mysql/postgres，可建库建号）/ redis（只注入连接参数）
+	Uri                              string // M68：URI 形态键集（MONGO_URI）单键注入
+	Kind                             string // sql（mysql/postgres，可建库建号）/ redis / mongo / s3 / neo4j（M68）
 }
 
 var networkNamePattern = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$`)
@@ -1444,6 +1456,26 @@ func (s *StoreService) deployCompose(ctx context.Context, logf TaskLogf, app mod
 			}
 			if !dup {
 				hosts = append(hosts, h)
+			}
+		}
+	}
+	// M68：可复用中间件声明注入（s3/neo4j 走数据库域、registry 类型走中间件域；只复用不创建）
+	if in.ExternalDB != nil {
+		composeText2 := ""
+		if res, rerr := agentclient.GetJSON[dto.FileReadResp](ac, ctx, "/agent/v1/files/read?path="+escapeURL2(dir+"/docker-compose.yml")); rerr == nil && res != nil {
+			composeText2 = res.Content
+		}
+		if aerr := s.ApplyExternalDeclarations(ctx, logf, ver, in, params, composeText2); aerr != nil {
+			return strings.Join(logs, "\n"), aerr
+		}
+		// 可选伴生服务：合并附加 compose + 注入开关 env（勾选即启用）
+		if len(in.ExternalDB.OptionalServices) > 0 {
+			if merr := s.MergeOptionalCompose(ctx, ac, dir, ver, in.ExternalDB.OptionalServices); merr != nil {
+				return strings.Join(logs, "\n"), merr
+			}
+			applied := optionalServiceEnv(ver, in.ExternalDB.OptionalServices, params)
+			if len(applied) > 0 {
+				logf("info", "可选组件已启用: %s", strings.Join(applied, ", "))
 			}
 		}
 	}
@@ -2183,6 +2215,31 @@ func dbFieldSetsOf(fields []StoreFormField, composeText string) []dbFieldSet {
 	seen := map[string]bool{}
 	sets := make([]dbFieldSet, 0, 2)
 	for _, k := range keys {
+		// M68：URI 形态键集（如 MONGO_URI，词干含 MONGO 的 *_URI）→ 单键 URI 注入
+		if strings.HasSuffix(k, "_URI") {
+			stem := strings.TrimSuffix(strings.TrimPrefix(k, "PANEL_"), "_URI")
+			kind := ""
+			switch {
+			case dbFieldStemMatch(stem, "MONGO"):
+				kind = "mongo"
+			case dbFieldStemMatch(stem, "NEO4J", "GRAPH"):
+				kind = "neo4j"
+			}
+			if kind != "" && !seen[strings.TrimSuffix(k, "URI")] {
+				seen[strings.TrimSuffix(k, "URI")] = true
+				sets = append(sets, dbFieldSet{Uri: k, Kind: kind})
+			}
+			continue
+		}
+		// M68：ENDPOINT 形态锚键（S3_ENDPOINT 等，对象存储常用单端点 URL 键）→ s3 键集
+		if strings.HasSuffix(k, "_ENDPOINT") {
+			stem := strings.TrimSuffix(strings.TrimPrefix(k, "PANEL_"), "_ENDPOINT")
+			if dbFieldStemMatch(stem, "S3", "OSS", "MINIO", "RUSTFS", "OBJECT", "BUCKET") && !seen[strings.TrimSuffix(k, "ENDPOINT")] {
+				seen[strings.TrimSuffix(k, "ENDPOINT")] = true
+				sets = append(sets, dbFieldSet{Host: k, Kind: "s3"})
+			}
+			continue
+		}
 		if !dbFieldHostRe.MatchString(k) || !dbFieldHostStem.MatchString(strings.TrimSuffix(strings.TrimPrefix(k, "PANEL_"), "_HOST")) {
 			continue
 		}
@@ -2198,6 +2255,10 @@ func dbFieldSetsOf(fields []StoreFormField, composeText string) []dbFieldSet {
 			kind = "redis"
 		case strings.Contains(stem, "MONGO"):
 			kind = "mongo"
+		case dbFieldStemMatch(stem, "S3", "BUCKET", "OBJECT", "OSS", "MINIO", "RUSTFS"):
+			kind = "s3"
+		case dbFieldStemMatch(stem, "NEO4J", "GRAPH"):
+			kind = "neo4j"
 		}
 		fs := dbFieldSet{Host: k, Kind: kind}
 		if hasKey(keys, prefix+"PORT") {
@@ -2283,10 +2344,25 @@ func (s *StoreService) applyExternalDB(ctx context.Context, logf TaskLogf, ver S
 				continue
 			}
 			var eh []string
+			// M68：fs.Uri 非空为 URI 形态键集（MONGO_URI），applyExternalMongo 内部生成完整连接串
 			if eh, err = s.applyExternalMongo(ctx, logf, ext, fs, in, params); err != nil {
 				return nil, err
 			}
 			extraHosts = append(extraHosts, eh...)
+		case "s3": // M68：对象存储键集走数据库纳管实例（建桶+注入）
+			if ext.S3InstanceID == 0 {
+				continue
+			}
+			if err = s.applyExternalS3KeySet(ctx, logf, fs, ext.S3InstanceID, in, params); err != nil {
+				return nil, err
+			}
+		case "neo4j": // M68：Neo4j 键集走数据库纳管实例（注入 bolt 连接）
+			if ext.Neo4jInstanceID == 0 {
+				continue
+			}
+			if err = s.applyExternalNeo4jKeySet(ctx, logf, fs, ext.Neo4jInstanceID, in, params); err != nil {
+				return nil, err
+			}
 		default:
 			if ext.InstanceID == 0 {
 				continue
@@ -2545,6 +2621,9 @@ func (s *StoreService) applyExternalMongo(ctx context.Context, logf TaskLogf, ex
 	}
 	if fs.Password != "" {
 		params[fs.Password] = dbPass
+	}
+	if fs.Uri != "" { // M68：URI 形态键集（MONGO_URI）注入完整连接串
+		params[fs.Uri] = fmt.Sprintf("mongodb://%s:%s@%s:%s/%s?authSource=admin", dbUser, dbPass, host, port, dbName)
 	}
 	logf("info", "已注入外接 MongoDB 参数（实例 %s，库 %s，账号 %s）", inst.Name, dbName, dbUser)
 	return extraHosts, nil
