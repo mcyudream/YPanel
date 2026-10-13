@@ -206,8 +206,9 @@ func (s *SelfUpdateService) CheckOnline(ctx context.Context) (*OnlineCheck, erro
 // 同步段仅做源探测与版本比较（快速失败）；任务体走 core 侧下载（精确 MB/s 进度，与节点
 // agent 升级同款）→ sha256 校验 → 解包 → 推送 updates → 复用本地 Apply 通道（detached 重启）。
 func (s *SelfUpdateService) UpgradeTask(ctx context.Context, source string) (map[string]any, error) {
-	if source != "github" && source != "gitee" && source != "gitlab" {
-		return nil, errs.Wrap(errs.ErrBadRequest, "未知更新源（github|gitee）")
+	// M69：source 空=自动选源（gitee > gitlab > github 取首个可达且有资产的源）
+	if source != "" && source != "github" && source != "gitee" && source != "gitlab" {
+		return nil, errs.Wrap(errs.ErrBadRequest, "未知更新源（github|gitee|gitlab，空=自动）")
 	}
 	if s.tasks == nil {
 		return nil, errs.Wrap(errs.ErrBadRequest, "任务服务不可用")
@@ -215,7 +216,13 @@ func (s *SelfUpdateService) UpgradeTask(ctx context.Context, source string) (map
 	if s.tasks.HasRunning([]string{TaskPanelUpgrade}, "panel") {
 		return nil, errs.Wrap(errs.ErrBadRequest, "已有面板更新任务运行中，请稍后再试")
 	}
-	rel := release.FetchLatestRelease(ctx, source)
+	var rel release.OnlineRelease
+	if source == "" {
+		rel = release.FetchLatestReleaseAuto(ctx)
+		source = rel.Source
+	} else {
+		rel = release.FetchLatestRelease(ctx, source)
+	}
 	if !rel.Reachable {
 		return nil, errs.New(errs.CodeAgentUnreach, "error.badRequest", source+" 不可达: "+rel.Error)
 	}

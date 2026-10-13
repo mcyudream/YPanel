@@ -130,7 +130,7 @@ func (a *NodeAPI) UpgradeAgent(c *gin.Context) {
 		return
 	}
 	req, ok := bind[struct {
-		Source string `json:"source" binding:"required"`
+		Source string `json:"source"` // 空=自动选源（M69）
 	}](c)
 	if !ok {
 		return

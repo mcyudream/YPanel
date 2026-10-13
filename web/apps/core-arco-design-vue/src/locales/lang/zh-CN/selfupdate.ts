@@ -38,5 +38,6 @@ export default {
     upgradeTitle: '在线升级',
     upgradeConfirm: '将从 {source} 下载 {version} 并校验后替换重启（约 5~10 秒中断，自动备份 ypanel.bak）。确认升级？',
     upgradeTo: '一键升级到 {version}', // version 为 Release tag 原样（自带 v 前缀）
+    sourceAuto: '自动选源',
   },
 }

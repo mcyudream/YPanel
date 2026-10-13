@@ -76,14 +76,26 @@ function compareV(a?: string, b?: string) {
 // 在线升级走任务中心（M65）：秒回 taskId，下载/校验/应用实时日志；任务成功后轮询 /health 确认新版本
 const { running: upgrading, run: runUpgradeJob } = useTaskJob()
 
+// M69 可选更新源：auto=按可达性+优先级自动选（bestSource），或手动指定三源之一
+const upgradeSource = ref<'auto' | 'github' | 'gitee' | 'gitlab'>('auto')
+const sourceOptions = [
+  { label: i18n.global.t('selfupdate.online.sourceAuto'), value: 'auto' },
+  { label: 'Gitee', value: 'gitee' },
+  { label: 'GitLab', value: 'gitlab' },
+  { label: 'GitHub', value: 'github' },
+]
+function sourceName(s: string) {
+  return s === 'gitee' ? 'Gitee' : s === 'gitlab' ? 'GitLab' : 'GitHub'
+}
+
 function upgrade() {
-  const source = bestSource()
+  const source = upgradeSource.value === 'auto' ? bestSource() : upgradeSource.value
   const modal = useFaModal()
   modal.confirm({
     title: i18n.global.t('selfupdate.online.upgradeTitle'),
     content: i18n.global.t('selfupdate.online.upgradeConfirm', {
       version: online.value?.latest || '',
-      source: source === 'gitee' ? 'Gitee' : 'GitHub',
+      source: sourceName(source),
     }),
     onConfirm: async () => {
       await runUpgradeJob(() => selfUpdateApi.upgrade(source), {
@@ -202,6 +214,13 @@ onMounted(load)
           <FaButton class="ml-auto" size="sm" :loading="checking" @click="checkOnline">
             <FaIcon name="i-lucide:search-check" class="mr-1" /> {{ $t('selfupdate.online.check') }}
           </FaButton>
+          <YdSelect
+            v-if="online?.updatable"
+            v-model="upgradeSource"
+            :options="sourceOptions"
+            class="w-40"
+            button-class="w-full"
+          />
           <FaButton
             v-if="online?.updatable" size="sm" :loading="upgrading" @click="upgrade"
           >

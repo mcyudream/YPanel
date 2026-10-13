@@ -56,6 +56,23 @@ type releasePayload struct {
 	} `json:"assets"`
 }
 
+// FetchLatestReleaseAuto 自动选源：按 gitee > gitlab > github 优先级依次探测，
+// 返回第一个可达且带当前架构资产的源（三源发布内容一致，取首个可用即最新）；
+// 全部不可用时返回末次探测结果（Reachable=false 供调用方报错）。
+func FetchLatestReleaseAuto(ctx context.Context) OnlineRelease {
+	var last OnlineRelease
+	for _, src := range []string{"gitee", "gitlab", "github"} {
+		r := FetchLatestRelease(ctx, src)
+		if r.Reachable && r.AssetURL != "" {
+			return r
+		}
+		if !last.Reachable || last.AssetURL == "" {
+			last = r
+		}
+	}
+	return last
+}
+
 // FetchLatestRelease 拉取单源最新 Release 并挑出当前架构资产。
 // Gitee 分支在 API 失败（匿名限流/超时）时回退 latest 页 302 探测（tag 从 Location 提取，
 // 资产 URL 按等价形式拼接），保证国内源检查几乎不误报。

@@ -37,6 +37,7 @@ export default {
     checkFailed: 'Failed to check for updates',
     upgradeTitle: 'Online Upgrade',
     upgradeConfirm: 'Download {version} from {source}, verify, replace and restart (about 5-10 seconds of downtime; ypanel.bak is kept). Continue?',
-    upgradeTo: 'Upgrade to {version}', // version is the raw release tag (already has v prefix)
+    upgradeTo: 'Upgrade to {version}',
+    sourceAuto: 'Auto select source', // version is the raw release tag (already has v prefix)
   },
 }

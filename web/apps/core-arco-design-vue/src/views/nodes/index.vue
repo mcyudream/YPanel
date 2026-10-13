@@ -110,7 +110,25 @@ function agentUpgradable(n: NodeItem) {
   return Boolean(n.remote && n.online && latestAgentVersion.value && (!n.version || versionLt(n.version, latestAgentVersion.value)))
 }
 
+// M69 可选更新源：auto=后端自动选（gitee>gitlab>github 首个可用），或手动指定
+const agentUpgradeModal = ref(false)
+const agentUpgradeNode = ref<NodeItem | null>(null)
+const agentUpgradeSource = ref<'auto' | 'github' | 'gitee' | 'gitlab'>('auto')
+const agentSourceOptions = [
+  { label: i18n.global.t('nodes.agentSourceAuto'), value: 'auto' },
+  { label: 'Gitee', value: 'gitee' },
+  { label: 'GitLab', value: 'gitlab' },
+  { label: 'GitHub', value: 'github' },
+]
+
+function openAgentUpgrade(n: NodeItem) {
+  agentUpgradeNode.value = n
+  agentUpgradeSource.value = 'auto'
+  agentUpgradeModal.value = true
+}
+
 async function upgradeAgent(n: NodeItem) {
+  agentUpgradeModal.value = false
   const modal = useFaModal()
   modal.confirm({
     title: i18n.global.t('nodes.agentUpgradeTitle'),
@@ -118,7 +136,7 @@ async function upgradeAgent(n: NodeItem) {
     onConfirm: async () => {
       upgradingId.value = n.id
       try {
-        const { taskId } = await apiNode.upgradeAgent(n.id)
+        const { taskId } = await apiNode.upgradeAgent(n.id, agentUpgradeSource.value === 'auto' ? '' : agentUpgradeSource.value)
         useFaToast().info(i18n.global.t('nodes.agentUpgradeStarted'))
         // 轮询任务终态（下载+推送+切换，可能数分钟）
         for (let i = 0; i < 300; i++) {
@@ -375,7 +393,7 @@ onBeforeUnmount(() => {
             <div class="flex items-center gap-1">
               <FaButton
                 v-if="n.remote && agentUpgradable(n)" variant="ghost" size="icon-sm"
-                :title="$t('nodes.agentUpgradeBtn')" :loading="upgradingId === n.id" @click.stop="upgradeAgent(n)"
+                :title="$t('nodes.agentUpgradeBtn')" :loading="upgradingId === n.id" @click.stop="openAgentUpgrade(n)"
               >
                 <FaIcon name="i-lucide:arrow-up-circle" class="text-sm text-amber-600" />
               </FaButton>
@@ -481,6 +499,23 @@ onBeforeUnmount(() => {
         <FaButton variant="outline" @click="assetVisible = false">{{ $t('common.cancel') }}</FaButton>
         <FaButton :loading="assetSaving" @click="saveAsset">{{ $t('common.save') }}</FaButton>
       </template>
+    </FaModal>
+
+    <!-- M69 可选更新源：agent 一键更新（源可选，空=自动） -->
+    <FaModal v-model:open="agentUpgradeModal" :title="$t('nodes.agentUpgradeTitle')" @ok="upgradeAgent(agentUpgradeNode!)" @cancel="agentUpgradeModal = false">
+      <div class="flex flex-col gap-3">
+        <p class="text-sm text-muted-foreground">
+          {{ $t('nodes.agentUpgradeConfirm', {
+            name: agentUpgradeNode?.name,
+            from: agentUpgradeNode?.version || '-',
+            to: latestAgentVersion,
+          }) }}
+        </p>
+        <label class="flex flex-col gap-1 text-sm">
+          <span>{{ $t('nodes.agentUpgradeSource') }}</span>
+          <YdSelect v-model="agentUpgradeSource" :options="agentSourceOptions" button-class="w-full" />
+        </label>
+      </div>
     </FaModal>
   </div>
 </template>

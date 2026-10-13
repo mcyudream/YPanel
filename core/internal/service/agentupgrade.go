@@ -87,8 +87,9 @@ func (s *SelfUpdateService) UpgradeAgentTask(nodeId, source string) (map[string]
 	if nodeId == "local" {
 		return nil, svcBadReq("本机 agent 与面板同进程，请走面板在线更新")
 	}
-	if source != "github" && source != "gitee" && source != "gitlab" {
-		return nil, svcBadReq("未知更新源（github|gitee|gitlab）")
+	// M69：source 空=自动选源（同面板口径）
+	if source != "" && source != "github" && source != "gitee" && source != "gitlab" {
+		return nil, svcBadReq("未知更新源（github|gitee|gitlab，空=自动）")
 	}
 	if s.tasks == nil {
 		return nil, errs.Wrap(errs.ErrBadRequest, "任务服务不可用")
@@ -105,16 +106,21 @@ func (s *SelfUpdateService) UpgradeAgentTask(nodeId, source string) (map[string]
 
 // runAgentUpgrade 任务体：下载校验 → 推送 → detached 切换 → 心跳确认。
 func (s *SelfUpdateService) runAgentUpgrade(ctx context.Context, logf TaskLogf, nodeId, source string) error {
-	// 1) 取 Release 资产（tar 内含 ypagent，与面板同包）；所选源不可达自动回落另一源
+	// M69：source 空=自动选源
+	if source == "" {
+		auto := release.FetchLatestReleaseAuto(ctx)
+		if !auto.Reachable || auto.AssetURL == "" {
+			return fmt.Errorf("自动选源失败（三源均不可用）: %s", auto.Error)
+		}
+		logf("info", "自动选源：%s", auto.Source)
+		source = auto.Source
+	}
+	// 1) 取 Release 资产（tar 内含 ypagent，与面板同包）；指定源不可达/无资产回落自动选源
 	logf("info", "[1/5] 获取最新 Release（源：%s）…", source)
 	rel := release.FetchLatestRelease(ctx, source)
 	if !rel.Reachable || rel.AssetURL == "" {
-		other := "github"
-		if source == "github" {
-			other = "gitee"
-		}
-		logf("info", "%s 源不可达（%s），回落 %s 源…", source, rel.Error, other)
-		rel = release.FetchLatestRelease(ctx, other)
+		logf("info", "%s 源不可达（%s），回落自动选源…", source, rel.Error)
+		rel = release.FetchLatestReleaseAuto(ctx)
 	}
 	if !rel.Reachable || rel.AssetURL == "" {
 		return fmt.Errorf("Release 不可用: %s", rel.Error)

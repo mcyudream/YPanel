@@ -1,8 +1,10 @@
 package release
 
 import (
+	"context"
 	"encoding/json"
 	"testing"
+	"time"
 )
 
 // 自建 GitLab Release 响应解析：assets.links 结构与 GitHub 不同，逐链接挑当前架构资产。
@@ -47,4 +49,21 @@ func TestFallbackAssetURLThreeSources(t *testing.T) {
 	if got := FallbackAssetURL("https://evil.example.com/x.tar.gz"); got != "" {
 		t.Fatalf("外域 URL 应返回空，得到 %s", got)
 	}
+}
+
+// M69 自动选源：gitee > gitlab > github 首个可达且有资产（联网用例，-short 跳过）。
+func TestFetchLatestReleaseAuto(t *testing.T) {
+	if testing.Short() {
+		t.Skip("short 模式跳过联网用例")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	r := FetchLatestReleaseAuto(ctx)
+	if !r.Reachable || r.AssetURL == "" {
+		t.Fatalf("自动选源失败: %+v", r)
+	}
+	if r.Source != "gitee" && r.Source != "gitlab" && r.Source != "github" {
+		t.Fatalf("选源异常: %s", r.Source)
+	}
+	t.Logf("auto 选源: %s %s (%s)", r.Source, r.Version, r.AssetURL)
 }

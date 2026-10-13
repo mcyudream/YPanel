@@ -82,6 +82,8 @@ export default {
     agentUpgradable: 'agent upgradable',
     agentUpgradableTip: 'Node agent can be upgraded to v{latest}',
     agentUpgradeBtn: 'Upgrade agent',
+    agentSourceAuto: 'Auto (first available)',
+    agentUpgradeSource: 'Update source',
     agentUpgradeTitle: 'Upgrade node agent',
     agentUpgradeConfirm: 'Download v{to} from the release and push it to node {name} (current {from}), verify then replace and restart the agent (1-2 minutes). Continue?',
     agentUpgradeStarted: 'Node agent upgrade task started. Check the task center for progress',

@@ -35,7 +35,7 @@ func (a *SelfUpdateAPI) CheckOnline(c *gin.Context) {
 // 下载/校验/应用全程任务中心实时日志）
 func (a *SelfUpdateAPI) Upgrade(c *gin.Context) {
 	req, ok := bind[struct {
-		Source string `json:"source" binding:"required"`
+		Source string `json:"source"` // 空=自动选源（M69）
 	}](c)
 	if !ok {
 		return
