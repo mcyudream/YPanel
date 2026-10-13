@@ -74,7 +74,7 @@ func (a *DatabaseAPI) Create(c *gin.Context) {
 func (a *DatabaseAPI) CreateExternal(c *gin.Context) {
 	req, ok := bind[struct {
 		Name     string `json:"name" binding:"required"`
-		Type     string `json:"type" binding:"required,oneof=mysql postgres redis mongo"`
+		Type     string `json:"type" binding:"required,oneof=mysql postgres redis mongo neo4j s3"`
 		Host     string `json:"host"`
 		Port     int    `json:"port" binding:"required"`
 		User     string `json:"user"`

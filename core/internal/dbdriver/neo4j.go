@@ -53,7 +53,8 @@ func (d *neo4jDriver) session(ctx context.Context, database, accessMode string) 
 }
 
 func (d *neo4jDriver) Ping(ctx context.Context) error {
-	s, done := d.session(ctx, "system", "read")
+	// 默认用户库执行（system 库只收系统命令，RETURN 会被拒）
+	s, done := d.session(ctx, "", "read")
 	defer done()
 	res, err := s.Run(ctx, "RETURN 1", nil)
 	if err != nil {
@@ -227,11 +228,13 @@ func (d *neo4jDriver) RunCypher(ctx context.Context, database, cypher string, li
 		out.Rows = append(out.Rows, row)
 	}
 	out.Elapsed = time.Since(start).Round(time.Millisecond).String()
-	// 写语句（CREATE/SET/DELETE 等）无行返回：补计数器摘要提示
+	// 写语句（CREATE/SET/DELETE 等）无行返回：补计数器摘要提示；读语句空结果保持空展示
 	if len(out.Rows) == 0 && len(out.Columns) == 0 {
-		out.Columns = []string{"result"}
 		summary, _ := res.Consume(ctx)
-		out.Rows = append(out.Rows, []any{fmt.Sprintf("OK (counters: %s)", neo4jCounters(summary))})
+		if summary.Counters().ContainsUpdates() || summary.Counters().ContainsSystemUpdates() {
+			out.Columns = []string{"result"}
+			out.Rows = append(out.Rows, []any{fmt.Sprintf("OK (counters: %s)", neo4jCounters(summary))})
+		}
 	}
 	return out, nil
 }
@@ -403,7 +406,8 @@ func (d *neo4jDriver) CreateIndex(ctx context.Context, database, name, label str
 	}
 	var cy string
 	if unique {
-		cy = fmt.Sprintf("CREATE CONSTRAINT %s ON (n:`%s`) ASSERT (%s) IS UNIQUE",
+		// Neo4j 5 语法：FOR ... REQUIRE（ON/ASSERT 是 v4 语法，v5 拒绝）
+		cy = fmt.Sprintf("CREATE CONSTRAINT %s FOR (n:`%s`) REQUIRE (%s) IS UNIQUE",
 			constraintName(name, label, props), label, strings.Join(quoted, ", "))
 	} else {
 		cy = fmt.Sprintf("CREATE INDEX %s FOR (n:`%s`) ON (%s)",

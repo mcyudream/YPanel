@@ -148,6 +148,19 @@ func (s *StoreService) ApplyExternalDeclarations(ctx context.Context, logf TaskL
 	}
 	decls := middlewareDeclsWithDefaults(ver.Middleware)
 	for _, d := range decls {
+		// 键集路径（dbFieldSetsOf→applyExternal*KeySet）与声明路径会对同一前缀双跑：
+		// 键集路径先行且已注入产物（*_BUCKET/*_URI）时跳过，避免重复建桶/重复日志
+		prefixUp := strings.ToUpper(d.Prefix) + "_"
+		already := false
+		for k := range params {
+			if strings.HasPrefix(k, prefixUp) {
+				already = true
+				break
+			}
+		}
+		if already {
+			continue
+		}
 		switch d.Type {
 		case "s3":
 			id := ext.S3InstanceID
@@ -195,7 +208,8 @@ func (s *StoreService) applyExternalS3(ctx context.Context, logf TaskLogf, decl 
 		return rerr
 	}
 	pwd, _ := secret["password"].(string)
-	bucket := dbIdentSanitize(in.Key) + "-app"
+	// S3 桶名不允许下划线：标识符化后再把 _ 转 -
+	bucket := strings.ReplaceAll(dbIdentSanitize(in.Key), "_", "-") + "-app"
 	// 建桶幂等：已存在跳过（复用既有 bucket 语义对齐建库）
 	drv, err := dbdriver.NewS3(inst.Host, inst.Port, inst.RootUser, pwd, inst.Secure)
 	if err != nil {

@@ -202,7 +202,39 @@ func (s *MiddlewareService) Test(ctx context.Context, id uint) error {
 	if !ok {
 		return errs.Wrap(errs.ErrBadRequest, "未注册的中间件类型: "+inst.Type)
 	}
-	return d.TestConn(ctx, inst.Host, inst.Port, inst.User, pwd)
+	err = d.TestConn(ctx, inst.Host, inst.Port, inst.User, pwd)
+	if err == nil || inst.Origin != "container" || inst.ContainerName == "" {
+		return err
+	}
+	// container 来源的 host 是容器名（面板宿主不可解析）——回退探测宿主映射端口
+	if port := s.containerMappedPort(ctx, inst.ContainerName, inst.Port); port > 0 {
+		if err2 := d.TestConn(ctx, "127.0.0.1", port, inst.User, pwd); err2 == nil {
+			return nil
+		}
+	}
+	return err
+}
+
+// containerMappedPort 查容器服务端口在宿主的映射端口（无映射返回 0）。
+func (s *MiddlewareService) containerMappedPort(ctx context.Context, container string, port int) int {
+	ac, err := s.clientFor("local")
+	if err != nil {
+		return 0
+	}
+	res, err := execAgentCmd(ac, ctx, fmt.Sprintf("docker port %s %d 2>/dev/null || true", shellQuote(container), port), 15)
+	if err != nil {
+		return 0
+	}
+	// 形如 "11211/tcp -> 0.0.0.0:31211"
+	for _, line := range strings.Split(res.Output, "\n") {
+		if i := strings.LastIndex(line, ":"); i > 0 {
+			var n int
+			if _, err := fmt.Sscanf(strings.TrimSpace(line[i+1:]), "%d", &n); err == nil && n > 0 {
+				return n
+			}
+		}
+	}
+	return 0
 }
 
 // Reveal 凭据查看（密码明文，权限闸在 API 层）。
