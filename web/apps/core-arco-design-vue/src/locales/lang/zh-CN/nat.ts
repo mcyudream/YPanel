@@ -14,7 +14,7 @@ export default {
   sortCol: '排序',
   allIfaces: '所有',
   noRules: '当前节点暂无转发规则',
-  footNote: '说明：目标机需有 iptables / ip6tables、ss、ip 命令；ip_forward 未开启时会运行时自动开启（重启后失效，持久化属宿主机运维）。规则保存在面板库中，面板启动时自动重放。',
+  footNote: '说明：目标机需有 iptables / ip6tables、ss、ip 命令；ip_forward 未开启时会运行时自动开启（重启后失效，持久化属宿主机运维）。Docker 宿主机上会自动在 DOCKER-USER 链挂载放行子链（转发去程按目标放行 + conntrack 回程），无需手工放行 FORWARD。规则保存在面板库中，面板启动时自动重放。',
   // 节点/网卡选项
   localNode: '（本机）',
   offlineNode: '（离线）',

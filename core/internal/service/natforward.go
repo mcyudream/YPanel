@@ -23,11 +23,13 @@ import (
 	"github.com/ypanel/shared/errs"
 )
 
-// nat 链名与注释前缀（nat 表）。
+// nat 链名与注释前缀（nat 表）；filter 表放行子链（挂进 DOCKER-USER，M69）。
 const (
 	natChainFwd      = "YPANEL_FWD"
 	natChainPost     = "YPANEL_FWD_POST"
 	natCommentPrefix = "ypanel-fwd-"
+	fltChainFwd      = "YPANEL_FWD_FLT" // filter 表转发放行子链（DNAT 去程 + conntrack 回程）
+	dockerUserChain  = "DOCKER-USER"
 )
 
 // natMaxRangeSize 端口范围尺寸上限（校验与占用检测共用）。
@@ -240,6 +242,26 @@ func buildNatApplyScript(bin string, family int, rules []natRenderView, localAdd
 		}
 	}
 	b.WriteString(buildNatRemovalSection(removals))
+	// M69 filter 放行段：DNAT 只改目的地址，转发是否放行取决于 filter/FORWARD——Docker 宿主机
+	// 默认策略为 DROP，必须显式放行（去程按转发目标匹配 + conntrack 回程置首）。
+	// 挂载点选 DOCKER-USER（Docker 官方推荐的用户链，重启/重排 FORWARD 不受影响）；
+	// DOCKER-USER 不存在（未装 Docker 的转发机）时 FORWARD 通常为 ACCEPT，整段跳过。
+	if family == 4 {
+		b.WriteString("if $IPT -L " + dockerUserChain + " >/dev/null 2>&1; then\n")
+	} else {
+		b.WriteString("if $IPT -L " + dockerUserChain + " >/dev/null 2>&1; then\n")
+	}
+	fmt.Fprintf(&b, "$IPT -N %s 2>/dev/null || true\n", fltChainFwd)
+	fmt.Fprintf(&b, "$IPT -C %s -j %s 2>/dev/null || $IPT -I %s 1 -j %s\n", dockerUserChain, fltChainFwd, dockerUserChain, fltChainFwd)
+	fmt.Fprintf(&b, "$IPT -F %s\n", fltChainFwd)
+	// 回程：DNAT 去程放行后，回程报文（SYN-ACK 等）目的地址已还原，须按连接状态放行
+	fmt.Fprintf(&b, "$IPT -A %s -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT\n", fltChainFwd)
+	for _, r := range rules {
+		comment := natCommentPrefix + strconv.FormatUint(uint64(r.ID), 10)
+		fmt.Fprintf(&b, "if ! _o=$($IPT -A %s -p %s -d '%s' --dport %s -m comment --comment '%s' -j ACCEPT 2>&1); then echo 'YPERR:规则 #%d 转发放行失败: '$_o; exit 67; fi\n",
+			fltChainFwd, r.Protocol, r.TargetIP, natDportSpec(r.Target), comment, r.ID)
+	}
+	b.WriteString("fi\n")
 	// 转发开关：为 0 时运行时开启并告警（不持久化，持久化属宿主机运维范畴）
 	if family == 4 {
 		b.WriteString("ipf=$(cat /proc/sys/net/ipv4/ip_forward 2>/dev/null || echo 1)\n")
@@ -362,6 +384,8 @@ func buildNatFlushScript(bin string) string {
 	fmt.Fprintf(&b, "command -v %s >/dev/null 2>&1 || exit 0\n", bin)
 	fmt.Fprintf(&b, "%s -t nat -L %s -n >/dev/null 2>&1 && %s -t nat -F %s\n", bin, natChainFwd, bin, natChainFwd)
 	fmt.Fprintf(&b, "%s -t nat -L %s -n >/dev/null 2>&1 && %s -t nat -F %s\n", bin, natChainPost, bin, natChainPost)
+	// M69：filter 放行子链容忍式清空（DOCKER-USER 挂载保留，空链语义为直通无害）
+	fmt.Fprintf(&b, "%s -L %s -n >/dev/null 2>&1 && %s -F %s\n", bin, fltChainFwd, bin, fltChainFwd)
 	b.WriteString("echo YPOK\n")
 	return b.String()
 }

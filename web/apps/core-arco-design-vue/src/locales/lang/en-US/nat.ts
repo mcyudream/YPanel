@@ -14,7 +14,7 @@ export default {
   sortCol: 'Sort',
   allIfaces: 'All',
   noRules: 'No forwarding rules on this node',
-  footNote: 'Note: the target host needs iptables / ip6tables, ss and ip commands; ip_forward is enabled at runtime automatically if off (lost on reboot; persistence is host ops). Rules are stored in the panel database and reapplied automatically at panel startup.',
+  footNote: 'Note: the target host needs iptables / ip6tables, ss and ip commands; ip_forward is enabled at runtime automatically if off (lost on reboot; persistence is host ops). Rules are stored in the panel database and reapplied automatically at panel startup. On Docker hosts a forwarding accept sub-chain is mounted into DOCKER-USER automatically (per-rule forward + conntrack return), no manual FORWARD rules needed.',
   // node/interface options
   localNode: ' (local)',
   offlineNode: ' (offline)',
