@@ -760,6 +760,12 @@ func Setup(d *Deps) (*gin.Engine, error) {
 				admin.POST("/ftp/port", pm("tool:ftp"), ftpAPI.SetPort)
 				admin.GET("/ftp/config", pm("tool:ftp"), ftpAPI.GetConfig)
 				admin.PUT("/ftp/config", pm("tool:ftp"), ftpAPI.PutConfig)
+				// M69 FTP 账号管理（系统用户 + vsftpd 白名单/chroot）
+				admin.GET("/ftp/accounts", pm("tool:ftp"), ftpAPI.AccountsList)
+				admin.POST("/ftp/accounts", pm("tool:ftp"), ftpAPI.AccountsCreate)
+				admin.PUT("/ftp/accounts/:id", pm("tool:ftp"), ftpAPI.AccountsUpdate)
+				admin.DELETE("/ftp/accounts/:id", pm("tool:ftp"), ftpAPI.AccountsDelete)
+				admin.POST("/ftp/accounts/:id/test", pm("tool:ftp"), ftpAPI.AccountsTest)
 				admin.GET("/ssh/config", pm("tool:ssh"), sshAPI.GetConfig)
 				admin.PUT("/ssh/config", pm("tool:ssh"), sshAPI.SetConfig)
 				admin.GET("/ssh/keys", pm("tool:ssh"), sshAPI.Keys)

@@ -6,6 +6,7 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"github.com/ypanel/core/internal/service"
+	"github.com/ypanel/shared/errs"
 )
 
 // FtpAPI FTP（vsftpd）管理。
@@ -272,6 +273,145 @@ func (a *SshAPI) FailedAttempts(c *gin.Context) {
 	n := 100
 	_, _ = fmt.Sscanf(c.DefaultQuery("limit", "100"), "%d", &n)
 	out, err := a.Ssh.FailedAttemptsMarked(c.Request.Context(), nodeID(c), a.F2B, n)
+	if err != nil {
+		respErr(c, err)
+		return
+	}
+	respOK(c, out)
+}
+
+// ---------- FTP 账号管理（M69：系统用户 + vsftpd 白名单/chroot） ----------
+
+// AccountsList GET /api/v1/ftp/accounts?nodeId=
+func (a *FtpAPI) AccountsList(c *gin.Context) {
+	ftp, ferr := a.Ftp.WithNode(c.Query("nodeId"))
+	if ferr != nil {
+		respErr(c, ferr)
+		return
+	}
+	out, err := ftp.ListAccounts(c.Request.Context())
+	if err != nil {
+		respErr(c, err)
+		return
+	}
+	respOK(c, gin.H{"items": out})
+}
+
+// AccountsCreate POST /api/v1/ftp/accounts {nodeId, name, directory, password, readOnly?, remark?}
+func (a *FtpAPI) AccountsCreate(c *gin.Context) {
+	req, ok := bind[struct {
+		NodeID    string `json:"nodeId" binding:"required"`
+		Name      string `json:"name" binding:"required"`
+		Directory string `json:"directory" binding:"required"`
+		Password  string `json:"password" binding:"required"`
+		ReadOnly  bool   `json:"readOnly"`
+		Remark    string `json:"remark"`
+	}](c)
+	if !ok {
+		return
+	}
+	ftp, ferr := a.Ftp.WithNode(req.NodeID)
+	if ferr != nil {
+		respErr(c, ferr)
+		return
+	}
+	row, err := ftp.CreateAccount(c.Request.Context(), req.Name, req.Directory, req.Password, req.Remark, req.ReadOnly)
+	if err != nil {
+		respErr(c, err)
+		return
+	}
+	respOK(c, gin.H{"id": row.ID, "name": row.Name})
+}
+
+// ftpAcctPtrs 编辑入参指针提取（复用同一个 bind struct）。
+type ftpAcctUpdateReq struct {
+	Directory *string `json:"directory"`
+	Password  *string `json:"password"`
+	ReadOnly  *bool   `json:"readOnly"`
+	Enabled   *bool   `json:"enabled"`
+	Remark    *string `json:"remark"`
+}
+
+// AccountsUpdate PUT /api/v1/ftp/accounts/:id?nodeId=
+func (a *FtpAPI) AccountsUpdate(c *gin.Context) {
+	id, err := idParam(c)
+	if err != nil {
+		respErr(c, err)
+		return
+	}
+	req, ok := bind[ftpAcctUpdateReq](c)
+	if !ok {
+		return
+	}
+	ftp, ferr := a.Ftp.WithNode(c.Query("nodeId"))
+	if ferr != nil {
+		respErr(c, ferr)
+		return
+	}
+	row, err := ftp.UpdateAccount(c.Request.Context(), id, req.Directory, req.Password, req.Remark, req.ReadOnly, req.Enabled)
+	if err != nil {
+		respErr(c, err)
+		return
+	}
+	respOK(c, gin.H{"id": row.ID})
+}
+
+// AccountsDelete DELETE /api/v1/ftp/accounts/:id?nodeId=&purgeDir=
+func (a *FtpAPI) AccountsDelete(c *gin.Context) {
+	id, err := idParam(c)
+	if err != nil {
+		respErr(c, err)
+		return
+	}
+	ftp, ferr := a.Ftp.WithNode(c.Query("nodeId"))
+	if ferr != nil {
+		respErr(c, ferr)
+		return
+	}
+	if err := ftp.DeleteAccount(c.Request.Context(), id, c.Query("purgeDir") == "true"); err != nil {
+		respErr(c, err)
+		return
+	}
+	respOK(c, gin.H{})
+}
+
+// AccountsTest POST /api/v1/ftp/accounts/:id/test {nodeId, password}
+// 密码不落库：验证用一次性传入；账号名由服务层从登记读取。
+func (a *FtpAPI) AccountsTest(c *gin.Context) {
+	id, err := idParam(c)
+	if err != nil {
+		respErr(c, err)
+		return
+	}
+	req, ok := bind[struct {
+		NodeID   string `json:"nodeId"`
+		Password string `json:"password" binding:"required"`
+	}](c)
+	if !ok {
+		return
+	}
+	ftp, ferr := a.Ftp.WithNode(req.NodeID)
+	if ferr != nil {
+		respErr(c, ferr)
+		return
+	}
+	accounts, lerr := ftp.ListAccounts(c.Request.Context())
+	if lerr != nil {
+		respErr(c, lerr)
+		return
+	}
+	name := ""
+	for _, acc := range accounts {
+		if uid, _ := acc["id"].(uint); uid == id {
+			name, _ = acc["name"].(string)
+			break
+		}
+	}
+	if name == "" {
+		respErr(c, errs.Wrap(errs.ErrBadRequest, "账号不存在"))
+		return
+	}
+	out, err := ftp.TestAccount(c.Request.Context(), name, req.Password)
 	if err != nil {
 		respErr(c, err)
 		return

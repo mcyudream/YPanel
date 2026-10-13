@@ -170,7 +170,7 @@ func run(ctx context.Context, cfg *config.Config) error {
 	mcpSvc := service.NewMCPService(gdb, aiSvc, settings)
 	snapSvc := service.NewSnapshotService(gdb, nodes, panelBkSvc, settings)
 	sysSnapSvc := service.NewSystemSnapshotService(nodes, taskSvc, dbSvc, gdb, panelBkSvc)
-	ftpSvc := service.NewFtpService(nodes)
+	ftpSvc := service.NewFtpService(gdb, nodes)
 	ftpSvc.SetTasks(taskSvc) // M65：安装任务化
 	sshGSvc := service.NewSshGuardService(nodes)
 	panelBkSvc.SetPruneFn(func(keep int) int { n, _ := snapSvc.Prune(context.Background(), "local", keep); return n })

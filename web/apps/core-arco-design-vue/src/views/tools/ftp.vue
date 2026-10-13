@@ -2,6 +2,7 @@
 import type { FtpStatus } from '@/api/modules/ftp'
 // M53 FTP 服务管理（vsftpd，工具分组）——自 system.vue 迁出
 import ftpApi from '@/api/modules/ftp'
+import FtpAccounts from './components/FtpAccounts.vue'
 import { i18n } from '@/locales'
 import { useTaskJob } from '@/composables/useTaskJob'
 
@@ -198,4 +199,13 @@ onMounted(loadFtp)
       </FaModal>
     </FaPageMain>
   </div>
-</template>
+
+    <FaCard class="mt-4">
+      <template #title>
+        <div class="flex items-center gap-2">
+          <FaIcon name="i-lucide:users" class="text-base text-primary opacity-70" />
+          <span class="font-medium">FTP 账号</span>
+        </div>
+      </template>
+      <FtpAccounts @change="loadFtp" />
+    </FaCard></template>

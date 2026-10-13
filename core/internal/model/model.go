@@ -158,8 +158,8 @@ type AppStoreInstall struct {
 	Version        string    `gorm:"size:64;not null" json:"version"`
 	ComposeProject string    `gorm:"size:64;not null;index" json:"composeProject"` // M55 多实例：同名应用可装多节点（项目名带节点后缀）
 	Remark         string    `gorm:"size:255" json:"remark"`
-	ParamsJSON     string    `gorm:"type:text" json:"paramsJson"` // 安装参数（含密码明文，仅 admin 视图返回）
-	OwnerID        uint      `gorm:"index;not null;default:0" json:"ownerId"` // M54-P3 数据范围属主（0=公共）
+	ParamsJSON     string    `gorm:"type:text" json:"paramsJson"`                     // 安装参数（含密码明文，仅 admin 视图返回）
+	OwnerID        uint      `gorm:"index;not null;default:0" json:"ownerId"`         // M54-P3 数据范围属主（0=公共）
 	NodeID         string    `gorm:"size:32;not null;default:'';index" json:"nodeId"` // M55 目标节点（空=local）
 	CreatedAt      time.Time `json:"createdAt"`
 }
@@ -176,12 +176,12 @@ type Node struct {
 	Version    string    `gorm:"size:32" json:"version"`
 	LastSeenAt time.Time `json:"lastSeenAt"`
 	// M43 服务器资产
-	ExpireDate  *time.Time `json:"expireDate"`              // 到期日
-	MonthlyPrice string    `gorm:"size:40" json:"monthlyPrice"` // 价格描述（如 ¥45/月）
-	TrafficQuotaGB int     `gorm:"not null;default:0" json:"trafficQuotaGB"` // 月流量额度（0=不限）
-	AssetRemark  string    `gorm:"size:255" json:"assetRemark"`
-	CreatedAt  time.Time `json:"createdAt"`
-	UpdatedAt  time.Time `json:"updatedAt"`
+	ExpireDate     *time.Time `json:"expireDate"`                               // 到期日
+	MonthlyPrice   string     `gorm:"size:40" json:"monthlyPrice"`              // 价格描述（如 ¥45/月）
+	TrafficQuotaGB int        `gorm:"not null;default:0" json:"trafficQuotaGB"` // 月流量额度（0=不限）
+	AssetRemark    string     `gorm:"size:255" json:"assetRemark"`
+	CreatedAt      time.Time  `json:"createdAt"`
+	UpdatedAt      time.Time  `json:"updatedAt"`
 }
 
 // PairingCode 一次性配对码。
@@ -194,37 +194,37 @@ type PairingCode struct {
 
 // Site 站点（容器化 nginx vhost）。
 type Site struct {
-	ID               uint      `gorm:"primaryKey" json:"id"`
-	Name             string    `gorm:"uniqueIndex;size:32;not null" json:"name"`
-	Type             string    `gorm:"size:8;not null" json:"type"` // static / proxy
-	Domain           string    `gorm:"uniqueIndex:idx_sites_domain_port;size:255;not null" json:"domain"`
-	Domains          string    `gorm:"type:text" json:"domains"` // 附加域名 JSON 数组（M13 多域名）
-	Port             int       `gorm:"not null;default:80;uniqueIndex:idx_sites_domain_port" json:"port"`
-	ProxyPass        string    `gorm:"size:255" json:"proxyPass"`   // 默认反代规则（"/"）
-	ProxyRules       string    `gorm:"type:text" json:"proxyRules"` // 反代规则 JSON 数组 [{prefix,target,ws}]
-	IndexFiles       string    `gorm:"size:255" json:"indexFiles"`  // 默认文档
-	LogsEnabled      bool      `gorm:"not null;default:true" json:"logsEnabled"`
-	RuntimeContainer string    `gorm:"size:64" json:"runtimeContainer"`  // php-fpm 容器名
-	RewriteName      string    `gorm:"size:32" json:"rewriteName"`       // 伪静态模板名（空=无）
-	RewriteContent   string    `gorm:"type:text" json:"rewriteContent"`  // 自定义伪静态文本
-	CustomLocations  string    `gorm:"type:text" json:"customLocations"` // 自定义 location JSON 数组 [{comment,content}]
-	ErrorPage404     string    `gorm:"size:255" json:"errorPage404"`     // 自定义 404 路径（相对站点 root）
-	RuntimeID        uint      `json:"runtimeId"`                        // php 类型绑定的运行环境
-	CacheEnable      bool      `gorm:"not null;default:false" json:"cacheEnable"`
-	CacheDuration    string    `gorm:"size:16" json:"cacheDuration"`      // 如 12h / 1d
-	CertDomain       string    `gorm:"size:255" json:"certDomain"`        // 非空 = 已启用 SSL
-	NodeID           string    `gorm:"size:32;not null;default:'';index" json:"nodeId"` // M57 站点归属节点（空=local，nginx 所在机）
-	CertID           uint      `gorm:"not null;default:0" json:"certId"`  // 绑定证书库条目（B23）
-	RunDir           string    `gorm:"size:128" json:"runDir"`            // 运行目录（相对 root 的二级目录，空=根）
-	GroupID          uint      `gorm:"not null;default:0" json:"groupId"` // 分组（0=默认分组）
-	Remark           string    `gorm:"size:255" json:"remark"`            // 备注
-	OwnerID          uint      `gorm:"index;not null;default:0" json:"ownerId"` // M54-P3 数据范围属主（0=公共）
-	HTTPSJSON        string    `gorm:"type:text" json:"httpsJson"`        // HTTPS 高级设置 JSON（HTTP 模式/HSTS/TLS 版本/加密算法）
-	OriginFile       string    `gorm:"size:255" json:"originFile"`        // 接管来源 conf（站点识别）
-	WafJSON          string    `gorm:"type:text" json:"wafJson"`          // WAF 配置（service.SiteWaf 序列化）
-	ConfJSON         string     `gorm:"type:text" json:"confJson"` // 扩展配置域 JSON（防盗链/Basic认证/CORS/重定向/真实IP/限连/负载均衡）
-	IsDefault        bool       `gorm:"not null;default:false" json:"isDefault"` // 默认站点（nginx default_server，M39）
-	ExpireAt         *time.Time `json:"expireAt"`                                 // 网站到期时间（M39）
+	ID               uint       `gorm:"primaryKey" json:"id"`
+	Name             string     `gorm:"uniqueIndex;size:32;not null" json:"name"`
+	Type             string     `gorm:"size:8;not null" json:"type"` // static / proxy
+	Domain           string     `gorm:"uniqueIndex:idx_sites_domain_port;size:255;not null" json:"domain"`
+	Domains          string     `gorm:"type:text" json:"domains"` // 附加域名 JSON 数组（M13 多域名）
+	Port             int        `gorm:"not null;default:80;uniqueIndex:idx_sites_domain_port" json:"port"`
+	ProxyPass        string     `gorm:"size:255" json:"proxyPass"`   // 默认反代规则（"/"）
+	ProxyRules       string     `gorm:"type:text" json:"proxyRules"` // 反代规则 JSON 数组 [{prefix,target,ws}]
+	IndexFiles       string     `gorm:"size:255" json:"indexFiles"`  // 默认文档
+	LogsEnabled      bool       `gorm:"not null;default:true" json:"logsEnabled"`
+	RuntimeContainer string     `gorm:"size:64" json:"runtimeContainer"`  // php-fpm 容器名
+	RewriteName      string     `gorm:"size:32" json:"rewriteName"`       // 伪静态模板名（空=无）
+	RewriteContent   string     `gorm:"type:text" json:"rewriteContent"`  // 自定义伪静态文本
+	CustomLocations  string     `gorm:"type:text" json:"customLocations"` // 自定义 location JSON 数组 [{comment,content}]
+	ErrorPage404     string     `gorm:"size:255" json:"errorPage404"`     // 自定义 404 路径（相对站点 root）
+	RuntimeID        uint       `json:"runtimeId"`                        // php 类型绑定的运行环境
+	CacheEnable      bool       `gorm:"not null;default:false" json:"cacheEnable"`
+	CacheDuration    string     `gorm:"size:16" json:"cacheDuration"`                    // 如 12h / 1d
+	CertDomain       string     `gorm:"size:255" json:"certDomain"`                      // 非空 = 已启用 SSL
+	NodeID           string     `gorm:"size:32;not null;default:'';index" json:"nodeId"` // M57 站点归属节点（空=local，nginx 所在机）
+	CertID           uint       `gorm:"not null;default:0" json:"certId"`                // 绑定证书库条目（B23）
+	RunDir           string     `gorm:"size:128" json:"runDir"`                          // 运行目录（相对 root 的二级目录，空=根）
+	GroupID          uint       `gorm:"not null;default:0" json:"groupId"`               // 分组（0=默认分组）
+	Remark           string     `gorm:"size:255" json:"remark"`                          // 备注
+	OwnerID          uint       `gorm:"index;not null;default:0" json:"ownerId"`         // M54-P3 数据范围属主（0=公共）
+	HTTPSJSON        string     `gorm:"type:text" json:"httpsJson"`                      // HTTPS 高级设置 JSON（HTTP 模式/HSTS/TLS 版本/加密算法）
+	OriginFile       string     `gorm:"size:255" json:"originFile"`                      // 接管来源 conf（站点识别）
+	WafJSON          string     `gorm:"type:text" json:"wafJson"`                        // WAF 配置（service.SiteWaf 序列化）
+	ConfJSON         string     `gorm:"type:text" json:"confJson"`                       // 扩展配置域 JSON（防盗链/Basic认证/CORS/重定向/真实IP/限连/负载均衡）
+	IsDefault        bool       `gorm:"not null;default:false" json:"isDefault"`         // 默认站点（nginx default_server，M39）
+	ExpireAt         *time.Time `json:"expireAt"`                                        // 网站到期时间（M39）
 	Enabled          bool       `gorm:"not null;default:true" json:"enabled"`
 	CreatedAt        time.Time  `json:"createdAt"`
 	UpdatedAt        time.Time  `json:"updatedAt"`
@@ -296,7 +296,7 @@ type CronTask struct {
 	Command     string     `gorm:"type:text;not null" json:"command"`
 	Type        string     `gorm:"size:16;not null;default:shell" json:"type"` // shell / db_backup / site_backup / container_op / script
 	Payload     string     `gorm:"type:text" json:"payload"`                   // 类型参数 JSON（B4：{dbId|siteName|container|action|scriptId}）
-	NodeID      string     `gorm:"size:32;not null;default:''" json:"nodeId"` // M55 目标节点（空=local；shell/script 类在目标节点执行）
+	NodeID      string     `gorm:"size:32;not null;default:''" json:"nodeId"`  // M55 目标节点（空=local；shell/script 类在目标节点执行）
 	Enabled     bool       `gorm:"not null;default:true" json:"enabled"`
 	TimeoutSecs int        `gorm:"not null;default:300" json:"timeoutSecs"`
 	LastRunAt   *time.Time `json:"lastRunAt"`
@@ -324,6 +324,19 @@ type DatabaseInstance struct {
 	UpdatedAt      time.Time `json:"updatedAt"`
 }
 
+// FtpAccount FTP 账号（M69：系统用户 + vsftpd 白名单/chroot 模式；密码不入库，写入系统 shadow）。
+type FtpAccount struct {
+	ID        uint      `gorm:"primaryKey" json:"id"`
+	NodeID    string    `gorm:"size:32;index;not null" json:"nodeId"`
+	Name      string    `gorm:"size:32;not null" json:"name"`       // 系统用户名（nologin shell）
+	Directory string    `gorm:"size:255;not null" json:"directory"` // FTP 根目录（=home）
+	ReadOnly  bool      `gorm:"not null;default:false" json:"readOnly"`
+	Enabled   bool      `gorm:"not null;default:true" json:"enabled"`
+	Remark    string    `gorm:"size:255" json:"remark"`
+	CreatedAt time.Time `json:"createdAt"`
+	UpdatedAt time.Time `json:"updatedAt"`
+}
+
 // MiddlewareInstance 可复用中间件实例（M68：非数据库类共享中间件的登记表，与数据库域区分）。
 // Version 记录探测所得版本，供复用方与声明 minVersion 比对；密码 AES-GCM 加密存储。
 type MiddlewareInstance struct {
@@ -335,8 +348,8 @@ type MiddlewareInstance struct {
 	Port           int       `gorm:"not null" json:"port"`
 	User           string    `gorm:"size:64" json:"user"`
 	PasswordEnc    string    `gorm:"type:text" json:"-"`
-	Version        string    `gorm:"size:32" json:"version"`          // 探测所得（空=未知，复用校验跳过）
-	ContainerName  string    `gorm:"size:64" json:"containerName"`    // container origin: 同网络容器名直连
+	Version        string    `gorm:"size:32" json:"version"`       // 探测所得（空=未知，复用校验跳过）
+	ContainerName  string    `gorm:"size:64" json:"containerName"` // container origin: 同网络容器名直连
 	ComposeProject string    `gorm:"size:64" json:"composeProject"`
 	OwnerID        uint      `gorm:"index;not null;default:0" json:"ownerId"` // M54-P3 数据范围属主（0=公共）
 	Remark         string    `gorm:"size:255" json:"remark"`
