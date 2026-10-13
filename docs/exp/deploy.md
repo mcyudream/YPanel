@@ -175,3 +175,12 @@
 - **根因**：单仓库双用途（main=源码 / assets/vX=发布资产孤儿分支）。发布流程 checkout 孤儿分支 = 把工作区所有 main 跟踪文件删掉；切回 main 恢复的是 HEAD 内容——期间任何未提交修改无处可躲。这不是 git 异常，是流程性冲突。
 - **规避/解决**：① 并行会话活跃期**禁止**依赖工作区保存成果——每个阶段完成立即 `git commit`（显式列文件，禁 `add -A`，防止把并行会话半成品带上 main）；② 被清后从 git 恢复：`git checkout -- <path>` 只救已跟踪文件，未跟踪新文件天然幸存；③ 修改动作前先 `git status` + 关键锚点 grep 验证在位（本次 driver.go 补丁被打掉后编译报 undefined 才发现）；④ 长期解法：发布资产挪独立仓库或 `git worktree`，与源码工作区物理隔离。
 - **来源**：2026-10-13 M68 实施全程（第一批 23 文件 2600 行被迫重做后立即提交 d98e579 自保；v0.9.34→0.9.35 两次发布各清场一次）。
+
+### Docker 宿主机 FORWARD 默认 DROP 拦截「NAT 端口转发→内网其他主机」——放行要挂 DOCKER-USER 且用子链
+
+- **现象**：YPanel NAT 转发（nat 表 DNAT/MASQUERADE）下发成功，但「公网端口 → 内网另一台主机」的流量全部不通；`iptables -L FORWARD` 策略为 DROP。
+- **根因**：DNAT 只改目的地址，转发是否放行取决于 **filter/FORWARD**；dockerd 启动会把 FORWARD 默认策略设为 DROP（ufw inactive 也会这样），面板原实现只下发 nat 表，FORWARD 无放行规则 → 必丢。
+- **修复**（YPanel M69）：apply 脚本追加 filter 段——filter 表自建 `YPANEL_FWD_FLT` 子链挂进 **DOCKER-USER**（Docker 官方用户链，dockerd 重启/重排 FORWARD 不清它）；子链首条 `conntrack --ctstate RELATED,ESTABLISHED ACCEPT`（**回程目的地址已被 conntrack 还原，只放去程必丢回程**），随后每条启用规则 `-A -d 转发目标 --dport 目标段 -m comment ypanel-fwd-<ID> ACCEPT`；链随面板整链重建幂等管理；DOCKER-USER 不存在（无 Docker 的纯转发机）自动跳过整段。删除规则=子链重建自动清理，无需单独摘除。
+- **运维坑**：systemd 兜底脚本手工往 FORWARD 插规则可用但会与面板接管重复；迁移顺序=面板升级（启动重放自动挂 DOCKER-USER）→ `systemctl disable --now` 兜底服务 → 按精确 spec 删兜底 FORWARD 规则 → 内网节点发 SYN 看 YPANEL_FWD_FLT 计数器增长确认接管。生产实测删除兜底瞬间零断流（conntrack 条即时承接回程）。
+- **排查工具**：`iptables -L <链> -v -n` 计数器是转发链路验证的最强信号——先发包再看计数器增量，比连不通猜原因快得多。注意本机 `127.0.0.1` 测试不匹配带 `-i ens18` 的 DNAT 规则（本地生成走 OUTPUT/lo），要从另一台内网机器发 SYN。
+- **来源**：2026-10-13 生产 NAT 转发排障（v0.9.38 发布，用户定位 + 面板实现三处修复）。
