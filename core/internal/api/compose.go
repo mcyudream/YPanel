@@ -12,6 +12,7 @@ import (
 	"github.com/ypanel/core/internal/agentclient"
 	"github.com/ypanel/core/internal/service"
 	"github.com/ypanel/shared/dto"
+	"github.com/ypanel/shared/errs"
 )
 
 // ComposeAPI compose 项目接口（代理 agent）。
@@ -20,6 +21,8 @@ type ComposeAPI struct {
 	Src2  *service.Src2ComposeService
 	Creds *service.GitCredService
 }
+
+// ---------- M70 编排镜像拉取更新 ----------
 
 func (c *ComposeAPI) client(ctx *gin.Context) *agentclient.Client {
 	node, _ := c.Nodes.ByID(ctx.DefaultQuery("node", "local"))
@@ -245,4 +248,65 @@ func (c *ComposeAPI) Src2Create(ctx *gin.Context) {
 		return
 	}
 	respOK(ctx, out)
+}
+
+// ---------- 编排镜像拉取更新 API（M70） ----------
+
+// PullUpdate POST /api/v1/compose/pull-update {nodeId, project, dir?, preHook?, postHook?}
+// 任务化秒回 taskId（pull 可能耗时数分钟，日志实时进任务中心）。
+func (c *ComposeAPI) PullUpdate(ctx *gin.Context) {
+	req, ok := bind[struct {
+		NodeID   string `json:"nodeId" binding:"required"`
+		Project  string `json:"project" binding:"required"`
+		Dir      string `json:"dir"`
+		PreHook  string `json:"preHook"`
+		PostHook string `json:"postHook"`
+	}](ctx)
+	if !ok {
+		return
+	}
+	out, err := c.Src2.PullUpdateTask(ctx.Request.Context(), req.NodeID, req.Project, req.Dir, req.PreHook, req.PostHook)
+	if err != nil {
+		respErr(ctx, err)
+		return
+	}
+	respOK(ctx, out)
+}
+
+// AutoUpdateGet GET /api/v1/compose/auto-update?nodeId=&project=
+func (c *ComposeAPI) AutoUpdateGet(ctx *gin.Context) {
+	node := ctx.Query("nodeId")
+	project := ctx.Query("project")
+	if project == "" {
+		respErr(ctx, errs.Wrap(errs.ErrBadRequest, "project 必填"))
+		return
+	}
+	out, err := c.Src2.GetAutoUpdate(node, project)
+	if err != nil {
+		respErr(ctx, err)
+		return
+	}
+	respOK(ctx, out)
+}
+
+// AutoUpdateSave PUT /api/v1/compose/auto-update {nodeId, project, dir?, enabled, intervalMin, preHook?, postHook?, remark?}
+func (c *ComposeAPI) AutoUpdateSave(ctx *gin.Context) {
+	req, ok := bind[struct {
+		NodeID      string `json:"nodeId" binding:"required"`
+		Project     string `json:"project" binding:"required"`
+		Dir         string `json:"dir"`
+		Enabled     bool   `json:"enabled"`
+		IntervalMin int    `json:"intervalMin"`
+		PreHook     string `json:"preHook"`
+		PostHook    string `json:"postHook"`
+		Remark      string `json:"remark"`
+	}](ctx)
+	if !ok {
+		return
+	}
+	if err := c.Src2.SaveAutoUpdate(req.NodeID, req.Project, req.Dir, req.Enabled, req.IntervalMin, req.PreHook, req.PostHook, req.Remark); err != nil {
+		respErr(ctx, err)
+		return
+	}
+	respOK(ctx, gin.H{})
 }

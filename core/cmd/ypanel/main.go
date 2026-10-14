@@ -148,7 +148,8 @@ func run(ctx context.Context, cfg *config.Config) error {
 	credSvc := service.NewGitCredService(gdb)
 	nginxSvc := service.NewNginxService(nodes)
 	logCentralSvc := service.NewLogCentralService(gdb, settings, nodes)
-	src2Svc := &service.Src2ComposeService{Nodes: nodes, Tasks: taskSvc, Creds: credSvc}
+	src2Svc := &service.Src2ComposeService{Nodes: nodes, Tasks: taskSvc, Creds: credSvc, DB: gdb}
+	src2Svc.StartAutoUpdateLoop(ctx)
 	// M31：AI 工具治理升级——全量服务依赖装配（原 126 行 aiSvc 创建移至此处，确保全部依赖就绪）
 	aiSvc := service.NewAIService(gdb, service.AIDeps{
 		Nodes: nodes, DBSvc: dbSvc, DBAdmin: dbAdminSvc, MW: mwSvc, Settings: settings,
@@ -209,16 +210,16 @@ func run(ctx context.Context, cfg *config.Config) error {
 		FileExt: fileExtSvc, FileCross: fileCrossSvc, Nginx: nginxSvc,
 		SysTool: sysToolSvc,
 		MCP:     mcpSvc, OpsM: mcpOpSvc,
-		Snap:    snapSvc,
-		SysSnap: sysSnapSvc,
-		Ftp:     ftpSvc,
-		SshG:    sshGSvc,
+		Snap:      snapSvc,
+		SysSnap:   sysSnapSvc,
+		Ftp:       ftpSvc,
+		SshG:      sshGSvc,
 		DiskGuard: diskGuardSvc,
-		F2B:     f2bSvc, DBAdmin: dbAdminSvc, Middleware: mwSvc, SU: suSvc, Store: storeSvc, Tasks: taskSvc, RT: rtSvc,
+		F2B:       f2bSvc, DBAdmin: dbAdminSvc, Middleware: mwSvc, SU: suSvc, Store: storeSvc, Tasks: taskSvc, RT: rtSvc,
 		Vpn: vpnSvc, Probes: probeSvc,
 		DockerExt: dockerExtSvc, Sec: secSvc, Rev: revSvc, NatF: natSvc, DNS: dnsSvc, HS: hostsSvc, Version: version,
 		DockerInstall: dockerInstallSvc,
-		Src2: src2Svc, Creds: credSvc, LogCentral: logCentralSvc, WebGW: webgwSvc, Dashboard: dashboardSvc,
+		Src2:          src2Svc, Creds: credSvc, LogCentral: logCentralSvc, WebGW: webgwSvc, Dashboard: dashboardSvc,
 	})
 	if err != nil {
 		return err

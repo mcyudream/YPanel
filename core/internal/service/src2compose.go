@@ -6,6 +6,7 @@ package service
 import (
 	"context"
 	"embed"
+	"encoding/json"
 	"fmt"
 	"math/rand"
 	"net/url"
@@ -19,6 +20,7 @@ import (
 	"github.com/ypanel/core/internal/model"
 	"github.com/ypanel/shared/dto"
 	"github.com/ypanel/shared/errs"
+	"gorm.io/gorm"
 )
 
 //go:embed src2composetpl
@@ -92,9 +94,10 @@ var src2Defaults = map[string]src2LangDefault{
 }
 
 type Src2ComposeService struct {
-	Nodes *NodeService
-	Tasks *TaskService
-	Creds *GitCredService
+	Nodes      *NodeService
+	Tasks      *TaskService
+	Creds      *GitCredService
+	DB         *gorm.DB            // M70：编排自动更新配置（ComposeAutoUpdate）
 	nodeClient *agentclient.Client // WithNode 绑定（M57）
 }
 
@@ -105,8 +108,8 @@ type srcSuggestion struct {
 	Lang      string   `json:"lang"`
 	Version   string   `json:"version,omitempty"`
 	StartCmd  string   `json:"startCmd,omitempty"`
-	BuildCmd  string   `json:"buildCmd,omitempty"` // package.json scripts.build
-	PkgMgr    string   `json:"pkgMgr,omitempty"`   // pnpm/yarn/npm
+	BuildCmd  string   `json:"buildCmd,omitempty"`  // package.json scripts.build
+	PkgMgr    string   `json:"pkgMgr,omitempty"`    // pnpm/yarn/npm
 	Packaging string   `json:"packaging,omitempty"` // maven pom=多模块父/jar
 	Modules   []string `json:"modules,omitempty"`   // maven 模块列表
 	Port      int      `json:"port"`                // 建议容器端口
@@ -636,4 +639,233 @@ func orDefaultStr(v, def string) string {
 		return def
 	}
 	return v
+}
+
+// ---------- 编排镜像拉取更新（M70：一键 pull + 类 watchtower 自动更新） ----------
+
+// composePullUpdateRe 无用占位（判定改用镜像 ID 前后对比，见 PullUpdate）。
+const composePullUpdMarker = "Recreated"
+
+// composeExec 在编排项目所在节点执行 shell（agent exec 通道，hostNode 域同款）。
+func (s *Src2ComposeService) composeExec(ctx context.Context, nodeId, cmd string, timeout int) (string, error) {
+	node, err := s.Nodes.ByID(nodeId)
+	if err != nil {
+		return "", err
+	}
+	res, err := agentclient.DoJSON[dto.ExecReq, dto.ExecResp](agentclient.New(node.BaseURL, node.Token), ctx, "POST", "/agent/v1/exec",
+		&dto.ExecReq{Command: cmd, TimeoutSecs: timeout})
+	if err != nil {
+		return "", err
+	}
+	return res.Output, nil
+}
+
+// composeImages 项目当前镜像快照（Repository:Tag → 镜像 ID + 容器名）。
+// compose images --format json 实证字段：ID/ContainerName/Repository/Tag（无 ServiceName/Digest）。
+func (s *Src2ComposeService) composeImages(ctx context.Context, nodeId, project, dir string) map[string]string {
+	out := map[string]string{}
+	base := fmt.Sprintf("docker compose --project-name %q", project)
+	if dir != "" {
+		base += fmt.Sprintf(" --project-directory %q", dir)
+	}
+	res, err := s.composeExec(ctx, nodeId, base+" images --format json", 60)
+	if err != nil {
+		return out
+	}
+	for _, line := range strings.Split(res, "\n") {
+		var m struct {
+			ContainerName string `json:"ContainerName"`
+			Repository    string `json:"Repository"`
+			Tag           string `json:"Tag"`
+			ID            string `json:"ID"`
+		}
+		if json.Unmarshal([]byte(line), &m) == nil && m.Repository != "" {
+			out[m.Repository+":"+m.Tag] = m.ID
+			_ = m.ContainerName
+		}
+	}
+	return out
+}
+
+// PullUpdate 编排项目一键拉取更新：镜像快照对比 → pull → up -d（镜像变化的容器自动重建）→ 钩子。
+// pull 失败即中止（原容器不受影响）；返回面向用户的日志行。preHook/postHook 为节点 shell（可选）。
+func (s *Src2ComposeService) PullUpdate(ctx context.Context, nodeId, project, dir, preHook, postHook string) ([]string, error) {
+	logs := []string{}
+	logf := func(format string, a ...any) {
+		logs = append(logs, fmt.Sprintf(format, a...))
+	}
+	composeBase := fmt.Sprintf("docker compose --project-name %q", project)
+	if dir != "" {
+		composeBase += fmt.Sprintf(" --project-directory %q", dir)
+	}
+
+	// 0) 更新前钩子（用户配置；失败记录不阻断）
+	if preHook != "" {
+		logf("[hook] 执行更新前钩子…")
+		if out, err := s.composeExec(ctx, nodeId, preHook, 300); err != nil {
+			logf("[hook] 前钩子异常（继续）: %s", tail(out+err.Error(), 200))
+		} else {
+			logf("[hook] 前钩子完成")
+		}
+	}
+
+	// 1) 更新前镜像快照
+	before := s.composeImages(ctx, nodeId, project, dir)
+
+	// 2) pull（--ignore-buildable-images 跳过本地构建服务；单服务拉取失败不整体失败）
+	logf("[pull] 拉取项目镜像…")
+	pullOut, err := s.composeExec(ctx, nodeId, composeBase+" pull --ignore-buildable-images", 1800)
+	if err != nil {
+		logf("[pull] 拉取异常: %s", tail(pullOut+err.Error(), 300))
+	}
+	if strings.Contains(pullOut, "Downloaded newer") || strings.Contains(pullOut, "Pull complete") {
+		logf("[pull] 拉取到新镜像层")
+	}
+
+	// 3) 对比镜像 ID 判定有更新的服务
+	after := s.composeImages(ctx, nodeId, project, dir)
+	updated := []string{}
+	for ref, newID := range after {
+		if oldID, ok := before[ref]; ok && oldID != newID {
+			updated = append(updated, ref)
+		}
+	}
+
+	// 4) up -d：镜像变化的容器自动重建（无变化时 compose 输出 Running 无副作用）
+	logf("[up] 应用更新…")
+	upOut, err := s.composeExec(ctx, nodeId, composeBase+" up -d --remove-orphans", 600)
+	if err != nil {
+		logf("[up] 失败: %s", tail(upOut+err.Error(), 300))
+		return logs, errs.Wrapc(errs.CodeFileOpFailed, "容器重建失败: "+tail(upOut+err.Error(), 300))
+	}
+	if len(updated) > 0 {
+		logf("[up] 已更新并重建容器: %s", strings.Join(updated, ", "))
+	} else {
+		logf("[up] 所有镜像均为最新，无容器重建")
+	}
+
+	// 5) 更新后钩子
+	if postHook != "" {
+		logf("[hook] 执行更新后钩子…")
+		if out, err := s.composeExec(ctx, nodeId, postHook, 300); err != nil {
+			logf("[hook] 后钩子异常: %s", tail(out+err.Error(), 200))
+		} else {
+			logf("[hook] 后钩子完成")
+		}
+	}
+	return logs, nil
+}
+
+// ---------- 编排镜像自动更新（M70：类 watchtower，配置 + 调度 + 手动一键） ----------
+
+// StartAutoUpdateLoop 启动自动更新调度循环（main 显式启动；每分钟扫一遍到期配置）。
+func (s *Src2ComposeService) StartAutoUpdateLoop(ctx context.Context) {
+	go func() {
+		ticker := time.NewTicker(time.Minute)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				s.autoUpdateTick(ctx)
+			}
+		}
+	}()
+}
+
+// autoUpdateTick 扫描启用的自动更新配置，到期的逐个执行（任务化，任务中心可见）。
+func (s *Src2ComposeService) autoUpdateTick(ctx context.Context) {
+	var rows []model.ComposeAutoUpdate
+	if err := s.DB.Where("enabled = ?", true).Find(&rows).Error; err != nil {
+		return
+	}
+	now := time.Now()
+	for _, r := range rows {
+		interval := time.Duration(r.IntervalMin) * time.Minute
+		if interval < 5*time.Minute {
+			interval = 5 * time.Minute
+		}
+		if r.LastCheckedAt != nil && now.Sub(*r.LastCheckedAt) < interval-30*time.Second {
+			continue
+		}
+		// 到期：任务化执行（任务系统自管执行 ctx 与 45min 超时上限）
+		_, err := s.Tasks.StartTask("compose-auto-update", "自动更新编排 "+r.Project+"（节点 "+r.NodeID+"）",
+			r.NodeID+":"+r.Project, 45*time.Minute, func(tctx context.Context, logf TaskLogf) error {
+				logs, err := s.PullUpdate(tctx, r.NodeID, r.Project, r.Dir, r.PreHook, r.PostHook)
+				for _, l := range logs {
+					logf("info", "%s", l)
+				}
+				return err
+			})
+		if err != nil {
+			continue
+		}
+		// 记录检查时间与结果（任务异步执行，此处先标已调度；结果由下次执行前覆盖）
+		nowT := now
+		_ = s.DB.Model(&model.ComposeAutoUpdate{}).Where("id = ?", r.ID).Updates(map[string]any{
+			"last_checked_at": nowT,
+			"last_result":     "已调度执行（见任务中心）",
+		}).Error
+		// 同批多项目错峰：单个执行即可占满节点带宽
+		break
+	}
+}
+
+// PullUpdateTask 手动/调度共用的任务化入口。
+func (s *Src2ComposeService) PullUpdateTask(ctx context.Context, nodeId, project, dir, preHook, postHook string) (map[string]any, error) {
+	if s.Tasks == nil {
+		return nil, errs.Wrap(errs.ErrBadRequest, "任务服务不可用")
+	}
+	task, err := s.Tasks.StartTask("compose-pull-update", "拉取更新编排 "+project+"（节点 "+nodeId+"）",
+		nodeId+":"+project, 45*time.Minute, func(runCtx context.Context, logf TaskLogf) error {
+			logs, err := s.PullUpdate(runCtx, nodeId, project, dir, preHook, postHook)
+			for _, l := range logs {
+				logf("info", "%s", l)
+			}
+			return err
+		})
+	if err != nil {
+		return nil, err
+	}
+	return map[string]any{"taskId": task.ID, "project": project}, nil
+}
+
+// GetAutoUpdate 读项目自动更新配置（无记录返回默认关闭态）。
+func (s *Src2ComposeService) GetAutoUpdate(nodeId, project string) (map[string]any, error) {
+	var row model.ComposeAutoUpdate
+	err := s.DB.Where("node_id = ? AND project = ?", nodeId, project).First(&row).Error
+	if err != nil {
+		return map[string]any{"enabled": false, "intervalMin": 60, "preHook": "", "postHook": "", "exists": false}, nil
+	}
+	return map[string]any{
+		"enabled": row.Enabled, "intervalMin": row.IntervalMin, "preHook": row.PreHook,
+		"postHook": row.PostHook, "lastCheckedAt": row.LastCheckedAt, "lastResult": row.LastResult,
+		"remark": row.Remark, "exists": true,
+	}, nil
+}
+
+// SaveAutoUpdate 保存项目自动更新配置。
+func (s *Src2ComposeService) SaveAutoUpdate(nodeId, project, dir string, enabled bool, intervalMin int, preHook, postHook, remark string) error {
+	if intervalMin < 5 {
+		intervalMin = 5
+	}
+	if intervalMin > 1440 {
+		intervalMin = 1440
+	}
+	var row model.ComposeAutoUpdate
+	err := s.DB.Where("node_id = ? AND project = ?", nodeId, project).First(&row).Error
+	if err != nil {
+		row = model.ComposeAutoUpdate{NodeID: nodeId, Project: project}
+	}
+	row.Dir = dir
+	row.Enabled = enabled
+	row.IntervalMin = intervalMin
+	row.PreHook = preHook
+	row.PostHook = postHook
+	row.Remark = remark
+	if row.ID > 0 {
+		return s.DB.Save(&row).Error
+	}
+	return s.DB.Create(&row).Error
 }

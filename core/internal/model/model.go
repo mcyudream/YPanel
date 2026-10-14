@@ -324,6 +324,23 @@ type DatabaseInstance struct {
 	UpdatedAt      time.Time `json:"updatedAt"`
 }
 
+// ComposeAutoUpdate 编排镜像自动更新配置（M70，类 watchtower：按间隔 pull 有更新即重建容器）。
+type ComposeAutoUpdate struct {
+	ID            uint      `gorm:"primaryKey" json:"id"`
+	NodeID        string    `gorm:"size:32;index;not null" json:"nodeId"`
+	Project       string    `gorm:"size:64;index;not null" json:"project"`
+	Dir           string    `gorm:"size:255" json:"dir"`              // 外部项目工作目录（托管项目空）
+	Enabled       bool      `gorm:"not null;default:true" json:"enabled"`
+	IntervalMin   int       `gorm:"not null;default:60" json:"intervalMin"` // 检查间隔（分钟，5-1440）
+	PreHook       string    `gorm:"size:500" json:"preHook"`          // pull 前钩子（节点 shell，可选）
+	PostHook      string    `gorm:"size:500" json:"postHook"`         // 重建后钩子（节点 shell，可选）
+	LastCheckedAt *time.Time `json:"lastCheckedAt"`
+	LastResult    string    `gorm:"size:255" json:"lastResult"`       // 最近一次结果摘要（updated: N / up-to-date / 错误）
+	Remark        string    `gorm:"size:255" json:"remark"`
+	CreatedAt     time.Time `json:"createdAt"`
+	UpdatedAt     time.Time `json:"updatedAt"`
+}
+
 // FtpAccount FTP 账号（M69：系统用户 + vsftpd 白名单/chroot 模式；密码不入库，写入系统 shadow）。
 type FtpAccount struct {
 	ID        uint      `gorm:"primaryKey" json:"id"`

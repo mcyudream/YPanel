@@ -17,61 +17,61 @@ import (
 
 // Deps 路由依赖。
 type Deps struct {
-	Auth       *service.Auth
-	Nodes      *service.NodeService
-	Settings   *service.SettingService
-	Cron       *service.Cron
-	Scripts    *service.ScriptService
-	DBSvc      *service.DatabaseService
-	AI         *service.AIService
-	Acme       *service.AcmeService
-	DBS        *service.DatabaseService
-	Sites      *service.SiteService
-	Certs      *service.CertificateService
-	Groups     *service.SiteGroupService
-	Store      *service.StoreService
-	Vpn        *service.VPNService
-	Tasks      *service.TaskService
-	Src2       *service.Src2ComposeService
-	Creds      *service.GitCredService
-	FW         *service.FirewallService
-	NatF       *service.NatForwardService
-	DNS        *service.DnsService
-	HS         *service.HostsService
-	Alerts     *service.AlertService
-	Notif      *service.NotificationService
-	Probes     *service.ProbeService
-	PanelBP    *service.PanelBackupService
-	Hist       *service.HistoryRecorder
-	F2B        *service.Fail2banService
-	DBAdmin    *service.DBAdminService
-	Middleware *service.MiddlewareService
-	SU         *service.SelfUpdateService
-	RT         *service.RuntimeService
-	LogCentral *service.LogCentralService
-	WebGW      *service.WebGwService
-	DockerExt  *service.DockerExtService
+	Auth          *service.Auth
+	Nodes         *service.NodeService
+	Settings      *service.SettingService
+	Cron          *service.Cron
+	Scripts       *service.ScriptService
+	DBSvc         *service.DatabaseService
+	AI            *service.AIService
+	Acme          *service.AcmeService
+	DBS           *service.DatabaseService
+	Sites         *service.SiteService
+	Certs         *service.CertificateService
+	Groups        *service.SiteGroupService
+	Store         *service.StoreService
+	Vpn           *service.VPNService
+	Tasks         *service.TaskService
+	Src2          *service.Src2ComposeService
+	Creds         *service.GitCredService
+	FW            *service.FirewallService
+	NatF          *service.NatForwardService
+	DNS           *service.DnsService
+	HS            *service.HostsService
+	Alerts        *service.AlertService
+	Notif         *service.NotificationService
+	Probes        *service.ProbeService
+	PanelBP       *service.PanelBackupService
+	Hist          *service.HistoryRecorder
+	F2B           *service.Fail2banService
+	DBAdmin       *service.DBAdminService
+	Middleware    *service.MiddlewareService
+	SU            *service.SelfUpdateService
+	RT            *service.RuntimeService
+	LogCentral    *service.LogCentralService
+	WebGW         *service.WebGwService
+	DockerExt     *service.DockerExtService
 	DockerInstall *service.DockerInstallService
-	Rev        *service.RevisionService
-	Sec        *service.SecuritySettingsService
-	Storage    *service.StorageService
-	BackupSrv  *service.BackupService
-	DockerEnv  *service.DockerEnvService
-	DockerImg  *service.DockerImgService
-	FileExt    *service.FileExtService
-	FileCross  *service.FileCrossService
-	Nginx      *service.NginxService
-	SysTool    *service.SystemToolService
-	MCP        *service.MCPService
-	OpsM       *service.MCPOperationService
-	Snap       *service.SnapshotService
-	SysSnap    *service.SystemSnapshotService
-	Ftp        *service.FtpService
-	SshG       *service.SshGuardService
-	RBAC       *rbac.Service
-	DiskGuard  *service.DiskGuardService
-	Dashboard  *service.DashboardService
-	Version    string
+	Rev           *service.RevisionService
+	Sec           *service.SecuritySettingsService
+	Storage       *service.StorageService
+	BackupSrv     *service.BackupService
+	DockerEnv     *service.DockerEnvService
+	DockerImg     *service.DockerImgService
+	FileExt       *service.FileExtService
+	FileCross     *service.FileCrossService
+	Nginx         *service.NginxService
+	SysTool       *service.SystemToolService
+	MCP           *service.MCPService
+	OpsM          *service.MCPOperationService
+	Snap          *service.SnapshotService
+	SysSnap       *service.SystemSnapshotService
+	Ftp           *service.FtpService
+	SshG          *service.SshGuardService
+	RBAC          *rbac.Service
+	DiskGuard     *service.DiskGuardService
+	Dashboard     *service.DashboardService
+	Version       string
 }
 
 // CronDB 计划任务审计库句柄。
@@ -178,12 +178,12 @@ func Setup(d *Deps) (*gin.Engine, error) {
 			authed.GET("/files/download", pm("file:read"), fileAPI.Download) // 下载走 ?token=
 			authed.GET("/files/upload", pm("file:read"), fileAPI.Upload)
 			authed.POST("/files/upload", pm("file:write"), fileAPI.Upload)
-				authed.POST("/files/copy-across", pm("file:write"), fileAPI.CopyAcross)
-				// 节点 nginx 管理（M57 节点化基座）——/host 前缀避开站点域 /nginx/*（同组同路径 gin 启动 panic）
-				authed.GET("/host/nginx/status", pm("host:read"), nginxAPI.Status)
-				authed.POST("/host/nginx/install", pm("host:write"), nginxAPI.Install)
-				authed.POST("/host/nginx/power", pm("host:write"), nginxAPI.Power)
-				authed.POST("/host/nginx/reload", pm("host:write"), nginxAPI.Reload)
+			authed.POST("/files/copy-across", pm("file:write"), fileAPI.CopyAcross)
+			// 节点 nginx 管理（M57 节点化基座）——/host 前缀避开站点域 /nginx/*（同组同路径 gin 启动 panic）
+			authed.GET("/host/nginx/status", pm("host:read"), nginxAPI.Status)
+			authed.POST("/host/nginx/install", pm("host:write"), nginxAPI.Install)
+			authed.POST("/host/nginx/power", pm("host:write"), nginxAPI.Power)
+			authed.POST("/host/nginx/reload", pm("host:write"), nginxAPI.Reload)
 			authed.POST("/files/write", pm("file:write"), fileAPI.Write)
 			authed.POST("/files/mkdir", pm("file:write"), fileAPI.Mkdir)
 			authed.POST("/files/rename", pm("file:write"), fileAPI.Rename)
@@ -233,6 +233,9 @@ func Setup(d *Deps) (*gin.Engine, error) {
 			authed.POST("/compose/up", pm("compose:write"), composeAPI.Action("up"))
 			authed.POST("/compose/down", pm("compose:write"), composeAPI.Action("down"))
 			authed.POST("/compose/service-action", pm("compose:write"), composeAPI.ServiceAction)
+			authed.POST("/compose/pull-update", pm("compose:write"), composeAPI.PullUpdate)
+			authed.GET("/compose/auto-update", pm("compose:read"), composeAPI.AutoUpdateGet)
+			authed.PUT("/compose/auto-update", pm("compose:write"), composeAPI.AutoUpdateSave)
 			authed.DELETE("/compose/projects/:name", pm("compose:write"), composeAPI.ProjectDelete)
 			authed.GET("/compose/logs", pm("compose:read"), composeAPI.Logs)
 
@@ -490,7 +493,7 @@ func Setup(d *Deps) (*gin.Engine, error) {
 				authed.DELETE("/store/install/:project", pm("store:write"), storeAPI.Uninstall)
 				authed.POST("/store/installed/:project/:action", pm("store:write"), storeAPI.InstalledAction)
 				authed.POST("/store/installed/:project/upgrade", pm("store:write"), storeAPI.UpgradeApp)
-			authed.POST("/store/installed/:project/owner", pm("store:write"), storeAPI.SetOwner)
+				authed.POST("/store/installed/:project/owner", pm("store:write"), storeAPI.SetOwner)
 				authed.GET("/store/upgrades/check", pm("store:read"), storeAPI.CheckUpgrades)
 				authed.POST("/store/local/scan", pm("store:write"), storeAPI.ScanLocalStore)
 				authed.GET("/store/installed/:project/env", pm("store:read"), storeAPI.InstallEnv)
