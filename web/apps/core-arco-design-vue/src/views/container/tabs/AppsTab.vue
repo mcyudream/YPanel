@@ -161,7 +161,7 @@ async function doSaveAutoUpdate() {
   updSaving.value = true
   try {
     await apiCompose.autoUpdateSave({
-      nodeId: nodeIdFor(updTarget.value), name: updTarget.value.name, dir: updTarget.value.dir || undefined,
+      nodeId: nodeIdFor(updTarget.value), project: updTarget.value.name, dir: updTarget.value.dir || undefined,
       enabled: updForm.value.enabled, intervalMin: updForm.value.intervalMin,
       preHook: updForm.value.preHook || undefined, postHook: updForm.value.postHook || undefined,
     })

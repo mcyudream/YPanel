@@ -126,12 +126,12 @@ export default {
     const res = await napi.post('api/v1/compose/pull-update', { name, dir, preHook, postHook }, { timeout: 30000 })
     return res.data as { taskId: number }
   },
-  autoUpdateGet: async (name: string, dir?: string, nodeId?: string) => {
-    const q = new URLSearchParams({ name, ...(dir ? { dir } : {}), ...(nodeId ? { nodeId } : {}) })
+  autoUpdateGet: async (project: string, dir?: string, nodeId?: string) => {
+    const q = new URLSearchParams({ project, ...(dir ? { dir } : {}), ...(nodeId ? { nodeId } : {}) })
     const res = await napi.get(`api/v1/compose/auto-update?${q.toString()}`, { silent: true })
     return res.data as { enabled: boolean, intervalMin: number, preHook: string, postHook: string, lastCheckedAt?: string, lastResult?: string, exists: boolean }
   },
-  autoUpdateSave: (data: { nodeId?: string, name: string, dir?: string, enabled: boolean, intervalMin: number, preHook?: string, postHook?: string, remark?: string }) =>
+  autoUpdateSave: (data: { nodeId: string, project: string, dir?: string, enabled: boolean, intervalMin: number, preHook?: string, postHook?: string, remark?: string }) =>
     napi.put('api/v1/compose/auto-update', data),
   logsURL: (name: string, dir: string | undefined, token: string, tail = 500, follow = false, service = '') =>
     `api/v1/compose/logs?name=${encodeURIComponent(name)}&dir=${encodeURIComponent(dir || '')}&tail=${tail}&follow=${follow ? 1 : 0}&service=${encodeURIComponent(service)}&token=${encodeURIComponent(token)}`,
