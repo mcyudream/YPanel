@@ -29,10 +29,11 @@ func Register(r *gin.Engine) error {
 			c.JSON(http.StatusNotFound, gin.H{"code": 404, "message": "not found"})
 			return
 		}
-		// 静态文件命中则直接服务
+		// 静态文件命中则直接服务（no-cache：发版后 index 与 chunk 引用立即切换，杜绝浏览器旧页面发旧 API 请求）
 		if path != "/" {
 			if f, err := sub.Open(strings.TrimPrefix(path, "/")); err == nil {
 				_ = f.Close()
+				c.Header("Cache-Control", "no-cache")
 				fileServer.ServeHTTP(c.Writer, c.Request)
 				return
 			}
