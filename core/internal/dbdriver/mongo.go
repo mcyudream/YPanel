@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 
+	"strings"
+
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/mongo"
 	"go.mongodb.org/mongo-driver/mongo/options"
@@ -43,9 +45,22 @@ func (d *mongoDriver) ListDatabases(ctx context.Context) ([]DatabaseInfo, error)
 	return out, nil
 }
 
+// ValidateMongoNS Mongo 库名/集合名/用户名校验。
+// Mongo 的命名合法字符集与 SQL 不同（允许中划线/点，如生产库名 swustmc-app），
+// 不可复用 SQL 的 ValidateIdent；防注入语义由驱动参数化保证，此处仅拦系统保留与空白。
+func ValidateMongoNS(s string) error {
+	if s == "" || len(s) > 63 {
+		return errs.Wrap(errs.ErrBadRequest, "Mongo 库名/集合名不合法（非空且 ≤63 字符）: "+s)
+	}
+	if strings.ContainsAny(s, "/\\ .$\x00") || strings.HasPrefix(s, "$") {
+		return errs.Wrap(errs.ErrBadRequest, "Mongo 库名/集合名含系统保留字符: "+s)
+	}
+	return nil
+}
+
 // CreateDatabase Mongo 无显式建库（首集合写入时创建）；此处以创建占位集合实现。
 func (d *mongoDriver) CreateDatabase(ctx context.Context, name, charset string) error {
-	if err := ValidateIdent(name); err != nil {
+	if err := ValidateMongoNS(name); err != nil {
 		return err
 	}
 	return d.client.Database(name).CreateCollection(ctx, "_placeholder")
@@ -53,7 +68,7 @@ func (d *mongoDriver) CreateDatabase(ctx context.Context, name, charset string) 
 
 // DropDatabase 删除整个数据库。
 func (d *mongoDriver) DropDatabase(ctx context.Context, name string) error {
-	if err := ValidateIdent(name); err != nil {
+	if err := ValidateMongoNS(name); err != nil {
 		return err
 	}
 	return d.client.Database(name).Drop(ctx)
@@ -77,7 +92,7 @@ func (d *mongoDriver) ListUsers(ctx context.Context) ([]UserInfo, error) {
 }
 
 func (d *mongoDriver) CreateUser(ctx context.Context, name, host, password string) error {
-	if err := ValidateIdent(name); err != nil {
+	if err := ValidateMongoNS(name); err != nil {
 		return err
 	}
 	cmd := bson.D{
@@ -92,10 +107,10 @@ func (d *mongoDriver) CreateUser(ctx context.Context, name, host, password strin
 // 区别于 admin 库的 readWriteAnyDatabase 管理用户（权限过大不能交给应用）。
 // 用户已存在返回原始 mongo 错误（code 51003 UserAlreadyExists），由调用方换名重试。
 func (d *mongoDriver) CreateAppUser(ctx context.Context, database, name, password string) error {
-	if err := ValidateIdent(name); err != nil {
+	if err := ValidateMongoNS(name); err != nil {
 		return err
 	}
-	if err := ValidateIdent(database); err != nil {
+	if err := ValidateMongoNS(database); err != nil {
 		return err
 	}
 	cmd := bson.D{
@@ -107,14 +122,14 @@ func (d *mongoDriver) CreateAppUser(ctx context.Context, database, name, passwor
 }
 
 func (d *mongoDriver) DropUser(ctx context.Context, name, host string) error {
-	if err := ValidateIdent(name); err != nil {
+	if err := ValidateMongoNS(name); err != nil {
 		return err
 	}
 	return d.client.Database("admin").RunCommand(ctx, bson.D{{Key: "dropUser", Value: name}}).Err()
 }
 
 func (d *mongoDriver) ChangePassword(ctx context.Context, name, host, password string) error {
-	if err := ValidateIdent(name); err != nil {
+	if err := ValidateMongoNS(name); err != nil {
 		return err
 	}
 	cmd := bson.D{{Key: "updateUser", Value: name}, {Key: "pwd", Value: password}}

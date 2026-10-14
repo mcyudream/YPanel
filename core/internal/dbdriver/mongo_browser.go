@@ -126,7 +126,7 @@ func extDateValue(v any) (time.Time, bool) {
 
 // validateMongoNS 库与集合名校验（集合名允许点号分隔，如 logs.2024）。
 func validateMongoNS(database, coll string) error {
-	if err := ValidateIdent(database); err != nil {
+	if err := ValidateMongoNS(database); err != nil {
 		return err
 	}
 	if coll == "" || len(coll) > 120 {
@@ -143,7 +143,7 @@ func validateMongoNS(database, coll string) error {
 
 // ListTables 集合清单（含文档数/存储大小统计，视图标注 kind=view）。
 func (d *mongoDriver) ListTables(ctx context.Context, database string) ([]TableInfo, error) {
-	if err := ValidateIdent(database); err != nil {
+	if err := ValidateMongoNS(database); err != nil {
 		return nil, err
 	}
 	specs, err := d.client.Database(database).ListCollectionSpecifications(ctx, bson.D{})
