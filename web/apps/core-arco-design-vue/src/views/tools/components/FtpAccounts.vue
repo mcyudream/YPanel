@@ -1,10 +1,9 @@
 // FTP 账号管理卡片（M69）——追加为 ftp.vue 的独立组件文件
 <script setup lang="ts">
 import { ref, computed } from 'vue'
-import { useNodeModule } from '@/store/modules/node'
-import { toast } from '@/utils/toast'
 import api from '@/api/modules/ftp'
 import type { FtpAccount } from '@/api/modules/ftp'
+const toast = useFaToast()
 
 const emit = defineEmits<{ (e: 'change'): void }>()
 
