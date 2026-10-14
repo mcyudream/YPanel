@@ -599,6 +599,12 @@ onBeforeUnmount(() => {
             <FaIcon name="i-lucide:refresh-cw" />
           </FaButton>
           <FaButton
+            variant="ghost" size="sm" :title="$t('container.apps.openDirTip')"
+            @click="router.push({ path: '/file_management', query: { ...(nodeIdFor(c.project) !== 'local' ? { node: nodeIdFor(c.project) } : {}), path: c.project.dir || `/opt/ypanel/compose/${c.project.name}` } })"
+          >
+            <FaIcon name="i-lucide:folder-open" />
+          </FaButton>
+          <FaButton
             v-if="c.project.managed && c.project.total === 0" variant="ghost" size="sm"
             class="ml-auto text-red-500!" :disabled="acting === `del-${c.project.name}`" :title="$t('container.apps.deleteProjectTip')"
             @click="deleteProject(c.project)"

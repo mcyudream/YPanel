@@ -34,7 +34,8 @@ const router = useRouter()
 const instanceId = `fm-${Math.random().toString(36).slice(2, 8)}`
 const embed = useYwEmbed()
 
-const cwd = ref(props.initialDir ?? '/')
+// M70：支持 ?path= 定位（编排「打开所在目录」跳转入口；优先级高于 initialDir）
+const cwd = ref((route.query.path as string) || props.initialDir || '/')
 const entries = ref<FileEntry[]>([])
 const loading = ref(false)
 const selected = ref<Set<string>>(new Set())
