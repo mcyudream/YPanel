@@ -60,15 +60,15 @@ export interface MiddlewareReuseOption {
 }
 
 export default {
-  list: () => api.get('/middleware/instances'),
-  types: () => api.get('/middleware/types'),
-  create: (data: { name: string, type: string, host: string, port?: number, user?: string, password?: string, remark?: string }) => api.post('/middleware/instances', data),
-  update: (id: number, data: { host?: string, port?: number, user?: string, password?: string, remark?: string }) => api.put(`/middleware/instances/${id}`, data),
-  remove: (id: number) => api.delete(`/middleware/instances/${id}`),
-  test: (id: number) => api.post(`/middleware/instances/${id}/test`),
-  reveal: (id: number) => api.get(`/middleware/instances/${id}/reveal`),
-  versionRefresh: (id: number, node?: string) => api.post(`/middleware/instances/${id}/version?node=${node || 'local'}`),
-  scan: (node?: string) => api.get(`/middleware/scan?node=${node || 'local'}`),
-  adopt: (data: { node?: string, containerName: string, name?: string }) => api.post('/middleware/adopt', data),
-  reuseOptions: (type: string, prefix?: string) => api.get(`/middleware/reuse?type=${type}&prefix=${prefix || ''}`),
+  list: () => api.get('api/v1/middleware/instances'),
+  types: () => api.get('api/v1/middleware/types'),
+  create: (data: { name: string, type: string, host: string, port?: number, user?: string, password?: string, remark?: string }) => api.post('api/v1/middleware/instances', data),
+  update: (id: number, data: { host?: string, port?: number, user?: string, password?: string, remark?: string }) => api.put(`api/v1/middleware/instances/${id}`, data),
+  remove: (id: number) => api.delete(`api/v1/middleware/instances/${id}`),
+  test: (id: number) => api.post(`api/v1/middleware/instances/${id}/test`),
+  reveal: (id: number) => api.get(`api/v1/middleware/instances/${id}/reveal`),
+  versionRefresh: (id: number, node?: string) => api.post(`api/v1/middleware/instances/${id}/version?node=${node || 'local'}`),
+  scan: (node?: string) => api.get(`api/v1/middleware/scan?node=${node || 'local'}`),
+  adopt: (data: { node?: string, containerName: string, name?: string }) => api.post('api/v1/middleware/adopt', data),
+  reuseOptions: (type: string, prefix?: string) => api.get(`api/v1/middleware/reuse?type=${type}&prefix=${prefix || ''}`),
 }
