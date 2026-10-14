@@ -751,10 +751,9 @@ onBeforeUnmount(() => {
   </div>
     </FaPageMain>
     <FileEditorWorkspace />
-  </div>
-  </div>
-  <!-- M70 编排镜像自动更新 -->
-  <FaModal v-model="updOpen" :title="$t('container.apps.autoUpdateTitle', { name: updTarget?.name })" :confirm-loading="updSaving" @ok="doSaveAutoUpdate" @cancel="updOpen = false">
+
+    <!-- M70 编排镜像自动更新 -->
+    <FaModal v-model="updOpen" :title="$t('container.apps.autoUpdateTitle', { name: updTarget?.name })" :confirm-loading="updSaving" @ok="doSaveAutoUpdate" @cancel="updOpen = false">
     <div class="flex flex-col gap-3">
       <label class="flex items-center gap-2 text-sm">
         <input v-model="updForm.enabled" type="checkbox" class="accent-[var(--primary)]">
@@ -775,5 +774,5 @@ onBeforeUnmount(() => {
       <p class="text-xs text-muted-foreground">机制：按间隔执行 docker compose pull，对比镜像 ID 有变化的容器自动重建；更新前/后钩子在节点上执行（失败不阻断更新）。</p>
     </div>
   </FaModal>
-
+  </div>
 </template>

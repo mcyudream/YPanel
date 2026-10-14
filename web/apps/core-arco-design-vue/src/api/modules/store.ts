@@ -86,6 +86,7 @@ export interface StoreInstall {
   name: string
   version: string
   composeProject: string
+  nodeId?: string
   remark: string
   createdAt: string
 }
