@@ -316,6 +316,26 @@ echo FTP_SETUP_OK
 	return nil
 }
 
+// SiteDirs 站点目录清单（FTP 根目录「关联站点」下拉数据源）。
+// 目录规则与站点 nginx root 一致（/var/www/sites/<name>[+RunDir]）。
+func (s *FtpService) SiteDirs(ctx context.Context) ([]map[string]any, error) {
+	var sites []model.Site
+	if err := s.db.Where("node_id = ? AND type = ?", s.boundNodeID, "static").Order("name ASC").Find(&sites).Error; err != nil {
+		return nil, err
+	}
+	out := make([]map[string]any, 0, len(sites))
+	for _, st := range sites {
+		dir := "/var/www/sites/" + st.Name
+		if d := strings.TrimSuffix(st.RunDir, "/"); d != "" && d != "/" {
+			dir += d
+		}
+		out = append(out, map[string]any{
+			"name": st.Name, "domain": st.Domain, "dir": dir,
+		})
+	}
+	return out, nil
+}
+
 // ListAccounts 节点账号清单（面板库为准，逐条回读系统用户存在性，防面板/系统漂移）。
 func (s *FtpService) ListAccounts(ctx context.Context) ([]map[string]any, error) {
 	var rows []model.FtpAccount

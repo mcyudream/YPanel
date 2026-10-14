@@ -282,6 +282,21 @@ func (a *SshAPI) FailedAttempts(c *gin.Context) {
 
 // ---------- FTP 账号管理（M69：系统用户 + vsftpd 白名单/chroot） ----------
 
+// SiteDirs GET /api/v1/ftp/site-dirs?nodeId=（FTP 根目录「关联站点」下拉数据源）
+func (a *FtpAPI) SiteDirs(c *gin.Context) {
+	ftp, ferr := a.Ftp.WithNode(c.Query("nodeId"))
+	if ferr != nil {
+		respErr(c, ferr)
+		return
+	}
+	out, err := ftp.SiteDirs(c.Request.Context())
+	if err != nil {
+		respErr(c, err)
+		return
+	}
+	respOK(c, gin.H{"items": out})
+}
+
 // AccountsList GET /api/v1/ftp/accounts?nodeId=
 func (a *FtpAPI) AccountsList(c *gin.Context) {
 	ftp, ferr := a.Ftp.WithNode(c.Query("nodeId"))

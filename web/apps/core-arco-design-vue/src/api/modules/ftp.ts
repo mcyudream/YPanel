@@ -43,6 +43,10 @@ export default {
   },
   putConfig: (content: string) => hnapi.put('api/v1/ftp/config', { content }),
   // ---------- 账号管理（M69：系统用户 + vsftpd 白名单/chroot） ----------
+  siteDirs: async (nodeId?: string) => {
+    const res = await hnapi.get(`api/v1/ftp/site-dirs${nodeId ? `?nodeId=${encodeURIComponent(nodeId)}` : ''}`, { silent: true })
+    return (res.data?.items ?? res.data) as { name: string, domain: string, dir: string }[]
+  },
   accounts: {
     list: async (nodeId?: string) => {
       const res = await hnapi.get(`api/v1/ftp/accounts${nodeId ? `?nodeId=${encodeURIComponent(nodeId)}` : ''}`, { silent: true })

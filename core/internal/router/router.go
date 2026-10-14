@@ -766,6 +766,7 @@ func Setup(d *Deps) (*gin.Engine, error) {
 				admin.PUT("/ftp/accounts/:id", pm("tool:ftp"), ftpAPI.AccountsUpdate)
 				admin.DELETE("/ftp/accounts/:id", pm("tool:ftp"), ftpAPI.AccountsDelete)
 				admin.POST("/ftp/accounts/:id/test", pm("tool:ftp"), ftpAPI.AccountsTest)
+				admin.GET("/ftp/site-dirs", pm("tool:ftp"), ftpAPI.SiteDirs)
 				admin.GET("/ssh/config", pm("tool:ssh"), sshAPI.GetConfig)
 				admin.PUT("/ssh/config", pm("tool:ssh"), sshAPI.SetConfig)
 				admin.GET("/ssh/keys", pm("tool:ssh"), sshAPI.Keys)
