@@ -197,5 +197,5 @@
 - **现象**：GitHub v0.9.43 已发布且工作流总体成功，GitLab 最新发行版仍是 v0.9.42；检查具体步骤才发现 GitLab 同步被跳过。
 - **根因**：仓库没有 `GITLAB_TOKEN`，旧步骤用 `if` 静默跳过并设置 `continue-on-error`；实现还没有推送源码与标签，创建 Release 不带 `ref`、不检查 HTTP 状态，上传失败后继续，且误把 `/uploads/...` 当成站点根路径。仅补一个 Secret 不能保证旧流程完成镜像。
 - **规避/解决**：配置项目专用的 `api` + `write_repository` 令牌；账号密码可用于 Git HTTPS 推送和网页登录，但不能直接充当 `PRIVATE-TOKEN`。GitLab 镜像独立于 Gitee，缺配置与 HTTP 错误必须失败；`deploy/mirror-gitlab-release.py` 只复制现有 GitHub 资产，检查两个架构和校验文件后在临时 bare 仓库原子、非强制推送 main/tag/`assets/<tag>`，登记可重复运行的 Release 链接，最后匿名下载三个附件逐个核验 SHA-256。补同步使用 `Mirror GitLab release` 的手动入口，不重跑构建、不移动版本标签。已有资产分支内容不一致时停止覆盖，避免修改已发布版本。
-- **传输补充**：GitHub runner 首次补同步时，三个源附件均在数秒内下载完成，但约 83 MB 的 GitLab Git 推送报 `curl 92 HTTP/2 ... PROTOCOL_ERROR`。脚本按 GitLab 主机限定 `http.version=HTTP/1.1`，不修改开发机全局 Git 配置；不能把 `Everything up-to-date` 尾行当成功，必须检查 Git 退出码及匿名下载摘要。
+- **传输补充**：GitHub runner 首次补同步时，三个源附件均在数秒内下载完成，但约 83 MB 的 GitLab Git 推送报 `curl 92 HTTP/2 ... PROTOCOL_ERROR`；HTTP/1.1 的 chunked 推送也长时间无响应。脚本按 GitLab 主机限定 `http.version=HTTP/1.1`、`http.postBuffer=268435456`（当前资产包小于该缓冲区，以固定 Content-Length 发送），并设置低速超时，不修改开发机全局 Git 配置。这里提高 postBuffer 仅用于规避该入口的 chunked 上传兼容问题，不能作为所有 Git 推送错误的通用修复；不能把 `Everything up-to-date` 尾行当成功，必须检查 Git 退出码及匿名下载摘要。
 - **来源**：2026-10-30，v0.9.43 GitLab 发行镜像补齐（`.github/workflows/release.yml`、`.github/workflows/mirror-gitlab.yml`、`deploy/mirror-gitlab-release.py`）。

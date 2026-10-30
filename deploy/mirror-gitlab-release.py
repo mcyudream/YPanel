@@ -114,6 +114,10 @@ def sync_refs(directory, tag, expected_commit):
             "-c", f"credential.{GITLAB_URL}.helper={helper}",
             # GitLab 入口的大包 HTTP/2 上传实测触发 curl 92 PROTOCOL_ERROR。
             "-c", f"http.{GITLAB_URL}/.version=HTTP/1.1",
+            # 两个发行包合并为单次 Git 推送；固定 Content-Length 避免代理卡住 chunked 上传。
+            "-c", f"http.{GITLAB_URL}/.postBuffer=268435456",
+            "-c", f"http.{GITLAB_URL}/.lowSpeedLimit=1024",
+            "-c", f"http.{GITLAB_URL}/.lowSpeedTime=90",
             # 单次别名绕开开发机 github.com 的全局下载代理重写。
             "-c", "url.https://github.com/.insteadOf=ypanel-github:",
             *args,
