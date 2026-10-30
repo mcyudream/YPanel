@@ -1,0 +1,50 @@
+name: Mirror GitLab release
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: '需要补同步的现有 GitHub Release（例如 v0.9.43）'
+        required: true
+        type: string
+  workflow_call:
+    inputs:
+      tag:
+        required: true
+        type: string
+    secrets:
+      GITLAB_TOKEN:
+        required: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: gitlab-release-mirror
+  cancel-in-progress: false
+
+jobs:
+  mirror:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      GITLAB_TOKEN: ${{ secrets.GITLAB_TOKEN }}
+    steps:
+      - name: Check GitLab release credentials
+        run: |
+          if [ -z "$GITLAB_TOKEN" ]; then
+            echo '::error::缺少 GITLAB_TOKEN：请配置本项目的 api + write_repository 发布令牌'
+            exit 1
+          fi
+
+      - uses: actions/checkout@v4
+        with:
+          # 补同步历史版本也使用当前镜像脚本；发行源码和资产由脚本按 tag 单独获取。
+          ref: main
+          persist-credentials: false
+
+      - name: Mirror and verify published release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.tag }}
+        run: python3 deploy/mirror-gitlab-release.py "$RELEASE_TAG"

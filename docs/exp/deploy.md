@@ -191,3 +191,10 @@
 - **运维坑**：systemd 兜底脚本手工往 FORWARD 插规则可用但会与面板接管重复；迁移顺序=面板升级（启动重放自动挂 DOCKER-USER）→ `systemctl disable --now` 兜底服务 → 按精确 spec 删兜底 FORWARD 规则 → 内网节点发 SYN 看 YPANEL_FWD_FLT 计数器增长确认接管。生产实测删除兜底瞬间零断流（conntrack 条即时承接回程）。
 - **排查工具**：`iptables -L <链> -v -n` 计数器是转发链路验证的最强信号——先发包再看计数器增量，比连不通猜原因快得多。注意本机 `127.0.0.1` 测试不匹配带 `-i ens18` 的 DNAT 规则（本地生成走 OUTPUT/lo），要从另一台内网机器发 SYN。
 - **来源**：2026-10-13 生产 NAT 转发排障（v0.9.38 发布，用户定位 + 面板实现三处修复）。
+
+### Release 工作流成功不代表 GitLab 已镜像：缺密钥跳过、HTTP 错误被忽略都会假报成功
+
+- **现象**：GitHub v0.9.43 已发布且工作流总体成功，GitLab 最新发行版仍是 v0.9.42；检查具体步骤才发现 GitLab 同步被跳过。
+- **根因**：仓库没有 `GITLAB_TOKEN`，旧步骤用 `if` 静默跳过并设置 `continue-on-error`；实现还没有推送源码与标签，创建 Release 不带 `ref`、不检查 HTTP 状态，上传失败后继续，且误把 `/uploads/...` 当成站点根路径。仅补一个 Secret 不能保证旧流程完成镜像。
+- **规避/解决**：配置项目专用的 `api` + `write_repository` 令牌；账号密码可用于 Git HTTPS 推送和网页登录，但不能直接充当 `PRIVATE-TOKEN`。GitLab 镜像独立于 Gitee，缺配置与 HTTP 错误必须失败；`deploy/mirror-gitlab-release.py` 只复制现有 GitHub 资产，检查两个架构和校验文件后在临时 bare 仓库原子、非强制推送 main/tag/`assets/<tag>`，登记可重复运行的 Release 链接，最后匿名下载三个附件逐个核验 SHA-256。补同步使用 `Mirror GitLab release` 的手动入口，不重跑构建、不移动版本标签。已有资产分支内容不一致时停止覆盖，避免修改已发布版本。
+- **来源**：2026-10-30，v0.9.43 GitLab 发行镜像补齐（`.github/workflows/release.yml`、`.github/workflows/mirror-gitlab.yml`、`deploy/mirror-gitlab-release.py`）。
