@@ -1,5 +1,12 @@
 # 经验之谈：构建与部署
 
+### Git 全局 URL 重写会让原始 GitHub 地址仍被转到代理
+
+- **现象**：origin 使用代理地址时推送缺少代理认证；把 push 目标临时写成 github.com 后，错误仍指向代理域名。
+- **根因**：全局 `url.<代理前缀>.insteadOf=https://github.com/` 会对显式传入的原始地址再次做匹配；GitHub 凭据不会自动当作代理域名凭据使用。
+- **规避/解决**：先检查 URL 重写配置；需直连同一 GitHub 仓库发布时，可给单次命令设置专用别名：`git -c url.https://github.com/.insteadOf=ypanel-publish: push --atomic ypanel-publish:<owner>/<repo>.git main refs/tags/<tag>`。只改变本次地址解析，不改远端或全局配置，也不把 GitHub token 写进代理 URL。推送后用 GitHub API 核对分支和标签指向。
+- **来源**：2026-10-30，v0.9.43 发布；本机 Git URL 配置及推送结果实测。
+
 ### 覆盖运行中的二进制报 "Text file busy"
 
 - **现象**：deploy 推送新二进制失败 `bash: /opt/ypanel/ypanel: Text file busy`。
