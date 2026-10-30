@@ -114,7 +114,7 @@ def sync_refs(directory, tag, expected_commit):
             "-c", f"credential.{GITLAB_URL}.helper={helper}",
             # GitLab 入口的大包 HTTP/2 上传实测触发 curl 92 PROTOCOL_ERROR。
             "-c", f"http.{GITLAB_URL}/.version=HTTP/1.1",
-            # 两个发行包合并为单次 Git 推送；固定 Content-Length 避免代理卡住 chunked 上传。
+            # 每次只推一个发行文件；固定 Content-Length 避免入口代理卡住 chunked 上传。
             "-c", f"http.{GITLAB_URL}/.postBuffer=268435456",
             "-c", f"http.{GITLAB_URL}/.lowSpeedLimit=1024",
             "-c", f"http.{GITLAB_URL}/.lowSpeedTime=90",
@@ -141,25 +141,42 @@ def sync_refs(directory, tag, expected_commit):
     if git("rev-parse", f"refs/tags/{tag}^{{commit}}") != expected_commit:
         raise RuntimeError("GitHub 标签的实际提交与 API 返回不一致，停止同步")
 
-    entries = []
+    blobs = {}
     for name in sorted(FILES):
-        blob = git("hash-object", "-w", "--no-filters", str(directory / name))
-        entries.append(f"100644 blob {blob}\t{name}\n")
-    tree = git("mktree", stdin="".join(entries))
+        blobs[name] = git("hash-object", "-w", "--no-filters", str(directory / name))
     branch = f"refs/heads/assets/{tag}"
     remote = f"{PROJECT_URL}.git"
+    uploaded = {}
+    asset_commit = None
     if git("ls-remote", "--heads", remote, branch):
         git("fetch", "--quiet", "--no-tags", remote, f"{branch}:{branch}")
-        if git("rev-parse", f"{branch}^{{tree}}") != tree:
-            raise RuntimeError(f"GitLab assets/{tag} 已存在不同资产，停止覆盖")
+        for entry in git("ls-tree", branch).splitlines():
+            metadata, name = entry.split("\t", 1)
+            mode, kind, blob = metadata.split()
+            if mode != "100644" or kind != "blob" or blobs.get(name) != blob:
+                raise RuntimeError(f"GitLab assets/{tag} 已存在不同资产，停止覆盖")
+            uploaded[name] = blob
         asset_commit = git("rev-parse", branch)
-    else:
-        asset_commit = git("commit-tree", tree, "-m", f"YPanel {tag} release assets")
-    # 原子、非强制推送；目标有独立改动时失败，不能覆盖源码或已有版本。
+    # 源码和标签原子、非强制推送；目标有独立改动时失败。
     git(
         "push", "--atomic", remote, "refs/heads/main:refs/heads/main",
-        f"refs/tags/{tag}:refs/tags/{tag}", f"{asset_commit}:{branch}",
+        f"refs/tags/{tag}:refs/tags/{tag}",
     )
+    for name in FILES:
+        if name in uploaded:
+            continue
+        uploaded[name] = blobs[name]
+        entries = [f"100644 blob {blob}\t{file}\n" for file, blob in sorted(uploaded.items())]
+        tree = git("mktree", stdin="".join(entries))
+        args = ["commit-tree", tree, "-m", f"YPanel {tag}: add {name}"]
+        if asset_commit:
+            args.extend(["-p", asset_commit])
+        asset_commit = git(*args)
+        print(f"推送 GitLab 资产：{name}", flush=True)
+        git("push", remote, f"{asset_commit}:{branch}")
+        print(f"GitLab 资产已同步：{name}", flush=True)
+    # 中途失败只留下已校验的文件子集；下次运行验证已有内容后补缺，不覆盖任何文件。
+    # Release 只会在全部文件完成后登记，因此部分上传不会被当成最新版发布。
     print(f"GitLab 源码、标签与 assets/{tag} 已同步", flush=True)
 
 
