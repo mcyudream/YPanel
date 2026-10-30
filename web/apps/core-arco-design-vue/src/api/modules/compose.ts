@@ -1,5 +1,5 @@
+import { getDockerNode, makeNodeApi, withNode } from '../dockerNode'
 import api from '../index'
-import { makeNodeApi, withNode } from '../dockerNode'
 
 // M55 容器域节点路由：全部调用自动附当前节点（setDockerNode 切换）
 const napi = makeNodeApi(api)
@@ -83,6 +83,27 @@ export interface Src2BuildReq {
   services: Src2ServiceSpec[]
 }
 
+export interface ComposeAutoUpdateSettings {
+  nodeId: string
+  project: string
+  dir?: string
+  enabled: boolean
+  intervalMin: number
+  preHook: string
+  postHook: string
+  hookFailurePolicy: 'stop' | 'continue'
+  remark: string
+}
+
+export interface ComposeAutoUpdateConfig extends ComposeAutoUpdateSettings {
+  exists: boolean
+  lastCheckedAt?: string
+  nextCheckAt?: string
+  lastResult: string
+  lastTaskId: number
+  lastStatus: '' | 'running' | 'success' | 'failed'
+}
+
 export default {
   list: async () => {
     const res = await napi.get('api/v1/compose/projects', { silent: true })
@@ -122,17 +143,17 @@ export default {
   // 删除托管项目（down + 移除编排目录，含其下全部数据，调用方须先确认）
   deleteProject: (name: string) => napi.delete(`api/v1/compose/projects/${encodeURIComponent(name)}`),
   // ---------- M70 编排镜像拉取更新（类 watchtower） ----------
-  pullUpdate: async (name: string, dir?: string, preHook?: string, postHook?: string) => {
-    const res = await napi.post('api/v1/compose/pull-update', { name, dir, preHook, postHook }, { timeout: 30000 })
+  pullUpdate: async (project: string, dir?: string, nodeId = getDockerNode() || 'local') => {
+    const res = await api.post(`api/v1/compose/pull-update?node=${encodeURIComponent(nodeId)}`, { nodeId, project, dir }, { timeout: 30000, silent: true })
     return res.data as { taskId: number }
   },
-  autoUpdateGet: async (project: string, dir?: string, nodeId?: string) => {
-    const q = new URLSearchParams({ project, ...(dir ? { dir } : {}), ...(nodeId ? { nodeId } : {}) })
-    const res = await napi.get(`api/v1/compose/auto-update?${q.toString()}`, { silent: true })
-    return res.data as { enabled: boolean, intervalMin: number, preHook: string, postHook: string, lastCheckedAt?: string, lastResult?: string, exists: boolean }
+  autoUpdateGet: async (project: string, nodeId = getDockerNode() || 'local') => {
+    const q = new URLSearchParams({ project, node: nodeId })
+    const res = await api.get(`api/v1/compose/auto-update?${q.toString()}`, { silent: true })
+    return res.data as ComposeAutoUpdateConfig
   },
-  autoUpdateSave: (data: { nodeId: string, project: string, dir?: string, enabled: boolean, intervalMin: number, preHook?: string, postHook?: string, remark?: string }) =>
-    napi.put('api/v1/compose/auto-update', data),
+  autoUpdateSave: (data: ComposeAutoUpdateSettings) =>
+    api.put(`api/v1/compose/auto-update?node=${encodeURIComponent(data.nodeId)}`, data, { silent: true }),
   logsURL: (name: string, dir: string | undefined, token: string, tail = 500, follow = false, service = '') =>
     `api/v1/compose/logs?name=${encodeURIComponent(name)}&dir=${encodeURIComponent(dir || '')}&tail=${tail}&follow=${follow ? 1 : 0}&service=${encodeURIComponent(service)}&token=${encodeURIComponent(token)}`,
 }

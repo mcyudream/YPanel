@@ -27,6 +27,8 @@
 
 ## 条目
 
+- [compose-update.md](./compose-update.md) — 更新请求与实际节点校验、命令退出码、镜像 ID 比较、FaModal 异步保存、输入属性透传、关闭配置持久化
+- [dependency-bootstrap.md](./dependency-bootstrap.md) — pnpm 版本切换阶段、临时验证环境、官方大包下载校验与跨文件系统缓存写入
 - [go-backend.md](./go-backend.md) — moby 模块拆分、internal 跨模块限制、GOPROXY 镜像、ExtJSON 归一化、DSN Replace 误伤、SHOW INDEX 版本漂移、firstLine(tail()) 吞报错、apt 安装缺 update
 - [frontend.md](./frontend.md) — fa 基座对接真实后端、vue-tsc 假性 TS6133、MSYS 路径转换、xterm 排障、lucide 图标名漂移
 - [deploy.md](./deploy.md) — Text file busy、纯 Go SQLite 交叉编译、敏感信息解析、systemd 排障、robocopy /MIR 方向与 dist 锁定处置

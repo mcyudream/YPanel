@@ -12,7 +12,6 @@ import (
 	"github.com/ypanel/core/internal/agentclient"
 	"github.com/ypanel/core/internal/service"
 	"github.com/ypanel/shared/dto"
-	"github.com/ypanel/shared/errs"
 )
 
 // ComposeAPI compose 项目接口（代理 agent）。
@@ -250,22 +249,42 @@ func (c *ComposeAPI) Src2Create(ctx *gin.Context) {
 	respOK(ctx, out)
 }
 
-// ---------- 编排镜像拉取更新 API（M70） ----------
+// ---------- 编排镜像拉取更新 API ----------
 
-// PullUpdate POST /api/v1/compose/pull-update {nodeId, project, dir?, preHook?, postHook?}
-// 任务化秒回 taskId（pull 可能耗时数分钟，日志实时进任务中心）。
+// composeUpdateTarget 统一查询参数与请求体的节点语义，避免校验节点和实际执行节点不一致。
+func composeUpdateTarget(ctx *gin.Context, req *dto.ComposePullUpdateReq) bool {
+	node := strings.TrimSpace(ctx.Query("node"))
+	nodeID := strings.TrimSpace(ctx.Query("nodeId"))
+	if node != "" && nodeID != "" && node != nodeID {
+		respErr(ctx, errBadRequest("节点参数 node 与 nodeId 不一致"))
+		return false
+	}
+	if node == "" {
+		node = nodeID
+	}
+	bodyNode := strings.TrimSpace(req.NodeID)
+	if node != "" && bodyNode != "" && node != bodyNode {
+		respErr(ctx, errBadRequest("请求体节点与当前选择的节点不一致，请重新打开更新设置"))
+		return false
+	}
+	if node != "" {
+		req.NodeID = node
+	}
+	if err := service.NormalizeComposeUpdateTarget(ctx.Request.Context(), req); err != nil {
+		respErr(ctx, err)
+		return false
+	}
+	return true
+}
+
+// PullUpdate POST /api/v1/compose/pull-update?node= {project, dir?, ...}
+// 兼容旧版前端 name 字段与请求体 nodeId；未指定节点时使用 local。
 func (c *ComposeAPI) PullUpdate(ctx *gin.Context) {
-	req, ok := bind[struct {
-		NodeID   string `json:"nodeId" binding:"required"`
-		Project  string `json:"project" binding:"required"`
-		Dir      string `json:"dir"`
-		PreHook  string `json:"preHook"`
-		PostHook string `json:"postHook"`
-	}](ctx)
-	if !ok {
+	req, ok := bind[dto.ComposePullUpdateReq](ctx)
+	if !ok || !composeUpdateTarget(ctx, req) {
 		return
 	}
-	out, err := c.Src2.PullUpdateTask(ctx.Request.Context(), req.NodeID, req.Project, req.Dir, req.PreHook, req.PostHook)
+	out, err := c.Src2.PullUpdateTask(ctx.Request.Context(), *req)
 	if err != nil {
 		respErr(ctx, err)
 		return
@@ -273,15 +292,13 @@ func (c *ComposeAPI) PullUpdate(ctx *gin.Context) {
 	respOK(ctx, out)
 }
 
-// AutoUpdateGet GET /api/v1/compose/auto-update?nodeId=&project=
+// AutoUpdateGet GET /api/v1/compose/auto-update?node=&project=
 func (c *ComposeAPI) AutoUpdateGet(ctx *gin.Context) {
-	node := ctx.Query("nodeId")
-	project := ctx.Query("project")
-	if project == "" {
-		respErr(ctx, errs.Wrap(errs.ErrBadRequest, "project 必填"))
+	req := dto.ComposePullUpdateReq{Project: ctx.Query("project"), Name: ctx.Query("name")}
+	if !composeUpdateTarget(ctx, &req) {
 		return
 	}
-	out, err := c.Src2.GetAutoUpdate(node, project)
+	out, err := c.Src2.GetAutoUpdate(ctx.Request.Context(), req.NodeID, req.Project)
 	if err != nil {
 		respErr(ctx, err)
 		return
@@ -289,22 +306,13 @@ func (c *ComposeAPI) AutoUpdateGet(ctx *gin.Context) {
 	respOK(ctx, out)
 }
 
-// AutoUpdateSave PUT /api/v1/compose/auto-update {nodeId, project, dir?, enabled, intervalMin, preHook?, postHook?, remark?}
+// AutoUpdateSave PUT /api/v1/compose/auto-update?node= {project, enabled, intervalMin, ...}
 func (c *ComposeAPI) AutoUpdateSave(ctx *gin.Context) {
-	req, ok := bind[struct {
-		NodeID      string `json:"nodeId" binding:"required"`
-		Project     string `json:"project" binding:"required"`
-		Dir         string `json:"dir"`
-		Enabled     bool   `json:"enabled"`
-		IntervalMin int    `json:"intervalMin"`
-		PreHook     string `json:"preHook"`
-		PostHook    string `json:"postHook"`
-		Remark      string `json:"remark"`
-	}](ctx)
-	if !ok {
+	req, ok := bind[dto.ComposeAutoUpdateSaveReq](ctx)
+	if !ok || !composeUpdateTarget(ctx, &req.ComposePullUpdateReq) {
 		return
 	}
-	if err := c.Src2.SaveAutoUpdate(req.NodeID, req.Project, req.Dir, req.Enabled, req.IntervalMin, req.PreHook, req.PostHook, req.Remark); err != nil {
+	if err := c.Src2.SaveAutoUpdate(ctx.Request.Context(), *req); err != nil {
 		respErr(ctx, err)
 		return
 	}

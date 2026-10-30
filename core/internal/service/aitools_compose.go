@@ -14,12 +14,75 @@ import (
 func (s *AIService) aiToolsCompose(ctx context.Context) []aiToolDef {
 	return []aiToolDef{
 		{
+			Name: "get_compose_auto_update", Module: aiModCompose, Risk: aiRiskRead,
+			Desc:       "读取编排镜像自动更新配置及最近检查结果。node 为节点 ID，默认 local；project 为项目名。返回 enabled、intervalMin、前后脚本、hookFailurePolicy(stop/continue)、最近任务 ID 与结果。",
+			Parameters: schObj(map[string]any{"node": schStr("目标节点 ID，默认 local"), "project": schStr("编排项目名")}, "project"),
+			Fn: func(ctx context.Context, input string) (string, error) {
+				p, err := parseToolArgs[struct {
+					Node    string `json:"node"`
+					Project string `json:"project"`
+				}](input)
+				if err != nil {
+					return "", err
+				}
+				out, err := s.src2.GetAutoUpdate(ctx, p.Node, p.Project)
+				if err != nil {
+					return "", err
+				}
+				return toolOut(out)
+			},
+		},
+		{
+			Name: "configure_compose_auto_update", Module: aiModCompose, Risk: aiRiskWrite,
+			Desc: "保存编排镜像自动更新配置（完整替换配置，先 get_compose_auto_update 读取并保留现有设置）。intervalMin 为 5–1440 分钟整数，常用 60/360/1440；preHook/postHook 为目标节点 shell 脚本，仅发现更新时执行，每个最多 5 分钟。hookFailurePolicy 默认 stop：前脚本失败不重建，后脚本失败报告错误但不回滚已完成更新；continue 记录错误后继续。仅更新当前镜像标签且跳过停止的服务。",
+			Parameters: schObj(map[string]any{
+				"node": schStr("目标节点 ID，默认 local"), "project": schStr("编排项目名"), "dir": schStr("项目工作目录，可省略"),
+				"enabled": schBool("是否启用"), "intervalMin": schInt("检查间隔，5–1440 分钟"),
+				"preHook": schStr("更新前脚本，可选，最多 8192 字符"), "postHook": schStr("更新后脚本，可选，最多 8192 字符"),
+				"hookFailurePolicy": schEnum("脚本失败策略，默认 stop", "stop", "continue"), "remark": schStr("备注，最多 255 字符"),
+			}, "project", "enabled", "intervalMin"),
+			Fn: func(ctx context.Context, input string) (string, error) {
+				p, err := parseToolArgs[struct {
+					dto.ComposeAutoUpdateSaveReq
+					Node string `json:"node"`
+				}](input)
+				if err != nil {
+					return "", err
+				}
+				p.NodeID = p.Node
+				if err := s.src2.SaveAutoUpdate(ctx, p.ComposeAutoUpdateSaveReq); err != nil {
+					return "", err
+				}
+				return "自动更新配置已保存", nil
+			},
+		},
+		{
+			Name: "pull_compose_update", Module: aiModCompose, Risk: aiRiskWrite,
+			Desc:       "为编排项目创建一次镜像更新任务：拉取当前标签，只重建镜像变化的运行服务，拉取失败中止。node 默认 local；project 项目名必填；dir 外部项目工作目录可选。返回 taskId，用 get_task 查看进度和结果。",
+			Parameters: schObj(map[string]any{"node": schStr("目标节点 ID，默认 local"), "project": schStr("编排项目名"), "dir": schStr("项目工作目录，可选")}, "project"),
+			Fn: func(ctx context.Context, input string) (string, error) {
+				p, err := parseToolArgs[struct {
+					Node    string `json:"node"`
+					Project string `json:"project"`
+					Dir     string `json:"dir"`
+				}](input)
+				if err != nil {
+					return "", err
+				}
+				out, err := s.src2.PullUpdateTask(ctx, dto.ComposePullUpdateReq{NodeID: p.Node, Project: p.Project, Dir: p.Dir})
+				if err != nil {
+					return "", err
+				}
+				return toolOut(out)
+			},
+		},
+		{
 			Name: "list_compose_projects", Module: aiModCompose, Risk: aiRiskRead,
-			Desc: "列出 compose 编排项目（含运行状态与服务清单）。input 可选 JSON：{\"search\":\"项目名关键词\"}。返回 items 含 name/dir/managed(托管可编辑)/running/total/services。",
+			Desc:       "列出 compose 编排项目（含运行状态与服务清单）。input 可选 JSON：{\"search\":\"项目名关键词\"}。返回 items 含 name/dir/managed(托管可编辑)/running/total/services。",
 			Parameters: schObj(map[string]any{"search": schStr("项目名关键词")}),
 			Fn: func(ctx context.Context, input string) (string, error) {
 				p, err := parseToolArgs[struct {
-					Node string `json:"node"`
+					Node   string `json:"node"`
 					Search string `json:"search"`
 				}](input)
 				if err != nil {
@@ -52,7 +115,7 @@ func (s *AIService) aiToolsCompose(ctx context.Context) []aiToolDef {
 			}, "name"),
 			Fn: func(ctx context.Context, input string) (string, error) {
 				p, err := parseToolArgs[struct {
-					Node string `json:"node"`
+					Node    string `json:"node"`
 					Name    string `json:"name"`
 					Service string `json:"service"`
 					Tail    int    `json:"tail"`
@@ -159,7 +222,7 @@ func (s *AIService) aiToolsCompose(ctx context.Context) []aiToolDef {
 			}, "name", "service", "action"),
 			Fn: func(ctx context.Context, input string) (string, error) {
 				p, err := parseToolArgs[struct {
-					Node string `json:"node"`
+					Node    string `json:"node"`
 					Name    string `json:"name"`
 					Service string `json:"service"`
 					Action  string `json:"action"`
@@ -207,7 +270,7 @@ func (s *AIService) aiToolsCompose(ctx context.Context) []aiToolDef {
 		},
 		{
 			Name: "delete_compose_project", Module: aiModCompose, Risk: aiRiskDanger,
-			Desc: "删除托管 compose 项目（移除容器并删除项目目录内应用包文件；data 数据卷目录保留，会先向用户确认）。input JSON：{\"name\":\"项目名\"}",
+			Desc:       "删除托管 compose 项目（移除容器并删除项目目录内应用包文件；data 数据卷目录保留，会先向用户确认）。input JSON：{\"name\":\"项目名\"}",
 			Parameters: schObj(map[string]any{"name": schStr("托管项目名")}, "name"),
 			Fn: func(ctx context.Context, input string) (string, error) {
 				p, err := parseToolArgs[struct {

@@ -2,11 +2,14 @@
 import type { ComposeProject } from '@/api/modules/compose'
 import type { ContainerItem } from '@/api/modules/container'
 import apiCompose from '@/api/modules/compose'
+import { getDockerNode } from '@/api/dockerNode'
+import ComposeAutoUpdateModal from '@/views/container/components/ComposeAutoUpdateModal.vue'
 import apiContainer, { LabelComposeProject, LabelComposeService } from '@/api/modules/container'
 import apiFile from '@/api/modules/file'
 import { storeApi, type StoreAppItem, type StoreInstall } from '@/api/modules/store'
 import SrcCreateWizard from '@/views/container/components/SrcCreateWizard.vue'
 import { i18n, tr } from '@/locales'
+import { useTaskCenterStore } from '@/store/modules/taskCenter'
 import { useYwEmbed } from '@/views/desktop/embed'
 import FileEditorWorkspace from '@/views/file_management/editor/Workspace.vue'
 
@@ -136,47 +139,20 @@ async function deleteProject(p: ComposeProject) {
 
 // ---- M70 编排镜像拉取更新（类 watchtower）----
 const updOpen = ref(false)
-const updTarget = ref<ComposeProject | null>(null)
-const updForm = ref({ enabled: false, intervalMin: 60, preHook: '', postHook: '' })
-const updSaving = ref(false)
+const updTarget = ref<{ project: string, dir: string, nodeId: string } | null>(null)
 const pulling = ref('')
 
-function nodeIdFor(p: ComposeProject): string {
-  const install = installs.value.find(i => i.composeProject === p.name)
-  return install?.nodeId || 'local'
+function nodeIdFor(_p: ComposeProject): string {
+  return getDockerNode() || 'local'
 }
 
 function openAutoUpdate(p: ComposeProject) {
-  updTarget.value = p
-  updForm.value = { enabled: false, intervalMin: 60, preHook: '', postHook: '' }
+  updTarget.value = { project: p.name, dir: p.dir, nodeId: nodeIdFor(p) }
   updOpen.value = true
-  apiCompose.autoUpdateGet(p.name, p.dir || undefined, nodeIdFor(p)).then((cfg) => {
-    updForm.value = { enabled: cfg.enabled, intervalMin: cfg.intervalMin || 60, preHook: cfg.preHook || '', postHook: cfg.postHook || '' }
-  }).catch(() => {})
-}
-
-async function doSaveAutoUpdate() {
-  if (!updTarget.value)
-    return
-  updSaving.value = true
-  try {
-    await apiCompose.autoUpdateSave({
-      nodeId: nodeIdFor(updTarget.value), project: updTarget.value.name, dir: updTarget.value.dir || undefined,
-      enabled: updForm.value.enabled, intervalMin: updForm.value.intervalMin,
-      preHook: updForm.value.preHook || undefined, postHook: updForm.value.postHook || undefined,
-    })
-    toast.success(updForm.value.enabled ? '自动更新已开启（按间隔检查镜像并重建容器）' : '自动更新已关闭')
-    updOpen.value = false
-  }
-  catch (e: any) {
-    toast.error(e?.message || '保存失败')
-  }
-  finally {
-    updSaving.value = false
-  }
 }
 
 async function pullUpdate(p: ComposeProject) {
+  const nodeId = nodeIdFor(p)
   const modal = useFaModal()
   modal.confirm({
     title: i18n.global.t('container.apps.pullUpdateTitle'),
@@ -184,12 +160,13 @@ async function pullUpdate(p: ComposeProject) {
     onConfirm: async () => {
       pulling.value = p.name
       try {
-        await apiCompose.pullUpdate(p.name, p.dir || undefined)
-        useFaToast().info('拉取更新任务已创建，进度见任务中心')
+        const task = await apiCompose.pullUpdate(p.name, p.dir || undefined, nodeId)
+        useTaskCenterStore().open(task.taskId)
+        toast.info(i18n.global.t('container.apps.pullUpdateStarted'))
         await load()
       }
       catch (e: any) {
-        toast.error(e?.message || '拉取更新失败')
+        toast.error(e?.message || i18n.global.t('container.apps.pullUpdateFailed'))
       }
       finally {
         pulling.value = ''
@@ -752,27 +729,9 @@ onBeforeUnmount(() => {
     </FaPageMain>
     <FileEditorWorkspace />
 
-    <!-- M70 编排镜像自动更新 -->
-    <FaModal v-model="updOpen" :title="$t('container.apps.autoUpdateTitle', { name: updTarget?.name })" :confirm-loading="updSaving" @ok="doSaveAutoUpdate" @cancel="updOpen = false">
-    <div class="flex flex-col gap-3">
-      <label class="flex items-center gap-2 text-sm">
-        <input v-model="updForm.enabled" type="checkbox" class="accent-[var(--primary)]">
-        启用自动更新（按间隔执行 pull，镜像有变化自动重建容器）
-      </label>
-      <label class="flex flex-col gap-1 text-sm">
-        <span>检查间隔（分钟，最小 5）</span>
-        <FaInput v-model.number="updForm.intervalMin" type="number" class="w-40!" />
-      </label>
-      <label class="flex flex-col gap-1 text-sm">
-        <span>更新前钩子（节点 shell 命令，可选，如备份）</span>
-        <FaInput v-model="updForm.preHook" placeholder="例：cd /opt/xxx && ./backup.sh" />
-      </label>
-      <label class="flex flex-col gap-1 text-sm">
-        <span>更新后钩子（可选，如迁移/通知）</span>
-        <FaInput v-model="updForm.postHook" />
-      </label>
-      <p class="text-xs text-muted-foreground">机制：按间隔执行 docker compose pull，对比镜像 ID 有变化的容器自动重建；更新前/后钩子在节点上执行（失败不阻断更新）。</p>
-    </div>
-  </FaModal>
+    <ComposeAutoUpdateModal
+      v-if="updTarget" v-model="updOpen"
+      :project="updTarget.project" :dir="updTarget.dir" :node-id="updTarget.nodeId"
+    />
   </div>
 </template>
