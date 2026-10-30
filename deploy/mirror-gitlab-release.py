@@ -112,6 +112,8 @@ def sync_refs(directory, tag, expected_commit):
         command = [
             "git", "-c", "credential.helper=",
             "-c", f"credential.{GITLAB_URL}.helper={helper}",
+            # GitLab 入口的大包 HTTP/2 上传实测触发 curl 92 PROTOCOL_ERROR。
+            "-c", f"http.{GITLAB_URL}/.version=HTTP/1.1",
             # 单次别名绕开开发机 github.com 的全局下载代理重写。
             "-c", "url.https://github.com/.insteadOf=ypanel-github:",
             *args,
