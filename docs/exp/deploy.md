@@ -199,4 +199,20 @@
 - **规避/解决**：配置项目专用的 `api` + `write_repository` 令牌；账号密码可用于 Git HTTPS 推送和网页登录，但不能直接充当 `PRIVATE-TOKEN`。GitLab 镜像独立于 Gitee，缺配置与 HTTP 错误必须失败；`deploy/mirror-gitlab-release.py` 只复制现有 GitHub 资产，检查两个架构和校验文件后，在临时 bare 仓库原子、非强制推送 main/tag，逐文件追加到 `assets/<tag>`，全部完成才登记 Release 链接，最后匿名下载三个附件逐个核验 SHA-256。补同步使用 `Mirror GitLab release` 的手动入口，不重跑构建、不移动版本标签。已有资产分支只允许补充缺文件，已有内容与源资产不一致时停止覆盖；中途失败可从已校验的文件子集继续。
 - **传输补充**：GitHub runner 首次补同步时，三个源附件均在数秒内下载完成，但约 83 MB 的 GitLab Git 推送报 `curl 92 HTTP/2 ... PROTOCOL_ERROR`；HTTP/1.1 的 chunked 推送也长时间无响应。脚本改为逐文件推送，按 GitLab 主机限定 `http.version=HTTP/1.1`、`http.postBuffer=268435456`（单个资产小于该缓冲区，以固定 Content-Length 发送），并设置低速超时，不修改开发机全局 Git 配置。这里提高 postBuffer 仅用于规避该入口的 chunked 上传兼容问题，不能作为所有 Git 推送错误的通用修复；不能把 `Everything up-to-date` 尾行当成功，必须检查 Git 退出码及匿名下载摘要。
 - **本机补传下载**：本次环境直连 GitHub Release / CI artifact 的单连接下载很慢，原始 CI artifact 支持 HTTP Range 分段并发下载。每段必须核对 `206`、`Content-Range` 和字节数，拼接后先校验 artifact API 给出的 ZIP SHA-256，再校验三个 Release 资产各自的摘要与 `sha256sums.txt`。本地补传复用与 GitHub main 提交一致的已提交 Git 对象，避免重复跨境拉取；不得用重新构建的文件替代同版本已发布资产。
+- **复验（2026-10-31）**：v0.9.44 在同样的 HTTP/1.1、固定 Content-Length 配置下，GitHub runner 向该 GitLab 入口上传首个 43 MB 文件仍达 600 秒超时；这些参数不能保证跨境链路可用。源码和标签已同步也不代表发行附件已到位。补传仍使用 GitHub CI 原始 artifact，先校验 ZIP 及三个 Release 资产摘要，再从可用链路上传，最后匿名下载验收。
 - **来源**：2026-10-30，v0.9.43 GitLab 发行镜像补齐（`.github/workflows/release.yml`、`.github/workflows/mirror-gitlab.yml`、`deploy/mirror-gitlab-release.py`）。
+
+
+### Gitee 的 Git Token 用户名与仓库权限要分别核实
+
+- **现象**：Git HTTPS 推送使用账号名时返回 `The token username invalid`；改用 `oauth2` 后面板仓库成功，同一个 Token 推商店仓库仍返回 `The token is not authorized to access this project`。
+- **根因**：Token 的 Git 认证用户名约定与普通账号密码不同；能够调用 API 或写入一个仓库，不能证明可以写入另一个仓库。
+- **规避/解决**：Token 用 credential helper 从环境变量读取，用户名用 `oauth2`，不嵌入 URL、不输出密钥；按目标仓库验证写权限。同步商店被 403 拒绝时明确报告权限阻塞，不能因为面板源码推送成功就声称三源已同步。
+- **来源**：2026-10-31，v0.9.44 发布，临时 GitHub Actions 发布任务；Gitee Feedback I1BGZG。
+
+### Gitee 先建 Release 会在旧 main 上生成标签，上传管道还能吞掉超时
+
+- **现象**：v0.9.44 的 Gitee 镜像步骤显示成功，但两个二进制上传均超时；远端标签剥离后的提交为旧 main，后续正常推送正确标签被拒绝。
+- **根因**：旧工作流创建 Release 时传 `target_commitish=main`，没有先同步源码与标签；API 自动在 Gitee 当时的 main 上创建了带注释标签。附件上传使用 `curl | head` 且没有 `pipefail`，管道末端成功掩盖了 curl 的失败。
+- **规避/解决**：发布前先同步源码，核对标签剥离后的提交与源标签一致，再创建 Release；附件必须检查 HTTP 状态、响应结构、资产列表与下载摘要。已有标签指向不同提交时停止覆盖，未完成镜像应明确标记，不能当作有效发行版。不能只比较带注释标签对象的 SHA，也不能只看 Actions job 的 success。
+- **来源**：2026-10-31，v0.9.44 发布；release.yml、GitHub Actions 日志、Gitee `ls-remote` 实测。
