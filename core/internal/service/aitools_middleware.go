@@ -4,7 +4,6 @@ package service
 
 import (
 	"context"
-	"fmt"
 )
 
 // mwNodeIDFromCtx 工具执行期的目标节点 ID（缺省 local）。
@@ -20,31 +19,34 @@ func (s *AIService) aiToolsMiddleware(ctx context.Context) []aiToolDef {
 	return []aiToolDef{
 		{
 			Name: "list_middleware_instances", Module: aiModMW, Risk: aiRiskRead,
-			Desc: "列出面板纳管的可复用中间件实例（RabbitMQ/Memcached 等，数据库类实例在数据库域）。input 可选 JSON：{\"search\":\"名称/类型关键词\"}。返回 {total,items}（含版本与可复用判定）。",
-			Parameters: schObj(map[string]any{"search": schStr("名称/类型关键词")}),
+			Desc:       "列出登记中间件、当前节点自动发现容器，以及关联的数据库纳管记录（含 S3/Neo4j/Redis 等）。返回 {total,items,discoveryError?}，含 source/managedBy/nodeId/state；source=database 的 ID 仅用于数据库域，discovered 条目尚未登记，发现失败保留已有记录。不返回密码、不自动纳管。",
+			Parameters: schObj(map[string]any{"search": schStr("名称/类型关键词"), "node": schStr("目标节点，缺省 local")}),
 			Fn: func(ctx context.Context, input string) (string, error) {
 				p, err := parseToolArgs[struct {
 					Search string `json:"search"`
+					Node   string `json:"node"`
 				}](input)
 				if err != nil {
 					return "", err
 				}
-				out, err := s.mwSvc.List(ctx)
+				ctx = withAINode(ctx, p.Node)
+				out, err := s.mwSvc.List(ctx, mwNodeIDFromCtx(ctx))
 				if err != nil {
 					return "", err
 				}
-				filtered := make([]map[string]any, 0, len(out))
-				for _, row := range out {
-					if matchAny(p.Search, fmt.Sprint(row["name"]), fmt.Sprint(row["type"]), fmt.Sprint(row["host"])) {
+				filtered := make([]MiddlewareListItem, 0, len(out.Items))
+				for _, row := range out.Items {
+					if matchAny(p.Search, row.Name, row.Type, row.Host) {
 						filtered = append(filtered, row)
 					}
 				}
-				return toolOut(map[string]any{"total": len(filtered), "items": filtered})
+				out.Items, out.Total = filtered, len(filtered)
+				return toolOut(out)
 			},
 		},
 		{
 			Name: "list_middleware_types", Module: aiModMW, Risk: aiRiskRead,
-			Desc: "列出已注册的可复用中间件类型（含默认端口与最低可复用版本基线）。",
+			Desc:       "列出已注册的可复用中间件类型（含默认端口与最低可复用版本基线）。",
 			Parameters: schObj(map[string]any{}),
 			Fn: func(_ context.Context, _ string) (string, error) {
 				out := s.mwSvc.Types()
@@ -53,7 +55,7 @@ func (s *AIService) aiToolsMiddleware(ctx context.Context) []aiToolDef {
 		},
 		{
 			Name: "test_middleware_instance", Module: aiModMW, Risk: aiRiskRead,
-			Desc: "测试中间件实例连通性。input JSON：{\"instanceId\":1}",
+			Desc:       "测试中间件实例连通性。input JSON：{\"instanceId\":1}",
 			Parameters: schObj(map[string]any{"instanceId": schInt("实例 ID")}, "instanceId"),
 			Fn: func(ctx context.Context, input string) (string, error) {
 				p, err := parseToolArgs[struct {
@@ -70,7 +72,7 @@ func (s *AIService) aiToolsMiddleware(ctx context.Context) []aiToolDef {
 		},
 		{
 			Name: "scan_middleware_containers", Module: aiModMW, Risk: aiRiskRead,
-			Desc: "扫描节点上可发现的中间件容器（按镜像规则匹配，返回版本/网络/compose 项目；不含凭据明文；不落库）。input 可选 JSON：{\"node\":\"local\"}",
+			Desc:       "扫描节点运行中与停止的中间件/数据库容器，返回版本、网络、项目、状态和 managedBy/adoptable。数据库域类型请在数据库管理接入；不读取凭据、不落库，扫描失败返回错误。input 可选 JSON：{\"node\":\"local\"}",
 			Parameters: schObj(map[string]any{"node": schStr("目标节点，缺省 local")}),
 			Fn: func(ctx context.Context, input string) (string, error) {
 				p, err := parseToolArgs[struct {
@@ -84,15 +86,12 @@ func (s *AIService) aiToolsMiddleware(ctx context.Context) []aiToolDef {
 				if err != nil {
 					return "", err
 				}
-				for i := range out {
-					out[i].Password = ""
-				}
 				return toolOut(map[string]any{"total": len(out), "items": out})
 			},
 		},
 		{
 			Name: "adopt_middleware_container", Module: aiModMW, Risk: aiRiskWrite,
-			Desc: "把扫描发现的中间件容器纳管为面板可复用实例。input JSON：{\"node\":\"local\",\"containerName\":\"1Panel-rabbitmq-xxx\",\"name\":\"可选自定义实例名\"}",
+			Desc: "把扫描结果中 adoptable=true 的 RabbitMQ/Memcached 容器纳管为可复用实例，记录节点并在此时读取、加密凭据。数据库域类型不通过此工具接入。input JSON：{\"node\":\"local\",\"containerName\":\"rabbitmq-main\",\"name\":\"可选自定义实例名\"}",
 			Parameters: schObj(map[string]any{
 				"node":          schStr("目标节点，缺省 local"),
 				"containerName": schStr("容器名（scan 结果中的 containerName）"),
@@ -145,19 +144,16 @@ func (s *AIService) aiToolsMiddleware(ctx context.Context) []aiToolDef {
 		},
 		{
 			Name: "delete_middleware_instance", Module: aiModMW, Risk: aiRiskDanger,
-			Desc: "删除中间件实例的纳管登记（不动实例本体运行；danger：执行前务必向用户确认）。input JSON：{\"instanceId\":1}",
+			Desc:       "删除中间件实例的纳管登记（不动实例本体运行；danger：执行前务必向用户确认）。input JSON：{\"instanceId\":1}",
 			Parameters: schObj(map[string]any{"instanceId": schInt("实例 ID")}, "instanceId"),
-			Fn: func(_ context.Context, input string) (string, error) {
+			Fn: func(ctx context.Context, input string) (string, error) {
 				p, err := parseToolArgs[struct {
 					InstanceID uint `json:"instanceId"`
 				}](input)
 				if err != nil {
 					return "", err
 				}
-				if _, err := s.mwSvc.ByID(p.InstanceID); err != nil {
-					return "", err
-				}
-				if err := s.mwSvc.Delete(p.InstanceID); err != nil {
+				if err := s.mwSvc.Delete(ctx, p.InstanceID); err != nil {
 					return "", err
 				}
 				return toolOut(map[string]any{"deleted": p.InstanceID})

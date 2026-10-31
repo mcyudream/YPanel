@@ -22,20 +22,20 @@ import (
 
 // StoreMiddlewareDecl 版本中间件复用声明。
 type StoreMiddlewareDecl struct {
-	Type       string `json:"type"`            // s3 / neo4j（数据库域）或 middlewareRegistry 注册类型（rabbitmq/memcached/…）
-	Prefix     string `json:"prefix"`          // env 键前缀（如 S3、RABBITMQ）；注入时填充该前缀下应用实际引用的键
-	Required   bool   `json:"required"`        // 向导标注必选（仍可回退手填）
-	Label      string `json:"label"`           // 向导展示名（缺省用类型 label）
-	MinVersion string `json:"minVersion"`      // 最低可复用版本（缺省用类型基线）；低于则候选禁选
-	Endpoint   string `json:"endpoint"`        // 可选：地址注入形态提示（uri=单键 URI；缺省 host/port 分键）
+	Type       string `json:"type"`       // s3 / neo4j（数据库域）或 middlewareRegistry 注册类型（rabbitmq/memcached/…）
+	Prefix     string `json:"prefix"`     // env 键前缀（如 S3、RABBITMQ）；注入时填充该前缀下应用实际引用的键
+	Required   bool   `json:"required"`   // 向导标注必选（仍可回退手填）
+	Label      string `json:"label"`      // 向导展示名（缺省用类型 label）
+	MinVersion string `json:"minVersion"` // 最低可复用版本（缺省用类型基线）；低于则候选禁选
+	Endpoint   string `json:"endpoint"`   // 可选：地址注入形态提示（uri=单键 URI；缺省 host/port 分键）
 }
 
 // StoreOptionalSvc 版本可选伴生服务声明。
 type StoreOptionalSvc struct {
-	ID     string            `json:"id"`     // 勾选标识
-	Label  string            `json:"label"`  // 向导展示名
-	Compose string           `json:"compose"` // 包内附加 compose 文件（相对包根，安装时合并进主文件）
-	Env    map[string]string `json:"env"`    // 勾选后注入的开关 env（如 PLATFORM_X_ENABLED=true）
+	ID      string            `json:"id"`      // 勾选标识
+	Label   string            `json:"label"`   // 向导展示名
+	Compose string            `json:"compose"` // 包内附加 compose 文件（相对包根，安装时合并进主文件）
+	Env     map[string]string `json:"env"`     // 勾选后注入的开关 env（如 PLATFORM_X_ENABLED=true）
 }
 
 // middlewareDeclsWithDefaults 声明规范化：label/minVersion 缺省回退类型描述符。
@@ -72,7 +72,7 @@ func middlewareDeclsWithDefaults(decls []StoreMiddlewareDecl) []StoreMiddlewareD
 // 键值语义按后缀映射：HOST/ADDR/ENDPOINT/URI → 地址（容器名/IP），PORT → 端口，
 // USER/USERNAME → 用户，PASSWORD/PASS → 密码（实例凭据 reveal，不落表单）。
 func (s *StoreService) applyExternalMiddleware(ctx context.Context, logf TaskLogf, decl StoreMiddlewareDecl, instanceID uint, in StoreInstallInput, params map[string]string, composeText string, formFields []StoreFormField) error {
-	inst, err := s.mws.ByID(instanceID)
+	inst, err := s.mws.ByIDForCaller(ctx, instanceID)
 	if err != nil {
 		return errs.Wrap(errs.ErrBadRequest, fmt.Sprintf("中间件实例不存在（%s）", decl.Prefix))
 	}
@@ -89,7 +89,39 @@ func (s *StoreService) applyExternalMiddleware(ctx context.Context, logf TaskLog
 	port := fmt.Sprint(middlewarePortOf(inst.Type, inst.Port))
 	host := inst.Host
 	if inst.Origin == "container" && inst.ContainerName != "" {
-		host = inst.ContainerName // 同网络容器名直连（商店应用统一接入 PanelNetwork）
+		if normalizeNodeID(inst.NodeID) != normalizeNodeID(in.NodeID) {
+			return errs.Wrap(errs.ErrBadRequest, "容器中间件与应用不在同一节点；跨节点请登记可访问的外部连接地址")
+		}
+		containers, err := s.mws.scanContainers(ctx, inst.NodeID)
+		if err != nil {
+			return err
+		}
+		network := in.Network
+		if network == "" {
+			network = PanelNetwork
+		}
+		if network == "host" {
+			return errs.Wrap(errs.ErrBadRequest, "host 网络不使用容器 DNS，请登记可访问的外部连接地址")
+		}
+		found := false
+		for _, c := range containers {
+			if c.ContainerName != inst.ContainerName {
+				continue
+			}
+			if c.State != "running" {
+				return errs.Wrap(errs.ErrBadRequest, "所选中间件容器未运行")
+			}
+			for _, n := range strings.Split(c.Networks, ",") {
+				if strings.TrimSpace(n) == network {
+					found = true
+					break
+				}
+			}
+		}
+		if !found {
+			return errs.Wrap(errs.ErrBadRequest, "中间件容器与应用不在同一网络；请选择容器所在网络或登记可访问的外部连接地址")
+		}
+		host = inst.ContainerName
 		logf("info", "中间件 %s（%s）为容器实例，连接地址使用 %s:%s（容器名直连）", inst.Name, inst.Type, host, port)
 	}
 	// 收集该前缀下应用实际引用的键（表单字段 + compose 变量引用）

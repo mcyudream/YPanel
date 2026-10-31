@@ -370,7 +370,8 @@ type MiddlewareInstance struct {
 	Version        string    `gorm:"size:32" json:"version"`       // 探测所得（空=未知，复用校验跳过）
 	ContainerName  string    `gorm:"size:64" json:"containerName"` // container origin: 同网络容器名直连
 	ComposeProject string    `gorm:"size:64" json:"composeProject"`
-	OwnerID        uint      `gorm:"index;not null;default:0" json:"ownerId"` // M54-P3 数据范围属主（0=公共）
+	NodeID         string    `gorm:"size:32;not null;default:'';index" json:"nodeId"` // 容器归属节点；旧记录空=local
+	OwnerID        uint      `gorm:"index;not null;default:0" json:"ownerId"`         // M54-P3 数据范围属主（0=公共）
 	Remark         string    `gorm:"size:255" json:"remark"`
 	CreatedAt      time.Time `json:"createdAt"`
 	UpdatedAt      time.Time `json:"updatedAt"`

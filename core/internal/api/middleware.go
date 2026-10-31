@@ -2,8 +2,6 @@
 package api
 
 import (
-	"strconv"
-
 	"github.com/gin-gonic/gin"
 
 	"github.com/ypanel/core/internal/service"
@@ -17,7 +15,7 @@ type MiddlewareAPI struct {
 
 // List GET /middleware/instances
 func (a *MiddlewareAPI) List(c *gin.Context) {
-	out, err := a.MW.List(c.Request.Context())
+	out, err := a.MW.List(c.Request.Context(), c.DefaultQuery("node", "local"))
 	if err != nil {
 		respErr(c, err)
 		return
@@ -49,15 +47,7 @@ func (a *MiddlewareAPI) Create(c *gin.Context) {
 		respErr(c, err)
 		return
 	}
-	if uid := stampOwnerForCreate(c); uid != 0 {
-		_ = a.setOwner(inst.ID, uid)
-	}
 	respOK(c, gin.H{"id": inst.ID, "name": inst.Name})
-}
-
-// setOwner 属主设置（表独立，逻辑同数据库域 stampOwner）。
-func (a *MiddlewareAPI) setOwner(id uint, uid uint) error {
-	return a.MW.SetOwner(id, uid)
 }
 
 // Update PUT /middleware/instances/:id {host?,port?,user?,password?,remark?}
@@ -92,7 +82,7 @@ func (a *MiddlewareAPI) Delete(c *gin.Context) {
 		respErr(c, err)
 		return
 	}
-	if err := a.MW.Delete(id); err != nil {
+	if err := a.MW.Delete(c.Request.Context(), id); err != nil {
 		respErr(c, err)
 		return
 	}
@@ -120,7 +110,7 @@ func (a *MiddlewareAPI) Reveal(c *gin.Context) {
 		respErr(c, err)
 		return
 	}
-	out, err := a.MW.Reveal(id)
+	out, err := a.MW.Reveal(c.Request.Context(), id)
 	if err != nil {
 		respErr(c, err)
 		return
@@ -135,7 +125,7 @@ func (a *MiddlewareAPI) VersionRefresh(c *gin.Context) {
 		respErr(c, err)
 		return
 	}
-	nodeId := c.DefaultQuery("node", "local")
+	nodeId := c.Query("node")
 	v, err := a.MW.RefreshVersion(c.Request.Context(), id, nodeId)
 	if err != nil {
 		respErr(c, err)
@@ -164,13 +154,17 @@ func (a *MiddlewareAPI) Adopt(c *gin.Context) {
 	if !ok {
 		return
 	}
+	if node := c.Query("node"); node != "" {
+		if req.Node != "" && req.Node != node {
+			respErr(c, errs.Wrap(errs.ErrBadRequest, "请求中的节点不一致"))
+			return
+		}
+		req.Node = node
+	}
 	inst, err := a.MW.Adopt(c.Request.Context(), defaultNode(req.Node), req.ContainerName, req.Name)
 	if err != nil {
 		respErr(c, err)
 		return
-	}
-	if uid := stampOwnerForCreate(c); uid != 0 {
-		_ = a.setOwner(inst.ID, uid)
 	}
 	respOK(c, gin.H{"id": inst.ID, "name": inst.Name, "type": inst.Type})
 }
@@ -197,5 +191,3 @@ func defaultNode(n string) string {
 	}
 	return n
 }
-
-var _ = strconv.Itoa

@@ -1,7 +1,15 @@
 import api from '../index'
 
-// M68 可复用中间件实例（非数据库类共享中间件；Neo4j/S3 在数据库域）
+// 中间件清单包含本域登记、数据库域引用与只读发现条目；ID 必须结合 source 使用。
 export interface MiddlewareInstance {
+  key: string
+  source: 'middleware' | 'database' | 'discovered'
+  managedBy: 'middleware' | 'database'
+  nodeId: string
+  image: string
+  networks: string[]
+  state: string
+  adoptable: boolean
   id: number
   name: string
   type: string
@@ -13,6 +21,7 @@ export interface MiddlewareInstance {
   version: string
   containerName: string
   composeProject: string
+  composeDir?: string
   ownerId: number
   remark: string
   minReuseVersion?: string
@@ -28,19 +37,14 @@ export interface MiddlewareType {
   injectPrefix: string
 }
 
-export interface MiddlewareScanItem {
-  type: string
-  label: string
-  containerName: string
-  image: string
-  version: string
-  networks: string[]
-  composeDir?: string
-  composeProject?: string
-  user?: string
+export interface MiddlewareList {
+  items: MiddlewareInstance[]
+  total: number
+  discoveryError?: string
+}
+
+export interface MiddlewareScanItem extends MiddlewareInstance {
   reused: boolean
-  reusable: boolean
-  adoptable: boolean
 }
 
 export interface MiddlewareReuseOption {
@@ -52,6 +56,7 @@ export interface MiddlewareReuseOption {
   port: number
   version: string
   containerName: string
+  nodeId: string
   label: string
   minReuseVersion: string
   reusable: boolean
@@ -60,15 +65,15 @@ export interface MiddlewareReuseOption {
 }
 
 export default {
-  list: () => api.get('api/v1/middleware/instances'),
-  types: () => api.get('api/v1/middleware/types'),
+  list: (node = 'local') => api.get<MiddlewareList>('api/v1/middleware/instances', { params: { node }, silent: true }),
+  types: () => api.get<MiddlewareType[]>('api/v1/middleware/types'),
   create: (data: { name: string, type: string, host: string, port?: number, user?: string, password?: string, remark?: string }) => api.post('api/v1/middleware/instances', data),
   update: (id: number, data: { host?: string, port?: number, user?: string, password?: string, remark?: string }) => api.put(`api/v1/middleware/instances/${id}`, data),
-  remove: (id: number) => api.delete(`api/v1/middleware/instances/${id}`),
-  test: (id: number) => api.post(`api/v1/middleware/instances/${id}/test`),
+  remove: (id: number, node?: string) => api.delete(`api/v1/middleware/instances/${id}`, { params: { node: node || undefined } }),
+  test: (id: number, node?: string) => api.post(`api/v1/middleware/instances/${id}/test`, undefined, { params: { node: node || undefined } }),
   reveal: (id: number) => api.get(`api/v1/middleware/instances/${id}/reveal`),
-  versionRefresh: (id: number, node?: string) => api.post(`api/v1/middleware/instances/${id}/version?node=${node || 'local'}`),
-  scan: (node?: string) => api.get(`api/v1/middleware/scan?node=${node || 'local'}`),
-  adopt: (data: { node?: string, containerName: string, name?: string }) => api.post('api/v1/middleware/adopt', data),
+  versionRefresh: (id: number, node?: string) => api.post<{ version: string }>(`api/v1/middleware/instances/${id}/version`, undefined, { params: { node: node || undefined } }),
+  scan: (node = 'local') => api.get<MiddlewareScanItem[]>('api/v1/middleware/scan', { params: { node } }),
+  adopt: (data: { node?: string, containerName: string, name?: string }) => api.post('api/v1/middleware/adopt', data, { params: { node: data.node || 'local' } }),
   reuseOptions: (type: string, prefix?: string) => api.get(`api/v1/middleware/reuse?type=${type}&prefix=${prefix || ''}`),
 }

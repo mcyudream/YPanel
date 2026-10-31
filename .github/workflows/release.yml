@@ -1,7 +1,7 @@
 name: Release
 
 # 推送 vX.Y.Z tag 触发：构建前端产物 → embed → 交叉编译 linux amd64/arm64（core+agent）
-# → 打包 + sha256 → 创建 GitHub Release → 独立任务镜像到 GitLab / Gitee。
+# → 打包 + sha256 → 创建 GitHub Release → 独立任务镜像到 GitLab。
 
 on:
   push:
@@ -93,48 +93,3 @@ jobs:
       tag: ${{ github.ref_name }}
     secrets:
       GITLAB_TOKEN: ${{ secrets.GITLAB_TOKEN }}
-
-  mirror-gitee:
-    needs: release
-    runs-on: ubuntu-latest
-    env:
-      # job 级注入：step 的 if 才能读到（step 自身 env 在 if 中不可见）
-      GITEE_TOKEN: ${{ secrets.GITEE_TOKEN }}
-    steps:
-      - uses: actions/download-artifact@v4
-        with:
-          name: ypanel-release
-          path: build
-
-      # 可选：镜像发布到 Gitee Release（repo secrets 配置 GITEE_TOKEN 后启用；缺失时自动跳过）。
-      # 使用 GitHub 侧构建产物原样上传——发行包只出 CI 一份，双平台同源。
-      - name: Mirror release to Gitee (optional)
-        if: ${{ env.GITEE_TOKEN != '' }}
-        continue-on-error: true
-        run: |
-          set -e
-          TAG="${GITHUB_REF_NAME}"
-          API="https://gitee.com/api/v5/repos/mcyudream/ypanel"
-          # 幂等：已有同名 tag 的 Release 直接复用（重打 tag 重跑不重复建）。
-          # 注意 grep 无匹配返回 1，必须 || true 兜底，否则 set -e 会杀掉整个步骤
-          RID=$(curl -sS --max-time 20 "${API}/releases/tags/${TAG}?access_token=${GITEE_TOKEN}" \
-            | grep -o '"id": *[0-9]*' | head -1 | grep -o '[0-9]*' || true)
-          if [ -z "$RID" ]; then
-            # Gitee API 硬要求：target_commitish 必填（tag 已存在时也不可省）；JSON body 含未转义中文会 400，保持 ASCII
-            RID=$(curl -sS --max-time 20 -X POST "${API}/releases" \
-              -H "Content-Type: application/json" \
-              -d "{\"access_token\":\"${GITEE_TOKEN}\",\"tag_name\":\"${TAG}\",\"target_commitish\":\"main\",\"name\":\"YPanel ${TAG}\",\"body\":\"YPanel ${TAG} - same build artifacts as the GitHub release\",\"prerelease\":false}" \
-              | grep -o '"id": *[0-9]*' | head -1 | grep -o '[0-9]*' || true)
-          fi
-          echo "gitee release id: $RID"
-          [ -n "$RID" ] || { echo "gitee release 创建失败"; exit 1; }
-          # 附件上传：GitHub runner 出口对 gitee 大文件上传实测挂连（零字节挂满超时），只给短窗口尽力而为；
-          # 正式镜像路径 = 本地/国内机执行 deploy/mirror-release.sh <tag>（GITEE_TOKEN 同源上传，秒级）
-          for f in build/*.tar.gz build/sha256sums.txt; do
-            curl -sS --max-time 180 --retry 1 --connect-timeout 15 \
-              -X POST "${API}/releases/${RID}/attach_files" \
-              -F "access_token=${GITEE_TOKEN}" \
-              -F "file=@${f}" | head -c 200
-            echo " <- $f"
-          done
-          echo "若附件缺失：本地执行 GITEE_TOKEN=xxx bash deploy/mirror-release.sh ${TAG} 完成镜像"

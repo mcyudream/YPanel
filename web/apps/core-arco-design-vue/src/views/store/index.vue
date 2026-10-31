@@ -269,7 +269,7 @@ async function loadMWData() {
 
 // registry 中间件候选下拉选项（版本不达标禁选）
 function mwOptions(type: string) {
-  const list = mwCandidates.value[type] || []
+  const list = (mwCandidates.value[type] || []).filter(i => i.origin !== 'container' || (i.nodeId || 'local') === (installNode.value || 'local'))
   return [
     { label: '应用自带 / 手填', value: 0 },
     ...list.map(i => ({ label: `${i.name}（${i.host}:${i.port}${i.version ? ` v${i.version}` : ''}）${i.reusable ? '' : ' — 版本低于基线'}`, value: i.id, disabled: !i.reusable })),
