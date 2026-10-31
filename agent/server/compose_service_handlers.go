@@ -4,19 +4,25 @@ package server
 import (
 	"net/http"
 
+	"github.com/ypanel/shared/dto"
+	"github.com/ypanel/shared/errs"
 )
 
-// handleComposeServiceAction POST /agent/v1/compose/services/{service}/{action}?project=
+// handleComposeServiceAction POST /agent/v1/compose/service-action?project=&service=&action=&dir=
 func (s *Server) handleComposeServiceAction(w http.ResponseWriter, r *http.Request) {
+	if !s.composeReady() {
+		writeErr(w, errs.ErrAgentDisabled)
+		return
+	}
 	project := r.URL.Query().Get("project")
 	service := r.URL.Query().Get("service")
 	action := r.URL.Query().Get("action")
-	out, err := s.compose.ServiceAction(r.Context(), project, service, action)
+	out, err := s.compose.ServiceAction(r.Context(), project, service, action, r.URL.Query().Get("dir"))
 	if err != nil {
 		writeErr(w, err)
 		return
 	}
-	writeOK(w, map[string]string{"output": out})
+	writeOK(w, dto.ComposeServiceActionResp{Output: out})
 }
 
 // handleComposeProjectDelete DELETE /agent/v1/compose/projects/{name}（down + 移除编排目录，含数据）

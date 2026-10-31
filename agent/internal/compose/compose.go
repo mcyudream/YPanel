@@ -142,7 +142,7 @@ func runDocker(ctx context.Context, args ...string) (string, int, error) {
 }
 
 // ServiceAction 单服务操作（start/stop/restart/pull；up=按当前编排定义重建该服务）。
-func (m *Manager) ServiceAction(ctx context.Context, project, service, action string) (string, error) {
+func (m *Manager) ServiceAction(ctx context.Context, project, service, action, dir string) (string, error) {
 	if err := ValidateName(project); err != nil {
 		return "", err
 	}
@@ -154,18 +154,16 @@ func (m *Manager) ServiceAction(ctx context.Context, project, service, action st
 	default:
 		return "", errs.ErrBadRequest
 	}
-	workDir := filepath.Join(m.baseDir, project)
-	cfg, ok := findConfig(workDir)
-	if !ok {
-		return "", errs.Wrap(errs.ErrNotFound, "未在 "+workDir+" 找到 compose 配置")
+	args, err := m.serviceActionArgs(ctx, project, dir)
+	if err != nil {
+		return "", err
 	}
-	args := []string{"--project-name", project}
 	if action == "up" {
 		args = append(args, "up", "-d", service)
 	} else {
 		args = append(args, action, service)
 	}
-	out, code, err := runDocker(ctx, composeArgs(cfg, args...)...)
+	out, code, err := runDocker(ctx, args...)
 	if err != nil {
 		return out, err
 	}
@@ -173,6 +171,57 @@ func (m *Manager) ServiceAction(ctx context.Context, project, service, action st
 		return out, errs.Wrapc(errs.CodeFileOpFailed, "compose "+action+" 失败: "+out)
 	}
 	return out, nil
+}
+
+// serviceActionArgs 保留运行项目实际使用的多文件顺序；外部工作目录不必是配置所在目录。
+func (m *Manager) serviceActionArgs(ctx context.Context, project, dir string) ([]string, error) {
+	if dir != "" && (!filepath.IsAbs(dir) || strings.ContainsAny(dir, "\x00\r\n")) {
+		return nil, errs.Wrap(errs.ErrBadRequest, "编排目录必须是有效的绝对路径")
+	}
+	var files []string
+	if m.docker != nil {
+		containers, err := m.docker.List(ctx)
+		if err != nil {
+			return nil, err
+		}
+		for _, c := range containers {
+			if c.Labels[composeProjectLabel] != project || c.Labels[composeConfigFilesLabel] == "" {
+				continue
+			}
+			for _, file := range strings.Split(c.Labels[composeConfigFilesLabel], ",") {
+				file = strings.TrimSpace(file)
+				if !filepath.IsAbs(file) {
+					return nil, errs.Wrap(errs.ErrBadRequest, "编排配置文件必须是绝对路径")
+				}
+				if st, err := os.Stat(file); err != nil || st.IsDir() {
+					return nil, errs.Wrap(errs.ErrNotFound, "编排配置文件不存在: "+file)
+				}
+				files = append(files, file)
+			}
+			if dir == "" {
+				dir = c.Labels[composeWorkdirLabel]
+			}
+			break
+		}
+	}
+	if len(files) == 0 {
+		cfg, err := m.resolveProject(ctx, project, dir)
+		if err != nil {
+			return nil, err
+		}
+		files = []string{cfg}
+	}
+	if dir == "" {
+		dir = filepath.Dir(files[0])
+	}
+	if !filepath.IsAbs(dir) || strings.ContainsAny(dir, "\x00\r\n") {
+		return nil, errs.Wrap(errs.ErrBadRequest, "编排目录必须是有效的绝对路径")
+	}
+	args := []string{"compose", "--project-name", project, "--project-directory", dir}
+	for _, file := range files {
+		args = append(args, "--file", file)
+	}
+	return args, nil
 }
 
 // ProjectDelete 删除托管项目：先 down（忽略失败）再移除编排目录（含其下全部数据，调用方须已确认）。

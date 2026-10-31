@@ -179,24 +179,23 @@ func (c *ComposeAPI) ProjectDelete(ctx *gin.Context) {
 	respOK(ctx, struct{}{})
 }
 
-// ServiceAction POST /api/v1/compose/service-action {project, service, action}
+// ServiceAction POST /api/v1/compose/service-action?node= {project, service, action, dir?}
+// 兼容旧页面 name 别名，节点与目录沿用编排目标校验。
 func (c *ComposeAPI) ServiceAction(ctx *gin.Context) {
-	req, ok := bind[struct {
-		Project string `json:"project" binding:"required"`
-		Service string `json:"service" binding:"required"`
-		Action  string `json:"action" binding:"required,oneof=start stop restart pull up"`
-	}](ctx)
+	req, ok := bind[dto.ComposeServiceActionReq](ctx)
 	if !ok {
 		return
 	}
-	q := "?project=" + escape(req.Project) + "&service=" + escape(req.Service) + "&action=" + escape(req.Action)
-	out, err := agentclient.DoJSON[dto.ExecReq, dto.ExecResp](c.client(ctx), ctx.Request.Context(), http.MethodPost,
-		"/agent/v1/compose/service-action"+q, &dto.ExecReq{Command: req.Project, TimeoutSecs: 300})
+	target := dto.ComposePullUpdateReq{Project: req.Project, Name: req.Name, Dir: req.Dir}
+	if !composeUpdateTarget(ctx, &target) {
+		return
+	}
+	out, err := service.RunComposeServiceAction(ctx.Request.Context(), c.Nodes, target.NodeID, *req)
 	if err != nil {
 		respErr(ctx, err)
 		return
 	}
-	respOK(ctx, gin.H{"output": out.Output})
+	respOK(ctx, out)
 }
 
 // Src2Templates GET /api/v1/compose/src2compose/templates（支持的语言栈）

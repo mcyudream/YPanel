@@ -1,5 +1,12 @@
 # 经验之谈：编排镜像更新
 
+### 单服务操作也有 name/project 契约，外部目录和多文件不能在代理时丢失
+
+- **现象**：应用详情点击重启服务时报 `Project required`，同时出现页面和全局两条错误提示；即使修正字段，外部项目仍会在托管目录下寻找配置。
+- **根因**：前端 serviceAction 发送 name，Core 匿名请求只接收 project；Core 未声明和透传 dir，agent 单服务入口也只在 baseDir/project 查文件。该端点实际返回 output，却用 exec 请求/响应类型代理。页面已有 catch 提示，API 仍弹全局提示。
+- **规避/解决**：单服务请求使用独立 DTO，统一 project 并兼容旧 name、拒绝别名冲突；HTTP/AI 共用服务入口，按实际节点检查权限。保留 agent 查询参数协议并透传 dir，使用 output 响应；agent 依据容器标签保留全部 config_files 的顺序与工作目录，缺失任一文件都中止，未记录文件时按目录解析。该页面负责服务操作提示，API 设置 silent，避免重复。
+- **来源**：2026-10-31，用户反馈应用详情服务重启失败；`shared/dto/compose_service.go`、`core/internal/service/compose_service.go`、`agent/internal/compose/compose.go`，API/agent/命令替身回归。
+
 ### 前端 name 和后端 project 不一致，且节点不能从商店安装记录推断
 
 - **现象**：点击拉取更新返回 `NodeID`、`Project` 的 required 校验错误；外部编排项目在远程节点操作时可能回落本机。

@@ -8,7 +8,7 @@ export interface ComposeServiceState {
   name: string
   image: string
   state: string
-	containerName?: string
+  containerName?: string
 }
 
 export interface ComposeProject {
@@ -96,6 +96,13 @@ export interface ComposeAutoUpdateSettings {
   remark: string
 }
 
+export interface ComposeServiceActionRequest {
+  project: string
+  service: string
+  action: 'start' | 'stop' | 'restart' | 'pull' | 'up'
+  dir?: string
+}
+
 export interface ComposeAutoUpdateConfig extends ComposeAutoUpdateSettings {
   exists: boolean
   lastCheckedAt?: string
@@ -124,8 +131,9 @@ export default {
     return (res.data as { output?: string }).output || ''
   },
   // 单服务操作：start / stop / restart / pull / up（按当前编排定义重建该服务）
-  serviceAction: async (name: string, service: string, action: 'start' | 'stop' | 'restart' | 'pull' | 'up', dir?: string) => {
-    const res = await napi.post('api/v1/compose/service-action', { name, service, action, dir }, { timeout: 300000 })
+  serviceAction: async (project: string, service: string, action: ComposeServiceActionRequest['action'], dir?: string) => {
+    const data: ComposeServiceActionRequest = { project, service, action, dir }
+    const res = await napi.post('api/v1/compose/service-action', data, { timeout: 300000, silent: true })
     return (res.data as { output?: string }).output || ''
   },
   // 项目服务拓扑（M26 P1）

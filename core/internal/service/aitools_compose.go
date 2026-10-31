@@ -215,31 +215,31 @@ func (s *AIService) aiToolsCompose(ctx context.Context) []aiToolDef {
 		},
 		{
 			Name: "compose_service_action", Module: aiModCompose, Risk: aiRiskWrite,
-			Desc: "对 compose 项目内单个服务执行 start/stop/restart。input JSON：{\"name\":\"项目名\",\"service\":\"服务名\",\"action\":\"start|stop|restart\"}",
+			Desc: "对 compose 项目内单个服务执行 start/stop/restart。project 为项目名（兼容旧 name），外部编排可传 dir 工作目录，node 默认 local。input JSON：{\"project\":\"项目名\",\"service\":\"服务名\",\"action\":\"start|stop|restart\",\"dir\":\"外部项目目录可省略\"}",
 			Parameters: schObj(map[string]any{
-				"node": schStr("目标节点 ID（list_nodes 返回数组项的 id；local=本机；不要传节点名）"),
-				"name": schStr("项目名"), "service": schStr("服务名"), "action": schEnum("操作", "start", "stop", "restart"),
-			}, "name", "service", "action"),
+				"node":    schStr("目标节点 ID（list_nodes 返回数组项的 id；local=本机；不要传节点名）"),
+				"project": schStr("项目名"), "service": schStr("服务名"), "action": schEnum("操作", "start", "stop", "restart"),
+				"dir": schStr("外部编排工作目录，托管项目省略"),
+			}, "project", "service", "action"),
 			Fn: func(ctx context.Context, input string) (string, error) {
 				p, err := parseToolArgs[struct {
-					Node    string `json:"node"`
-					Name    string `json:"name"`
-					Service string `json:"service"`
-					Action  string `json:"action"`
+					dto.ComposeServiceActionReq
+					Node string `json:"node"`
 				}](input)
 				if err != nil {
 					return "", err
 				}
-				ctx = withAINode(ctx, p.Node)
 				if p.Action != "start" && p.Action != "stop" && p.Action != "restart" {
 					return "", fmt.Errorf("不支持的操作: %s", p.Action)
 				}
-				path := fmt.Sprintf("/agent/v1/compose/service-action?project=%s&service=%s&action=%s",
-					url.QueryEscape(p.Name), url.QueryEscape(p.Service), p.Action)
-				if _, err := agentPostJSON[struct{}, any](s, ctx, path, nil); err != nil {
+				if _, err := RunComposeServiceAction(ctx, s.nodes, p.Node, p.ComposeServiceActionReq); err != nil {
 					return "", err
 				}
-				return fmt.Sprintf("已对 %s/%s 执行 %s", p.Name, p.Service, p.Action), nil
+				project := p.Project
+				if project == "" {
+					project = p.Name
+				}
+				return fmt.Sprintf("已对 %s/%s 执行 %s", project, p.Service, p.Action), nil
 			},
 		},
 		{
