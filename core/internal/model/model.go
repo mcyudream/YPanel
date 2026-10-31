@@ -159,6 +159,7 @@ type AppStoreInstall struct {
 	ComposeProject string    `gorm:"size:64;not null;index" json:"composeProject"` // M55 多实例：同名应用可装多节点（项目名带节点后缀）
 	Remark         string    `gorm:"size:255" json:"remark"`
 	ParamsJSON     string    `gorm:"type:text" json:"paramsJson"`                     // 安装参数（含密码明文，仅 admin 视图返回）
+	OptionsJSON    string    `gorm:"type:text" json:"-"`                              // 网络、时区、hosts 与可选组件，升级时恢复
 	OwnerID        uint      `gorm:"index;not null;default:0" json:"ownerId"`         // M54-P3 数据范围属主（0=公共）
 	NodeID         string    `gorm:"size:32;not null;default:'';index" json:"nodeId"` // M55 目标节点（空=local）
 	CreatedAt      time.Time `json:"createdAt"`

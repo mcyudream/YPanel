@@ -171,4 +171,13 @@ export default {
 
   installAgain: 'Install again',
 
+  upgradeAppTitle: 'Upgrade app version',
+  upgradeAppHint: 'Deploys the latest store package, including templates and pinned image versions. Existing credentials, deployment options and persistent data are retained. Back up application data first: configuration recovery cannot undo database migrations.',
+  upgradeNamingHint: 'Container names may change with the package. Check custom container-name references; the Compose project stays the same.',
+  upgradeStarted: 'App upgrade task created',
+  upgradeFailed: 'Failed to create app upgrade task',
+  projectPreview: 'Compose project:',
+  containerPreview: 'Container names:',
+  instanceNameHint: 'Use an app-related instance name, such as yudream-admin-prod or yudream-admin-test.',
+
 }

@@ -34,7 +34,7 @@ func (s *AIService) aiToolsCompose(ctx context.Context) []aiToolDef {
 		},
 		{
 			Name: "configure_compose_auto_update", Module: aiModCompose, Risk: aiRiskWrite,
-			Desc: "保存编排镜像自动更新配置（完整替换配置，先 get_compose_auto_update 读取并保留现有设置）。intervalMin 为 5–1440 分钟整数，常用 60/360/1440；preHook/postHook 为目标节点 shell 脚本，仅发现更新时执行，每个最多 5 分钟。hookFailurePolicy 默认 stop：前脚本失败不重建，后脚本失败报告错误但不回滚已完成更新；continue 记录错误后继续。仅更新当前镜像标签且跳过停止的服务。",
+			Desc: "保存编排镜像自动更新配置（完整替换配置，先 get_compose_auto_update 读取并保留现有设置）。intervalMin 为 5–1440 分钟整数，常用 60/360/1440；preHook/postHook 为目标节点 shell 脚本，仅发现更新时执行，每个最多 5 分钟。hookFailurePolicy 默认 stop：前脚本失败不重建，后脚本失败报告错误但不回滚已完成更新；continue 记录错误后继续。仅更新当前镜像引用且跳过停止的服务；不下载商店包、不自动跨版本。发现未部署的编排配置变化时中止，先明确部署配置或使用 store_upgrade_app。",
 			Parameters: schObj(map[string]any{
 				"node": schStr("目标节点 ID，默认 local"), "project": schStr("编排项目名"), "dir": schStr("项目工作目录，可省略"),
 				"enabled": schBool("是否启用"), "intervalMin": schInt("检查间隔，5–1440 分钟"),
@@ -58,7 +58,7 @@ func (s *AIService) aiToolsCompose(ctx context.Context) []aiToolDef {
 		},
 		{
 			Name: "pull_compose_update", Module: aiModCompose, Risk: aiRiskWrite,
-			Desc:       "为编排项目创建一次镜像更新任务：拉取当前标签，只重建镜像变化的运行服务，拉取失败中止。node 默认 local；project 项目名必填；dir 外部项目工作目录可选。返回 taskId，用 get_task 查看进度和结果。",
+			Desc:       "为编排项目创建一次镜像更新任务：拉取当前镜像引用，只重建镜像变化的运行服务，拉取失败中止。不会下载商店版本包或切换固定标签；编排配置与运行容器不一致时中止，先部署配置或使用 store_upgrade_app。node 默认 local；project 项目名必填；dir 外部项目工作目录可选。返回 taskId，用 get_task 查看进度和结果。",
 			Parameters: schObj(map[string]any{"node": schStr("目标节点 ID，默认 local"), "project": schStr("编排项目名"), "dir": schStr("项目工作目录，可选")}, "project"),
 			Fn: func(ctx context.Context, input string) (string, error) {
 				p, err := parseToolArgs[struct {

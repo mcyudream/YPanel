@@ -191,14 +191,9 @@ const installProxyEnv = ref('')
 const installVersions = ref<StoreVersion[]>([])
 // 高级选项：网络 / 时区 / hosts / 目标节点（M55）
 const installAdvanced = ref(false)
-const installNode = ref('')
-const onlineNodes = ref<{ id: string, name: string, hostname?: string, arch?: string }[]>([])
-const dockerNets = ref<{ name: string }[]>([])
-const netSel = ref('ypanel_default')
-const netNew = ref('')
-const installTZ = ref(true)
-const installTZValue = ref('Asia/Shanghai')
-const installMountHosts = ref(false)
+const installNode = ref('local')
+const installProjectPreview = computed(() => `app-${installForm.value.name || installTarget.value?.key || 'my-app'}${installNode.value && installNode.value !== 'local' ? `-${installNode.value}` : ''}`)
+
 // M32：外接数据库实例（识别到 *_HOST 数据库参数时提供「使用已有实例」选择）
 const dbSource = ref<'default' | 'external'>('default')
 const installPrefilled = ref(false)
@@ -210,14 +205,14 @@ const redisTarget = ref<{ instanceId: number }>({ instanceId: 0 })
 
 // M68：可复用中间件声明驱动——s3/neo4j 走数据库纳管实例，registry 类型走中间件登记实例
 const mwDecls = computed(() => {
-  const v = detailVersions.value.find(x => x.id === installForm.value.version)
+  const v = installVersions.value.find(x => x.id === installForm.value.version)
   return v?.middleware || []
 })
 const s3Decl = computed(() => mwDecls.value.find(d => d.type === 's3'))
 const neo4jDecl = computed(() => mwDecls.value.find(d => d.type === 'neo4j'))
 const regDecls = computed(() => mwDecls.value.filter(d => d.type !== 's3' && d.type !== 'neo4j'))
 const optSvcs = computed(() => {
-  const v = detailVersions.value.find(x => x.id === installForm.value.version)
+  const v = installVersions.value.find(x => x.id === installForm.value.version)
   return v?.optionalServices || []
 })
 const s3Source = ref<'default' | 'external'>('default')
@@ -229,6 +224,22 @@ const neo4jInstances = ref<DbInstance[]>([])
 const mwTargets = ref<Record<string, number>>({})
 const mwCandidates = ref<Record<string, MiddlewareReuseOption[]>>({})
 const optSelected = ref<string[]>([])
+const installContainerPreview = computed(() => {
+  if (installTarget.value?.key !== 'yudream-admin') {
+    return ''
+  }
+  const project = installProjectPreview.value
+  const legacy = installForm.value.version === '1.0'
+  const names = legacy ? [project, `${project}1`] : [`${project}-backend`, `${project}-frontend`]
+  return [...names, ...optSelected.value.map(id => `${project}-${legacy && id === 'render-server' ? 'render' : id}`)].join(', ')
+})
+const onlineNodes = ref<{ id: string, name: string, hostname?: string, arch?: string }[]>([])
+const dockerNets = ref<{ name: string }[]>([])
+const netSel = ref('ypanel_default')
+const netNew = ref('')
+const installTZ = ref(true)
+const installTZValue = ref('Asia/Shanghai')
+const installMountHosts = ref(false)
 
 async function loadMWData() {
   if (s3Decl.value && !s3Instances.value.length) {
@@ -410,20 +421,46 @@ function applyInstallVersion(versions: StoreVersion[], versionId: string, prev?:
   installPrefilled.value = !!prev
   if (prev && prev.name) {
     installForm.value.name = prev.name
+    installNode.value = prev.nodeId || 'local'
+    netSel.value = prev.options?.network || 'ypanel_default'
+    installTZ.value = !!prev.options?.timezone
+    installTZValue.value = prev.options?.timezone || 'Asia/Shanghai'
+    installHosts.value = (prev.options?.extraHosts || []).map((h) => {
+      const index = h.indexOf(':')
+      return { host: h.slice(0, index), ip: h.slice(index + 1) }
+    })
+    installMountHosts.value = !!prev.options?.mountHostsFile
+    optSelected.value = prev.options?.optionalServices || []
   }
   if (prev) {
     for (const [k, v] of Object.entries(prev.params || {})) {
       if (k in params && v) {
-        params[k] = v
+        params[k] = v === '******' ? '' : v
       }
     }
   }
+  Object.assign(params, target.versionParams || {})
   installForm.value.params = params
+  void loadMWData()
   // php 应用声明 database 时默认走纳管实例（自动建库注入）；compose 应用保持「应用自带」默认
   if (installTarget.value?.kind === 'php' && dbHostKey.value) {
     dbSource.value = 'external'
     void loadDBInstances()
   }
+}
+
+function selectInstallVersion(value: string | number) {
+  const versionId = String(value)
+  const target = installVersions.value.find(v => v.id === versionId)
+  if (!target) {
+    return
+  }
+  const previous = installForm.value.params
+  installFields.value = (target.formFields || []).filter(f => f.envKey)
+  installForm.value.params = Object.fromEntries(installFields.value.map(f => [f.envKey, previous[f.envKey] ?? fieldDefault(f)]))
+  Object.assign(installForm.value.params, target.versionParams || {})
+  optSelected.value = optSelected.value.filter(id => target.optionalServices?.some(s => s.id === id))
+  void loadMWData()
 }
 
 function stopInstallPolling() {
@@ -478,6 +515,7 @@ async function openInstall(item: StoreAppItem, versionId = '') {
   installTZ.value = true
   installTZValue.value = 'Asia/Shanghai'
   installMountHosts.value = false
+  installNode.value = 'local'
   installHosts.value = []
   // M68 重置复用与可选组件状态
   s3Source.value = 'default'
@@ -530,26 +568,23 @@ async function doInstall() {
       // 统一字符串化（number 输入框可能产出 number）
       params: Object.fromEntries(Object.entries(installForm.value.params).map(([k, v]) => [k, String(v ?? '')])),
       domain: installForm.value.domain || undefined,
-        nodeId: installNode.value || '',
+      nodeId: installNode.value || '',
       network: netSel.value === '__create__' ? netNew.value : netSel.value,
       createNetwork: netSel.value === '__create__',
       timezone: installTZ.value ? installTZValue.value : '',
       extraHosts: installHosts.value.filter(h => h.host && h.ip).map(h => `${h.host}:${h.ip}`),
       mountHostsFile: installMountHosts.value,
-      externalDB: (dbSource.value === 'external' && dbTarget.value.instanceId)
-        || (redisSource.value === 'external' && redisTarget.value.instanceId)
-        ? {
-            instanceId: dbSource.value === 'external' ? dbTarget.value.instanceId : 0,
-            database: dbTarget.value.database || undefined,
-            user: dbTarget.value.user || undefined,
-            createIfMissing: dbTarget.value.createIfMissing,
-            redisInstanceId: redisSource.value === 'external' ? redisTarget.value.instanceId : 0,
-            neo4jInstanceId: neo4jSource.value === 'external' ? neo4jTarget.value.instanceId : 0,
-            s3InstanceId: s3Source.value === 'external' ? s3Target.value.instanceId : 0,
-            middlewareInstanceIds: Object.fromEntries(Object.entries(mwTargets.value).filter(([, v]) => v > 0)),
-            optionalServices: optSelected.value.length ? optSelected.value : undefined,
-          }
-        : undefined,
+      externalDB: {
+        instanceId: dbSource.value === 'external' ? dbTarget.value.instanceId : 0,
+        database: dbTarget.value.database || undefined,
+        user: dbTarget.value.user || undefined,
+        createIfMissing: dbTarget.value.createIfMissing,
+        redisInstanceId: redisSource.value === 'external' ? redisTarget.value.instanceId : 0,
+        neo4jInstanceId: neo4jSource.value === 'external' ? neo4jTarget.value.instanceId : 0,
+        s3InstanceId: s3Source.value === 'external' ? s3Target.value.instanceId : 0,
+        middlewareInstanceIds: Object.fromEntries(Object.entries(mwTargets.value).filter(([, v]) => v > 0)),
+        optionalServices: optSelected.value.length ? optSelected.value : undefined,
+      },
     })
     // 任务化：切换到日志视图并轮询
     installTaskId.value = out.taskId
@@ -616,10 +651,6 @@ async function doUninstall(checked: Record<string, boolean>) {
   }
 }
 
-async function upgrade(item: StoreAppItem) {
-  openInstall(item, item.latestVer)
-}
-
 // ---------- M54-P3 属主分配 ----------
 const ownerVisible = ref(false)
 const ownerTarget = ref<StoreInstallInfo | null>(null)
@@ -645,6 +676,54 @@ async function doSetOwner(uid: number) {
 
 // ---------- 已安装 Tab（1Panel 风格卡片：状态/启停/重启/重建/参数/日志/外链） ----------
 const installedInfos = ref<StoreInstallInfo[]>([])
+
+const upgradeVisible = ref(false)
+const upgradeBusy = ref(false)
+const upgradeCandidates = ref<StoreInstallInfo[]>([])
+const upgradeProject = ref('')
+function upgradeIdentity(info: StoreInstallInfo) {
+  return `${info.nodeId || 'local'}:${info.composeProject}`
+}
+const upgradeTarget = computed(() => upgradeCandidates.value.find(i => upgradeIdentity(i) === upgradeProject.value))
+
+function openUpgrade(info: StoreInstallInfo) {
+  upgradeCandidates.value = [info]
+  upgradeProject.value = upgradeIdentity(info)
+  upgradeVisible.value = true
+}
+
+async function upgrade(item: StoreAppItem) {
+  await loadInstalled()
+  upgradeCandidates.value = installedInfos.value.filter(i => i.sourceId === item.sourceId && i.key === item.key && i.upgradable)
+  if (!upgradeCandidates.value.length) {
+    return
+  }
+  upgradeProject.value = upgradeIdentity(upgradeCandidates.value[0]!)
+  upgradeVisible.value = true
+}
+
+async function doUpgrade() {
+  const target = upgradeTarget.value
+  if (!target || upgradeBusy.value) {
+    return
+  }
+  upgradeBusy.value = true
+  try {
+    const out = await storeApi.upgrade(target.composeProject, target.nodeId)
+    if (out.task) {
+      taskCenter.open(out.task.taskId)
+    }
+    useFaToast().success(i18n.global.t(out.upgraded ? 'store.upgradeStarted' : 'store.allUpToDate'))
+    upgradeVisible.value = false
+  }
+  catch (e: any) {
+    useFaToast().error(i18n.global.t('store.upgradeFailed'), { description: e?.message })
+  }
+  finally {
+    upgradeBusy.value = false
+  }
+}
+
 // M55 节点筛选：全部/本机/各节点（前端过滤，installedDetailed 本就跨节点聚合）
 const installedNodeFilter = ref('all')
 const storeNodes = ref<{ id: string, name: string, hostname?: string, online: boolean }[]>([])
@@ -712,15 +791,17 @@ async function installedAction(info: StoreInstallInfo, action: 'start' | 'stop' 
 // 参数（.env 编辑，保存重建生效）
 const paramsVisible = ref(false)
 const paramsProject = ref('')
+const paramsNode = ref('local')
 const paramsSaving = ref(false)
 const paramsText = ref('')
 
 async function openParams(info: StoreInstallInfo) {
   paramsProject.value = info.composeProject
+  paramsNode.value = info.nodeId || 'local'
   paramsVisible.value = true
   paramsText.value = i18n.global.t('common.loading')
   try {
-    const env = await storeApi.installEnv(info.composeProject)
+    const env = await storeApi.installEnv(info.composeProject, paramsNode.value)
     paramsText.value = Object.entries(env).map(([k, v]) => `${k}=${v}`).join('\n')
   }
   catch (e: any) {
@@ -732,7 +813,7 @@ async function openParams(info: StoreInstallInfo) {
 async function saveParams() {
   paramsSaving.value = true
   try {
-    await storeApi.saveInstallEnv(paramsProject.value, paramsText.value)
+    await storeApi.saveInstallEnv(paramsProject.value, paramsText.value, paramsNode.value)
     useFaToast().success(i18n.global.t('store.paramsSaved'))
     paramsVisible.value = false
     await loadInstalled()
@@ -802,6 +883,13 @@ function randomPassword(len = 16) {
   return s
 }
 
+function randomFieldValue(f: StoreFormField) {
+  if (f.randomFormat === 'base64-32') {
+    return btoa(String.fromCharCode(...crypto.getRandomValues(new Uint8Array(32))))
+  }
+  return randomPassword(f.randomLen || 16)
+}
+
 function randomPort() {
   return String(32768 + Math.floor(Math.random() * 28231))
 }
@@ -814,7 +902,7 @@ function fieldIsEditable(f: StoreFormField) {
 function fieldDefault(f: StoreFormField) {
   // 后端 Go 序列化把无 default 的字段输出为 null（非 undefined），必须用 == null 同时兜住两种
   if (f.type === 'password' && f.random !== false && f.default == null) {
-    return randomPassword(f.randomLen || 16)
+    return randomFieldValue(f)
   }
   if (isPortField(f) && f.type === 'number') {
     return randomPort()
@@ -827,7 +915,7 @@ function fieldDefault(f: StoreFormField) {
 
 function randomizeField(f: StoreFormField) {
   if (f.type === 'password') {
-    installForm.value.params[f.envKey] = randomPassword(f.randomLen || 16)
+    installForm.value.params[f.envKey] = randomFieldValue(f)
   }
   else if (isPortField(f)) {
     installForm.value.params[f.envKey] = randomPort()
@@ -1011,6 +1099,9 @@ function statusText(s: StoreSource) {
                   <span v-for="p in info.ports" :key="p" class="rounded border px-1.5 py-0.5">{{ $t('store.portN', { v: p }) }}</span>
                 </div>
                 <div class="mt-1 text-xs text-muted-foreground">{{ $t('store.installedDur', { t: fmtDuration(info.createdAt) }) }} · {{ info.composeProject }}</div>
+                <div class="text-xs text-muted-foreground mt-1 break-words">
+                  {{ info.appName }} · {{ (info.containerNames || []).join(' / ') }}
+                </div>
               </div>
               <div class="flex shrink-0 flex-col gap-1.5">
                 <FaButton size="sm" variant="outline" :disabled="!info.ports.length" :title="$t('store.openServiceTitle')" @click="openExternal(info)">
@@ -1019,6 +1110,9 @@ function statusText(s: StoreSource) {
               </div>
             </div>
             <div class="mt-3 flex flex-wrap items-center gap-1.5 border-t pt-2.5" @click.stop>
+              <FaButton v-if="info.upgradable" v-auth="['store:write']" size="sm" @click="openUpgrade(info)">
+                {{ $t('store.upgradeV', { v: info.latestVersion }) }}
+              </FaButton>
               <FaButton
                 size="sm" variant="outline" :loading="actingOn === `restart-${info.composeProject}`"
                 @click="installedAction(info, 'restart')"
@@ -1201,6 +1295,34 @@ function statusText(s: StoreSource) {
       </template>
     </FaPageMain>
 
+    <FaModal v-model="upgradeVisible" :title="$t('store.upgradeAppTitle')" :close-on-click-modal="false" class="max-w-xl!">
+      <div class="text-sm flex flex-col gap-4">
+        <YdSelect v-model="upgradeProject" :disabled="upgradeBusy" :options="upgradeCandidates.map(i => ({ value: upgradeIdentity(i), label: `${i.name} · ${i.composeProject}` }))" />
+        <div v-if="upgradeTarget" class="p-3 border rounded-lg bg-muted/30">
+          <div class="font-medium">
+            {{ upgradeTarget.appName }} · {{ upgradeTarget.version }} → {{ upgradeTarget.latestVersion }}
+          </div>
+          <div class="text-xs text-muted-foreground mt-1 break-all">
+            {{ upgradeTarget.composeProject }} · {{ upgradeTarget.nodeId || 'local' }}
+          </div>
+        </div>
+        <p class="text-muted-foreground">
+          {{ $t('store.upgradeAppHint') }}
+        </p>
+        <p class="text-muted-foreground">
+          {{ $t('store.upgradeNamingHint') }}
+        </p>
+      </div>
+      <template #footer>
+        <FaButton variant="outline" :disabled="upgradeBusy" @click="upgradeVisible = false">
+          {{ $t('common.cancel') }}
+        </FaButton>
+        <FaButton :loading="upgradeBusy" :disabled="!upgradeTarget" @click="doUpgrade">
+          {{ $t('store.upgradeAppTitle') }}
+        </FaButton>
+      </template>
+    </FaModal>
+
     <!-- 详情抽屉 -->
     <FaDrawer v-model="detailVisible" :title="$t('store.detailTitle', { name: detailApp?.name || '' })" class="max-w-2xl!">
       <div v-if="detailApp" class="flex flex-col gap-4">
@@ -1302,7 +1424,7 @@ function statusText(s: StoreSource) {
           <FaButton v-if="!detailInstall" v-auth="['store:write']" size="sm" :disabled="detailLoading" @click="openInstall(detailApp, detailApp.latestVersion)">
             {{ $t('store.installV', { v: detailApp.latestVersion }) }}
           </FaButton>
-          <FaButton v-else size="sm" variant="outline" @click="openInstall(detailApp, detailApp.latestVer)">
+          <FaButton v-else-if="detailApp.upgradable" v-auth="['store:write']" size="sm" variant="outline" @click="upgrade(detailApp)">
             {{ $t('store.upgradeToV', { v: detailApp.latestVer }) }}
           </FaButton>
         </div>
@@ -1321,7 +1443,7 @@ function statusText(s: StoreSource) {
           <span class="w-28 shrink-0 text-sm text-muted-foreground">{{ $t('nodes.targetNode') }}</span>
           <YdNodeSelect
             v-model="installNode"
-            local-value=""
+            local-value="local"
             :nodes="onlineNodes"
             button-class="min-w-0 flex-1"
             :describe="(n) => (n as { arch?: string }).arch || 'linux'"
@@ -1329,7 +1451,16 @@ function statusText(s: StoreSource) {
         </div>
         <div class="flex items-center gap-3">
           <span class="w-28 shrink-0 text-sm text-muted-foreground">{{ $t('store.version') }}</span>
-          <YdSelect v-model="installForm.version" :options="installVersions.map(v => ({ label: v.name || v.id, value: v.id }))" button-class="flex-1" />
+          <YdSelect v-model="installForm.version" :options="installVersions.map(v => ({ label: v.name || v.id, value: v.id }))" button-class="flex-1" @update:model-value="selectInstallVersion" />
+        </div>
+        <div class="text-xs text-muted-foreground p-3 border rounded-lg bg-muted/30">
+          <div>{{ $t('store.projectPreview') }} <span class="font-mono">{{ installProjectPreview }}</span></div>
+          <div v-if="installContainerPreview" class="mt-1 break-all">
+            {{ $t('store.containerPreview') }} <span class="font-mono">{{ installContainerPreview }}</span>
+          </div>
+          <div class="mt-1">
+            {{ $t('store.instanceNameHint') }}
+          </div>
         </div>
         <div v-if="installPrefilled" class="-mt-1 text-xs text-muted-foreground">
           {{ $t('store.prefillHint') }}

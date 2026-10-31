@@ -27,6 +27,7 @@
 
 ## 条目
 
+- [store-upgrade.md](./store-upgrade.md) — 商店版本与镜像标签、全挂载源保留、旧容器配置恢复、dotenv 转义、关联命名与制品拉取验收
 - [compose-update.md](./compose-update.md) — 更新请求与实际节点校验、命令退出码、镜像 ID 比较、FaModal 异步保存、输入属性透传、关闭配置持久化
 - [dependency-bootstrap.md](./dependency-bootstrap.md) — pnpm 版本切换阶段、临时验证环境、官方大包下载校验与跨文件系统缓存写入
 - [go-backend.md](./go-backend.md) — moby 模块拆分、internal 跨模块限制、GOPROXY 镜像、ExtJSON 归一化、DSN Replace 误伤、SHOW INDEX 版本漂移、firstLine(tail()) 吞报错、apt 安装缺 update

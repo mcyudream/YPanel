@@ -4,18 +4,19 @@ import "time"
 
 // ComposeServiceState compose 项目内单个服务状态（由容器聚合）。
 type ComposeServiceState struct {
-	Name    string `json:"name"`
-	Image   string `json:"image"`
-	State   string `json:"state"`
+	Name          string `json:"name"`
+	Image         string `json:"image"`
+	State         string `json:"state"`
+	ContainerName string `json:"containerName,omitempty"`
 }
 
 // ComposeProject compose 项目（托管目录或外部识别）。
 type ComposeProject struct {
 	Name     string                `json:"name"`
-	Dir      string                `json:"dir"`                // 项目工作目录
-	Managed  bool                  `json:"managed"`            // 是否位于 YPanel 托管目录（可编辑 yaml）
-	Running  int                   `json:"running"`            // 运行中服务数
-	Total    int                   `json:"total"`              // 服务总数
+	Dir      string                `json:"dir"`     // 项目工作目录
+	Managed  bool                  `json:"managed"` // 是否位于 YPanel 托管目录（可编辑 yaml）
+	Running  int                   `json:"running"` // 运行中服务数
+	Total    int                   `json:"total"`   // 服务总数
 	Services []ComposeServiceState `json:"services"`
 }
 
@@ -23,9 +24,9 @@ type ComposeProject struct {
 type ComposeTopologyNode struct {
 	Name   string   `json:"name"`
 	Image  string   `json:"image"`
-	State  string   `json:"state,omitempty"`   // running/exited/...；未创建容器为空
-	Health string   `json:"health,omitempty"`  // healthy/starting/unhealthy；无 healthcheck 为空
-	Ports  []string `json:"ports,omitempty"`   // 编排定义的发布端口，如 "8080:80/tcp"
+	State  string   `json:"state,omitempty"`  // running/exited/...；未创建容器为空
+	Health string   `json:"health,omitempty"` // healthy/starting/unhealthy；无 healthcheck 为空
+	Ports  []string `json:"ports,omitempty"`  // 编排定义的发布端口，如 "8080:80/tcp"
 }
 
 // ComposeTopologyEdge 依赖边：from 依赖 to（depends_on）。
@@ -89,17 +90,17 @@ type ExecResp struct {
 
 // CronTask 计划任务。
 type CronTask struct {
-	ID          uint      `json:"id"`
-	Name        string    `json:"name"`
-	Cron        string    `json:"cron"`
-	Command     string    `json:"command"`
-	Type        string    `json:"type,omitempty"`
-	Payload     string    `json:"payload,omitempty"`
-	Enabled     bool      `json:"enabled"`
-	TimeoutSecs int       `json:"timeoutSecs"`
+	ID          uint       `json:"id"`
+	Name        string     `json:"name"`
+	Cron        string     `json:"cron"`
+	Command     string     `json:"command"`
+	Type        string     `json:"type,omitempty"`
+	Payload     string     `json:"payload,omitempty"`
+	Enabled     bool       `json:"enabled"`
+	TimeoutSecs int        `json:"timeoutSecs"`
 	LastRunAt   *time.Time `json:"lastRunAt"`
-	LastSuccess *bool     `json:"lastSuccess"`
-	CreatedAt   time.Time `json:"createdAt"`
+	LastSuccess *bool      `json:"lastSuccess"`
+	CreatedAt   time.Time  `json:"createdAt"`
 }
 
 // CronTaskCreateReq 创建任务。
@@ -126,13 +127,13 @@ type CronTaskUpdateReq struct {
 
 // CronTaskLogItem 执行记录条目。
 type CronTaskLogItem struct {
-	ID         uint      `json:"id"`
-	TaskID     uint      `json:"taskId"`
-	TaskName   string    `json:"taskName"`
-	Trigger    string    `json:"trigger"` // cron / manual / running
-	StartAt    time.Time `json:"startAt"`
+	ID         uint       `json:"id"`
+	TaskID     uint       `json:"taskId"`
+	TaskName   string     `json:"taskName"`
+	Trigger    string     `json:"trigger"` // cron / manual / running
+	StartAt    time.Time  `json:"startAt"`
 	EndAt      *time.Time `json:"endAt"`
-	DurationMs int64     `json:"durationMs"`
-	Success    bool      `json:"success"`
-	Output     string    `json:"output"`
+	DurationMs int64      `json:"durationMs"`
+	Success    bool       `json:"success"`
+	Output     string     `json:"output"`
 }

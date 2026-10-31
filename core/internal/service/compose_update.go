@@ -96,11 +96,12 @@ type composeUpdateImage struct {
 	ConfigFiles string `json:"configFiles"`
 	WorkDir     string `json:"workDir"`
 	OneOff      string `json:"oneOff"`
+	ConfigHash  string `json:"configHash"`
 }
 
 // 只采集运行容器的必要字段，不读取/记录含密码的完整 inspect 输出。
 func (s *Src2ComposeService) composeRunningImages(ctx context.Context, req dto.ComposePullUpdateReq) ([]composeUpdateImage, error) {
-	format := `{"service":{{json (index .Config.Labels "com.docker.compose.service")}},"image":{{json .Config.Image}},"id":{{json .Image}},"configFiles":{{json (index .Config.Labels "com.docker.compose.project.config_files")}},"workDir":{{json (index .Config.Labels "com.docker.compose.project.working_dir")}},"oneOff":{{json (index .Config.Labels "com.docker.compose.oneoff")}}}`
+	format := `{"service":{{json (index .Config.Labels "com.docker.compose.service")}},"image":{{json .Config.Image}},"id":{{json .Image}},"configFiles":{{json (index .Config.Labels "com.docker.compose.project.config_files")}},"workDir":{{json (index .Config.Labels "com.docker.compose.project.working_dir")}},"oneOff":{{json (index .Config.Labels "com.docker.compose.oneoff")}},"configHash":{{json (index .Config.Labels "com.docker.compose.config-hash")}}}`
 	command := "ids=$(docker ps -q --filter " + shellQuote("label=com.docker.compose.project="+req.Project) + ") || exit $?\n" +
 		"if [ -n \"$ids\" ]; then docker inspect --format " + shellQuote(format) + " $ids; fi"
 	out, err := s.composeExec(ctx, req.NodeID, command, 60)
@@ -200,6 +201,9 @@ func (s *Src2ComposeService) runComposeUpdate(ctx context.Context, req dto.Compo
 	if err != nil {
 		return "", err
 	}
+	if err := s.checkComposeUpdateConfig(ctx, req, base, before); err != nil {
+		return "", err
+	}
 	logf("info", "拉取运行服务的镜像（跳过本地构建服务）…")
 	if _, err := s.composeExec(ctx, req.NodeID, base+" pull --ignore-buildable --policy always "+quoteComposeArgs(composeUpdateServices(before)), 1800); err != nil {
 		return "", errs.Wrapc(errs.CodeFileOpFailed, "镜像拉取失败，已中止更新: "+err.Error())
@@ -257,6 +261,9 @@ func (s *Src2ComposeService) runComposeUpdate(ctx context.Context, req dto.Compo
 		return "", err
 	}
 	services := composeUpdateServices(changed)
+	if err := s.checkComposeUpdateConfig(ctx, req, base, before); err != nil {
+		return "", err
+	}
 	logf("info", "重建镜像有变化的服务: %s", strings.Join(services, ", "))
 	if _, err := s.composeExec(ctx, req.NodeID, base+" up -d --no-deps --no-build --pull never "+quoteComposeArgs(services), 600); err != nil {
 		return "", errs.Wrapc(errs.CodeFileOpFailed, "容器重建失败: "+err.Error())
@@ -269,6 +276,27 @@ func (s *Src2ComposeService) runComposeUpdate(ctx context.Context, req dto.Compo
 		result += "；脚本失败，已按设置继续（见日志）"
 	}
 	return result, nil
+}
+
+// 镜像更新不能顺便应用未部署的端口、挂载、环境变量或镜像标签变更。
+func (s *Src2ComposeService) checkComposeUpdateConfig(ctx context.Context, req dto.ComposePullUpdateReq, base string, images []composeUpdateImage) error {
+	out, err := s.composeExec(ctx, req.NodeID, base+" config --hash '*'", 60)
+	if err != nil {
+		return fmt.Errorf("无法核对当前编排配置，已中止镜像更新: %w", err)
+	}
+	hashes := map[string]string{}
+	for _, line := range strings.Split(out, "\n") {
+		f := strings.Fields(line)
+		if len(f) == 2 {
+			hashes[f[0]] = f[1]
+		}
+	}
+	for _, image := range images {
+		if image.ConfigHash == "" || hashes[image.Service] != image.ConfigHash {
+			return fmt.Errorf("服务 %s 的本地编排配置与运行容器不一致，已中止镜像更新；请先通过应用版本升级或重新部署应用配置", image.Service)
+		}
+	}
+	return nil
 }
 
 func (s *Src2ComposeService) startComposeUpdateTask(ctx context.Context, req dto.ComposePullUpdateReq, taskType string) (*dto.ComposeUpdateTaskResp, error) {
@@ -284,17 +312,7 @@ func (s *Src2ComposeService) startComposeUpdateTask(ctx context.Context, req dto
 	if _, err := s.Nodes.ByID(req.NodeID); err != nil {
 		return nil, err
 	}
-	s.updateMu.Lock()
-	defer s.updateMu.Unlock()
-	ref := req.NodeID + ":" + req.Project
-	var running int64
-	if err := s.DB.Model(&model.AppTask{}).Where("type IN ? AND ref = ? AND status = ?", composeUpdateTaskTypes, ref, TaskRunning).Count(&running).Error; err != nil {
-		return nil, err
-	}
-	if running > 0 {
-		return nil, errs.Wrapc(errs.CodeConflict, "该项目正在更新，请在任务日志中查看进度")
-	}
-	task, err := s.Tasks.StartTask(taskType, "更新编排 "+req.Project+"（节点 "+req.NodeID+"）", ref, 45*time.Minute,
+	task, err := s.Tasks.StartProjectTask(taskType, "更新运行镜像 "+req.Project+"（节点 "+req.NodeID+"）", req.NodeID, req.Project, 45*time.Minute,
 		func(runCtx context.Context, logf TaskLogf) error {
 			now := time.Now()
 			where := s.DB.Model(&model.ComposeAutoUpdate{}).Where("node_id = ? AND project = ?", req.NodeID, req.Project)

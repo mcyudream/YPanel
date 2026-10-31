@@ -20,6 +20,7 @@ export interface StoreFormField {
   required?: boolean
   random?: boolean // 安装时随机生成（密码/名称）
   randomLen?: number // 随机值目标长度（字符），缺省 16；部分应用要求密钥 ≥32 字节
+  randomFormat?: 'base64-32' | string
   edit?: boolean // false = 只读
   disabled?: boolean
   description?: string
@@ -55,6 +56,7 @@ export interface StoreVersion {
   formFields: StoreFormField[]
   middleware?: StoreMiddlewareDecl[]
   optionalServices?: StoreOptionalSvc[]
+  versionParams?: Record<string, string>
 }
 
 export interface StoreApp {
@@ -108,7 +110,9 @@ export interface StoreInstallInfo {
   params: Record<string, string>
   createdAt: string
   ownerId: number
-	  nodeId?: string
+  containerNames: string[]
+  options?: { network?: string, timezone?: string, extraHosts?: string[], mountHostsFile?: boolean, optionalServices?: string[] }
+  nodeId?: string
   adminUI?: { name: string, url: string }
 }
 
@@ -208,23 +212,28 @@ export const storeApi = {
     const res = await api.get('api/v1/store/installed', { silent: true })
     return res.data as StoreInstallInfo[]
   },
+  upgrade: async (project: string, nodeId = 'local') => {
+    const query = new URLSearchParams({ nodeId })
+    const res = await api.post(`api/v1/store/installed/${encodeURIComponent(project)}/upgrade?${query}`)
+    return res.data as { upgraded: boolean, from?: string, to?: string, task?: { taskId: number, project: string } }
+  },
   installedAction: (project: string, action: 'start' | 'stop' | 'restart' | 'rebuild', nodeId?: string) =>
     api.post(`api/v1/store/installed/${encodeURIComponent(project)}/${action}${nodeId && nodeId !== 'local' ? `?nodeId=${encodeURIComponent(nodeId)}` : ''}`, null, { timeout: 300000 }),
   // M54-P3 属主分配（0=公共；仅数据范围不受限账号可操作）
   setOwner: (project: string, ownerId: number) =>
     api.post(`api/v1/store/installed/${encodeURIComponent(project)}/owner`, { ownerId }),
-  installEnv: async (project: string) => {
-    const res = await api.get(`api/v1/store/installed/${encodeURIComponent(project)}/env`, { silent: true })
+  installEnv: async (project: string, nodeId = 'local') => {
+    const res = await api.get(`api/v1/store/installed/${encodeURIComponent(project)}/env?${new URLSearchParams({ nodeId })}`, { silent: true })
     return res.data as Record<string, string>
   },
-  saveInstallEnv: (project: string, content: string) =>
-    api.put(`api/v1/store/installed/${encodeURIComponent(project)}/env`, { content }, { timeout: 300000 }),
+  saveInstallEnv: (project: string, content: string, nodeId = 'local') =>
+    api.put(`api/v1/store/installed/${encodeURIComponent(project)}/env?${new URLSearchParams({ nodeId })}`, { content, nodeId }, { timeout: 300000 }),
   install: async (data: { sourceId: number, key: string, version: string, name: string, params: Record<string, string>, domain?: string, nodeId?: string, network?: string, createNetwork?: boolean, timezone?: string, extraHosts?: string[], mountHostsFile?: boolean, externalDB?: { instanceId: number, database?: string, user?: string, createIfMissing?: boolean, redisInstanceId?: number, neo4jInstanceId?: number, s3InstanceId?: number, middlewareInstanceIds?: Record<string, number>, optionalServices?: string[] } }) => {
     const res = await api.post('api/v1/store/install', data, { timeout: 60000 })
     return res.data as { taskId: number, project: string }
   },
   uninstall: async (project: string, opts: { purgeData?: boolean, rmi?: boolean, cascadeDB?: boolean, nodeId?: string } = {}) => {
-    const q = new URLSearchParams()
+    const q = new URLSearchParams({ nodeId: opts.nodeId || 'local' })
     if (opts.purgeData) {
       q.set('purgeData', 'true')
     }

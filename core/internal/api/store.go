@@ -252,6 +252,14 @@ func (a *StoreAPI) SaveInstallEnv(c *gin.Context) {
 		respErr(c, err)
 		return
 	}
+	queryNode := c.Query("nodeId")
+	if req.NodeID != "" && queryNode != "" && req.NodeID != queryNode {
+		respErr(c, errBadRequest("查询节点与请求体节点不一致"))
+		return
+	}
+	if queryNode != "" {
+		req.NodeID = queryNode
+	}
 	if err := a.Store.SaveInstallEnv(c.Request.Context(), project, req.NodeID, req.Content); err != nil {
 		respErr(c, err)
 		return
@@ -277,6 +285,7 @@ func (a *StoreAPI) Install(c *gin.Context) {
 // Uninstall DELETE /api/v1/store/install/:project（任务化；?purgeData=&rmi=&cascadeDB=）
 func (a *StoreAPI) Uninstall(c *gin.Context) {
 	opts := service.StoreUninstallOptions{
+		NodeID:      c.Query("nodeId"),
 		PurgeData:   c.DefaultQuery("purgeData", "false") == "true",
 		RemoveImage: c.DefaultQuery("rmi", "false") == "true",
 		CascadeDB:   c.DefaultQuery("cascadeDB", "false") == "true",
@@ -321,7 +330,7 @@ func (a *StoreAPI) UpgradeApp(c *gin.Context) {
 		respErr(c, err)
 		return
 	}
-	out, err := a.Store.UpgradeApp(c.Request.Context(), project)
+	out, err := a.Store.UpgradeApp(c.Request.Context(), project, c.Query("nodeId"))
 	if err != nil {
 		respErr(c, err)
 		return

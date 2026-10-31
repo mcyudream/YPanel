@@ -14,11 +14,15 @@ import (
 	"archive/zip"
 	"bytes"
 	"context"
+	"crypto/rand"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
 	"io/fs"
+	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"path"
@@ -64,22 +68,25 @@ type StoreVersion struct {
 	// M68：可复用中间件复用声明（向导「中间件」区块）与可选伴生服务声明（向导「可选组件」勾选）
 	Middleware       []StoreMiddlewareDecl `json:"middleware,omitempty"`
 	OptionalServices []StoreOptionalSvc    `json:"optionalServices,omitempty"`
+	VersionParams    map[string]string     `json:"versionParams,omitempty"`  // 由版本包管理的镜像版本参数
+	RecoverVolumes   []StoreVolumeRecovery `json:"recoverVolumes,omitempty"` // 补挂持久化卷前从旧容器恢复
 }
 
 // StoreFormField 版本参数定义（兼容 1Panel formFields 全量形态）。
 type StoreFormField struct {
-	EnvKey      string            `json:"envKey"`
-	Label       map[string]string `json:"label"`
-	Default     interface{}       `json:"default"`
-	Type        string            `json:"type"` // text / number / password / select / service / apps / ...
-	Rule        string            `json:"rule"` // paramPort / paramCommon / paramComplexity / ...
-	Required    bool              `json:"required"`
-	Random      bool              `json:"random"`    // 安装时随机生成（密码/名称类）
-	RandomLen   int               `json:"randomLen"` // 随机值目标长度（字符）；部分应用要求密钥 ≥32 字节，缺省 24
-	Edit        *bool             `json:"edit"`      // false = 只读展示
-	Disabled    bool              `json:"disabled"`
-	Description FlexString        `json:"description"`
-	Values      []StoreFormValue  `json:"values"` // select 选项
+	EnvKey       string            `json:"envKey"`
+	Label        map[string]string `json:"label"`
+	Default      interface{}       `json:"default"`
+	Type         string            `json:"type"` // text / number / password / select / service / apps / ...
+	Rule         string            `json:"rule"` // paramPort / paramCommon / paramComplexity / ...
+	Required     bool              `json:"required"`
+	Random       bool              `json:"random"`                 // 安装时随机生成（密码/名称类）
+	RandomLen    int               `json:"randomLen"`              // 随机值目标长度（字符）；部分应用要求密钥 ≥32 字节，缺省 24
+	RandomFormat string            `json:"randomFormat,omitempty"` // base64-32：32 随机字节的标准 Base64
+	Edit         *bool             `json:"edit"`                   // false = 只读展示
+	Disabled     bool              `json:"disabled"`
+	Description  FlexString        `json:"description"`
+	Values       []StoreFormValue  `json:"values"` // select 选项
 }
 
 // FlexString 宽容字符串：1P 新清单的 description 可为多语言 object/数组——非字符串形态取空
@@ -151,6 +158,8 @@ type ypVerion struct {
 	PGExtensions     []string              `json:"pgExtensions"`     // 纳管 PG 自动建扩展声明
 	Middleware       []StoreMiddlewareDecl `json:"middleware"`       // M68 可复用中间件复用声明
 	OptionalServices []StoreOptionalSvc    `json:"optionalServices"` // M68 可选伴生服务声明
+	VersionParams    map[string]string     `json:"versionParams"`
+	RecoverVolumes   []StoreVolumeRecovery `json:"recoverVolumes"`
 }
 
 // ypAdminUI 内网管理界面声明：安装后注册到桌面工作台，点击经内网浏览器（gw 会话式反代）打开。
@@ -161,15 +170,16 @@ type ypAdminUI struct {
 }
 
 type ypEnvItem struct {
-	Key         string      `json:"key"`
-	Label       string      `json:"label"`
-	Type        string      `json:"type"` // text / number / password / select
-	Default     interface{} `json:"default"`
-	Required    bool        `json:"required"`
-	Rule        string      `json:"rule"`
-	Random      bool        `json:"random"`    // 安装时随机生成（密码类）；缺失时后端不兜底随机
-	RandomLen   int         `json:"randomLen"` // 随机值目标长度（字符）
-	Description FlexString  `json:"description"`
+	Key          string      `json:"key"`
+	Label        string      `json:"label"`
+	Type         string      `json:"type"` // text / number / password / select
+	Default      interface{} `json:"default"`
+	Required     bool        `json:"required"`
+	Rule         string      `json:"rule"`
+	Random       bool        `json:"random"`    // 安装时随机生成（密码类）；缺失时后端不兜底随机
+	RandomLen    int         `json:"randomLen"` // 随机值目标长度（字符）
+	RandomFormat string      `json:"randomFormat"`
+	Description  FlexString  `json:"description"`
 }
 
 type ypPortDef struct {
@@ -217,7 +227,7 @@ type StoreService struct {
 	tasks    *TaskService
 	dbs      *DatabaseService
 	mws      *MiddlewareService // M68 可复用中间件（复用注入）
-	runtimes *RuntimeService // php 应用安装时复用/创建 PHP 运行时
+	runtimes *RuntimeService    // php 应用安装时复用/创建 PHP 运行时
 	http     *http.Client
 	mu       sync.Mutex
 	dir      string // 源缓存目录根 <data>/store-sources
@@ -642,7 +652,7 @@ func (s *StoreService) syncYpManifest(src *model.AppStoreSource, raw []byte, loc
 			if v.ID == "" || v.Package == "" {
 				continue
 			}
-			sv := StoreVersion{ID: v.ID, Name: v.ID, ReleaseNotes: v.ReleaseNotes, PGExtensions: v.PGExtensions, Middleware: middlewareDeclsWithDefaults(v.Middleware), OptionalServices: v.OptionalServices}
+			sv := StoreVersion{ID: v.ID, Name: v.ID, ReleaseNotes: v.ReleaseNotes, PGExtensions: v.PGExtensions, Middleware: middlewareDeclsWithDefaults(v.Middleware), OptionalServices: v.OptionalServices, VersionParams: v.VersionParams, RecoverVolumes: v.RecoverVolumes}
 			switch {
 			case localRoot != "":
 				sv.LocalDir = v.Package
@@ -656,7 +666,7 @@ func (s *StoreService) syncYpManifest(src *model.AppStoreSource, raw []byte, loc
 				fields = append(fields, StoreFormField{
 					EnvKey: e.Key, Label: map[string]string{"zh": e.Label}, Default: e.Default,
 					Type: e.Type, Required: e.Required, Rule: e.Rule,
-					Random: e.Random, RandomLen: e.RandomLen, Description: e.Description,
+					Random: e.Random, RandomLen: e.RandomLen, RandomFormat: e.RandomFormat, Description: e.Description,
 				})
 			}
 			for _, p := range v.Ports {
@@ -997,22 +1007,26 @@ type StoreInstallInput struct {
 	// 使用已有数据库实例（M32）：识别到应用包的数据库 host 参数后，把应用装到指定纳管实例上
 	ExternalDB *StoreExternalDB `json:"externalDB,omitempty"`
 
-	OwnerID uint `json:"-"` // M54-P3 创建归属（assigned 调用者 → 自己；all → 公共），由 API 层填
+	OwnerID        uint `json:"-"` // M54-P3 创建归属（assigned 调用者 → 自己；all → 公共），由 API 层填
+	existing       *model.AppStoreInstall
+	rawEnv         string
+	providedParams map[string]bool
+	upgrade        bool
 }
 
 // StoreExternalDB 安装时外接数据库实例选项（SQL 与 Redis 可并存——双键集应用如 harbor 各选各的实例）。
 // M68 扩展：Neo4j/S3 走数据库纳管实例，其余可复用中间件走 MiddlewareInstance（复用只注入不创建）。
 type StoreExternalDB struct {
-	InstanceID       uint            `json:"instanceId"`      // SQL 实例（mysql/postgres）；0 = SQL 用应用自带/手填
-	RedisInstanceID  uint            `json:"redisInstanceId"` // Redis 实例；0 = Redis 用应用自带/手填
-	Neo4jInstanceID  uint            `json:"neo4jInstanceId"` // M68 Neo4j 实例；0 = 用应用自带/手填
-	S3InstanceID     uint            `json:"s3InstanceId"`    // M68 对象存储(s3)实例；0 = 用应用自带/手填
+	InstanceID       uint            `json:"instanceId"`            // SQL 实例（mysql/postgres）；0 = SQL 用应用自带/手填
+	RedisInstanceID  uint            `json:"redisInstanceId"`       // Redis 实例；0 = Redis 用应用自带/手填
+	Neo4jInstanceID  uint            `json:"neo4jInstanceId"`       // M68 Neo4j 实例；0 = 用应用自带/手填
+	S3InstanceID     uint            `json:"s3InstanceId"`          // M68 对象存储(s3)实例；0 = 用应用自带/手填
 	MiddlewareIDs    map[string]uint `json:"middlewareInstanceIds"` // M68 registry 类型 → MiddlewareInstance ID
-	Database         string          `json:"database"`        // 目标库名；空 = 应用 key
-	User             string          `json:"user"`            // 应用账号名；空 = <key>_user
-	CreateIfMissing  bool            `json:"createIfMissing"` // 库/账号不存在时自动创建
-	Extensions       []string        `json:"extensions"`      // PG 实例附加扩展（与应用包 pgExtensions 声明合并去重）
-	OptionalServices []string        `json:"optionalServices"` // M68 勾选的可选伴生服务 id（合并 compose + 注入开关 env）
+	Database         string          `json:"database"`              // 目标库名；空 = 应用 key
+	User             string          `json:"user"`                  // 应用账号名；空 = <key>_user
+	CreateIfMissing  bool            `json:"createIfMissing"`       // 库/账号不存在时自动创建
+	Extensions       []string        `json:"extensions"`            // PG 实例附加扩展（与应用包 pgExtensions 声明合并去重）
+	OptionalServices []string        `json:"optionalServices"`      // M68 勾选的可选伴生服务 id（合并 compose + 注入开关 env）
 }
 
 // dbFieldSet 应用包数据库参数键集（由 formFields 识别）。
@@ -1060,36 +1074,90 @@ func (s *StoreService) resolveInstallNetwork(ctx context.Context, ac *agentclien
 }
 
 // writeComposeOverride 生成 docker-compose.override.yml（TZ / extra_hosts / 挂载主机 hosts，compose up 自动合并全部服务）。
-func (s *StoreService) writeComposeOverride(ctx context.Context, logf TaskLogf, ac *agentclient.Client, dir, tz string, hosts []string, mountHostsFile bool) error {
-	if tz == "" && len(hosts) == 0 && !mountHostsFile {
-		return nil
-	}
-	// 服务名由 agent 端 docker compose config --services 动态获取，逐服务注入 override
-	var script strings.Builder
-	script.WriteString(`svcs=$(docker compose config --services) && { echo "services:"; for s in $svcs; do echo "  $s:";`)
-	if tz != "" {
-		script.WriteString(` echo "    environment:"; echo "      TZ: ` + tz + `";`)
-	}
-	if len(hosts) > 0 {
-		script.WriteString(` echo "    extra_hosts:";`)
-		for _, h := range hosts {
-			script.WriteString(` printf '      - "%s"\n' "` + h + `";`)
-		}
-	}
-	if mountHostsFile {
-		// 只读挂载宿主机 /etc/hosts（compose volumes 列表与原服务挂载合并，容器内与主机 hosts 实时同步）
-		script.WriteString(` echo "    volumes:"; echo "      - /etc/hosts:/etc/hosts:ro";`)
-	}
-	script.WriteString(` done; } > docker-compose.override.yml`)
-	out, err := agentclient.DoJSON[dto.ExecReq, dto.ExecResp](ac, ctx, "POST", "/agent/v1/exec",
-		&dto.ExecReq{Command: fmt.Sprintf("cd %s && %s", dir, script.String()), TimeoutSecs: 120})
+func (s *StoreService) writeComposeOverride(ctx context.Context, logf TaskLogf, ac *agentclient.Client, dir, tz string, hosts []string, mountHostsFile bool, labels map[string]string) error {
+	out, err := storeExec(ctx, ac, "cd "+shellQuote(dir)+" && docker compose config --services", 60)
 	if err != nil {
 		return err
 	}
-	if out.ExitCode != 0 {
-		return errs.Wrapc(errs.CodeFileOpFailed, "生成 override 失败: "+tailOutput(out.Output, 400))
+	doc := map[string]any{}
+	probe, err := storeExec(ctx, ac, "if [ -f "+shellQuote(dir+"/docker-compose.override.yml")+" ]; then printf exists; fi", 30)
+	if err != nil {
+		return err
 	}
-	logf("info", "已注入 compose override（时区/hosts）")
+	if probe == "exists" {
+		original, err := agentclient.GetJSON[dto.FileReadResp](ac, ctx, "/agent/v1/files/read?path="+escapeURL2(dir+"/docker-compose.override.yml"))
+		if err != nil {
+			return err
+		}
+		if original.Truncated {
+			return fmt.Errorf("应用包 override 文件过大")
+		}
+		if err := yaml.Unmarshal([]byte(original.Content), &doc); err != nil {
+			return err
+		}
+	}
+	services, _ := doc["services"].(map[string]any)
+	if services == nil {
+		services = map[string]any{}
+	}
+	for _, name := range strings.Fields(out) {
+		if !src2NameRe.MatchString(name) {
+			return fmt.Errorf("编排服务名称不合法")
+		}
+		serviceLabels := map[string]any{"io.ypanel.app.service": name}
+		for k, v := range labels {
+			serviceLabels[k] = v
+		}
+		svc, _ := services[name].(map[string]any)
+		if svc == nil {
+			svc = map[string]any{}
+		}
+		mergedLabels, err := mergeStoreKeyValues(svc["labels"], serviceLabels)
+		if err != nil {
+			return err
+		}
+		svc["labels"] = mergedLabels
+		if tz != "" {
+			env, err := mergeStoreKeyValues(svc["environment"], map[string]any{"TZ": tz})
+			if err != nil {
+				return err
+			}
+			svc["environment"] = env
+		}
+		if len(hosts) > 0 {
+			switch old := svc["extra_hosts"].(type) {
+			case map[string]any:
+				for _, h := range hosts {
+					key, value, _ := strings.Cut(h, ":")
+					old[key] = value
+				}
+				svc["extra_hosts"] = old
+			default:
+				entries, _ := old.([]any)
+				for _, h := range hosts {
+					entries = append(entries, h)
+				}
+				svc["extra_hosts"] = entries
+			}
+		}
+		if mountHostsFile {
+			entries, _ := svc["volumes"].([]any)
+			svc["volumes"] = append(entries, "/etc/hosts:/etc/hosts:ro")
+		}
+		services[name] = svc
+	}
+	if len(services) == 0 {
+		return fmt.Errorf("应用编排中没有服务")
+	}
+	doc["services"] = services
+	content, err := yaml.Marshal(doc)
+	if err != nil {
+		return err
+	}
+	if err := s.writeViaAgent(ctx, ac, dir+"/docker-compose.override.yml", string(content)); err != nil {
+		return err
+	}
+	logf("info", "已注入应用关联标签、时区与 hosts 配置")
 	return nil
 }
 
@@ -1158,60 +1226,113 @@ func (s *StoreService) Install(ctx context.Context, in StoreInstallInput) (map[s
 	if ver == nil {
 		return nil, errs.Wrap(errs.ErrBadRequest, "版本不存在")
 	}
-	// 参数合并：定义 default ∪ 用户输入；random 字段缺省时后端兜底随机
-	finalParams := map[string]string{}
-	for _, f := range ver.FormFields {
-		if f.EnvKey == "" {
-			continue
-		}
-		if f.Default != nil { // fmt.Sprint(nil) = "<nil>"，sanitize 后成 "nil" 污染参数
-			finalParams[f.EnvKey] = sanitizeParam(fmt.Sprint(f.Default))
-		}
-		if f.Random && f.Type == "password" && (in.Params == nil || stringifyParam(in.Params[f.EnvKey]) == "") {
-			finalParams[f.EnvKey] = randomHex(randomHexBytes(f.RandomLen))
-		}
-	}
-	for k, v := range in.Params {
-		if !paramKeyPattern.MatchString(k) {
-			return nil, errs.Wrap(errs.ErrBadRequest, "参数名不合法: "+k)
-		}
-		if sv := sanitizeParam(stringifyParam(v)); sv != "" {
-			finalParams[k] = sv
-		}
-	}
-	// 密码类字段兜底：用户/ AI 未提供非空值且无 random 声明时，拒绝落固定 default 之外的空值——
-	// envKey 含 PASSWORD 且最终为空一律随机生成（防 1Panel 包弱 default 泄漏后的空密码）。
-	for _, f := range ver.FormFields {
-		if f.Type == "password" && strings.Contains(strings.ToUpper(f.EnvKey), "PASSWORD") && finalParams[f.EnvKey] == "" {
-			finalParams[f.EnvKey] = randomHex(randomHexBytes(f.RandomLen))
-		}
-	}
-	// M55 多实例：远程节点项目名带节点后缀（local 保持 app-<name> 兼容存量）
 	project := "app-" + in.Name
 	if nid := normalizeNodeID(in.NodeID); nid != "local" {
-		project = "app-" + in.Name + "-" + nid
+		project += "-" + nid
 	}
-	finalParams["CONTAINER_NAME"] = project
-	finalParams["CONTAINER_NAME1"] = project + "-1"
+	if err := NormalizeComposeUpdateTarget(ctx, &dto.ComposePullUpdateReq{NodeID: in.NodeID, Project: project}); err != nil {
+		return nil, err
+	}
 
-	// 端口占用预检在任务内执行（需 agent exec）
-	input := in
+	// 任务占用项目锁后再读取旧参数，避免与刚完成的部署交错。
+	caller, hasCaller := rbac.CallerFrom(ctx)
+	if hasCaller && caller.Assigned() {
+		in.OwnerID = caller.UserID
+	}
 	installFn := func(tctx context.Context, logf TaskLogf) error {
-		return s.runInstall(tctx, logf, row, *ver, input, project, finalParams)
-	}
-	if row.Kind == "php" { // php 应用：运行时+站点+源码编排，不走 compose
-		installFn = func(tctx context.Context, logf TaskLogf) error {
-			return s.runInstallPHP(tctx, logf, row, *ver, input, project, finalParams)
+		if hasCaller {
+			tctx = rbac.WithCaller(tctx, caller)
 		}
+		finalParams, err := s.prepareStoreInstall(tctx, project, *ver, &in)
+		if err != nil {
+			return err
+		}
+		if row.Kind == "php" {
+			return s.runInstallPHP(tctx, logf, row, *ver, in, project, finalParams)
+		}
+		return s.runInstall(tctx, logf, row, *ver, in, project, finalParams)
 	}
-	task, err := s.tasks.StartTask(TaskStoreInstall, fmt.Sprintf("安装 %s（%s）", row.Name, project), project, 30*time.Minute, installFn)
+	task, err := s.tasks.StartProjectTask(TaskStoreInstall, fmt.Sprintf("部署 %s（%s）", row.Name, project), in.NodeID, project, 45*time.Minute, installFn)
 	if err != nil {
 		return nil, err
 	}
 	return map[string]any{"taskId": task.ID, "project": project}, nil
 }
 
-// runInstall 任务化安装主体：重装清理 → 端口预检 → 部署 → 记录 → 一键反代。
+// prepareStoreInstall 在项目任务互斥期间恢复原参数并应用目标版本的固定参数。
+func (s *StoreService) prepareStoreInstall(ctx context.Context, project string, ver StoreVersion, in *StoreInstallInput) (map[string]string, error) {
+	if err := s.restoreStoreInstall(ctx, project, ver, in); err != nil {
+		return nil, err
+	}
+	// 参数合并：定义 default ∪ 用户输入；random 字段缺省时后端兜底随机
+	finalParams := map[string]string{}
+	for _, f := range ver.FormFields {
+		if f.EnvKey == "" {
+			continue
+		}
+		if !paramKeyPattern.MatchString(f.EnvKey) {
+			return nil, errs.ErrBadRequest
+		}
+		if f.Default != nil { // fmt.Sprint(nil) = "<nil>"，sanitize 后成 "nil" 污染参数
+			if strings.ContainsAny(stringifyParam(f.Default), "\x00\r\n") {
+				return nil, errs.ErrBadRequest
+			}
+			finalParams[f.EnvKey] = stringifyParam(f.Default)
+		}
+		if f.Random && f.Type == "password" && (in.Params == nil || stringifyParam(in.Params[f.EnvKey]) == "") {
+			if f.RandomFormat == "base64-32" {
+				key := make([]byte, 32)
+				if _, err := rand.Read(key); err != nil {
+					return nil, err
+				}
+				finalParams[f.EnvKey] = base64.StdEncoding.EncodeToString(key)
+			} else if f.RandomFormat == "" {
+				finalParams[f.EnvKey] = randomHex(randomHexBytes(f.RandomLen))
+			} else {
+				return nil, errs.Wrap(errs.ErrBadRequest, "不支持的随机值格式")
+			}
+		}
+	}
+	for k, v := range in.Params {
+		if !paramKeyPattern.MatchString(k) {
+			return nil, errs.Wrap(errs.ErrBadRequest, "参数名不合法: "+k)
+		}
+		if sv := stringifyParam(v); sv != "" {
+			if strings.ContainsAny(sv, "\x00\r\n") {
+				return nil, errs.Wrap(errs.ErrBadRequest, "参数值不能包含换行或空字符")
+			}
+			finalParams[k] = sv
+		}
+	}
+	for k, v := range ver.VersionParams {
+		if !paramKeyPattern.MatchString(k) || strings.ContainsAny(v, "\x00\r\n") {
+			return nil, errs.Wrap(errs.ErrBadRequest, "版本参数声明不合法")
+		}
+		finalParams[k] = v
+	}
+	for _, f := range ver.FormFields {
+		if f.RandomFormat == "base64-32" && (in.existing == nil || in.providedParams[f.EnvKey]) {
+			decoded, err := base64.StdEncoding.DecodeString(finalParams[f.EnvKey])
+			if err != nil || len(decoded) != 32 {
+				return nil, svcBadReq("参数 " + f.EnvKey + " 需要标准 Base64 编码的 32 字节密钥")
+			}
+		}
+	}
+	// 密码类字段兜底：用户/ AI 未提供非空值且无 random 声明时，拒绝落固定 default 之外的空值——
+	// envKey 含 PASSWORD 且最终为空一律随机生成（防 1Panel 包弱 default 泄漏后的空密码）。
+	for _, f := range ver.FormFields {
+		if f.Type == "password" && f.Required && strings.Contains(strings.ToUpper(f.EnvKey), "PASSWORD") && finalParams[f.EnvKey] == "" {
+			finalParams[f.EnvKey] = randomHex(randomHexBytes(f.RandomLen))
+		}
+	}
+	// M55 多实例：远程节点项目名带节点后缀（local 保持 app-<name> 兼容存量）
+	finalParams["CONTAINER_NAME"] = project
+	finalParams["CONTAINER_NAME1"] = project + "-1"
+
+	return finalParams, nil
+}
+
+// runInstall 任务化安装主体：准备与校验 → 部署 → 记录 → 一键反代。
 func (s *StoreService) runInstall(ctx context.Context, logf TaskLogf, app model.AppStoreApp, ver StoreVersion, in StoreInstallInput, project string, params map[string]string) error {
 	ac, err := s.clientFor(in.NodeID)
 	if err != nil {
@@ -1219,19 +1340,6 @@ func (s *StoreService) runInstall(ctx context.Context, logf TaskLogf, app model.
 	}
 	logf("info", "开始安装 %s 版本 %s → 项目 %s%s", app.Name, ver.ID, project,
 		mapStr(normalizeNodeID(in.NodeID) != "local", "（节点 "+normalizeNodeID(in.NodeID)+"）", ""))
-
-	// 重装场景：先 down 同名项目释放端口与容器
-	if out, err := agentclient.DoJSON[dto.ExecReq, dto.ExecResp](ac, ctx, "POST", "/agent/v1/exec",
-		&dto.ExecReq{Command: fmt.Sprintf("docker compose -p %s ps --format '{{.Name}}' 2>/dev/null | grep -q . && cd /opt/ypanel/compose/%s 2>/dev/null && docker compose -p %s down || true", project, project, project), TimeoutSecs: 120}); err == nil {
-		if strings.Contains(out.Output, project) || out.ExitCode == 0 {
-			logf("info", "已停止同名旧项目（重装）")
-		}
-	}
-
-	// 端口占用预检（目标节点）
-	if err := s.precheckPorts(ctx, logf, ac, params); err != nil {
-		return err
-	}
 
 	// 高级选项校验：网络（不存在可创建）、时区、hosts
 	network, err := s.resolveInstallNetwork(ctx, ac, in)
@@ -1248,7 +1356,7 @@ func (s *StoreService) runInstall(ctx context.Context, logf TaskLogf, app model.
 		if h == "" {
 			continue
 		}
-		if !extraHostPattern.MatchString(h) {
+		if !extraHostPattern.MatchString(h) && h != "host.docker.internal:host-gateway" {
 			return errs.Wrap(errs.ErrBadRequest, "hosts 映射格式不合法（需 域名:IP）: "+h)
 		}
 		hosts = append(hosts, h)
@@ -1260,20 +1368,31 @@ func (s *StoreService) runInstall(ctx context.Context, logf TaskLogf, app model.
 	}
 	_ = logs
 
-	// 已装记录 upsert（同名重装=换版本，参数同步落库供"参数"查看）
-	var exist model.AppStoreInstall
-	if err := s.db.Where("compose_project = ? AND node_id = ?", project, normalizeNodeID(in.NodeID)).First(&exist).Error; err == nil {
-		_ = s.db.Model(&exist).Updates(map[string]any{
+	// 从最终配置保存选项（含外接数据库自动追加的 host-gateway）。
+	cfg, err := readStoreComposeConfig(ctx, ac, "/opt/ypanel/compose/"+project, project)
+	if err != nil {
+		return fmt.Errorf("应用已部署，但读取最终安装选项失败: %w", err)
+	}
+	options := storeOptionsFromConfig(cfg, ver)
+	options.Network = network
+	var persistErr error
+	if in.existing != nil {
+		persistErr = s.db.Model(in.existing).Updates(map[string]any{
 			"source_id": app.SourceID, "key": app.Key, "name": in.Name, "version": ver.ID,
 			"params_json": marshalJSON(params), "node_id": normalizeNodeID(in.NodeID),
+			"options_json": marshalJSON(options),
 		}).Error
 	} else {
-		_ = s.db.Create(&model.AppStoreInstall{
+		persistErr = s.db.Create(&model.AppStoreInstall{
 			SourceID: app.SourceID, Key: app.Key, Name: in.Name, Version: ver.ID,
 			ComposeProject: project, ParamsJSON: marshalJSON(params), OwnerID: in.OwnerID,
-			NodeID: normalizeNodeID(in.NodeID),
+			OptionsJSON: marshalJSON(options), NodeID: normalizeNodeID(in.NodeID),
 		}).Error
 	}
+	if persistErr != nil {
+		return fmt.Errorf("应用已部署，但安装记录保存失败: %w", persistErr)
+	}
+
 	logf("info", "安装完成，项目 %s 已启动", project)
 
 	// 数据库类应用：等待初始化就绪后自动接管至数据库模块（对齐 1Panel「装完即可管理」）
@@ -1294,10 +1413,25 @@ func (s *StoreService) runInstall(ctx context.Context, logf TaskLogf, app model.
 		if port == "" {
 			port = "80"
 		}
-		logf("info", "创建反代站点 %s → http://%s:%s", in.Domain, project, port)
+		host := "127.0.0.1"
+		if normalizeNodeID(in.NodeID) != "local" {
+			node, err := s.nodes.ByID(in.NodeID)
+			if err != nil {
+				logf("warn", "读取反代目标节点失败: %s", err)
+				return nil
+			}
+			u, err := url.Parse(node.BaseURL)
+			if err != nil || u.Hostname() == "" {
+				logf("warn", "节点地址不能用于创建反代，请手动配置站点目标")
+				return nil
+			}
+			host = u.Hostname()
+		}
+		proxyPass := "http://" + net.JoinHostPort(host, port)
+		logf("info", "创建反代站点 %s → %s", in.Domain, proxyPass)
 		site, perr := s.sites.Create(ctx, SiteCreateInput{
 			Name: "app-" + in.Name, Type: "proxy", Domain: in.Domain,
-			ProxyPass: "http://" + project + ":" + port,
+			ProxyPass: proxyPass,
 			Remark:    "商店应用 " + app.Name + " 反代",
 		})
 		if perr != nil {
@@ -1309,7 +1443,7 @@ func (s *StoreService) runInstall(ctx context.Context, logf TaskLogf, app model.
 	return nil
 }
 
-// precheckPorts 端口占用预检：宿主已监听端口即冲突（compose down 后检测，本项目旧端口已释放）。
+// precheckPorts 新装应用的宿主发布端口预检，内部数据库端口不参与。
 func (s *StoreService) precheckPorts(ctx context.Context, logf TaskLogf, ac *agentclient.Client, params map[string]string) error {
 	ports := []int{}
 	for k, v := range params {
@@ -1327,6 +1461,10 @@ func (s *StoreService) precheckPorts(ctx context.Context, logf TaskLogf, ac *age
 		&dto.ExecReq{Command: "ss -tlnH | awk '{print $4}' | grep -oE '[0-9]+$' | sort -un", TimeoutSecs: 30})
 	if err != nil {
 		logf("warn", "端口预检跳过（ss 不可用）: %s", err.Error())
+		return nil
+	}
+	if out.TimedOut || out.ExitCode != 0 {
+		logf("warn", "端口预检命令未成功，端口冲突将由 Compose 部署时检查")
 		return nil
 	}
 	listening := map[int]bool{}
@@ -1349,12 +1487,17 @@ func (s *StoreService) precheckPorts(ctx context.Context, logf TaskLogf, ac *age
 }
 
 // deployCompose 两种包形态的统一部署（步骤日志写任务；network 为解析后的目标网络）。
-func (s *StoreService) deployCompose(ctx context.Context, logf TaskLogf, app model.AppStoreApp, ver StoreVersion, in StoreInstallInput, project string, params map[string]string, network, tz string, hosts []string, mountHostsFile bool) (string, error) {
+func (s *StoreService) deployCompose(ctx context.Context, logf TaskLogf, app model.AppStoreApp, ver StoreVersion, in StoreInstallInput, project string, params map[string]string, network, tz string, hosts []string, mountHostsFile bool) (logsText string, deployErr error) {
 	ac, err := s.clientFor(in.NodeID)
 	if err != nil {
 		return "", err
 	}
-	dir := "/opt/ypanel/compose/" + project
+	deployment, err := newStoreDeployment(ctx, ac, project)
+	if err != nil {
+		return "", err
+	}
+	defer deployment.finish(ac, &deployErr, logf)
+	dir := deployment.stage
 	var logs []string
 	step := func(desc, cmd string, timeoutSecs int) error {
 		out, err := agentclient.DoJSON[dto.ExecReq, dto.ExecResp](ac, ctx, "POST", "/agent/v1/exec",
@@ -1362,7 +1505,7 @@ func (s *StoreService) deployCompose(ctx context.Context, logf TaskLogf, app mod
 		if err != nil {
 			return errs.Wrapc(errs.CodeFileOpFailed, desc+" 失败: "+err.Error())
 		}
-		if out.ExitCode != 0 {
+		if out.TimedOut || out.ExitCode != 0 {
 			// compose up/pull 的真实错误常在输出尾部（首行多为 Pulling 进度）
 			return errs.Wrapc(errs.CodeFileOpFailed, desc+" 失败: "+tailOutput(out.Output, 1200))
 		}
@@ -1371,10 +1514,6 @@ func (s *StoreService) deployCompose(ctx context.Context, logf TaskLogf, app mod
 		return nil
 	}
 	if err := step("创建目录", fmt.Sprintf("mkdir -p %s", dir), 60); err != nil {
-		return strings.Join(logs, "\n"), err
-	}
-	// 清理上次部署的遗留（docker 会为缺失的挂载源自动建同名目录，残留会导致整包拷贝类型冲突）；数据卷目录 data 保留
-	if err := step("清理旧文件", fmt.Sprintf("cd %s && find . -mindepth 1 -maxdepth 1 ! -name 'data' -exec rm -rf {} +", dir), 120); err != nil {
 		return strings.Join(logs, "\n"), err
 	}
 	switch {
@@ -1479,29 +1618,40 @@ func (s *StoreService) deployCompose(ctx context.Context, logf TaskLogf, app mod
 			}
 		}
 	}
-	// .env 渲染
-	var envBuf strings.Builder
-	envBuf.WriteString("CONTAINER_NAME=" + project + "\n")
-	keys := make([]string, 0, len(params))
-	for k := range params {
-		keys = append(keys, k)
-	}
-	sort.Strings(keys)
-	for _, k := range keys {
-		envBuf.WriteString(k + "=" + params[k] + "\n")
-	}
-	if err := s.writeViaAgent(ctx, ac, dir+"/.env", envBuf.String()); err != nil {
+	if err := s.writeViaAgent(ctx, ac, dir+"/.env", renderStoreEnv(in, ver, params)); err != nil {
 		return strings.Join(logs, "\n"), err
 	}
 	logs = append(logs, "写入 .env ✓")
 	logf("info", "写入 .env ✓")
 	// 时区 / hosts 映射：compose override（up 自动合并全部服务）
-	if oerr := s.writeComposeOverride(ctx, logf, ac, dir, tz, hosts, mountHostsFile); oerr != nil {
+	if oerr := s.writeComposeOverride(ctx, logf, ac, dir, tz, hosts, mountHostsFile, map[string]string{"io.ypanel.app.key": app.Key, "io.ypanel.app.name": app.Name, "io.ypanel.app.instance": in.Name, "io.ypanel.app.project": project, "io.ypanel.app.node": normalizeNodeID(in.NodeID)}); oerr != nil {
 		return strings.Join(logs, "\n"), oerr
+	}
+	cfg, cerr := readStoreComposeConfig(ctx, ac, dir, project)
+	if cerr != nil {
+		return strings.Join(logs, "\n"), fmt.Errorf("新应用包配置校验失败，原部署保持运行: %w", cerr)
+	}
+	if in.existing == nil {
+		published := map[string]string{}
+		for name, svc := range cfg.Services {
+			for i, port := range svc.Ports {
+				published[fmt.Sprintf("PUBLISHED_PORT_%s_%d", name, i)] = port.Published
+			}
+		}
+		if err := s.precheckPorts(ctx, logf, ac, published); err != nil {
+			return strings.Join(logs, "\n"), err
+		}
 	}
 	// 预拉取缺失镜像（逐镜像流式进度进任务日志；全部本地已有则跳过不连 registry）
 	if perr := s.prePullImages(ctx, logf, ac, dir, project); perr != nil {
 		return strings.Join(logs, "\n"), perr
+	}
+	if err := deployment.activate(ctx, ac, cfg, ver.RecoverVolumes, logf); err != nil {
+		return strings.Join(logs, "\n"), err
+	}
+	dir = deployment.actual
+	if _, err := readStoreComposeConfig(ctx, ac, dir, project); err != nil {
+		return strings.Join(logs, "\n"), fmt.Errorf("应用配置落盘后校验失败: %w", err)
 	}
 	// init 服务先行（如 harbor prepare）：compose up 在命令开始的项目解析阶段就读取 env_file 内容，
 	// init 服务运行时才生成的配置（common/config/*/env 等）在全量 up 时还是空占位——先跑完 init
@@ -1550,7 +1700,7 @@ func (s *StoreService) deployCompose(ctx context.Context, logf TaskLogf, app mod
 			}
 		}
 	}
-	if err := step("compose up", fmt.Sprintf("cd %s && docker compose -p %s up -d", dir, project), 600); err != nil {
+	if err := step("compose up", fmt.Sprintf("cd %s && docker compose -p %s up -d --wait --wait-timeout 120 --remove-orphans", shellQuote(dir), shellQuote(project)), 600); err != nil {
 		return strings.Join(logs, "\n"), err
 	}
 	return strings.Join(logs, "\n"), nil
@@ -1710,6 +1860,13 @@ type StoreUninstallOptions struct {
 
 // Uninstall 卸载（异步任务）：compose down；数据/镜像/级联按选项执行，默认保留数据目录。
 func (s *StoreService) Uninstall(ctx context.Context, project string, opts StoreUninstallOptions) (map[string]any, error) {
+	if err := NormalizeComposeUpdateTarget(ctx, &dto.ComposePullUpdateReq{NodeID: opts.NodeID, Project: project}); err != nil {
+		return nil, err
+	}
+	var inst model.AppStoreInstall
+	if err := storeInstallQuery(s.db, project, opts.NodeID).First(&inst).Error; err != nil || !storeOwnerAllowed(ctx, inst) {
+		return nil, errs.ErrNotFound
+	}
 	if !storeAppNamePattern.MatchString(strings.TrimPrefix(project, "app-")) {
 		return nil, errs.ErrBadRequest
 	}
@@ -1717,7 +1874,7 @@ func (s *StoreService) Uninstall(ctx context.Context, project string, opts Store
 		return nil, errs.Wrap(errs.ErrBadRequest, "任务服务不可用")
 	}
 	nodeId := normalizeNodeID(opts.NodeID)
-	task, err := s.tasks.StartTask(TaskStoreUninstall, fmt.Sprintf("卸载 %s", project), project, 15*time.Minute,
+	task, err := s.tasks.StartProjectTask(TaskStoreUninstall, fmt.Sprintf("卸载 %s", project), nodeId, project, 15*time.Minute,
 		func(tctx context.Context, logf TaskLogf) error {
 			ac, aerr := s.clientFor(nodeId)
 			if aerr != nil {
@@ -1764,7 +1921,7 @@ func (s *StoreService) Uninstall(ctx context.Context, project string, opts Store
 			}
 			if opts.CascadeDB {
 				var linked []model.DatabaseInstance
-				_ = s.db.Where("compose_project = ?", project).Find(&linked).Error
+				_ = storeInstallQuery(s.db, project, nodeId).Find(&linked).Error
 				for _, d := range linked {
 					logf("info", "级联移除数据库纳管记录 %s（%s）及其备份", d.Name, d.Type)
 					_, _ = agentclient.DoJSON[dto.FileDeleteReq, struct{}](ac, tctx, "POST", "/agent/v1/files/delete",
@@ -1772,7 +1929,9 @@ func (s *StoreService) Uninstall(ctx context.Context, project string, opts Store
 					_ = s.db.Delete(&model.DatabaseInstance{}, d.ID).Error
 				}
 			}
-			_ = s.db.Where("compose_project = ?", project).Delete(&model.AppStoreInstall{}).Error
+			if err := storeInstallQuery(s.db, project, nodeId).Delete(&model.AppStoreInstall{}).Error; err != nil {
+				return err
+			}
 			logf("info", "卸载完成")
 			return nil
 		})
@@ -1784,9 +1943,13 @@ func (s *StoreService) Uninstall(ctx context.Context, project string, opts Store
 
 // Installed 已装列表。
 // InstalledByProject 按编排项目名取安装记录（M54-P3 属主断言用）。
-func (s *StoreService) InstalledByProject(project string) (*model.AppStoreInstall, error) {
+func (s *StoreService) InstalledByProject(project string, nodeID ...string) (*model.AppStoreInstall, error) {
 	var inst model.AppStoreInstall
-	if err := s.db.Where("compose_project = ?", project).First(&inst).Error; err != nil {
+	q := s.db.Where("compose_project = ?", project)
+	if len(nodeID) > 0 {
+		q = storeInstallQuery(s.db, project, nodeID[0])
+	}
+	if err := q.First(&inst).Error; err != nil {
 		return nil, err
 	}
 	return &inst, nil
@@ -1795,14 +1958,20 @@ func (s *StoreService) InstalledByProject(project string) (*model.AppStoreInstal
 // ownerFilterInstalls assigned 数据范围下仅保留 owner∈{uid,0} 的安装记录。
 func ownerFilterInstalls(ctx context.Context, installs []model.AppStoreInstall) []model.AppStoreInstall {
 	caller, ok := rbac.CallerFrom(ctx)
-	if !ok || !caller.Assigned() {
+	if !ok {
 		return installs
 	}
 	out := make([]model.AppStoreInstall, 0, len(installs))
-	for _, i := range installs {
-		if i.OwnerID == 0 || i.OwnerID == caller.UserID {
-			out = append(out, i)
+	for _, inst := range installs {
+		if !storeOwnerAllowed(ctx, inst) {
+			continue
 		}
+		if !caller.AllNodes {
+			if _, allowed := caller.NodeSet[normalizeNodeID(inst.NodeID)]; !allowed {
+				continue
+			}
+		}
+		out = append(out, inst)
 	}
 	return out
 }
@@ -1820,24 +1989,26 @@ func (s *StoreService) Installed() []model.AppStoreInstall {
 
 // StoreInstallInfo 已安装应用详情（列表卡片聚合：状态/端口/图标/可升级/参数）。
 type StoreInstallInfo struct {
-	ID             uint              `json:"id"`
-	SourceID       uint              `json:"sourceId"`
-	Key            string            `json:"key"`
-	Name           string            `json:"name"`
-	Remark         string            `json:"remark"`
-	AppName        string            `json:"appName"`
-	IconURL        string            `json:"iconUrl"`
-	Version        string            `json:"version"`
-	LatestVersion  string            `json:"latestVersion"`
-	Upgradable     bool              `json:"upgradable"`
-	ComposeProject string            `json:"composeProject"`
-	Running        bool              `json:"running"`
-	Ports          []int             `json:"ports"`
-	Params         map[string]string `json:"params"`  // 密码类值已打码
-	OwnerID        uint              `json:"ownerId"` // M54-P3 数据范围属主（0=公共）
-	CreatedAt      time.Time         `json:"createdAt"`
-	NodeID         string            `json:"nodeId"`
-	AdminUI        *StoreAdminUI     `json:"adminUI,omitempty"` // 内网管理界面（桌面注册用，URL 指向本机映射端口）
+	ID             uint                `json:"id"`
+	SourceID       uint                `json:"sourceId"`
+	Key            string              `json:"key"`
+	Name           string              `json:"name"`
+	Remark         string              `json:"remark"`
+	AppName        string              `json:"appName"`
+	IconURL        string              `json:"iconUrl"`
+	Version        string              `json:"version"`
+	LatestVersion  string              `json:"latestVersion"`
+	Upgradable     bool                `json:"upgradable"`
+	ComposeProject string              `json:"composeProject"`
+	Running        bool                `json:"running"`
+	Ports          []int               `json:"ports"`
+	Params         map[string]string   `json:"params"`  // 密码类值已打码
+	OwnerID        uint                `json:"ownerId"` // M54-P3 数据范围属主（0=公共）
+	CreatedAt      time.Time           `json:"createdAt"`
+	NodeID         string              `json:"nodeId"`
+	AdminUI        *StoreAdminUI       `json:"adminUI,omitempty"` // 内网管理界面（桌面注册用，URL 指向本机映射端口）
+	ContainerNames []string            `json:"containerNames"`
+	Options        storeInstallOptions `json:"options"`
 }
 
 // StoreAdminUI 已装应用的内网管理界面信息。
@@ -1870,6 +2041,7 @@ func (s *StoreService) InstalledDetailed(ctx context.Context, reqHost string) ([
 	}
 	// compose 运行状态（M55：按节点分组路由查询）
 	running := map[string]bool{}
+	containerNames := map[string][]string{}
 	nodeClients := map[string]*agentclient.Client{}
 	for _, i := range installs {
 		nid := normalizeNodeID(i.NodeID)
@@ -1880,7 +2052,13 @@ func (s *StoreService) InstalledDetailed(ctx context.Context, reqHost string) ([
 			nodeClients[nid] = ac
 			if projects, perr := agentclient.GetJSON[[]dto.ComposeProject](ac, ctx, "/agent/v1/compose/projects"); perr == nil {
 				for _, p := range projectsSafe(projects) {
-					running[p.Name] = running[p.Name] || p.Running > 0
+					id := nid + ":" + p.Name
+					running[id] = running[id] || p.Running > 0
+					for _, svc := range p.Services {
+						if svc.ContainerName != "" {
+							containerNames[id] = append(containerNames[id], svc.ContainerName)
+						}
+					}
 				}
 			}
 		}
@@ -1889,10 +2067,13 @@ func (s *StoreService) InstalledDetailed(ctx context.Context, reqHost string) ([
 	for _, i := range installs {
 		info := StoreInstallInfo{
 			ID: i.ID, SourceID: i.SourceID, Key: i.Key, Name: i.Name, Remark: i.Remark, Version: i.Version,
-			ComposeProject: i.ComposeProject, Running: running[i.ComposeProject],
+			ComposeProject: i.ComposeProject, Running: running[normalizeNodeID(i.NodeID)+":"+i.ComposeProject],
 			OwnerID: i.OwnerID, CreatedAt: i.CreatedAt, Params: map[string]string{}, Ports: []int{},
-			NodeID: normalizeNodeID(i.NodeID),
+			NodeID:         normalizeNodeID(i.NodeID),
+			ContainerNames: append([]string{}, containerNames[normalizeNodeID(i.NodeID)+":"+i.ComposeProject]...),
 		}
+		sort.Strings(info.ContainerNames)
+		_ = json.Unmarshal([]byte(i.OptionsJSON), &info.Options)
 		if m, ok := metas[fmt.Sprintf("%d/%s", i.SourceID, i.Key)]; ok {
 			info.AppName = m.name
 			info.IconURL = m.icon
@@ -1905,7 +2086,7 @@ func (s *StoreService) InstalledDetailed(ctx context.Context, reqHost string) ([
 		}
 		for k, v := range params {
 			lk := strings.ToUpper(k)
-			if strings.Contains(lk, "PASSWORD") || strings.Contains(lk, "SECRET") || strings.Contains(lk, "PASSWD") {
+			if strings.Contains(lk, "PASSWORD") || strings.Contains(lk, "SECRET") || strings.Contains(lk, "PASSWD") || strings.Contains(lk, "CREDENTIAL") || strings.Contains(lk, "TOKEN") || strings.HasSuffix(lk, "_URI") || strings.HasSuffix(lk, "_ACCESS_KEY") {
 				info.Params[k] = "******"
 				continue
 			}
@@ -2028,23 +2209,39 @@ func (s *StoreService) SaveInstallEnv(ctx context.Context, project, nodeId, cont
 			return errs.Wrap(errs.ErrBadRequest, "参数行不合法（需 KEY=VALUE 格式）: "+truncStr(t, 60))
 		}
 	}
-	ac, err := s.clientFor(nodeId)
+	if err := NormalizeComposeUpdateTarget(ctx, &dto.ComposePullUpdateReq{NodeID: nodeId, Project: project}); err != nil {
+		return err
+	}
+	done := make(chan error, 1)
+	_, err := s.tasks.StartProjectTask(TaskStoreInstall, "部署应用参数（"+project+"）", nodeId, project, 10*time.Minute, func(tctx context.Context, logf TaskLogf) error {
+		runErr := func() error {
+			ac, err := s.clientFor(nodeId)
+			if err != nil {
+				return err
+			}
+			dir := "/opt/ypanel/compose/" + project
+			if err := s.writeViaAgent(tctx, ac, dir+"/.env", content); err != nil {
+				return err
+			}
+			_, err = storeExec(tctx, ac, "cd "+shellQuote(dir)+" && docker compose -p "+shellQuote(project)+" up -d --force-recreate", 300)
+			if err != nil {
+				return fmt.Errorf("参数已保存，但重建容器失败: %w", err)
+			}
+			return nil
+		}()
+		done <- runErr
+		return runErr
+	})
 	if err != nil {
 		return err
 	}
-	if _, err := agentclient.DoJSON[dto.FileWriteReq, struct{}](ac, ctx, "POST", "/agent/v1/files/write",
-		&dto.FileWriteReq{Path: "/opt/ypanel/compose/" + project + "/.env", Content: content}); err != nil {
+	select {
+	case err := <-done:
 		return err
+	case <-ctx.Done():
+		return ctx.Err()
 	}
-	out, err := agentclient.DoJSON[dto.ExecReq, dto.ExecResp](ac, ctx, "POST", "/agent/v1/exec",
-		&dto.ExecReq{Command: fmt.Sprintf("docker compose -p %s up -d --force-recreate", project), TimeoutSecs: 300})
-	if err != nil {
-		return err
-	}
-	if out.ExitCode != 0 {
-		return errs.Wrapc(errs.CodeFileOpFailed, "参数已保存，但重建容器失败: "+tailOutput(out.Output, 800))
-	}
-	return nil
+
 }
 
 // ---------- 工具 ----------

@@ -69,7 +69,7 @@ export default {
   // 安装向导
   installTitle: '安装：{name}',
   installRunningTitle: '安装进行中：{name}',
-  appName: '应用名',
+  appName: '实例名',
   appNamePh: '小写字母/数字/中划线',
   database: '数据库',
   dbDefault: '应用自带（随包默认参数）',
@@ -104,7 +104,7 @@ export default {
   mountHosts: '挂载主机 /etc/hosts（容器内与主机 hosts 实时同步，只读）',
   advNote: '统一接入同一网络后可互相用容器名访问；时区 / hosts / 主机 hosts 挂载以 compose override 方式注入全部服务',
   hostModeNote: 'host 模式：容器直接使用宿主机网络栈（无网络隔离，端口映射失效，容器内 127.0.0.1 即宿主机）。安装时将自动改写应用编排。',
-  installNote: '安装为 compose 项目 app-<应用名>，容器接入 1panel-network；端口已随机避开占用（可手动修改，安装前会做占用预检）；卸载保留数据卷',
+  installNote: '安装为上方预览的 Compose 项目；容器使用所选网络与包内私有网络。宿主端口可修改，新装前检查占用；卸载默认保留数据。',
   installSuccess: '安装成功',
   inProgress: '进行中',
   taskN: '任务 #{n}',
@@ -172,5 +172,14 @@ export default {
   installAgain: '再次安装',
   dbManual: '手动填写数据库连接',
   prefillHint: '已沿用上次安装参数（可修改）；升级版本前请确认应用兼容性',
+
+  upgradeAppTitle: '升级应用版本',
+  upgradeAppHint: '使用商店最新包部署模板和镜像版本，沿用凭据、部署选项与持久化数据。请先备份应用数据；失败时恢复部署配置，无法撤销应用自身的数据库迁移。',
+  upgradeNamingHint: '新包可能调整容器名称，请检查自定义配置中的容器名引用；Compose 项目名保持稳定。',
+  upgradeStarted: '应用版本升级任务已创建',
+  upgradeFailed: '创建应用版本升级任务失败',
+  projectPreview: '编排项目：',
+  containerPreview: '容器名称：',
+  instanceNameHint: '实例名建议保留应用名称，例如 yudream-admin-prod、yudream-admin-test。',
 
 }

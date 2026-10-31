@@ -33,26 +33,44 @@ const (
 	TaskDockerMirror   = "docker-mirror"
 
 	// M65 耗时操作任务化（证书/面板更新/数据库/镜像/工具安装等）。
-	TaskCertIssue      = "cert-issue"
-	TaskCertRenew      = "cert-renew"
-	TaskAcmeRegister   = "acme-register"
-	TaskPanelUpgrade   = "panel-upgrade"
-	TaskDBBackup       = "db-backup"
-	TaskDBRestore      = "db-restore"
-	TaskDBExecPull     = "db-exec-pull"
-	TaskImageBuild     = "image-build"
-	TaskImageSave      = "image-save"
-	TaskImageLoad      = "image-load"
-	TaskFtpInstall     = "ftp-install"
-	TaskF2bInstall     = "fail2ban-install"
-	TaskDiskRestore    = "diskguard-restore"
-	TaskStoreSync      = "store-sync"
+	TaskCertIssue    = "cert-issue"
+	TaskCertRenew    = "cert-renew"
+	TaskAcmeRegister = "acme-register"
+	TaskPanelUpgrade = "panel-upgrade"
+	TaskDBBackup     = "db-backup"
+	TaskDBRestore    = "db-restore"
+	TaskDBExecPull   = "db-exec-pull"
+	TaskImageBuild   = "image-build"
+	TaskImageSave    = "image-save"
+	TaskImageLoad    = "image-load"
+	TaskFtpInstall   = "ftp-install"
+	TaskF2bInstall   = "fail2ban-install"
+	TaskDiskRestore  = "diskguard-restore"
+	TaskStoreSync    = "store-sync"
 )
 
 // TaskService 任务服务。
 type TaskService struct {
-	db *gorm.DB
-	mu sync.Mutex // 日志追加串行化（SQLite 单写）
+	db        *gorm.DB
+	mu        sync.Mutex // 日志追加串行化（SQLite 单写）
+	projectMu sync.Mutex // 应用部署和镜像更新共用任务创建锁
+}
+
+// StartProjectTask 同节点、同 Compose 项目的部署与镜像更新互斥。
+func (s *TaskService) StartProjectTask(typ, title, node, project string, timeout time.Duration, run func(context.Context, TaskLogf) error) (*model.AppTask, error) {
+	s.projectMu.Lock()
+	defer s.projectMu.Unlock()
+	ref := normalizeNodeID(node) + ":" + project
+	var n int64
+	if err := s.db.Model(&model.AppTask{}).
+		Where("type IN ? AND status = ? AND (ref = ? OR ref = ?)", []string{TaskStoreInstall, TaskStoreUninstall, composeUpdateManual, composeUpdateAuto}, TaskRunning, ref, project).
+		Count(&n).Error; err != nil {
+		return nil, err
+	}
+	if n > 0 {
+		return nil, errs.Wrapc(errs.CodeConflict, "该项目正在部署或更新，请在任务日志中查看进度")
+	}
+	return s.StartTask(typ, title, ref, timeout, run)
 }
 
 // NewTaskService 创建。

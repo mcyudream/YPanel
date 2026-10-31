@@ -68,22 +68,45 @@ func (s *AIService) aiToolsStore(ctx context.Context) []aiToolDef {
 		},
 		{
 			Name: "store_install_app", Module: aiModStore, Risk: aiRiskWrite,
-			Desc: "安装商店应用（异步任务：拉镜像/起容器，会先向用户确认参数）。安装前先用 list_database_instances/list_installed_apps 检查已有服务：应用需要的数据库已存在时告知用户选择复用还是新建，存在多个同类实例时列出候选交由用户选择；复用时经 reveal_db_credentials（需用户确认）获取连接信息填入 params（host/port/user/password），并先 create_database/create_db_user 准备库账号。input JSON：{\"sourceId\":1,\"key\":\"wordpress\",\"name\":\"app-blog\",\"params\":{\"PANEL_DB_ROOT_PASSWORD\":\"可选覆盖\"},\"version\":\"可选\",\"domain\":\"可选反代域名\"}。name 规则：小写字母/数字/中划线（如 app-blog）。params 按 store_app_detail 的 formFields envKey 传。注意：密码类参数（type=password，envKey 含 PASSWORD）不要传空串——若包未声明 random，必须自行生成 16 位以上随机强密码填入，并在交付说明中把密码告知用户；声明 random 的可省略由系统生成。用户选择复用已有实例时传 externalDB：{\"instanceId\":选中实例ID,\"database\":\"库名可省略\",\"user\":\"账号可省略\",\"createIfMissing\":true}，系统自动建库建号并注入连接参数（凭据不经过对话）。返回任务 ID，用 get_task 跟踪。",
+			Desc: "安装或重新部署商店应用，返回异步任务 ID。先查看 store_app_detail 的 formFields、middleware、optionalServices，再确认实例名与目标节点。name 为实例名（如 yudream-admin-prod），项目名前缀 app- 由系统添加。params 按 envKey 填写，random 字段可省略由系统生成，base64-32 会生成标准 Base64 的 32 字节密钥。同名部署沿用旧凭据和数据；升级既有应用优先使用 store_upgrade_app。externalDB 选择纳管实例后自动注入凭据，无需在对话中获取密码。固定镜像参数由所选商店版本管理。",
 			Parameters: schObj(map[string]any{
+				"node":     schStr("目标节点 ID，默认 local；不要传节点名称"),
 				"sourceId": schInt("应用来源 ID"), "key": schStr("应用 key"),
-				"name": schStr("应用实例名（小写字母/数字/中划线，如 app-blog）"),
-				"version": schStr("版本，空=最新"), "params": schObj(map[string]any{}, "安装参数（envKey→值）；密码字段必须传自生成的强密码，不要传空串"),
-				"domain": schStr("可选：安装后一键反代的域名"),
+				"name":           schStr("实例名，小写字母/数字/中划线，例如 yudream-admin-prod"),
+				"version":        schStr("商店版本，空=最新"),
+				"params":         map[string]any{"type": "object", "description": "envKey 到安装值，随机凭据可省略", "additionalProperties": map[string]any{"type": "string"}},
+				"domain":         schStr("安装后一键反代的域名"),
+				"network":        schStr("容器网络，默认 ypanel_default；host 为宿主网络"),
+				"createNetwork":  schBool("不存在时创建所选网络"),
+				"timezone":       schStr("时区，例如 Asia/Shanghai"),
+				"extraHosts":     map[string]any{"type": "array", "items": schStr("域名:IP 或 host.docker.internal:host-gateway")},
+				"mountHostsFile": schBool("只读挂载宿主 /etc/hosts"),
+				"externalDB": schObj(map[string]any{
+					"instanceId": schInt("SQL/Mongo 纳管实例 ID"), "redisInstanceId": schInt("Redis 实例 ID"),
+					"neo4jInstanceId": schInt("Neo4j 实例 ID"), "s3InstanceId": schInt("S3 实例 ID"),
+					"database": schStr("数据库/桶名称"), "user": schStr("应用数据库账号"), "createIfMissing": schBool("自动准备库与账号"),
+					"middlewareInstanceIds": map[string]any{"type": "object", "additionalProperties": map[string]any{"type": "integer"}},
+					"optionalServices":      map[string]any{"type": "array", "items": schStr("可选伴生服务 ID")},
+				}),
 			}, "sourceId", "key", "name"),
-			Fn: func(_ context.Context, input string) (string, error) {
-				p, err := parseToolArgs[StoreInstallInput](input)
+			Fn: func(ctx context.Context, input string) (string, error) {
+				p, err := parseToolArgs[struct {
+					StoreInstallInput
+					Node string `json:"node"`
+				}](input)
 				if err != nil {
 					return "", err
 				}
 				if strings.TrimSpace(p.Name) == "" {
 					return "", fmt.Errorf("缺少 name")
 				}
-				out, err := s.store.Install(ctx, p)
+				if p.Node != "" {
+					if p.NodeID != "" && p.NodeID != p.Node {
+						return "", fmt.Errorf("node 与 nodeId 不一致")
+					}
+					p.NodeID = p.Node
+				}
+				out, err := s.store.Install(ctx, p.StoreInstallInput)
 				if err != nil {
 					return "", err
 				}
@@ -91,8 +114,27 @@ func (s *AIService) aiToolsStore(ctx context.Context) []aiToolDef {
 			},
 		},
 		{
+			Name: "store_upgrade_app", Module: aiModStore, Risk: aiRiskWrite,
+			Desc:       "把已安装应用升级到商店最新版本包。会更新模板和版本包指定的镜像引用，保留真实参数、安装选项与持久化数据；配置失败会尝试恢复原部署，应用自身的数据库迁移无法自动撤销。先向用户确认目标实例和备份；先查看 list_installed_apps。与镜像自动更新互斥。返回 task，用 get_task 跟踪；仅下载镜像用镜像工具，沿用当前标签更新运行服务用 pull_compose_update。",
+			Parameters: schObj(map[string]any{"project": schStr("Compose 项目名"), "node": schStr("目标节点 ID，默认 local")}, "project"),
+			Fn: func(ctx context.Context, input string) (string, error) {
+				p, err := parseToolArgs[struct {
+					Project string `json:"project"`
+					Node    string `json:"node"`
+				}](input)
+				if err != nil {
+					return "", err
+				}
+				out, err := s.store.UpgradeApp(ctx, p.Project, p.Node)
+				if err != nil {
+					return "", err
+				}
+				return toolOut(out)
+			},
+		},
+		{
 			Name: "list_installed_apps", Module: aiModStore, Risk: aiRiskRead,
-			Desc: "列出已安装的应用（状态/端口/版本/安装参数摘要/可升级）。input 传 {}。",
+			Desc:       "列出已安装的应用（状态/端口/版本/安装参数摘要/可升级）。input 传 {}。",
 			Parameters: schObj(map[string]any{}),
 			Fn: func(_ context.Context, _ string) (string, error) {
 				out, err := s.store.InstalledDetailed(ctx, "")
@@ -106,11 +148,13 @@ func (s *AIService) aiToolsStore(ctx context.Context) []aiToolDef {
 			Name: "uninstall_app", Module: aiModStore, Risk: aiRiskDanger,
 			Desc: "卸载商店应用（compose down 停容器；数据/镜像/数据库纳管按选项删除，默认保留数据，会先向用户确认）。input JSON：{\"project\":\"app-blog\",\"purgeData\":false,\"removeImage\":false,\"cascadeDB\":false}",
 			Parameters: schObj(map[string]any{
-				"project": schStr("应用项目名（app- 开头，list_installed_apps 可查）"),
+				"node":      schStr("目标节点 ID，默认 local"),
+				"project":   schStr("应用项目名（app- 开头，list_installed_apps 可查）"),
 				"purgeData": schBool("同时删除应用数据"), "removeImage": schBool("同时删除镜像"), "cascadeDB": schBool("级联移除数据库纳管记录"),
 			}, "project"),
-			Fn: func(_ context.Context, input string) (string, error) {
+			Fn: func(ctx context.Context, input string) (string, error) {
 				p, err := parseToolArgs[struct {
+					Node        string `json:"node"`
 					Project     string `json:"project"`
 					PurgeData   bool   `json:"purgeData"`
 					RemoveImage bool   `json:"removeImage"`
@@ -123,7 +167,7 @@ func (s *AIService) aiToolsStore(ctx context.Context) []aiToolDef {
 					return "", fmt.Errorf("缺少 project")
 				}
 				out, err := s.store.Uninstall(ctx, p.Project, StoreUninstallOptions{
-					PurgeData: p.PurgeData, RemoveImage: p.RemoveImage, CascadeDB: p.CascadeDB,
+					NodeID: p.Node, PurgeData: p.PurgeData, RemoveImage: p.RemoveImage, CascadeDB: p.CascadeDB,
 				})
 				if err != nil {
 					return "", err

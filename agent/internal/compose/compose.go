@@ -224,7 +224,7 @@ func (m *Manager) List(ctx context.Context) ([]dto.ComposeProject, error) {
 			if svc == "" {
 				svc = c.Name
 			}
-			g.services[c.Name] = dto.ComposeServiceState{Name: svc, Image: c.Image, State: c.State}
+			g.services[c.Name] = dto.ComposeServiceState{Name: svc, Image: c.Image, State: c.State, ContainerName: c.Name}
 		}
 	}
 

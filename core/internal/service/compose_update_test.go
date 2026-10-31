@@ -89,8 +89,11 @@ func TestComposeUpdateExecution(t *testing.T) {
 	for _, tc := range []struct {
 		name, policy, failAt, wantErr                             string
 		noRunning, unchanged, timeout, wantUp, wantPost, wantWarn bool
+		drift, hookDrift                                          bool
 	}{
 		{name: "停止项目跳过", noRunning: true},
+		{name: "配置变化阻止拉取", drift: true, wantErr: "本地编排配置与运行容器不一致"},
+		{name: "前脚本修改配置阻止重建", hookDrift: true, wantErr: "本地编排配置与运行容器不一致"},
 		{name: "镜像未变化", unchanged: true},
 		{name: "只重建变化服务", wantUp: true, wantPost: true},
 		{name: "拉取非零退出", failAt: "pull", wantErr: "镜像拉取失败"},
@@ -103,8 +106,8 @@ func TestComposeUpdateExecution(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			images := []composeUpdateImage{
-				{Service: "web", Image: "web:stable", ID: "sha256:old", ConfigFiles: "/srv/demo/compose.yaml, /srv/demo/override.yaml", WorkDir: "/srv/demo"},
-				{Service: "db", Image: "db:16", ID: "sha256:db"},
+				{Service: "web", Image: "web:stable", ID: "sha256:old", ConfigHash: "hash-web", ConfigFiles: "/srv/demo/compose.yaml, /srv/demo/override.yaml", WorkDir: "/srv/demo"},
+				{Service: "db", Image: "db:16", ID: "sha256:db", ConfigHash: "hash-db"},
 				{Service: "migration", Image: "web:stable", ID: "sha256:old", OneOff: "True"},
 			}
 			var snapshot strings.Builder
@@ -115,11 +118,19 @@ func TestComposeUpdateExecution(t *testing.T) {
 					snapshot.WriteByte('\n')
 				}
 			}
+			hashChecks := 0
 			s, commands := newComposeUpdateTestService(t, func(req dto.ExecReq) dto.ExecResp {
 				kind := ""
 				switch {
 				case strings.HasPrefix(req.Command, "ids=$(docker ps"):
 					return dto.ExecResp{Output: snapshot.String()}
+				case strings.Contains(req.Command, " config --hash "):
+					hashChecks++
+					hash := "hash-web"
+					if tc.drift || (tc.hookDrift && hashChecks > 1) {
+						hash = "modified"
+					}
+					return dto.ExecResp{Output: "web " + hash + "\ndb hash-db\n"}
 				case strings.Contains(req.Command, " pull "):
 					kind = "pull"
 				case strings.Contains(req.Command, " up -d "):
@@ -154,6 +165,9 @@ func TestComposeUpdateExecution(t *testing.T) {
 			var up, post, pre bool
 			for _, command := range commands() {
 				if strings.Contains(command, " pull ") {
+					if tc.drift {
+						t.Error("发现未部署配置时不能开始拉取")
+					}
 					for _, want := range []string{"pull --ignore-buildable --policy always", "'--file' '/srv/demo/override.yaml'", "'--project-name' 'demo'"} {
 						if !strings.Contains(command, want) {
 							t.Errorf("拉取命令缺少 %q: %s", want, command)
@@ -175,7 +189,7 @@ func TestComposeUpdateExecution(t *testing.T) {
 			if up != tc.wantUp || post != tc.wantPost || warned != tc.wantWarn {
 				t.Fatalf("up/post/warn = %v/%v/%v, want %v/%v/%v", up, post, warned, tc.wantUp, tc.wantPost, tc.wantWarn)
 			}
-			if (tc.noRunning || tc.unchanged) && (pre || len(commands()) > 3) {
+			if (tc.noRunning || tc.unchanged) && (pre || len(commands()) > 4) {
 				t.Error("未发现更新时不应执行脚本或重建")
 			}
 		})

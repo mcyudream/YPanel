@@ -3,7 +3,7 @@
 
 - **现象**：1p 应用（mysql）首次安装失败（compose 里的 `./conf/my.cnf` 未随包上移）；修复整包拷贝后重装仍失败 `cp: cannot overwrite directory '././conf/my.cnf' with non-directory`。
 - **根因**：compose up 时 bind-mount 源 `./conf/my.cnf` 不存在，dockerd 自动创建了一个**同名目录**（经典行为）残留在项目目录；重装时整包拷贝要落的 `conf/my.cnf` 是文件，撞上残留目录报类型冲突。
-- **规避/解决**：重装部署前先清理项目目录旧内容（`find . -mindepth 1 -maxdepth 1 ! -name 'data' -exec rm -rf {} +`，1Panel/YP 应用规范数据卷固定在 `./data`，保留即不丢数据）。另外判别"部署没生效"看任务日志里的**步骤名**：旧二进制显示「定位 compose」，新版是「整理应用包」。
+- **规避/解决**：历史方案曾清理除 data 外的项目文件；2026-10-30 已确认会删除 plugins/config 等路径的数据，**不再适用**。当前保护全部新旧 bind 源，仅用 rmdir 修复确认空的同名文件目录；非空目录不得删除。详见 [商店升级数据保留](./store-upgrade.md)。定位旧部署可对照任务日志步骤名：旧版「定位 compose」，新版「整理应用包」。
 - **补充（2026-10-08，M33 P2）**：YP 源（yp-git）包内容物约定在 `package/` 子目录一层，`writeLocalPackage` 只对 compose 文件按 basename 重命名落项目根、附属文件曾按相对路径写进 `package/` 子层——compose 挂载 `./附属文件` 时源缺失，同样触发 dockerd 自动建同名目录（vector.toml 变空目录、容器循环 "Configuration error. error=Is a directory"）。已修：非 compose 附属文件剥离首层 `package/` 前缀落项目根。排障特征：项目目录出现「空的同名目录 + 文件在 package/ 里」即此症。
 - **来源**：2026-10-07 商店安装 mysql 两次失败排查（core/internal/service/store.go deployCompose）
 

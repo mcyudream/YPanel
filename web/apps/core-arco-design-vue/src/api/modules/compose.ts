@@ -8,6 +8,7 @@ export interface ComposeServiceState {
   name: string
   image: string
   state: string
+	containerName?: string
 }
 
 export interface ComposeProject {

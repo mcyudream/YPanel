@@ -96,7 +96,7 @@ func ownedProject(c *gin.Context, store *service.StoreService) (string, error) {
 	if dataScopeOf(c) != "assigned" {
 		return project, nil
 	}
-	inst, err := store.InstalledByProject(project)
+	inst, err := store.InstalledByProject(project, c.Query("nodeId"))
 	if err != nil {
 		return "", errNotFound("应用不存在")
 	}

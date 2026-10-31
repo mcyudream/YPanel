@@ -130,10 +130,13 @@ func (s *StoreService) CheckUpgrades(ctx context.Context) (map[string]any, error
 	return map[string]any{"checked": checked, "upgradable": upgradable, "items": details}, nil
 }
 
-// UpgradeApp 已装应用升级：按安装参数重装到最新版本（复用重装管线，保留 data 目录）。
-func (s *StoreService) UpgradeApp(ctx context.Context, project string) (map[string]any, error) {
+// UpgradeApp 使用商店最新版本包，保留真实参数、部署选项和持久化挂载。
+func (s *StoreService) UpgradeApp(ctx context.Context, project, nodeID string) (map[string]any, error) {
+	if err := NormalizeComposeUpdateTarget(ctx, &dto.ComposePullUpdateReq{NodeID: nodeID, Project: project}); err != nil {
+		return nil, err
+	}
 	var inst model.AppStoreInstall
-	if err := s.db.Where("compose_project = ?", project).First(&inst).Error; err != nil {
+	if err := storeInstallQuery(s.db, project, nodeID).First(&inst).Error; err != nil || !storeOwnerAllowed(ctx, inst) {
 		return nil, errs.New(errs.CodeNotFound, "error.installNotFound", "安装记录不存在")
 	}
 	var app model.AppStoreApp
@@ -143,12 +146,10 @@ func (s *StoreService) UpgradeApp(ctx context.Context, project string) (map[stri
 	if app.LatestVersion == "" || app.LatestVersion == inst.Version {
 		return map[string]any{"upgraded": false, "version": inst.Version}, nil
 	}
-	var params map[string]any
-	_ = json.Unmarshal([]byte(inst.ParamsJSON), &params)
-	// Install 对同名项目自带重装语义（down 同名项目→端口预检→部署→记录 upsert）
+	// Install 从目标节点恢复真实参数与选项，版本包声明的版本参数覆盖旧标签。
 	out, err := s.Install(ctx, StoreInstallInput{
 		SourceID: inst.SourceID, Key: inst.Key, Name: inst.Name, Version: app.LatestVersion,
-		Params: params, NodeID: inst.NodeID, // M55：升级保持在原节点
+		NodeID: inst.NodeID, OwnerID: inst.OwnerID, upgrade: true,
 	})
 	if err != nil {
 		return nil, err

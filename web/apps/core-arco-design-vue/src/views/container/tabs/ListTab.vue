@@ -80,7 +80,7 @@ const filtered = computed(() => {
     if (projectFilter.value !== 'all' && c.labels?.[LabelComposeProject] !== projectFilter.value) {
       return false
     }
-    if (kw && !c.name.toLowerCase().includes(kw) && !c.image.toLowerCase().includes(kw) && !c.id.toLowerCase().includes(kw)) {
+    if (kw && ![c.name, c.image, c.id, c.labels?.['io.ypanel.app.key'], c.labels?.['io.ypanel.app.instance']].some(value => value?.toLowerCase().includes(kw))) {
       return false
     }
     return true
@@ -469,6 +469,9 @@ onBeforeUnmount(() => {
             {{ c.name }}
           </button>
         </div>
+            <div v-if="c.labels?.['io.ypanel.app.key']" class="text-xs text-muted-foreground mt-1 truncate" :title="c.labels['io.ypanel.app.key']">
+              {{ c.labels['io.ypanel.app.name'] || c.labels['io.ypanel.app.key'] }} · {{ c.labels['io.ypanel.app.instance'] }} / {{ c.labels['io.ypanel.app.service'] }}
+            </div>
       </template>
       <template #cell-image="{ item: c }">
         <span class="block max-w-48 truncate font-mono text-xs text-muted-foreground" :title="c.image">{{ c.image }}</span>
