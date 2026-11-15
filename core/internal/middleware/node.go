@@ -24,7 +24,7 @@ var localImplicitPrefixes = []string{
 	"/snapshots", "/panel/backups", "/storage-accounts", "/backups",
 	"/vpn", "/firewall", "/fail2ban", "/nat", "/dns", "/hosts", "/ftp", "/ssh",
 	"/files", "/terminal", "/webgw", "/processes", "/services", "/logs/search",
-	"/git/credentials", "/config-revisions", "/nodes/exec",
+	"/ai/workspace", "/git/credentials", "/config-revisions", "/nodes/exec",
 }
 
 func localImplicitPath(path string) bool {

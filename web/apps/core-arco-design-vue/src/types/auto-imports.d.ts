@@ -83,6 +83,7 @@ declare global {
   const unref: typeof import('vue').unref
   const useAiAskStore: typeof import('../store/modules/aiAsk').useAiAskStore
   const useAiChat: typeof import('../composables/useAiChat').useAiChat
+  const useAiChatStore: typeof import('../store/modules/aiChat').useAiChatStore
   const useAiQuestionStore: typeof import('../store/modules/aiQuestion').useAiQuestionStore
   const useAppAccountStore: typeof import('../store/modules/app/account').useAppAccountStore
   const useAppAuth: typeof import('../composables/app/auth').useAppAuth
@@ -130,10 +131,13 @@ declare global {
   export type { Component, Slot, Slots, ComponentPublicInstance, ComputedRef, DirectiveBinding, ExtractDefaultPropTypes, ExtractPropTypes, ExtractPublicPropTypes, InjectionKey, PropType, Ref, ShallowRef, MaybeRef, MaybeRefOrGetter, VNode, WritableComputedRef } from 'vue'
   import('vue')
   // @ts-ignore
+  export type { DraftAttachment, ChatEntry } from '../store/modules/aiChat'
+  import('../store/modules/aiChat')
+  // @ts-ignore
   export type { FileEditorTab, FileEditorGroup, FileEditorLayout, FileEditorCursor, FileEditorStoreInstance } from '../store/modules/fileEditor'
   import('../store/modules/fileEditor')
   // @ts-ignore
-  export type { AiChatStep, AiKnowledgeRef, AiChatMessage, AiSegment, AiSceneData } from '../composables/useAiChat'
+  export type { AiChatStep, AiChatMessage, AiSegment } from '../composables/useAiChat'
   import('../composables/useAiChat')
   // @ts-ignore
   export type { BusEvent } from '../composables/useEventBus'

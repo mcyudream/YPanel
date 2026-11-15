@@ -3,8 +3,8 @@
 // （状态色 icon + 工具名 + 摘要 + 状态徽标），点击展开参数/原始输出；危险操作挂起时
 // 内联批准/拒绝提示（aiAsk store 驱动）。
 import { computed, ref, watch } from 'vue'
-import { useAiAskStore } from '@/store/modules/aiAsk'
 import { i18n } from '@/locales'
+import Attachment from './Attachment.vue'
 
 const props = defineProps<{
   seg: {
@@ -12,29 +12,23 @@ const props = defineProps<{
     args: string
     summary: string
     output: string
+    outputId?: string
     status: string
     risk?: string
     askId?: string
     done?: boolean
   }
 }>()
-
-const askStore = useAiAskStore()
 const collapsed = ref(true)
-
 // 仅真正挂了 askId 的工具块参与「待确认」判定——否则 undefined === undefined
 // 会把运行中的普通工具块（无 ask，如 full 档任务）误标成待确认（M62 修复）
-const askPending = computed(() =>
-  !props.seg.done && !!props.seg.askId && askStore.payload?.id === props.seg.askId,
-)
-
+const askPending = computed(() => !props.seg.done && !!props.seg.askId && props.seg.status === 'waiting')
 // 危险操作挂起时自动展开参数区，方便核对后到下方批准
 watch(askPending, (v) => {
   if (v) {
     collapsed.value = false
   }
 })
-
 const stateText = computed(() => {
   if (askPending.value) {
     return i18n.global.t('components.ydAiChat.pendingConfirmShort')
@@ -44,7 +38,6 @@ const stateText = computed(() => {
   }
   return props.seg.status || i18n.global.t('components.ydAiChat.stateDone')
 })
-
 const stateClass = computed(() => {
   if (askPending.value) {
     return 'border-amber-500/50 bg-amber-500/10 text-amber-600'
@@ -61,7 +54,6 @@ const stateClass = computed(() => {
   }
   return 'border-emerald-500/40 bg-emerald-500/10 text-emerald-600'
 })
-
 const icon = computed(() => {
   if (!props.seg.done) {
     return 'i-lucide:loader-circle'
@@ -74,7 +66,6 @@ const icon = computed(() => {
   }
   return 'i-lucide:check'
 })
-
 const iconClass = computed(() => {
   if (!props.seg.done) {
     return 'animate-spin text-primary'
@@ -87,7 +78,6 @@ const iconClass = computed(() => {
   }
   return 'text-emerald-600'
 })
-
 // 胶囊上的可读摘要：挂起/运行/失败优先展示，完成态优先展示结果摘要
 const pillText = computed(() => {
   if (askPending.value || !props.seg.done) {
@@ -95,7 +85,6 @@ const pillText = computed(() => {
   }
   return props.seg.summary || ''
 })
-
 function prettyArgs(raw: string) {
   try {
     return JSON.stringify(JSON.parse(raw), null, 2)
@@ -111,36 +100,37 @@ function prettyArgs(raw: string) {
     <!-- 头部胶囊：状态 icon + 工具名 + 摘要（长结果限三行换行，不横向撑页） + 状态徽标（点击折叠/展开） -->
     <button
       type="button"
-      class="flex max-w-full cursor-pointer items-start gap-2 rounded-2xl border border-border/60 bg-background/80 py-1.5 pl-2.5 pr-2 text-left text-xs transition-colors hover:border-border"
+      class="text-xs py-1.5 pl-2.5 pr-2 text-left border border-border/60 rounded-2xl bg-background/80 flex gap-2 max-w-full cursor-pointer transition-colors items-start hover:border-border"
       :class="askPending ? 'border-amber-500/50' : ''"
       @click="collapsed = !collapsed"
     >
-      <FaIcon :name="icon" class="mt-0.5 shrink-0 text-[11px]" :class="iconClass" />
-      <span class="shrink-0 font-medium text-foreground">{{ seg.name }}</span>
-      <span v-if="pillText" class="min-w-0 flex-1 line-clamp-3 break-words text-muted-foreground" :title="pillText">
+      <FaIcon :name="icon" class="text-[11px] mt-0.5 shrink-0" :class="iconClass" />
+      <span class="text-foreground font-medium shrink-0">{{ seg.name }}</span>
+      <span v-if="pillText" class="text-muted-foreground flex-1 min-w-0 break-words line-clamp-3" :title="pillText">
         {{ pillText }}
       </span>
-      <span class="mt-0.5 shrink-0 rounded-full px-2 py-0.5 text-[10px]" :class="stateClass">{{ stateText }}</span>
-      <FaIcon :name="collapsed ? 'i-lucide:chevron-down' : 'i-lucide:chevron-up'" class="mt-0.5 shrink-0 text-[10px] text-muted-foreground" />
+      <span class="text-[10px] mt-0.5 px-2 py-0.5 rounded-full shrink-0" :class="stateClass">{{ stateText }}</span>
+      <FaIcon :name="collapsed ? 'i-lucide:chevron-down' : 'i-lucide:chevron-up'" class="text-[10px] text-muted-foreground mt-0.5 shrink-0" />
     </button>
     <!-- 展开区：可读摘要 + 原始输出（默认折叠为胶囊，点开可见） -->
-    <div v-if="!collapsed" class="mt-1.5 space-y-1.5 rounded-lg border border-border/50 bg-muted/20 px-2.5 py-2">
-      <div v-if="seg.summary" class="text-[11px] leading-relaxed text-muted-foreground">
+    <div v-if="!collapsed" class="mt-1.5 px-2.5 py-2 border border-border/50 rounded-lg bg-muted/20 space-y-1.5">
+      <div v-if="seg.summary" class="text-[11px] text-muted-foreground leading-relaxed">
         {{ seg.summary }}
       </div>
       <div v-if="seg.output">
-        <div class="mb-0.5 text-[10px] font-medium text-muted-foreground/70">
+        <div class="text-[10px] text-muted-foreground/70 font-medium mb-0.5">
           {{ $t('components.ydAiChat.rawOutput') }}
         </div>
-        <pre class="max-h-52 overflow-y-auto whitespace-pre-wrap break-words rounded bg-muted/50 px-2 py-1.5 font-mono text-[11px] leading-relaxed text-muted-foreground">{{ seg.output }}</pre>
+        <pre class="text-[11px] text-muted-foreground leading-relaxed font-mono px-2 py-1.5 rounded bg-muted/50 max-h-52 whitespace-pre-wrap break-words overflow-y-auto">{{ seg.output }}</pre>
       </div>
+      <Attachment v-if="seg.outputId" :attachment="{ id: seg.outputId, name: `${seg.name}.txt`, mime: 'text/plain', kind: 'document', size: 0 }" />
       <div v-if="seg.args && seg.args !== seg.output">
-        <div class="mb-0.5 text-[10px] font-medium text-muted-foreground/70">
+        <div class="text-[10px] text-muted-foreground/70 font-medium mb-0.5">
           {{ $t('components.ydAiChat.args') }}
         </div>
-        <pre class="max-h-28 overflow-y-auto whitespace-pre-wrap break-words rounded bg-muted/50 px-2 py-1.5 font-mono text-[11px] leading-relaxed text-muted-foreground">{{ prettyArgs(seg.args) }}</pre>
+        <pre class="text-[11px] text-muted-foreground leading-relaxed font-mono px-2 py-1.5 rounded bg-muted/50 max-h-28 whitespace-pre-wrap break-words overflow-y-auto">{{ prettyArgs(seg.args) }}</pre>
       </div>
-      <div v-if="askPending" class="pt-1 text-[11px] text-amber-600">
+      <div v-if="askPending" class="text-[11px] text-amber-600 pt-1">
         <FaIcon name="i-lucide:arrow-down" class="mr-0.5" />{{ $t('components.ydAiChat.approveHint') }}
       </div>
     </div>

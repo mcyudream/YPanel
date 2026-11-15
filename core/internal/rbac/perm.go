@@ -229,10 +229,11 @@ func CallerFrom(ctx context.Context) (Caller, bool) {
 // aiModulePerm AI 工具模块 → [读权限点, 写权限点]。
 // write/danger 风险一律取写点；模块未登记时回落 ai:use / ai:admin。
 var aiModulePerm = map[string][2]string{
-	"system":           {"dashboard:read", "host:manage"},
+	"mcp":               {"ai:admin", "ai:admin"},
+	"system":            {"dashboard:read", "host:manage"},
 	"web_lookup":        {"dashboard:read", "dashboard:read"},
-	"monitor_alert":    {"monitor:read", "monitor:read"},
-	"panel_ops":        {"panel:read", "panel:manage"},
+	"monitor_alert":     {"monitor:read", "monitor:read"},
+	"panel_ops":         {"panel:read", "panel:manage"},
 	"docker_containers": {"docker:read", "docker:write"},
 	"docker_images":     {"docker:read", "docker:write"},
 	"docker_networks":   {"docker:read", "docker:write"},

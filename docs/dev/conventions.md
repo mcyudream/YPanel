@@ -127,6 +127,8 @@ php 站点 fastcgi 段**必须显式包含** `fastcgi_param CONTENT_TYPE $conten
 
 ## 6. AI 工具同步规范（M33 固化）
 
+会话、流恢复、上下文、附件与治理的专用约束见 [AI 会话与工具链规范](./ai-conversations.md)。
+
 面板功能与 AI 工具注册表**必须同步维护**——功能上线而工具缺失 = 功能不完整：
 
 - **新增功能**（新路由域/新服务能力）：在 `core/internal/service/aitools_*.go` 同步提供工具（名称/描述/JSON Schema/风险级/节点参数），并在 `internal/rbac/perm.go` 的 `aiModulePerm` 确认权限点映射、`aiModuleRegistry` 确认目录条目；

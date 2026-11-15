@@ -1,17 +1,18 @@
 <script setup lang="ts">
-// AI 工作空间（智能/工作空间）：沙箱目录文件列表 + 手动执行命令 + 上传/新建文件。
-// 沙箱目录与 core 侧 service/aibase.go workspaceDir 保持一致。
-import { i18n } from '@/locales'
-import apiFile from '@/api/modules/file'
 import api from '@/api'
+import apiFile from '@/api/modules/file'
+// AI 工作空间（智能/工作空间）：宿主工作目录文件列表 + 手动执行命令 + 上传/新建文件。
+// 宿主工作目录与 core 侧 service/aibase.go workspaceDir 保持一致。
+import { i18n } from '@/locales'
 
 defineOptions({
-  name: 'aiWorkspace',
+  name: 'AiWorkspace',
 })
-
 const WS_DIR = '/opt/ypanel/ai-workspace'
-
-interface WorkspaceFile { name: string, size: number }
+interface WorkspaceFile {
+  name: string
+  size: number
+}
 const wsFiles = ref<WorkspaceFile[]>([])
 const wsCommand = ref('')
 const wsOutput = ref('')
@@ -19,13 +20,11 @@ const wsRunning = ref(false)
 const wsError = ref('')
 const wsLoading = ref(false)
 const toast = useFaToast()
-
 // 空态可一键填入的示例命令
 const exampleCommands = [
   'echo "hello ypanel" > hello.txt && cat hello.txt',
   'uname -a > sysinfo.txt && cat sysinfo.txt',
 ]
-
 async function loadWorkspace() {
   wsLoading.value = true
   wsError.value = ''
@@ -42,11 +41,9 @@ async function loadWorkspace() {
     wsLoading.value = false
   }
 }
-
 function useExample(cmd: string) {
   wsCommand.value = cmd
 }
-
 async function wsRun() {
   if (!wsCommand.value.trim()) {
     return
@@ -65,15 +62,12 @@ async function wsRun() {
     wsRunning.value = false
   }
 }
-
 // ---- 上传文件 ----
 const fileInput = ref<HTMLInputElement>()
 const uploading = ref(false)
-
 function pickUpload() {
   fileInput.value?.click()
 }
-
 async function onFileChange(e: Event) {
   const input = e.target as HTMLInputElement
   const file = input.files?.[0]
@@ -94,19 +88,16 @@ async function onFileChange(e: Event) {
     uploading.value = false
   }
 }
-
 // ---- 新建文件 ----
 const createVisible = ref(false)
 const createName = ref('')
 const createContent = ref('')
 const creating = ref(false)
-
 function openCreate() {
   createName.value = ''
   createContent.value = ''
   createVisible.value = true
 }
-
 async function createFile() {
   const name = createName.value.trim()
   if (!name) {
@@ -131,7 +122,6 @@ async function createFile() {
     creating.value = false
   }
 }
-
 onMounted(loadWorkspace)
 onActivated(loadWorkspace)
 </script>
@@ -140,11 +130,11 @@ onActivated(loadWorkspace)
   <div>
     <FaPageMain>
       <div class="space-y-4">
-        <div class="rounded-lg border p-4">
+        <div class="p-4 border rounded-lg">
           <div class="mb-2 flex items-center justify-between">
             <div class="text-sm font-medium">
               {{ $t('ai.workspace.fileList') }}
-              <span class="ml-1 font-mono text-xs font-normal text-muted-foreground">{{ WS_DIR }}</span>
+              <span class="text-xs text-muted-foreground font-mono font-normal ml-1">{{ WS_DIR }}</span>
             </div>
             <div class="flex gap-2">
               <FaButton size="sm" variant="outline" @click="openCreate">
@@ -157,7 +147,7 @@ onActivated(loadWorkspace)
           </div>
 
           <!-- 加载失败：显示错误与重试，不误报"目录为空" -->
-          <div v-if="wsError" class="rounded-md border border-red-300/60 bg-red-500/5 p-3 text-xs text-red-600 dark:border-red-500/40 dark:text-red-400">
+          <div v-if="wsError" class="text-xs text-red-600 p-3 border border-red-300/60 rounded-md bg-red-500/5 dark:text-red-400 dark:border-red-500/40">
             {{ $t('ai.workspace.loadFailedWith', { msg: wsError }) }}
             <FaButton size="sm" variant="ghost" class="ml-2!" @click="loadWorkspace">
               {{ $t('ai.workspace.retry') }}
@@ -165,36 +155,36 @@ onActivated(loadWorkspace)
           </div>
 
           <!-- 空态引导：说明目录用途与文件来源 -->
-          <div v-else-if="!wsFiles.length" class="py-4 text-center text-xs text-muted-foreground">
+          <div v-else-if="!wsFiles.length" class="text-xs text-muted-foreground py-4 text-center">
             <div class="mb-2">
-              <FaIcon name="i-lucide:folder-code" class="mr-1 text-lg" />{{ $t('ai.workspace.emptyDir') }}
+              <FaIcon name="i-lucide:folder-code" class="text-lg mr-1" />{{ $t('ai.workspace.emptyDir') }}
             </div>
-            <p class="mx-auto mb-3 max-w-md leading-5">
+            <p class="leading-5 mx-auto mb-3 max-w-md">
               {{ $t('ai.workspace.emptyDesc') }}
             </p>
-            <div class="mx-auto max-w-md space-y-1.5 text-left">
+            <div class="mx-auto text-left max-w-md space-y-1.5">
               <div
                 v-for="cmd in exampleCommands"
                 :key="cmd"
-                class="flex cursor-pointer items-center justify-between gap-2 rounded-md border bg-muted/40 px-2.5 py-1.5 font-mono text-xs transition-colors hover:border-primary/50 hover:text-foreground"
+                class="text-xs font-mono px-2.5 py-1.5 border rounded-md bg-muted/40 flex gap-2 cursor-pointer transition-colors items-center justify-between hover:text-foreground hover:border-primary/50"
                 :title="$t('ai.workspace.fillHint')"
                 @click="useExample(cmd)"
               >
                 <span class="truncate">{{ cmd }}</span>
-                <FaIcon name="i-lucide:corner-down-left" class="shrink-0 opacity-60" />
+                <FaIcon name="i-lucide:corner-down-left" class="opacity-60 shrink-0" />
               </div>
             </div>
           </div>
 
           <template v-else>
-            <div v-for="f in wsFiles" :key="f.name" class="border-b py-1.5 font-mono text-xs last:border-b-0">
+            <div v-for="f in wsFiles" :key="f.name" class="text-xs font-mono py-1.5 border-b last:border-b-0">
               {{ f.name }} <span class="text-muted-foreground">({{ f.size }} B)</span>
             </div>
           </template>
         </div>
-        <div class="rounded-lg border p-4">
-          <div class="mb-2 text-sm font-medium">
-            {{ $t('ai.workspace.runTitle') }}
+        <div class="p-4 border rounded-lg">
+          <div class="text-sm font-medium mb-2">
+            {{ $t('aiAssistant.hostExecution') }}
           </div>
           <div class="flex gap-2">
             <FaInput v-model="wsCommand" :placeholder="$t('ai.workspace.runPlaceholder')" class="flex-1" @keyup.enter="wsRun" />
@@ -202,28 +192,28 @@ onActivated(loadWorkspace)
               {{ $t('ai.workspace.run') }}
             </FaButton>
           </div>
-          <pre v-if="wsOutput" class="mt-3 max-h-60 overflow-auto rounded-md bg-muted/60 p-3 font-mono text-xs">{{ wsOutput }}</pre>
+          <pre v-if="wsOutput" class="text-xs font-mono mt-3 p-3 rounded-md bg-muted/60 max-h-60 overflow-auto">{{ wsOutput }}</pre>
         </div>
       </div>
     </FaPageMain>
 
     <!-- 新建文件弹窗 -->
     <FaModal v-model="createVisible" :title="$t('ai.workspace.createFile')" class="max-w-xl!" :destroy-on-close="true">
-      <div class="space-y-3 text-sm">
-        <div class="flex items-center gap-3">
-          <span class="w-20 shrink-0 text-muted-foreground">{{ $t('ai.workspace.fileName') }}</span>
+      <div class="text-sm space-y-3">
+        <div class="flex gap-3 items-center">
+          <span class="text-muted-foreground shrink-0 w-20">{{ $t('ai.workspace.fileName') }}</span>
           <FaInput v-model="createName" :placeholder="$t('ai.workspace.namePlaceholder')" class="flex-1" @keyup.enter="createFile" />
         </div>
-        <div class="flex items-start gap-3">
-          <span class="w-20 shrink-0 pt-2 text-muted-foreground">{{ $t('ai.workspace.content') }}</span>
+        <div class="flex gap-3 items-start">
+          <span class="text-muted-foreground pt-2 shrink-0 w-20">{{ $t('ai.workspace.content') }}</span>
           <textarea
             v-model="createContent"
             rows="8"
-            class="w-full resize-y rounded-md border bg-background p-2 font-mono text-xs outline-none focus:border-primary"
+            class="text-xs font-mono p-2 outline-none border rounded-md bg-background w-full resize-y focus:border-primary"
             :placeholder="$t('ai.workspace.contentPlaceholder')"
           />
         </div>
-        <p class="pl-23 text-xs text-muted-foreground">
+        <p class="text-xs text-muted-foreground pl-23">
           {{ $t('ai.workspace.willCreate', { path: WS_DIR }) }}
         </p>
       </div>

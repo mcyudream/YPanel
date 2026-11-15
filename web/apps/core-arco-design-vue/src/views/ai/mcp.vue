@@ -1,16 +1,13 @@
 <script setup lang="ts">
+import type { MCPOperation, MCPServer } from '@/api/modules/ai'
+import { mcpApi, mcpOpsApi } from '@/api/modules/ai'
 // MCP 服务器（智能/MCP）：外部工具服务器接入（stdio / streamable-http），工具自动并入对话。
 import { i18n, tr } from '@/locales'
-import type { MCPServer } from '@/api/modules/ai'
-import { mcpApi, mcpOpsApi } from '@/api/modules/ai'
-import type { MCPOperation } from '@/api/modules/ai'
 
 defineOptions({
-  name: 'aiMcp',
+  name: 'AiMcp',
 })
-
 const toast = useFaToast()
-
 const mcpServers = ref<MCPServer[]>([])
 const mcpVisible = ref(false)
 const mcpSaving = ref(false)
@@ -18,26 +15,24 @@ const mcpTesting = ref('')
 const mcpForm = ref<MCPServer>({ name: '', transport: 'stdio', command: '', args: [], url: '', enabled: true })
 const mcpTools = ref<string[]>([])
 const mcpTestName = ref('')
-
 async function loadMCP() {
   try {
     mcpServers.value = await mcpApi.list()
   }
-  catch {}
-}
+  catch {
 
+  }
+}
 const mcpArgsStr = computed({
   get: () => (mcpForm.value.args || []).join(' '),
   set: (v: string) => {
     mcpForm.value.args = v.split(/\s+/).filter(Boolean)
   },
 })
-
 function openMCP(s?: MCPServer) {
   mcpForm.value = s ? JSON.parse(JSON.stringify(s)) : { name: '', transport: 'stdio', command: '', args: [], url: '', enabled: true }
   mcpVisible.value = true
 }
-
 async function saveMCP() {
   mcpSaving.value = true
   try {
@@ -52,7 +47,6 @@ async function saveMCP() {
     mcpSaving.value = false
   }
 }
-
 async function testMCP(s: MCPServer) {
   mcpTesting.value = s.name
   try {
@@ -68,13 +62,11 @@ async function testMCP(s: MCPServer) {
     mcpTesting.value = ''
   }
 }
-
 // ---- M45：MCP 写操作审批 ----
 const ops = ref<MCPOperation[]>([])
 const opsLoading = ref(false)
 const opsState = ref('pending')
 let opsTimer: ReturnType<typeof setInterval> | null = null
-
 async function loadOps() {
   opsLoading.value = true
   try {
@@ -84,33 +76,44 @@ async function loadOps() {
     opsLoading.value = false
   }
 }
-
 async function decideOp(op: MCPOperation, approve: boolean) {
   await mcpOpsApi.approve(op.id, approve)
   toast.success(i18n.global.t(approve ? 'ai.mcp.approved' : 'ai.mcp.rejected'))
   await loadOps()
 }
-
 function fmtState(st: string) {
   return tr(`ai.mcp.state.${st}`, st)
 }
-
 function stateCls(st: string) {
-  if (st === 'pending') return 'bg-amber-500/10 text-amber-600'
-  if (st === 'succeeded') return 'bg-emerald-500/10 text-emerald-600'
-  if (st === 'failed' || st === 'rejected') return 'bg-red-500/10 text-red-600'
+  if (st === 'pending') {
+    return 'bg-amber-500/10 text-amber-600'
+  }
+  if (st === 'succeeded') {
+    return 'bg-emerald-500/10 text-emerald-600'
+  }
+  if (st === 'failed' || st === 'rejected') {
+    return 'bg-red-500/10 text-red-600'
+  }
   return 'bg-muted text-muted-foreground'
 }
-
 watch(opsState, loadOps)
-
 function toggleOpsPolling(on: boolean) {
-  if (opsTimer) { clearInterval(opsTimer); opsTimer = null }
-  if (on) { void loadOps(); opsTimer = setInterval(loadOps, 5000) }
+  if (opsTimer) {
+    clearInterval(opsTimer)
+    opsTimer = null
+  }
+  if (on) {
+    void loadOps()
+    opsTimer = setInterval(loadOps, 5000)
+  }
 }
-
-onMounted(() => { loadMCP() })
-onActivated(() => { loadMCP(); toggleOpsPolling(opsState.value === 'pending') })
+onMounted(() => {
+  loadMCP()
+})
+onActivated(() => {
+  loadMCP()
+  toggleOpsPolling(opsState.value === 'pending')
+})
 onDeactivated(() => toggleOpsPolling(false))
 </script>
 
@@ -118,8 +121,8 @@ onDeactivated(() => toggleOpsPolling(false))
   <div>
     <FaPageMain>
       <!-- M45：写操作审批 -->
-      <div class="mb-6 rounded-lg border bg-background p-4">
-        <div class="flex flex-wrap items-center gap-2">
+      <div class="mb-6 p-4 border rounded-lg bg-background">
+        <div class="flex flex-wrap gap-2 items-center">
           <FaIcon name="i-lucide:shield-check" class="text-base text-primary opacity-70" />
           <span class="text-sm font-medium">{{ $t('ai.mcp.opsTitle') }}</span>
           <YdSelect
@@ -132,18 +135,26 @@ onDeactivated(() => toggleOpsPolling(false))
               { label: $t('ai.mcp.state.expired'), value: 'expired' },
             ]"
           />
-          <FaButton variant="ghost" size="sm" @click="loadOps">{{ $t('common.refresh') }}</FaButton>
+          <FaButton variant="ghost" size="sm" @click="loadOps">
+            {{ $t('common.refresh') }}
+          </FaButton>
         </div>
-        <div v-if="!ops.length" class="mt-2 text-xs text-muted-foreground">{{ $t('ai.mcp.opsEmpty') }}</div>
-        <div v-for="op in ops" :key="op.id" class="mt-2 flex flex-wrap items-center gap-2 rounded-md border px-3 py-2 text-xs">
-          <span class="rounded-full px-2 py-0.5" :class="stateCls(op.state)">{{ fmtState(op.state) }}</span>
-          <span class="font-mono font-medium">{{ op.tool }}</span>
-          <span class="max-w-64 truncate font-mono text-muted-foreground" :title="op.args">{{ op.args }}</span>
+        <div v-if="!ops.length" class="text-xs text-muted-foreground mt-2">
+          {{ $t('ai.mcp.opsEmpty') }}
+        </div>
+        <div v-for="op in ops" :key="op.id" class="text-xs mt-2 px-3 py-2 border rounded-md flex flex-wrap gap-2 items-center">
+          <span class="px-2 py-0.5 rounded-full" :class="stateCls(op.state)">{{ fmtState(op.state) }}</span>
+          <span class="font-medium font-mono">{{ op.tool }}</span>
+          <span class="text-muted-foreground font-mono max-w-64 truncate" :title="op.args">{{ op.args }}</span>
           <span class="text-muted-foreground">{{ new Date(op.createdAt).toLocaleTimeString('zh-CN', { hour12: false }) }}</span>
           <span v-if="op.approvedBy" class="text-muted-foreground">by {{ op.approvedBy }}</span>
           <div v-if="op.state === 'pending'" class="ml-auto flex gap-1">
-            <FaButton variant="outline" size="sm" @click="decideOp(op, true)">{{ $t('ai.mcp.approve') }}</FaButton>
-            <FaButton variant="outline" size="sm" class="text-red-500!" @click="decideOp(op, false)">{{ $t('ai.mcp.deny') }}</FaButton>
+            <FaButton variant="outline" size="sm" @click="decideOp(op, true)">
+              {{ $t('ai.mcp.approve') }}
+            </FaButton>
+            <FaButton variant="outline" size="sm" class="text-red-500!" @click="decideOp(op, false)">
+              {{ $t('ai.mcp.deny') }}
+            </FaButton>
           </div>
         </div>
       </div>
@@ -157,18 +168,18 @@ onDeactivated(() => toggleOpsPolling(false))
             <FaIcon name="i-lucide:plus" class="mr-1" /> {{ $t('ai.mcp.addServer') }}
           </FaButton>
         </div>
-        <div v-if="!mcpServers.length" class="rounded-lg border p-8 text-center text-sm text-muted-foreground">
+        <div v-if="!mcpServers.length" class="text-sm text-muted-foreground p-8 text-center border rounded-lg">
           {{ $t('ai.mcp.empty') }}
         </div>
-        <div v-for="sv in mcpServers" :key="sv.name" class="rounded-lg border p-4">
+        <div v-for="sv in mcpServers" :key="sv.name" class="p-4 border rounded-lg">
           <div class="flex items-center justify-between">
             <div class="min-w-0">
-              <div class="flex items-center gap-2 text-sm font-medium">
+              <div class="text-sm font-medium flex gap-2 items-center">
                 {{ sv.name }}
-                <span class="rounded-full bg-muted px-2 py-0.5 font-mono text-xs text-muted-foreground">{{ sv.transport }}</span>
-                <span v-if="sv.enabled" class="rounded-full bg-emerald-500/10 px-2 py-0.5 text-xs text-emerald-600">{{ $t('common.enabled') }}</span>
+                <span class="text-xs text-muted-foreground font-mono px-2 py-0.5 rounded-full bg-muted">{{ sv.transport }}</span>
+                <span v-if="sv.enabled" class="text-xs text-emerald-600 px-2 py-0.5 rounded-full bg-emerald-500/10">{{ $t('common.enabled') }}</span>
               </div>
-              <div class="mt-1 truncate font-mono text-xs text-muted-foreground">
+              <div class="text-xs text-muted-foreground font-mono mt-1 truncate">
                 {{ sv.transport === 'stdio' ? `${sv.command} ${sv.args?.join(' ') || ''}` : sv.url }}
               </div>
             </div>
@@ -185,7 +196,7 @@ onDeactivated(() => toggleOpsPolling(false))
             </div>
           </div>
           <div v-if="mcpTestName === sv.name && mcpTools.length" class="mt-2 flex flex-wrap gap-1">
-            <span v-for="t in mcpTools" :key="t" class="rounded bg-muted px-1.5 py-0.5 font-mono text-[11px]">
+            <span v-for="t in mcpTools" :key="t" class="text-[11px] font-mono px-1.5 py-0.5 rounded bg-muted">
               {{ t }}
             </span>
           </div>
@@ -195,13 +206,13 @@ onDeactivated(() => toggleOpsPolling(false))
 
     <!-- MCP 编辑 -->
     <FaModal v-model="mcpVisible" :title="mcpForm.name ? $t('ai.mcp.editTitle', { name: mcpForm.name }) : $t('ai.mcp.addTitle')" class="max-w-2xl!" :destroy-on-close="true">
-      <div class="space-y-3 text-sm">
-        <div class="flex items-center gap-3">
-          <span class="w-24 shrink-0 text-muted-foreground">{{ $t('common.name') }}</span>
+      <div class="text-sm space-y-3">
+        <div class="flex gap-3 items-center">
+          <span class="text-muted-foreground shrink-0 w-24">{{ $t('common.name') }}</span>
           <FaInput v-model="mcpForm.name" :placeholder="$t('ai.mcp.namePlaceholder')" class="flex-1" />
         </div>
-        <div class="flex items-center gap-3">
-          <span class="w-24 shrink-0 text-muted-foreground">{{ $t('ai.mcp.transport') }}</span>
+        <div class="flex gap-3 items-center">
+          <span class="text-muted-foreground shrink-0 w-24">{{ $t('ai.mcp.transport') }}</span>
           <YdSelect
             v-model="mcpForm.transport"
             :options="[
@@ -213,24 +224,25 @@ onDeactivated(() => toggleOpsPolling(false))
           />
         </div>
         <div v-if="mcpForm.transport === 'stdio'" class="space-y-3">
-          <div class="flex items-center gap-3">
-            <span class="w-24 shrink-0 text-muted-foreground">{{ $t('ai.mcp.command') }}</span>
+          <div class="flex gap-3 items-center">
+            <span class="text-muted-foreground shrink-0 w-24">{{ $t('ai.mcp.command') }}</span>
             <FaInput v-model="mcpForm.command" placeholder="npx" class="flex-1" />
           </div>
-          <div class="flex items-center gap-3">
-            <span class="w-24 shrink-0 text-muted-foreground">{{ $t('ai.mcp.args') }}</span>
+          <div class="flex gap-3 items-center">
+            <span class="text-muted-foreground shrink-0 w-24">{{ $t('ai.mcp.args') }}</span>
             <FaInput v-model="mcpArgsStr" placeholder="-y @modelcontextprotocol/server-filesystem /tmp" class="flex-1" />
           </div>
         </div>
-        <div v-else class="flex items-center gap-3">
-          <span class="w-24 shrink-0 text-muted-foreground">{{ $t('ai.mcp.endpoint') }}</span>
+        <div v-else class="flex gap-3 items-center">
+          <span class="text-muted-foreground shrink-0 w-24">{{ $t('ai.mcp.endpoint') }}</span>
           <FaInput v-model="mcpForm.url" placeholder="http://127.0.0.1:3001/mcp" class="flex-1" />
         </div>
-        <div class="flex items-center gap-3">
-          <span class="w-24 shrink-0 text-muted-foreground">{{ $t('ai.mcp.envVars') }}</span>
+        <div class="flex gap-3 items-center">
+          <span class="text-muted-foreground shrink-0 w-24">{{ $t('ai.mcp.envVars') }}</span>
           <FaInput v-model="mcpArgsStr" :placeholder="$t('ai.mcp.envPlaceholder')" disabled class="flex-1" />
         </div>
       </div>
+      <label class="text-sm my-3 flex items-center justify-between"><span>{{ $t('aiAssistant.privateEndpoint') }}</span><FaSwitch v-model="mcpForm.allowPrivate" /></label>
       <template #footer>
         <FaButton variant="outline" @click="mcpVisible = false">
           {{ $t('common.cancel') }}

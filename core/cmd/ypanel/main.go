@@ -152,7 +152,8 @@ func run(ctx context.Context, cfg *config.Config) error {
 	src2Svc.StartAutoUpdateLoop(ctx)
 	// M31：AI 工具治理升级——全量服务依赖装配（原 126 行 aiSvc 创建移至此处，确保全部依赖就绪）
 	aiSvc := service.NewAIService(gdb, service.AIDeps{
-		Nodes: nodes, DBSvc: dbSvc, DBAdmin: dbAdminSvc, MW: mwSvc, Settings: settings,
+		DataDir: cfg.DataDir,
+		Nodes:   nodes, DBSvc: dbSvc, DBAdmin: dbAdminSvc, MW: mwSvc, Settings: settings,
 		Skills: service.NewSkillsManager(nodes, settings),
 		Sites:  siteSvc, Certs: certSvc, Runtimes: rtSvc, DockerX: dockerExtSvc,
 		FW: fwSvc, NAT: natSvc, Hosts: hostsSvc, DNS: dnsSvc, Cron: cronSvc,
@@ -162,6 +163,10 @@ func run(ctx context.Context, cfg *config.Config) error {
 		LogC: logCentralSvc, Rev: revSvc,
 		Nginx: nginxSvc, Probe: probeSvc, Creds: credSvc,
 	})
+	if err := aiSvc.RecoverChatRuns(); err != nil {
+		slog.Error("AI 运行记录恢复失败", "err", err)
+		os.Exit(1)
+	}
 	alertSvc.SetLogCentral(logCentralSvc) // P3 日志量告警：VL 聚合计数（metric=log 规则）
 	// M51：桌面工作台内网浏览器——会话式反代网关（第二端口）
 	webgwSvc := service.NewWebGwService(ctx, settings)

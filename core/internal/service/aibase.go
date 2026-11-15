@@ -4,13 +4,13 @@
 package service
 
 import (
-	"log/slog"
 	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"sort"
 	"strings"
@@ -28,14 +28,16 @@ import (
 
 // AIProvider 供应商配置。
 type AIProvider struct {
-	ID        uint   `json:"id"`
-	Name      string `json:"name"`
-	APIType   string `json:"apiType"` // openai（兼容）/ anthropic
-	BaseURL   string `json:"baseURL"`
-	APIKey    string `json:"apiKey"`
-	Model     string `json:"model"`
-	Models    string `json:"models"` // 可用模型列表（逗号分隔）；空 = 仅 Model 一个
-	IsDefault bool   `json:"isDefault"`
+	ID           uint   `json:"id"`
+	Name         string `json:"name"`
+	APIType      string `json:"apiType"` // openai（兼容）/ anthropic
+	BaseURL      string `json:"baseURL"`
+	APIKey       string `json:"apiKey"`
+	Model        string `json:"model"`
+	Models       string `json:"models"` // 可用模型列表（逗号分隔）；空 = 仅 Model 一个
+	Capabilities string `json:"capabilities"`
+	AllowPrivate bool   `json:"allowPrivate"`
+	IsDefault    bool   `json:"isDefault"`
 }
 
 // AIKnowledge 知识库条目。
@@ -46,14 +48,6 @@ type AIKnowledge struct {
 }
 
 // ChatMessage 对话消息。
-type ChatMessage struct {
-	Role      string          `json:"role"`
-	Content   string          `json:"content"`
-	Reasoning string          `json:"reasoning,omitempty"`
-	Steps     []ChatStep      `json:"steps,omitempty"`
-	Knowledge []ChatKnowledge `json:"knowledge,omitempty"`
-}
-
 // ChatKnowledge 回答引用的知识库条目（随会话持久化）。
 type ChatKnowledge struct {
 	Title string `json:"title"`
@@ -67,47 +61,56 @@ type ChatStep struct {
 	Detail  string `json:"detail,omitempty"`
 	Status  string `json:"status,omitempty"` // 失败/完成（空 = 未结束）
 	Done    bool   `json:"done,omitempty"`
+	Summary string `json:"summary,omitempty"`
+	Output  string `json:"output,omitempty"`
+	AskID   string `json:"askId,omitempty"`
 }
 
 // AIService AI 助手。
 type AIService struct {
-	db        *gorm.DB
-	nodes     *NodeService
-	dbSvc     *DatabaseService
-	adminSvc  *DBAdminService
-	mwSvc     *MiddlewareService
-	settings  *SettingService
-	skills    *SkillsManager
-	sites     *SiteService
-	certs     *CertificateService
-	runtimes  *RuntimeService
-	dockerX   *DockerExtService
-	fw        *FirewallService
-	nat       *NatForwardService
-	hosts     *HostsService
-	dns       *DnsService
-	cron      *Cron
-	store     *StoreService
-	f2b       *Fail2banService
-	src2      *Src2ComposeService
-	alert     *AlertService
-	hist      *HistoryRecorder
-	notif     *NotificationService
-	panelBk   *PanelBackupService
-	su        *SelfUpdateService
-	vpn       *VPNService
-	logc      *LogCentralService
-	rev       *RevisionService
-	nginx     *NginxService
-	probe     *ProbeService
-	creds     *GitCredService
-	pendingAsks sync.Map // askID → *aiAskRequest（等待用户确认的危险操作）
+	db               *gorm.DB
+	nodes            *NodeService
+	dbSvc            *DatabaseService
+	adminSvc         *DBAdminService
+	mwSvc            *MiddlewareService
+	settings         *SettingService
+	skills           *SkillsManager
+	sites            *SiteService
+	certs            *CertificateService
+	runtimes         *RuntimeService
+	dockerX          *DockerExtService
+	fw               *FirewallService
+	nat              *NatForwardService
+	hosts            *HostsService
+	dns              *DnsService
+	cron             *Cron
+	store            *StoreService
+	f2b              *Fail2banService
+	src2             *Src2ComposeService
+	alert            *AlertService
+	hist             *HistoryRecorder
+	notif            *NotificationService
+	panelBk          *PanelBackupService
+	su               *SelfUpdateService
+	vpn              *VPNService
+	logc             *LogCentralService
+	rev              *RevisionService
+	nginx            *NginxService
+	probe            *ProbeService
+	creds            *GitCredService
+	pendingAsks      sync.Map // askID → *aiAskRequest（等待用户确认的危险操作）
 	pendingQuestions sync.Map // questionID → *aiQuestionRequest（等待用户回答的交互提问）
-	runs sync.Map // 会话ID → *chatRun（M62 后台任务运行体，跨窗口订阅）
+	runMu            sync.Mutex
+	dataDir          string
+	lastAttachmentGC time.Time
+	mcpSessions      sync.Map
+	mcpMu            sync.Mutex
+	runs             sync.Map // 会话ID → *chatRun（M62 后台任务运行体，跨窗口订阅）
 }
 
 // AIDeps AI 服务外部依赖（main 装配注入；M31 扩展全域能力所需服务）。
 type AIDeps struct {
+	DataDir  string
 	Nodes    *NodeService
 	DBSvc    *DatabaseService
 	DBAdmin  *DBAdminService
@@ -142,7 +145,7 @@ type AIDeps struct {
 // NewAIService 创建。
 func NewAIService(db *gorm.DB, deps AIDeps) *AIService {
 	return &AIService{
-		db: db, nodes: deps.Nodes, dbSvc: deps.DBSvc, adminSvc: deps.DBAdmin, mwSvc: deps.MW,
+		db: db, dataDir: deps.DataDir, nodes: deps.Nodes, dbSvc: deps.DBSvc, adminSvc: deps.DBAdmin, mwSvc: deps.MW,
 		settings: deps.Settings, skills: deps.Skills,
 		sites: deps.Sites, certs: deps.Certs, runtimes: deps.Runtimes, dockerX: deps.DockerX,
 		fw: deps.FW, nat: deps.NAT, hosts: deps.Hosts, dns: deps.DNS, cron: deps.Cron,
@@ -183,7 +186,7 @@ func (s *AIService) UploadSkillZip(ctx context.Context, data []byte) (string, st
 // ---- 供应商 CRUD ----
 
 func (s *AIService) toOut(p *model.AIProvider, withKey bool) AIProvider {
-	out := AIProvider{ID: p.ID, Name: p.Name, APIType: p.APIType, BaseURL: p.BaseURL, Model: p.Model, Models: p.Models, IsDefault: p.IsDefault}
+	out := AIProvider{ID: p.ID, Name: p.Name, APIType: p.APIType, BaseURL: p.BaseURL, Model: p.Model, Models: p.Models, IsDefault: p.IsDefault, Capabilities: p.Capabilities, AllowPrivate: p.AllowPrivate}
 	if withKey {
 		out.APIKey = p.APIKey
 	}
@@ -231,8 +234,17 @@ func (s *AIService) Presets() []AIProvider {
 
 // SaveProvider 新建/更新。
 func (s *AIService) SaveProvider(p *model.AIProvider) error {
-	if p.APIType != "openai" && p.APIType != "anthropic" {
-		return errWrapAI("API 类型仅支持 openai/anthropic")
+	if p.APIType != "openai" && p.APIType != "anthropic" && p.APIType != "response" && p.APIType != "responses" {
+		return errWrapAI("API 类型仅支持 openai / anthropic / responses")
+	}
+	if _, err := newAIHTTP(p); err != nil {
+		return err
+	}
+	if err := validateAIModelCapabilities(p.Capabilities); err != nil {
+		return err
+	}
+	if strings.TrimSpace(p.Name) == "" || strings.TrimSpace(p.Model) == "" {
+		return errWrapAI("供应商名称和默认模型必填")
 	}
 	if p.IsDefault {
 		s.db.Model(&model.AIProvider{}).Where("is_default = ?", true).Update("is_default", false)
@@ -241,7 +253,7 @@ func (s *AIService) SaveProvider(p *model.AIProvider) error {
 		return s.db.Create(p).Error
 	}
 	updates := map[string]any{
-		"name": p.Name, "api_type": p.APIType, "base_url": p.BaseURL,
+		"name": p.Name, "api_type": p.APIType, "base_url": p.BaseURL, "capabilities": p.Capabilities, "allow_private": p.AllowPrivate,
 		"model": p.Model, "models": p.Models, "is_default": p.IsDefault,
 	}
 	// apiKey 为空表示沿用已存密钥（前端编辑弹窗「留空不修改」）
@@ -252,17 +264,36 @@ func (s *AIService) SaveProvider(p *model.AIProvider) error {
 }
 
 // ProviderModels 拉取供应商可用模型列表（openai 兼容 GET {baseURL}/models）。
-func (s *AIService) ProviderModels(id uint) ([]string, error) {
+func (s *AIService) ProviderModels(id uint, scopes ...context.Context) ([]string, error) {
 	p, err := s.ProviderByID(id)
 	if err != nil {
 		return nil, err
 	}
-	req, err := http.NewRequest(http.MethodGet, strings.TrimRight(p.BaseURL, "/")+"/models", nil)
+	ctx := context.Background()
+	if len(scopes) > 0 {
+		ctx = scopes[0]
+	}
+	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	client, err := newAIHTTP(p)
+	if err != nil {
+		return nil, err
+	}
+	endpoint := aiEndpoint(p)
+	if p.APIType == "anthropic" && !strings.HasSuffix(endpoint, "/v1") {
+		endpoint += "/v1"
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint+"/models", nil)
 	if err != nil {
 		return nil, err
 	}
 	req.Header.Set("Authorization", "Bearer "+p.APIKey)
-	resp, err := http.DefaultClient.Do(req)
+	if p.APIType == "anthropic" {
+		req.Header.Del("Authorization")
+		req.Header.Set("x-api-key", p.APIKey)
+		req.Header.Set("anthropic-version", "2023-06-01")
+	}
+	resp, err := client.Do(req)
 	if err != nil {
 		return nil, err
 	}
@@ -325,26 +356,35 @@ func (s *AIService) DefaultProvider() (*model.AIProvider, error) {
 // ---- 知识库 ----
 
 // ListKnowledge 知识库列表。
-func (s *AIService) ListKnowledge() []model.AIKnowledge {
+func (s *AIService) ListKnowledge(scopes ...context.Context) []model.AIKnowledge {
 	out := []model.AIKnowledge{}
-	_ = s.db.Order("id desc").Find(&out).Error
+	_ = aiResourceScope(aiContext(scopes), s.db).Order("id desc").Find(&out).Error
 	return out
 }
 
 // SaveKnowledge 新建/更新。
-func (s *AIService) SaveKnowledge(k *model.AIKnowledge) error {
+func (s *AIService) SaveKnowledge(k *model.AIKnowledge, scopes ...context.Context) error {
+	ctx := aiContext(scopes)
+	if k.Shared && !aiAdmin(ctx) {
+		return errWrapAI("仅管理员可发布共享知识")
+	}
 	if k.Title == "" {
 		return errWrapAI("标题必填")
 	}
 	if k.ID == 0 {
+		k.OwnerID = aiOwner(ctx)
 		return s.db.Create(k).Error
 	}
-	return s.db.Model(k).Updates(map[string]any{"title": k.Title, "body": k.Body}).Error
+	var old model.AIKnowledge
+	if aiScope(ctx, s.db).First(&old, k.ID).Error != nil {
+		return aiNotFound()
+	}
+	return s.db.Model(&old).Updates(map[string]any{"title": k.Title, "body": k.Body, "shared": k.Shared}).Error
 }
 
 // DeleteKnowledge 删除。
-func (s *AIService) DeleteKnowledge(id uint) error {
-	return s.db.Delete(&model.AIKnowledge{}, id).Error
+func (s *AIService) DeleteKnowledge(id uint, scopes ...context.Context) error {
+	return aiScope(aiContext(scopes), s.db).Delete(&model.AIKnowledge{}, id).Error
 }
 
 // KnowledgeHit 知识检索命中（统一手工条目与文档分块形态）。
@@ -365,50 +405,69 @@ func scoreWords(words []string, text string) int {
 	return n
 }
 
+func aiKnowledgeScoreSQL(words []string, fields string) (string, []any) {
+	terms := make([]string, 0, len(words))
+	args := make([]any, 0, len(words))
+	for _, word := range words {
+		terms = append(terms, "CASE WHEN lower("+fields+") LIKE ? THEN 1 ELSE 0 END")
+		args = append(args, "%"+word+"%")
+	}
+	return strings.Join(terms, " + "), args
+}
+
 // searchKnowledge 关键词检索：手工条目 + 知识文档分块统一打分，取命中数最多的前 3 条。
-func (s *AIService) searchKnowledge(query string) []KnowledgeHit {
+func (s *AIService) searchKnowledge(query string, scopes ...context.Context) []KnowledgeHit {
+	ctx := aiContext(scopes)
 	words := tokenizeKnowledgeQuery(query)
+	if len(words) > 32 {
+		words = words[:32]
+	}
 	if len(words) == 0 {
 		return nil
 	}
+	type candidate struct {
+		ID      uint
+		DocID   uint
+		Title   string
+		Heading string
+		Body    string
+		AIScore int `gorm:"column:ai_score"`
+	}
+
+	entryScore, args := aiKnowledgeScoreSQL(words, "title || ' ' || body")
+	entries := []candidate{}
+	_ = aiResourceScope(ctx, s.db.WithContext(ctx).Model(&model.AIKnowledge{})).Select("id,title,body,("+entryScore+") AS ai_score", args...).Where("("+entryScore+") > 0", args...).Order("ai_score DESC, id DESC").Limit(12).Scan(&entries).Error
+	docIDs := aiResourceScope(ctx, s.db.Model(&model.AIKnowledgeDoc{})).Select("id")
+	chunkScore, chunkArgs := aiKnowledgeScoreSQL(words, "heading || ' ' || body")
+	chunks := []candidate{}
+	_ = s.db.WithContext(ctx).Model(&model.AIKnowledgeChunk{}).Where("doc_id IN (?)", docIDs).Select("id,doc_id,heading,body,("+chunkScore+") AS ai_score", chunkArgs...).Where("("+chunkScore+") > 0", chunkArgs...).Order("ai_score DESC, id DESC").Limit(12).Scan(&chunks).Error
+	ids := []uint{}
+	for _, c := range chunks {
+		ids = append(ids, c.DocID)
+	}
+	docNames := map[uint]string{}
+	if len(ids) > 0 {
+		var docs []model.AIKnowledgeDoc
+		_ = aiResourceScope(ctx, s.db).Select("id", "title").Where("id IN ?", ids).Find(&docs).Error
+		for _, d := range docs {
+			docNames[d.ID] = d.Title
+		}
+	}
 	type scored struct {
-		hit KnowledgeHit
-		n   int
+		hit   KnowledgeHit
+		score int
 	}
-	var ss []scored
-	for _, k := range s.ListKnowledge() {
-		if n := scoreWords(words, k.Title+" "+k.Body); n > 0 {
-			ss = append(ss, scored{KnowledgeHit{Title: "[条目] " + k.Title, Body: k.Body}, n})
-		}
+	hits := []scored{}
+	for _, e := range entries {
+		hits = append(hits, scored{KnowledgeHit{Title: "[条目] " + e.Title, Body: truncText(e.Body, 12000)}, e.AIScore})
 	}
-	docs := map[uint]string{}
-	docRows := []model.AIKnowledgeDoc{}
-	_ = s.db.Find(&docRows).Error
-	for _, d := range docRows {
-		docs[d.ID] = d.Title
+	for _, c := range chunks {
+		hits = append(hits, scored{KnowledgeHit{Title: "[文档] " + docNames[c.DocID] + " / " + c.Heading, Body: truncText(c.Body, 12000)}, c.AIScore})
 	}
-	chunks := []model.AIKnowledgeChunk{}
-	_ = s.db.Find(&chunks).Error
-	for _, ch := range chunks {
-		if n := scoreWords(words, ch.Heading+" "+ch.Body); n > 0 {
-			ss = append(ss, scored{KnowledgeHit{
-				Title: fmt.Sprintf("[文档] %s › %s", docs[ch.DocID], ch.Heading),
-				Body:  ch.Body,
-			}, n})
-		}
-	}
-	for i := 1; i < len(ss) && i < 3; i++ {
-		for j := i; j > 0 && ss[j].n > ss[j-1].n; j-- {
-			ss[j], ss[j-1] = ss[j-1], ss[j]
-		}
-	}
-	limit := 3
-	if len(ss) < limit {
-		limit = len(ss)
-	}
-	out := make([]KnowledgeHit, 0, limit)
-	for _, it := range ss[:limit] {
-		out = append(out, it.hit)
+	sort.SliceStable(hits, func(i, j int) bool { return hits[i].score > hits[j].score })
+	out := make([]KnowledgeHit, 0, min(3, len(hits)))
+	for _, h := range hits[:min(3, len(hits))] {
+		out = append(out, h.hit)
 	}
 	return out
 }
@@ -419,39 +478,13 @@ func (s *AIService) searchKnowledge(query string) []KnowledgeHit {
 func (s *AIService) SceneContext(ctx context.Context, path string, focus string) map[string]any {
 	sc := s.sceneData(ctx, path)
 	if focus != "" {
-		sc["focus"] = focus
+		sc["focus"] = truncText(focus, 1000)
 	}
 	return sc
 }
 
 func (s *AIService) sceneData(ctx context.Context, path string) map[string]any {
-	node, err := s.nodes.ByID("local")
-	if err != nil {
-		return map[string]any{"page": path}
-	}
-	ac := agentclient.New(node.BaseURL, node.Token)
-	switch {
-	case strings.HasPrefix(path, "/container"):
-		out, err := agentclient.GetJSON[[]dto.ContainerItem](ac, ctx, "/agent/v1/docker/containers")
-		if err == nil {
-			return map[string]any{"page": "容器管理", "containers": out}
-		}
-	case strings.HasPrefix(path, "/sites"):
-		sites := []model.Site{}
-		_ = s.db.Find(&sites).Error
-		return map[string]any{"page": "网站管理", "sites": sites}
-	case strings.HasPrefix(path, "/database"):
-		out, err := agentclient.GetJSON[[]map[string]any](ac, ctx, "/agent/v1/database/instances")
-		if err == nil {
-			return map[string]any{"page": "数据库", "instances": out}
-		}
-	case path == "/" || path == "" || strings.HasPrefix(path, "/overview"):
-		ov, err := agentclient.GetJSON[dto.SystemOverview](ac, ctx, "/agent/v1/sysinfo/overview")
-		if err == nil {
-			return map[string]any{"page": "主机概览", "overview": ov}
-		}
-	}
-	return map[string]any{"page": path}
+	return map[string]any{"page": truncText(path, 256), "hint": "页面内容需通过已授权的工具按需查询"}
 }
 
 // buildSceneSummary 场景摘要文本。
@@ -470,7 +503,7 @@ func (s *AIService) buildSceneSummary(ctx context.Context, path string, focus st
 
 // ---- 工具系统 ----
 
-// workspaceDir AI 工作空间沙箱目录。
+// workspaceDir is a host directory; it provides no execution isolation.
 const workspaceDir = "/opt/ypanel/ai-workspace"
 
 // errWrapAI 局部错误包装。
@@ -590,7 +623,7 @@ const (
 	aiModStore      = "store"
 	aiModSrcBuild   = "srcbuild"
 	aiModDiag       = "diagnostics"
-	aiModWeb    = "web_lookup"
+	aiModWeb        = "web_lookup"
 	aiModMonitor    = "monitor_alert"
 	aiModPanel      = "panel_ops"
 	aiModAI         = "panel_ai"
@@ -624,9 +657,10 @@ var aiModuleRegistry = []aiModule{
 	{aiModSrcBuild, "源码构建", "从 git 仓库预检语言栈与构建参数，创建源码构建部署任务（自动生成 compose 并构建跑通）"},
 	{aiModDiag, "诊断排查", "端口监听检查、HTTP 探测、DNS 解析验证、systemd 服务日志(journalctl)、从 URL 下载文件到服务器"},
 	{aiModWeb, "联网查询", "外部联网搜索（查软件文档/报错资料）与网页正文抓取"},
-		{aiModMonitor, "监控告警", "告警规则查询与创建、历史监控指标查询（CPU/内存趋势）、面板通知、登录审计日志"},
+	{aiModMonitor, "监控告警", "告警规则查询与创建、历史监控指标查询（CPU/内存趋势）、面板通知、登录审计日志"},
 	{aiModPanel, "面板运维", "面板备份创建/查询/删除、检查面板更新与执行升级、MCP 开放状态"},
 	{aiModMeta, "工具目录", "load_tools 元工具：按需展开各模块工具集（对话过程中自动使用）"},
+	{"mcp", "外部 MCP", "按需连接已启用的 MCP 服务；未知副作用工具须确认"},
 	{aiModAI, "AI 自身", "长期记忆沉淀与知识库深读（常驻工具，无需加载）"},
 }
 
@@ -736,9 +770,13 @@ func schObj(props map[string]any, required ...string) map[string]any {
 	return map[string]any{"type": "object", "properties": props, "required": required}
 }
 
-func schStr(desc string) map[string]any  { return map[string]any{"type": "string", "description": desc} }
-func schInt(desc string) map[string]any  { return map[string]any{"type": "integer", "description": desc} }
-func schBool(desc string) map[string]any { return map[string]any{"type": "boolean", "description": desc} }
+func schStr(desc string) map[string]any { return map[string]any{"type": "string", "description": desc} }
+func schInt(desc string) map[string]any {
+	return map[string]any{"type": "integer", "description": desc}
+}
+func schBool(desc string) map[string]any {
+	return map[string]any{"type": "boolean", "description": desc}
+}
 
 func schEnum(desc string, values ...string) map[string]any {
 	return map[string]any{"type": "string", "description": desc, "enum": values}
@@ -902,21 +940,29 @@ func (s *AIService) agentDeleteJSON(ctx context.Context, path string) (json.RawM
 
 // aiAskRequest 待用户确认的危险操作。
 type aiAskRequest struct {
-	ch chan bool
+	identity aiRunIdentity
+	ch       chan bool
 }
 
 // aiQuestionRequest 待用户回答的交互提问（ask_user 工具）。
 type aiQuestionRequest struct {
-	ch chan string // 答案 JSON 文本
+	identity aiRunIdentity
+	ch       chan string // 答案 JSON 文本
 }
 
 // ResolveAsk 落用户的确认/拒绝结果；ask 不存在（已超时清理）返回 false。
-func (s *AIService) ResolveAsk(id string, approve bool) bool {
+func (s *AIService) ResolveAsk(id string, approve bool, scopes ...context.Context) bool {
 	v, ok := s.pendingAsks.Load(id)
 	if !ok {
 		return false
 	}
 	req := v.(*aiAskRequest)
+	if len(scopes) > 0 && !aiAdmin(scopes[0]) && aiOwner(scopes[0]) != req.identity.UserID {
+		return false
+	}
+	if !s.pendingAsks.CompareAndDelete(id, req) {
+		return false
+	}
 	select {
 	case req.ch <- approve:
 	default:
@@ -925,13 +971,19 @@ func (s *AIService) ResolveAsk(id string, approve bool) bool {
 }
 
 // ResolveQuestion 落用户的提问回答（answers JSON 文本）；问题不存在（已取消）返回 false。
-func (s *AIService) ResolveQuestion(id string, answers string) bool {
+func (s *AIService) ResolveQuestion(id string, answers string, scopes ...context.Context) bool {
 	v, ok := s.pendingQuestions.Load(id)
 	slog.Info("ai ask-question received", "id", id, "found", ok)
 	if !ok {
 		return false
 	}
 	req := v.(*aiQuestionRequest)
+	if len(scopes) > 0 && !aiAdmin(scopes[0]) && aiOwner(scopes[0]) != req.identity.UserID {
+		return false
+	}
+	if !s.pendingQuestions.CompareAndDelete(id, req) {
+		return false
+	}
 	select {
 	case req.ch <- answers:
 	default:
@@ -963,11 +1015,14 @@ func (s *AIService) SetAskMode(mode string) error {
 }
 
 // auditOperation 写/danger 操作审计落库（含被拒绝/超时的 ask）。
-func (s *AIService) auditOperation(def aiToolDef, args, result, errMsg string, success bool, action string) {
+func (s *AIService) auditOperation(ctx context.Context, def aiToolDef, args, result, errMsg string, success bool, action string) {
+	ident, _ := ctx.Value(aiRunContextKey{}).(aiRunIdentity)
+	callID, _ := ctx.Value(aiToolCallContextKey{}).(string)
 	merged := maskSensitive(strings.TrimSpace(strings.TrimSpace(result) + "\n" + strings.TrimSpace(errMsg)))
 	_ = s.db.Create(&model.AIOperationLog{
+		UserID: aiOwner(ctx), ConversationID: ident.ConversationID, RunID: ident.RunID, ToolCallID: callID,
 		Tool: def.Name, Module: def.Module, Risk: def.Risk, Action: action,
-		Args: truncText(args, 2000), Result: truncText(merged, 480), Success: success,
+		Args: truncText(maskSensitive(args), 2000), Result: truncText(merged, 480), Success: success,
 	}).Error
 }
 
@@ -1012,7 +1067,7 @@ func (s *AIService) aiToolsAll(ctx context.Context) []aiToolDef {
 	defs = append(defs, s.aiToolsDnsAccounts(ctx)...)
 	defs = append(defs, s.aiToolsMongoCollections(ctx)...)
 	defs = append(defs, s.aiToolsWeb(ctx)...)
-		defs = append(defs, s.aiToolsNginx(ctx)...)
+	defs = append(defs, s.aiToolsNginx(ctx)...)
 	defs = append(defs, s.aiToolsProbeGitCred(ctx)...)
 	defs = append(defs, s.aiToolsPanelAI(ctx)...)
 	for i := range defs {
@@ -1072,7 +1127,7 @@ func (s *AIService) loadToolsDef(expanded map[string]bool, byMod map[string][]ai
 		Parameters: schObj(map[string]any{
 			"module": schStr("要加载的模块 key，多个用英文逗号分隔"),
 		}, "module"),
-		Fn: func(_ context.Context, input string) (string, error) {
+		Fn: func(ctx context.Context, input string) (string, error) {
 			var p struct {
 				Module string `json:"module"`
 			}
@@ -1103,7 +1158,29 @@ func (s *AIService) loadToolsDef(expanded map[string]bool, byMod map[string][]ai
 				if defs := byMod[key]; len(defs) > 0 {
 					loaded = append(loaded, fmt.Sprintf("%s(%d 个)", key, len(defs)))
 				} else {
-					loaded = append(loaded, key+"（模块内工具全部被用户停用）")
+					if key == "mcp" {
+						if err := rbac.CheckTool(ctx, "mcp", aiRiskRead, "{}"); err != nil {
+							return "", err
+						}
+						count := 0
+						for _, conf := range s.ListMCPServers() {
+							if !conf.Enabled {
+								continue
+							}
+							count++
+							session, err := s.ConnectMCP(ctx, conf)
+							if err != nil {
+								loaded = append(loaded, "MCP "+conf.Name+" 连接失败："+maskSensitive(err.Error()))
+							} else {
+								loaded = append(loaded, fmt.Sprintf("MCP %s (%d 个工具，执行仍需确认)", conf.Name, len(session.Tools)))
+							}
+						}
+						if count == 0 {
+							loaded = append(loaded, "mcp（未配置已启用的服务）")
+						}
+					} else {
+						loaded = append(loaded, key+"（模块内工具全部被用户停用）")
+					}
 				}
 			}
 			msg := "已加载模块工具：" + strings.Join(loaded, "、") + "，后续可直接调用。"
@@ -1119,6 +1196,9 @@ func (s *AIService) loadToolsDef(expanded map[string]bool, byMod map[string][]ai
 // read_only 模式只保留 read 级工具（write/danger 不注入）。
 func (s *AIService) toolDefsFor(ctx context.Context, scenePath string, expanded map[string]bool, mode string) []aiToolDef {
 	byMod := s.aiToolsByModule(ctx)
+	if expanded["mcp"] {
+		byMod["mcp"] = s.aiMCPTools(ctx)
+	}
 	modules := []string{aiModSystem, aiModAI}
 	modules = append(modules, sceneAIModules(scenePath)...)
 	for key := range expanded {
@@ -1226,7 +1306,12 @@ func (s *AIService) SetToolFlag(name string, enabled bool) error {
 }
 
 // ListOperationLogs 操作审计分页（写/danger 工具的执行与 ask 结果）。
-func (s *AIService) ListOperationLogs(page, pageSize int) map[string]any {
+func (s *AIService) ListOperationLogs(page, pageSize int, scopes ...context.Context) map[string]any {
+	ctx := aiContext(scopes)
+	query := s.db.Model(&model.AIOperationLog{})
+	if !aiAdmin(ctx) {
+		query = query.Where("user_id = ? AND user_id <> 0", aiOwner(ctx))
+	}
 	if page < 1 {
 		page = 1
 	}
@@ -1234,8 +1319,8 @@ func (s *AIService) ListOperationLogs(page, pageSize int) map[string]any {
 		pageSize = 20
 	}
 	var total int64
-	_ = s.db.Model(&model.AIOperationLog{}).Count(&total).Error
+	_ = query.Count(&total).Error
 	rows := []model.AIOperationLog{}
-	_ = s.db.Order("id desc").Limit(pageSize).Offset((page - 1) * pageSize).Find(&rows).Error
+	_ = query.Order("id desc").Limit(pageSize).Offset((page - 1) * pageSize).Find(&rows).Error
 	return map[string]any{"total": total, "page": page, "pageSize": pageSize, "items": rows}
 }

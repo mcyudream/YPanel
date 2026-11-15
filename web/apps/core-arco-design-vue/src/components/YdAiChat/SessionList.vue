@@ -1,157 +1,112 @@
 <script setup lang="ts">
-// YdAiSessionList：会话列表（M60.1 参考 YuDream-Admin）——搜索过滤 + 悬停浮现操作
-// （行内重命名 / 删除）+ 空态；桌面侧栏与窄屏抽屉共用同一实例形态。
-import { computed, nextTick, ref } from 'vue'
+import type { ConversationMeta } from '@/api/modules/aiChat'
+import { useI18n } from 'vue-i18n'
 
-export interface AiSessionItem {
-  id: number
-  title: string
-  updatedAt?: string
-  /** 运行态标注（M62）：running / waiting_confirm / waiting_answer；空 = 无任务 */
-  runStatus?: string
-}
-
-const props = withDefaults(defineProps<{
-  sessions: AiSessionItem[]
+export type AiSessionItem = ConversationMeta
+const props = defineProps<{
+  sessions: ConversationMeta[]
   activeId?: number
   loading?: boolean
-}>(), {
-  activeId: 0,
-  loading: false,
-})
-
-const emit = defineEmits<{
-  select: [id: number]
-  create: []
-  rename: [session: AiSessionItem, title: string]
-  remove: [id: number]
+  more?: boolean
+  archived?: boolean
 }>()
-
+const emit = defineEmits<{
+  select: [
+    number,
+  ]
+  create: [
+  ]
+  search: [
+    string,
+  ]
+  more: [
+  ]
+  archiveView: [
+  ]
+  rename: [
+    ConversationMeta,
+    string,
+  ]
+  remove: [
+    number,
+  ]
+  patch: [
+    number,
+    {
+      pinned?: boolean
+      archived?: boolean
+    },
+  ]
+}>()
 const keyword = ref('')
-const editingId = ref(0)
-const editingTitle = ref('')
-const editInput = ref<HTMLInputElement | HTMLInputElement[]>()
-
-const filtered = computed(() => {
-  const k = keyword.value.trim().toLowerCase()
-  if (!k) {
-    return props.sessions
-  }
-  return props.sessions.filter(s => s.title.toLowerCase().includes(k))
+const editing = ref<ConversationMeta>()
+const title = ref('')
+const { t } = useI18n()
+let debounce: ReturnType<typeof setTimeout>
+watch(keyword, (v) => {
+  clearTimeout(debounce)
+  debounce = setTimeout(emit, 250, 'search', v)
 })
-
-async function startRename(s: AiSessionItem) {
-  editingId.value = s.id
-  editingTitle.value = s.title
-  await nextTick()
-  // v-for 内模板 ref 收集为数组（同一时刻仅一个编辑行，取首个即可）
-  const el = Array.isArray(editInput.value) ? editInput.value[0] : editInput.value
-  el?.focus()
-  el?.select()
+onBeforeUnmount(() => clearTimeout(debounce))
+function menu(s: ConversationMeta) {
+  return [[
+    { label: t('common.rename'), handle: () => {
+      editing.value = s
+      title.value = s.title
+    } },
+    { label: t(s.pinned ? 'aiAssistant.unpin' : 'aiAssistant.pin'), handle: () => emit('patch', s.id, { pinned: !s.pinned }) },
+    { label: t(s.archived ? 'aiAssistant.restore' : 'aiAssistant.archive'), handle: () => emit('patch', s.id, { archived: !s.archived }) },
+    { label: t('common.delete'), handle: () => emit('remove', s.id) },
+  ]]
 }
-
-function commitRename(s: AiSessionItem) {
-  const title = editingTitle.value.trim()
-  editingId.value = 0
-  if (title && title !== s.title) {
-    emit('rename', s, title)
-  }
-}
-
-const RUN_BADGE: Record<string, { cls: string, key: string }> = {
-  running: { cls: 'bg-emerald-500/10 text-emerald-600', key: 'ai.chat.runRunning' },
-  waiting_confirm: { cls: 'bg-amber-500/10 text-amber-600', key: 'ai.chat.runWaitingConfirm' },
-  waiting_answer: { cls: 'bg-sky-500/10 text-sky-600', key: 'ai.chat.runWaitingAnswer' },
-}
-
-function onEditKeydown(e: KeyboardEvent, s: AiSessionItem) {
-  if (e.key === 'Enter') {
-    e.preventDefault()
-    commitRename(s)
-  }
-  else if (e.key === 'Escape') {
-    editingId.value = 0
-  }
+function group(s: ConversationMeta) {
+  return s.pinned ? t('aiAssistant.pin') : new Date(s.updatedAt).toDateString() === new Date().toDateString() ? t('aiAssistant.today') : t('aiAssistant.previous')
 }
 </script>
 
 <template>
-  <div class="flex h-full min-h-0 flex-col">
-    <div class="grid gap-2 px-3 pb-2 pt-3">
-      <FaButton size="sm" class="w-full!" @click="emit('create')">
-        <FaIcon name="i-lucide:plus" class="mr-1" /> {{ $t('ai.chat.newConversation') }}
+  <div class="flex flex-col h-full min-h-0">
+    <div class="p-3 gap-3 grid">
+      <FaButton class="w-full" @click="emit('create')">
+        <FaIcon name="i-lucide:plus" class="mr-2" />{{ $t('aiAssistant.new') }}
       </FaButton>
-      <div class="flex items-center gap-1.5 rounded-lg border bg-background px-2.5 focus-within:border-primary/50">
-        <FaIcon name="i-lucide:search" class="shrink-0 text-xs text-muted-foreground" />
-        <input
-          v-model="keyword"
-          type="text"
-          :placeholder="$t('ai.chat.searchSessions')"
-          class="w-full bg-transparent py-1.5 text-xs outline-none placeholder:text-muted-foreground/60"
-        >
-      </div>
-    </div>
-    <div class="min-h-0 flex-1 overflow-y-auto px-2 pb-3">
-      <div v-if="loading" class="px-3 py-6 text-center text-xs text-muted-foreground">
-        {{ $t('common.loading') }}
-      </div>
-      <div v-else-if="!filtered.length" class="px-3 py-6 text-center text-xs text-muted-foreground">
-        {{ sessions.length ? $t('ai.chat.noMatchSession') : $t('ai.chat.noSessions') }}
-      </div>
-      <div
-        v-for="s in filtered"
-        :key="s.id"
-        class="group relative mt-0.5 flex items-center gap-2 rounded-lg px-2.5 py-2 text-[13px] transition-colors"
-        :class="s.id === activeId ? 'bg-primary/10 text-foreground' : 'text-muted-foreground hover:bg-accent/50 hover:text-foreground'"
-      >
-        <FaIcon
-          name="i-lucide:message-square"
-          class="shrink-0 text-sm"
-          :class="s.id === activeId ? 'text-primary' : 'text-muted-foreground/60'"
-        />
-        <template v-if="editingId === s.id">
-          <input
-            ref="editInput"
-            v-model="editingTitle"
-            type="text"
-            class="min-w-0 flex-1 rounded border border-primary/40 bg-background px-1.5 py-0.5 text-[13px] outline-none"
-            @keydown="onEditKeydown($event, s)"
-            @blur="commitRename(s)"
-            @click.stop
-          >
+      <FaInput v-model="keyword" class="w-full" :placeholder="$t('aiAssistant.search')">
+        <template #start>
+          <FaIcon name="i-lucide:search" />
         </template>
-        <template v-else>
-          <button type="button" class="min-w-0 flex-1 cursor-pointer truncate text-left" @click="emit('select', s.id)">
-            {{ s.title }}
+      </FaInput>
+      <FaButton size="sm" variant="ghost" class="text-muted-foreground justify-start" @click="emit('archiveView')">
+        <FaIcon name="i-lucide:archive" class="mr-2" />{{ $t(archived ? 'aiAssistant.archived' : 'aiAssistant.recent') }}
+      </FaButton>
+    </div>
+    <div class="px-2 pb-3 flex-1 min-h-0 overflow-y-auto">
+      <div v-if="!sessions.length" class="text-xs text-muted-foreground p-5 text-center">
+        {{ loading ? $t('common.loading') : $t('ai.chat.noSessions') }}
+      </div>
+      <template v-for="(s, i) in props.sessions" :key="s.id">
+        <div v-if="i === 0 || group(s) !== group(props.sessions[i - 1])" class="text-[10px] text-muted-foreground px-3 pb-1 pt-4">
+          {{ group(s) }}
+        </div>
+        <div class="group p-1.5 rounded-xl flex gap-1 items-center" :class="s.id === activeId ? 'bg-primary/10' : 'hover:bg-accent/60'">
+          <button type="button" class="text-[13px] p-1 text-left flex flex-1 gap-2 min-w-0 items-center" @click="emit('select', s.id)">
+            <FaIcon :name="s.runStatus ? 'i-lucide:loader-circle' : s.pinned ? 'i-lucide:pin' : 'i-lucide:message-square'" class="text-muted-foreground shrink-0" :class="s.runStatus ? 'animate-spin text-primary' : ''" /><span class="truncate">{{ s.title }}</span>
           </button>
-          <!-- 运行态徽标（悬停时让位给操作按钮） -->
-          <span
-            v-if="s.runStatus && RUN_BADGE[s.runStatus] && editingId !== s.id"
-            class="hidden shrink-0 rounded-full px-1.5 py-0.5 text-[10px] group-hover:hidden sm:inline-flex"
-            :class="RUN_BADGE[s.runStatus].cls"
-          >
-            {{ $t(RUN_BADGE[s.runStatus].key) }}
-          </span>
-          <span class="hidden shrink-0 items-center gap-0.5 group-hover:flex max-md:flex">
-            <button
-              type="button"
-              class="cursor-pointer rounded p-1 text-muted-foreground/70 transition-colors hover:bg-background hover:text-foreground"
-              :title="$t('common.rename')"
-              @click.stop="startRename(s)"
-            >
-              <FaIcon name="i-lucide:pencil" class="text-[11px]" />
-            </button>
-            <button
-              type="button"
-              class="cursor-pointer rounded p-1 text-muted-foreground/70 transition-colors hover:bg-background hover:text-red-500"
-              :title="$t('common.delete')"
-              @click.stop="emit('remove', s.id)"
-            >
-              <FaIcon name="i-lucide:trash-2" class="text-[11px]" />
-            </button>
-          </span>
-        </template>
-      </div>
+          <FaDropdown :items="menu(s)">
+            <FaButton variant="ghost" size="icon-sm" :title="$t('common.operation')" class="opacity-50 shrink-0 group-hover:opacity-100">
+              <FaIcon name="i-lucide:ellipsis" />
+            </FaButton>
+          </FaDropdown>
+        </div>
+      </template>
+      <FaButton v-if="more" variant="ghost" size="sm" class="mt-3 w-full" :loading="loading" @click="emit('more')">
+        {{ $t('aiAssistant.loadMore') }}
+      </FaButton>
     </div>
+    <FaModal
+      :model-value="!!editing" :title="$t('common.rename')" @update:model-value="v => { if (!v) editing = undefined }" @confirm="editing && emit('rename', editing, title);
+                                                                                                                                 editing = undefined"
+    >
+      <FaInput v-model="title" class="w-full" />
+    </FaModal>
   </div>
 </template>

@@ -30,6 +30,7 @@
     "class-variance-authority": "catalog:",
     "clsx": "catalog:",
     "dayjs": "catalog:",
+    "dompurify": "catalog:",
     "echarts": "catalog:",
     "eruda": "catalog:",
     "es-toolkit": "catalog:",

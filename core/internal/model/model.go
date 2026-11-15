@@ -424,21 +424,25 @@ type MetricHourly struct {
 
 // AIProvider AI 供应商配置（B18）：支持多供应商与自定义接入。
 type AIProvider struct {
-	ID        uint      `gorm:"primaryKey" json:"id"`
-	Name      string    `gorm:"size:32;not null" json:"name"`
-	APIType   string    `gorm:"size:16;not null" json:"apiType"` // openai / anthropic / response
-	BaseURL   string    `gorm:"size:255;not null" json:"baseURL"`
-	APIKey    string    `gorm:"type:text;not null" json:"apiKey"`
-	Model     string    `gorm:"size:64;not null" json:"model"`
-	Models    string    `gorm:"type:text" json:"models"` // 可用模型列表（逗号分隔）；空 = 仅 Model 一个
-	IsDefault bool      `gorm:"not null;default:false" json:"isDefault"`
-	CreatedAt time.Time `json:"createdAt"`
-	UpdatedAt time.Time `json:"updatedAt"`
+	ID           uint      `gorm:"primaryKey" json:"id"`
+	Name         string    `gorm:"size:32;not null" json:"name"`
+	APIType      string    `gorm:"size:16;not null" json:"apiType"` // openai / anthropic / response
+	BaseURL      string    `gorm:"size:255;not null" json:"baseURL"`
+	APIKey       string    `gorm:"type:text;not null" json:"apiKey"`
+	Model        string    `gorm:"size:64;not null" json:"model"`
+	Models       string    `gorm:"type:text" json:"models"`       // 可用模型列表（逗号分隔）；空 = 仅 Model 一个
+	Capabilities string    `gorm:"type:text" json:"capabilities"` // 按模型 ID 的能力与默认参数 JSON
+	AllowPrivate bool      `json:"allowPrivate"`                  // 管理员显式允许已配置端点的私网地址
+	IsDefault    bool      `gorm:"not null;default:false" json:"isDefault"`
+	CreatedAt    time.Time `json:"createdAt"`
+	UpdatedAt    time.Time `json:"updatedAt"`
 }
 
 // AIMemory AI 长期记忆（B18：AI 自动沉淀的运维经验/用户偏好）。
 type AIMemory struct {
 	ID        uint      `gorm:"primaryKey" json:"id"`
+	Shared    bool      `gorm:"index;not null;default:false" json:"shared"`
+	OwnerID   uint      `gorm:"index" json:"ownerId"`
 	Content   string    `gorm:"type:text;not null" json:"content"`
 	CreatedAt time.Time `json:"createdAt"`
 }
@@ -452,29 +456,42 @@ type AIToolFlag struct {
 
 // AIOperationLog AI 工具操作审计（M31）：write/danger 级工具的执行与 ask 确认结果全留痕。
 type AIOperationLog struct {
-	ID        uint      `gorm:"primaryKey" json:"id"`
-	CreatedAt time.Time `json:"createdAt"`
-	Tool      string    `gorm:"size:64;index;not null" json:"tool"`
-	Module    string    `gorm:"size:32;not null" json:"module"`
-	Risk      string    `gorm:"size:8;not null" json:"risk"`    // write / danger
-	Action    string    `gorm:"size:16;not null" json:"action"` // executed / approved / denied / timeout
-	Args      string    `gorm:"type:text" json:"args"`          // 入参 JSON（截断 2KB）
-	Result    string    `gorm:"size:512" json:"result"`         // 结果摘要（截断）
-	Success   bool      `gorm:"not null;default:true" json:"success"`
+	ID             uint      `gorm:"primaryKey" json:"id"`
+	UserID         uint      `gorm:"index" json:"userId"`
+	ConversationID uint      `gorm:"index" json:"conversationId"`
+	RunID          string    `gorm:"size:64" json:"runId"`
+	ToolCallID     string    `gorm:"size:128;index" json:"toolCallId"`
+	CreatedAt      time.Time `json:"createdAt"`
+	Tool           string    `gorm:"size:64;index;not null" json:"tool"`
+	Module         string    `gorm:"size:32;not null" json:"module"`
+	Risk           string    `gorm:"size:8;not null" json:"risk"`    // write / danger
+	Action         string    `gorm:"size:16;not null" json:"action"` // executed / approved / denied / timeout
+	Args           string    `gorm:"type:text" json:"args"`          // 入参 JSON（截断 2KB）
+	Result         string    `gorm:"size:512" json:"result"`         // 结果摘要（截断）
+	Success        bool      `gorm:"not null;default:true" json:"success"`
 }
 
 // AIConversation AI 会话（B18：多会话持久化）。
 type AIConversation struct {
-	ID        uint      `gorm:"primaryKey" json:"id"`
-	Title     string    `gorm:"size:128" json:"title"`
-	Messages  string    `gorm:"type:text" json:"messages"`
-	CreatedAt time.Time `json:"createdAt"`
-	UpdatedAt time.Time `json:"updatedAt"`
+	ID             uint      `gorm:"primaryKey" json:"id"`
+	OwnerID        uint      `gorm:"index" json:"ownerId"`
+	Version        uint      `gorm:"not null;default:0" json:"version"`
+	Settings       string    `gorm:"type:text" json:"-"`
+	Summary        string    `gorm:"type:text" json:"-"`
+	SummaryThrough int       `json:"-"`
+	Pinned         bool      `json:"pinned"`
+	Archived       bool      `gorm:"index" json:"archived"`
+	Title          string    `gorm:"size:128" json:"title"`
+	Messages       string    `gorm:"type:text" json:"messages"`
+	CreatedAt      time.Time `json:"createdAt"`
+	UpdatedAt      time.Time `json:"updatedAt"`
 }
 
 // AIKnowledge AI 知识库条目（B18：对话时关键词检索注入）。
 type AIKnowledge struct {
 	ID        uint      `gorm:"primaryKey" json:"id"`
+	Shared    bool      `gorm:"index;not null;default:false" json:"shared"`
+	OwnerID   uint      `gorm:"index" json:"ownerId"`
 	Title     string    `gorm:"size:128;not null" json:"title"`
 	Body      string    `gorm:"type:text;not null" json:"body"`
 	CreatedAt time.Time `json:"createdAt"`
@@ -484,6 +501,8 @@ type AIKnowledge struct {
 // AIKnowledgeDoc 用户注入的知识文档（md/txt），保存时切为分块供检索。
 type AIKnowledgeDoc struct {
 	ID        uint      `gorm:"primaryKey" json:"id"`
+	Shared    bool      `gorm:"index;not null;default:false" json:"shared"`
+	OwnerID   uint      `gorm:"index" json:"ownerId"`
 	Title     string    `gorm:"size:128;not null" json:"title"`
 	Filename  string    `gorm:"size:255;not null" json:"filename"`
 	Content   string    `gorm:"type:text;not null" json:"content"`

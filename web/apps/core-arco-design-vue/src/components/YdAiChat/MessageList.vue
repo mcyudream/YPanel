@@ -1,75 +1,74 @@
 <script setup lang="ts">
-// YdAiAiMessageList：消息列表容器（ZCode 式自动滚动：新内容贴底跟随；用户上翻时暂停并显示「回到底部」）。
-import type { AiChatMessage } from '@/composables/useAiChat'
-import { nextTick, onUpdated, ref, watch } from 'vue'
-
 const props = defineProps<{
-  messages: AiChatMessage[]
+  revision?: number
+  identity?: number
 }>()
-
-const listRef = ref<HTMLElement>()
-// 距底 < 48px 视为贴底（自动滚动跟随）；用户上翻则暂停，滚回底部自动恢复
-const stickBottom = ref(true)
-const showJump = ref(false)
-
-function onScroll() {
-  const el = listRef.value
-  if (!el) {
+const scroller = ref<HTMLElement>()
+const content = ref<HTMLElement>()
+const atBottom = ref(true)
+let observer: ResizeObserver | undefined
+let frame = 0
+function scroll(force = false) {
+  if (!force && !atBottom.value) {
     return
   }
-  const gap = el.scrollHeight - el.scrollTop - el.clientHeight
-  stickBottom.value = gap < 48
-  showJump.value = !stickBottom.value
-}
-
-async function scrollToBottom(force = false) {
-  await nextTick()
-  const el = listRef.value
-  if (!el || (!stickBottom.value && !force)) {
-    return
-  }
-  el.scrollTop = el.scrollHeight
-  stickBottom.value = true
-  showJump.value = false
-}
-
-// 流式内容高频更新：deep watch 覆盖 content/segments/步骤等全部嵌套变化
-watch(() => props.messages, () => {
-  void scrollToBottom()
-}, { deep: true, immediate: true })
-
-// 嵌套组件（工具块展开等）引起的 DOM 高度变化兜底
-onUpdated(() => {
-  if (stickBottom.value) {
-    const el = listRef.value
+  cancelAnimationFrame(frame)
+  frame = requestAnimationFrame(() => {
+    const el = scroller.value
     if (el) {
       el.scrollTop = el.scrollHeight
     }
-  }
-})
-
-function jump() {
-  void scrollToBottom(true)
+  })
 }
+function onScroll() {
+  const el = scroller.value
+  if (el) {
+    atBottom.value = el.scrollHeight - el.scrollTop - el.clientHeight < 64
+  }
+}
+watch(() => props.revision, () => nextTick(() => scroll()))
+watch(() => props.identity, () => {
+  atBottom.value = true
+  nextTick(() => scroll(true))
+})
+onMounted(() => {
+  observer = new ResizeObserver(() => scroll())
+  if (content.value) {
+    observer.observe(content.value)
+  }
+  scroll(true)
+})
+onBeforeUnmount(() => {
+  observer?.disconnect()
+  cancelAnimationFrame(frame)
+})
+async function preserve(action: () => Promise<void>) {
+  const el = scroller.value
+  if (!el) {
+    return
+  }
+  const height = el.scrollHeight
+  const top = el.scrollTop
+  atBottom.value = false
+  await action()
+  await nextTick()
+  el.scrollTop = top + el.scrollHeight - height
+}
+defineExpose({ preserve })
 </script>
 
 <template>
-  <div class="relative min-h-0 flex-1">
-    <div ref="listRef" class="h-full overflow-y-auto px-4 py-4" @scroll="onScroll">
-      <!-- 内容宽度约束 920px 居中（参考 YuDream-Admin） -->
-      <div class="mx-auto w-full max-w-[920px] space-y-5">
+  <div class="flex-1 min-h-0 relative">
+    <div ref="scroller" class="px-4 py-5 overscroll-contain h-full overflow-y-auto" @scroll.passive="onScroll">
+      <div ref="content" class="mx-auto max-w-[920px] w-full space-y-6">
         <slot />
       </div>
     </div>
-    <!-- 回到底部：右下角圆形悬浮钮 -->
-    <button
-      v-if="showJump"
-      type="button"
-      class="absolute bottom-4 right-4 flex size-9 cursor-pointer items-center justify-center rounded-full border bg-background text-muted-foreground shadow-md transition-all hover:text-foreground hover:shadow-lg"
-      :title="$t('components.ydAiChat.jumpToBottom')"
-      @click="jump"
+    <FaButton
+      v-if="!atBottom" size="icon-sm" variant="outline" class="rounded-full bg-background shadow-md bottom-4 right-4 absolute" :title="$t('components.ydAiChat.jumpToBottom')" @click="atBottom = true;
+                                                                                                                                                                                       scroll(true)"
     >
-      <FaIcon name="i-lucide:arrow-down-to-line" class="text-sm" />
-    </button>
+      <FaIcon name="i-lucide:arrow-down" />
+    </FaButton>
   </div>
 </template>

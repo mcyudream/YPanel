@@ -1,29 +1,27 @@
 <script setup lang="ts">
+import type { AiOperationLog, AiToolInfo } from '@/api/modules/ai'
+import aiApi from '@/api/modules/ai'
+import { RISK_META, toolMetaOf } from '@/components/YdAiChat/toolMeta'
 // 系统工具（智能/系统工具，M31 治理化）：
 // 模块分组工具表（风险徽标 + 开关）+ AI 操作审计。
 // M60：全局「确认模式」卡片移除——写/危险操作确认改由对话发送框的权限档位（四档）决定。
 import { i18n, tr } from '@/locales'
-import aiApi from '@/api/modules/ai'
-import type { AiOperationLog, AiToolInfo } from '@/api/modules/ai'
-import { RISK_META, toolMetaOf } from '@/components/YdAiChat/toolMeta'
 
 defineOptions({
-  name: 'aiTools',
+  name: 'AiTools',
 })
-
 const toast = useFaToast()
-
 const tools = ref<AiToolInfo[]>([])
 const savingName = ref('')
 const keyword = ref('')
-
 async function loadTools() {
   try {
     tools.value = await aiApi.tools()
   }
-  catch {}
-}
+  catch {
 
+  }
+}
 async function setFlag(t: AiToolInfo, enabled: boolean) {
   savingName.value = t.name
   try {
@@ -38,31 +36,23 @@ async function setFlag(t: AiToolInfo, enabled: boolean) {
     savingName.value = ''
   }
 }
-
 // ---- 模块分组（后端已按模块返回，顺序即注册表顺序） ----
 const filteredTools = computed(() => {
   const kw = keyword.value.trim().toLowerCase()
   if (!kw) {
     return tools.value
   }
-  return tools.value.filter(t =>
-    t.name.toLowerCase().includes(kw)
+  return tools.value.filter(t => t.name.toLowerCase().includes(kw)
     || t.description.toLowerCase().includes(kw)
-    || t.moduleTitle.toLowerCase().includes(kw),
-  )
+    || t.moduleTitle.toLowerCase().includes(kw))
 })
-
 // ---- 分页（先切片再分组：页内仍按模块分组展示，组头计数用全量口径） ----
 const page = ref(1)
 const size = ref(20)
-const pagedTools = computed(() =>
-  filteredTools.value.slice((page.value - 1) * size.value, page.value * size.value),
-)
-
+const pagedTools = computed(() => filteredTools.value.slice((page.value - 1) * size.value, page.value * size.value))
 watch(keyword, () => {
   page.value = 1
 })
-
 const moduleTotals = computed(() => {
   const m = new Map<string, number>()
   for (const t of filteredTools.value) {
@@ -70,7 +60,6 @@ const moduleTotals = computed(() => {
   }
   return m
 })
-
 const grouped = computed(() => {
   const map = new Map<string, AiToolInfo[]>()
   for (const t of pagedTools.value) {
@@ -82,24 +71,23 @@ const grouped = computed(() => {
   }
   return [...map.entries()].map(([key, list]) => ({ key, title: key.split('|')[0], module: key.split('|')[1], list }))
 })
-
 const enabledCount = computed(() => tools.value.filter(t => t.enabled).length)
 const riskCount = computed(() => tools.value.filter(t => t.risk === 'danger').length)
-
 // ---- 操作审计 ----
 const logs = ref<AiOperationLog[]>([])
 const logTotal = ref(0)
 const logPage = ref(1)
 const logSize = ref(10)
 const logLoading = ref(false)
-
-const ACTION_META: Record<string, { text: string, class: string }> = {
+const ACTION_META: Record<string, {
+  text: string
+  class: string
+}> = {
   executed: { text: '自动执行', class: 'bg-sky-500/10 text-sky-600' },
   approved: { text: '已批准', class: 'bg-emerald-500/10 text-emerald-600' },
   denied: { text: '已拒绝', class: 'bg-red-500/10 text-red-500' },
   timeout: { text: '已超时', class: 'bg-red-500/10 text-red-500' },
 }
-
 async function loadLogs() {
   logLoading.value = true
   try {
@@ -107,18 +95,17 @@ async function loadLogs() {
     logs.value = res.items || []
     logTotal.value = res.total || 0
   }
-  catch {}
+  catch {
+
+  }
   finally {
     logLoading.value = false
   }
 }
-
 watch(logPage, loadLogs)
-
 function fmtTime(v: string) {
   return v ? new Date(v).toLocaleString('zh-CN', { hour12: false }) : '-'
 }
-
 onMounted(() => {
   loadTools()
   loadLogs()
@@ -133,64 +120,64 @@ onActivated(() => {
     <FaPageMain>
       <div class="space-y-4">
         <!-- 顶部：统计 + 搜索（M60：全局确认模式卡片移除，写/危险确认由对话发送框的权限档位决定） -->
-        <div class="flex flex-wrap items-center gap-3">
+        <div class="flex flex-wrap gap-3 items-center">
           <span class="text-xs text-muted-foreground">{{ $t('ai.tools.modeHint') }}</span>
-          <div class="ml-auto text-xs text-muted-foreground">
-            {{ $t('ai.tools.totalTools', { n: tools.length }) }} · {{ $t('ai.tools.enabledPrefix') }} <span class="font-medium text-foreground">{{ enabledCount }}</span> {{ $t('ai.tools.enabledSuffix') }} · {{ $t('ai.tools.dangerTools', { n: riskCount }) }}
+          <div class="text-xs text-muted-foreground ml-auto">
+            {{ $t('ai.tools.totalTools', { n: tools.length }) }} · {{ $t('ai.tools.enabledPrefix') }} <span class="text-foreground font-medium">{{ enabledCount }}</span> {{ $t('ai.tools.enabledSuffix') }} · {{ $t('ai.tools.dangerTools', { n: riskCount }) }}
           </div>
           <FaInput v-model="keyword" :placeholder="$t('ai.tools.searchPlaceholder')" class="w-52" />
         </div>
 
         <!-- 工具表：按模块分组 -->
-        <div class="overflow-hidden rounded-lg border">
-          <div v-if="!grouped.length" class="px-3 py-8 text-center text-sm text-muted-foreground">
+        <div class="border rounded-lg overflow-hidden">
+          <div v-if="!grouped.length" class="text-sm text-muted-foreground px-3 py-8 text-center">
             {{ $t('ai.tools.noMatch') }}
           </div>
           <div v-for="g in grouped" :key="g.key">
-            <div class="flex items-center gap-2 border-b bg-muted/40 px-3 py-2 text-xs font-medium text-muted-foreground">
+            <div class="text-xs text-muted-foreground font-medium px-3 py-2 border-b bg-muted/40 flex gap-2 items-center">
               <FaIcon name="i-lucide:layout-grid" class="text-[11px]" />
               {{ g.title }}
-              <span class="font-mono text-[10px] text-muted-foreground/60">{{ g.module }}</span>
+              <span class="text-[10px] text-muted-foreground/60 font-mono">{{ g.module }}</span>
               <span class="ml-auto">{{ $t('ai.tools.toolCount', { n: moduleTotals.get(g.module) }) }}</span>
             </div>
             <div class="overflow-x-auto">
-              <table class="w-full text-sm">
-              <tbody>
-                <tr v-for="t in g.list" :key="t.name" class="border-b transition-colors last:border-b-0 hover:bg-accent/30">
-                  <td class="w-56 px-3 py-2">
-                    <div class="flex items-center gap-2.5">
-                      <span class="flex size-7 shrink-0 items-center justify-center rounded-lg bg-muted">
-                        <FaIcon :name="toolMetaOf(t.name).icon" class="text-xs text-muted-foreground" />
-                      </span>
-                      <div class="min-w-0">
-                        <div class="truncate font-mono text-xs font-medium">
-                          {{ t.name }}
+              <table class="text-sm w-full">
+                <tbody>
+                  <tr v-for="t in g.list" :key="t.name" class="border-b transition-colors last:border-b-0 hover:bg-accent/30">
+                    <td class="px-3 py-2 w-56">
+                      <div class="flex gap-2.5 items-center">
+                        <span class="rounded-lg bg-muted flex shrink-0 size-7 items-center justify-center">
+                          <FaIcon :name="toolMetaOf(t.name).icon" class="text-xs text-muted-foreground" />
+                        </span>
+                        <div class="min-w-0">
+                          <div class="text-xs font-medium font-mono truncate">
+                            {{ t.name }}
+                          </div>
                         </div>
                       </div>
-                    </div>
-                  </td>
-                  <td class="min-w-48 px-3 py-2">
-                    <div class="truncate text-muted-foreground" :title="t.description">
-                      {{ t.description }}
-                    </div>
-                  </td>
-                  <td class="w-16 px-3 py-2">
-                    <span
-                      class="rounded-full px-2 py-0.5 text-[11px]"
-                      :class="(RISK_META[t.risk] || RISK_META.read).badgeClass"
-                    >
-                      {{ (RISK_META[t.risk] || RISK_META.read).label }}
-                    </span>
-                  </td>
-                  <td class="w-20 px-3 py-2 text-right">
-                    <FaSwitch
-                      v-model="t.enabled"
-                      :disabled="savingName === t.name"
-                      @update:model-value="(v: boolean | undefined) => setFlag(t, v === true)"
-                    />
-                  </td>
-                </tr>
-              </tbody>
+                    </td>
+                    <td class="px-3 py-2 min-w-48">
+                      <div class="text-muted-foreground truncate" :title="t.description">
+                        {{ t.description }}
+                      </div>
+                    </td>
+                    <td class="px-3 py-2 w-16">
+                      <span
+                        class="text-[11px] px-2 py-0.5 rounded-full"
+                        :class="(RISK_META[t.risk] || RISK_META.read).badgeClass"
+                      >
+                        {{ (RISK_META[t.risk] || RISK_META.read).label }}
+                      </span>
+                    </td>
+                    <td class="px-3 py-2 text-right w-20">
+                      <FaSwitch
+                        v-model="t.enabled"
+                        :disabled="savingName === t.name"
+                        @update:model-value="(v: boolean | undefined) => setFlag(t, v === true)"
+                      />
+                    </td>
+                  </tr>
+                </tbody>
               </table>
             </div>
           </div>
@@ -202,27 +189,27 @@ onActivated(() => {
     <!-- 操作审计 -->
     <FaPageMain>
       <div class="space-y-3">
-        <div class="flex items-center gap-2">
+        <div class="flex gap-2 items-center">
           <span class="text-sm font-medium">{{ $t('ai.tools.auditTitle') }}</span>
           <span class="text-xs text-muted-foreground">{{ $t('ai.tools.auditDesc') }}</span>
           <FaButton size="icon-sm" variant="ghost" class="ml-auto" @click="loadLogs">
             <FaIcon name="i-lucide:refresh-cw" :class="logLoading ? 'animate-spin' : ''" />
           </FaButton>
         </div>
-        <div class="overflow-x-auto rounded-lg border">
-          <table class="w-full text-sm">
+        <div class="border rounded-lg overflow-x-auto">
+          <table class="text-sm w-full">
             <thead>
-              <tr class="border-b bg-muted/40 text-left text-xs text-muted-foreground">
-                <th class="w-40 px-3 py-2">
+              <tr class="text-xs text-muted-foreground text-left border-b bg-muted/40">
+                <th class="px-3 py-2 w-40">
                   {{ $t('common.time') }}
                 </th>
-                <th class="w-48 px-3 py-2">
+                <th class="px-3 py-2 w-48">
                   {{ $t('ai.tools.colTool') }}
                 </th>
-                <th class="w-24 px-3 py-2">
+                <th class="px-3 py-2 w-24">
                   {{ $t('ai.tools.colRisk') }}
                 </th>
-                <th class="w-24 px-3 py-2">
+                <th class="px-3 py-2 w-24">
                   {{ $t('ai.tools.colAction') }}
                 </th>
                 <th class="px-3 py-2">
@@ -232,16 +219,16 @@ onActivated(() => {
             </thead>
             <tbody>
               <tr v-if="!logs.length">
-                <td colspan="5" class="px-3 py-8 text-center text-muted-foreground">
+                <td colspan="5" class="text-muted-foreground px-3 py-8 text-center">
                   {{ logLoading ? $t('common.loading') : $t('ai.tools.noLogs') }}
                 </td>
               </tr>
               <tr v-for="log in logs" :key="log.id" class="border-b transition-colors last:border-b-0 hover:bg-accent/30">
-                <td class="px-3 py-2 font-mono text-xs text-muted-foreground">
+                <td class="text-xs text-muted-foreground font-mono px-3 py-2">
                   {{ fmtTime(log.createdAt) }}
                 </td>
                 <td class="px-3 py-2">
-                  <div class="truncate font-mono text-xs font-medium" :title="log.tool">
+                  <div class="text-xs font-medium font-mono truncate" :title="log.tool">
                     {{ log.tool }}
                   </div>
                   <div class="text-[11px] text-muted-foreground">
@@ -249,23 +236,23 @@ onActivated(() => {
                   </div>
                 </td>
                 <td class="px-3 py-2">
-                  <span class="rounded-full px-2 py-0.5 text-[11px]" :class="(RISK_META[log.risk] || RISK_META.read).badgeClass">
+                  <span class="text-[11px] px-2 py-0.5 rounded-full" :class="(RISK_META[log.risk] || RISK_META.read).badgeClass">
                     {{ (RISK_META[log.risk] || RISK_META.read).label }}
                   </span>
                 </td>
                 <td class="px-3 py-2">
                   <span
-                    class="rounded-full px-2 py-0.5 text-[11px]"
+                    class="text-[11px] px-2 py-0.5 rounded-full"
                     :class="(ACTION_META[log.action] || ACTION_META.executed).class"
                   >
                     {{ tr(`ai.tools.actionState.${log.action || 'executed'}`, (ACTION_META[log.action] || ACTION_META.executed).text) }}
                   </span>
                 </td>
-                <td class="max-w-0 px-3 py-2">
-                  <div class="truncate font-mono text-[11px] text-muted-foreground" :title="log.args">
+                <td class="px-3 py-2 max-w-0">
+                  <div class="text-[11px] text-muted-foreground font-mono truncate" :title="log.args">
                     {{ log.args || '-' }}
                   </div>
-                  <div class="truncate text-[11px]" :class="log.success ? 'text-muted-foreground' : 'text-red-500'" :title="log.result">
+                  <div class="text-[11px] truncate" :class="log.success ? 'text-muted-foreground' : 'text-red-500'" :title="log.result">
                     {{ log.result || (log.success ? $t('common.success') : $t('common.failed')) }}
                   </div>
                 </td>

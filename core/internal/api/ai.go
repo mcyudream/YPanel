@@ -12,12 +12,10 @@ import (
 
 	"github.com/gin-gonic/gin"
 
-	"github.com/ypanel/core/internal/agentclient"
 	"github.com/ypanel/core/internal/middleware"
 	"github.com/ypanel/core/internal/model"
 	"github.com/ypanel/core/internal/rbac"
 	"github.com/ypanel/core/internal/service"
-	"github.com/ypanel/shared/dto"
 )
 
 // callerCtx 下游工具链路的授权 ctx：auth 中间件已在请求 ctx 注入完整 Caller
@@ -69,7 +67,7 @@ func (a *AIAPI) SaveProvider(c *gin.Context) {
 	}
 	row := model.AIProvider{
 		ID: req.ID, Name: req.Name, APIType: req.APIType, BaseURL: req.BaseURL,
-		APIKey: req.APIKey, Model: req.Model, Models: req.Models, IsDefault: req.IsDefault,
+		APIKey: req.APIKey, Model: req.Model, Models: req.Models, IsDefault: req.IsDefault, Capabilities: req.Capabilities, AllowPrivate: req.AllowPrivate,
 	}
 	if err := a.AI.SaveProvider(&row); err != nil {
 		respErr(c, err)
@@ -85,7 +83,7 @@ func (a *AIAPI) ProviderModels(c *gin.Context) {
 		respErr(c, errBadRequest("供应商 ID 不合法"))
 		return
 	}
-	models, err := a.AI.ProviderModels(uint(id))
+	models, err := a.AI.ProviderModels(uint(id), callerCtx(c))
 	if err != nil {
 		respErr(c, err)
 		return
@@ -109,110 +107,81 @@ func (a *AIAPI) DeleteProvider(c *gin.Context) {
 // 任务在后端 goroutine 运行（30min 上限），不随 HTTP 连接断开而终止；
 // 前端经 GET /ai/chat/stream 订阅事件流（换窗口/强刷新可重连介入）。
 func (a *AIAPI) ChatStart(c *gin.Context) {
-	req, ok := bind[struct {
-		ConversationID uint                  `json:"conversationId"`
-		ProviderID     uint                  `json:"providerId"`
-		Model          string                `json:"model"`
-		Mode           string                `json:"mode"`
-		Messages       []service.ChatMessage `json:"messages"`
-		Scene          string                `json:"scene"`
-		Focus          string                `json:"focus"`
-		MaxRounds      int                   `json:"maxRounds"`
-	}](c)
-	if !ok {
+	req := service.AIChatStart{Settings: a.AI.AIChatDefaults(callerCtx(c))}
+	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, 2<<20)
+	if err := c.ShouldBindJSON(&req); err != nil {
+		respErr(c, errBadRequest("对话参数无效"))
 		return
 	}
-	var provider *model.AIProvider
-	var err error
-	if req.ProviderID > 0 {
-		provider, err = a.AI.ProviderByID(req.ProviderID)
-	} else {
-		provider, err = a.AI.DefaultProvider()
-	}
+	out, err := a.AI.StartChat(callerCtx(c), req)
 	if err != nil {
 		respErr(c, err)
 		return
 	}
-	// 同一供应商多模型：请求可指定模型覆盖供应商默认值
-	if req.Model != "" {
-		cp := *provider
-		cp.Model = req.Model
-		provider = &cp
-	}
-	convoID, err := a.AI.StartChatRun(callerCtx(c), req.ConversationID, provider, req.Messages, req.Scene, req.Focus, req.Mode, req.MaxRounds)
-	if err != nil {
-		respErr(c, err)
-		return
-	}
-	respOK(c, gin.H{"conversationId": convoID})
+	respOK(c, out)
 }
 
-// ChatStream GET /api/v1/ai/chat/stream?conversationId=N&offset=K（M62）：
-// 订阅任务事件流——回放 events[K:] 后实时推送；响应头 X-Ai-Run 报告任务状态
-// （none=无运行体，前端回退静态历史）。断开仅取消订阅，不影响任务本身。
+// ChatStream 有序增量；过期游标、不同 run 或慢订阅重连时用原子快照重同步。
 func (a *AIAPI) ChatStream(c *gin.Context) {
-	id64, _ := strconv.ParseUint(c.Query("conversationId"), 10, 64)
+	id, err := strconv.ParseUint(c.Query("conversationId"), 10, 64)
+	if err != nil || id == 0 {
+		respErr(c, errBadRequest("会话 ID 无效"))
+		return
+	}
 	offset, _ := strconv.Atoi(c.Query("offset"))
+	sub, err := a.AI.SubscribeChatRun(callerCtx(c), uint(id), c.Query("runId"), offset)
+	if err != nil {
+		respErr(c, err)
+		return
+	}
+	defer sub.Close()
 	flusher, ok := c.Writer.(http.Flusher)
 	if !ok {
 		respErr(c, errBadRequest("当前连接不支持流式"))
 		return
 	}
 	c.Header("Content-Type", "text/event-stream")
-	c.Header("Cache-Control", "no-cache")
+	c.Header("Cache-Control", "no-cache, no-transform")
 	c.Header("X-Accel-Buffering", "no")
-	c.Status(http.StatusOK)
-
-	write := func(b []byte) {
-		_, _ = c.Writer.Write(b)
+	write := func(id int, raw []byte) bool {
+		_ = http.NewResponseController(c.Writer).SetWriteDeadline(time.Now().Add(20 * time.Second))
+		if _, err := fmt.Fprintf(c.Writer, "id: %d\ndata: %s\n\n", id, raw); err != nil {
+			return false
+		}
 		flusher.Flush()
+		return true
 	}
-	runFrame := func(v any) {
-		b, _ := json.Marshal(v)
-		write(append(append([]byte("data: "), b...), '\n', '\n'))
+	if sub.Snapshot != nil {
+		raw, _ := json.Marshal(gin.H{"sync": sub.Snapshot, "eventId": sub.Snapshot.LastEventID, "runId": sub.Snapshot.RunID})
+		if !write(sub.Snapshot.LastEventID, raw) {
+			return
+		}
 	}
-
-	convoID := uint(id64)
-	replay, sub, doneCh, status, has := a.AI.SubscribeChatRun(convoID, offset)
-	if !has {
-		c.Header("X-Ai-Run", "none")
-		runFrame(map[string]string{"done": "1"})
-		return
+	for _, frame := range sub.Replay {
+		if !write(frame.ID, frame.Data) {
+			return
+		}
 	}
-	c.Header("X-Ai-Run", status)
-	for _, b := range replay {
-		write(append(append([]byte("data: "), b...), '\n', '\n'))
-	}
-	if status != service.AIRunStatusRunning {
+	if sub.Events == nil {
 		return
 	}
 	heartbeat := time.NewTicker(15 * time.Second)
 	defer heartbeat.Stop()
 	for {
 		select {
-		case b := <-sub:
-			if isPingFrame(b) {
-				write(b)
-				continue
-			}
-			write(append(append([]byte("data: "), b...), '\n', '\n'))
-		case <-heartbeat.C:
-			write([]byte(": ping\n\n"))
-		case <-doneCh:
-			// 任务收尾：剩余帧已按序进缓冲，排空后结束订阅
-			for {
-				select {
-				case b := <-sub:
-					if isPingFrame(b) {
-						write(b)
-						continue
-					}
-					write(append(append([]byte("data: "), b...), '\n', '\n'))
-					continue
-				default:
-				}
+		case frame, ok := <-sub.Events:
+			if !ok {
 				return
 			}
+			if !write(frame.ID, frame.Data) {
+				return
+			}
+		case <-heartbeat.C:
+			_ = http.NewResponseController(c.Writer).SetWriteDeadline(time.Now().Add(20 * time.Second))
+			if _, err := c.Writer.Write([]byte(": ping\n\n")); err != nil {
+				return
+			}
+			flusher.Flush()
 		case <-c.Request.Context().Done():
 			return
 		}
@@ -228,13 +197,14 @@ func isPingFrame(b []byte) bool {
 // （fail-closed 语义保留：未批准的操作视为拒绝），半截内容落库。
 func (a *AIAPI) ChatStop(c *gin.Context) {
 	req, ok := bind[struct {
-		ConversationID uint `json:"conversationId"`
+		ConversationID uint   `json:"conversationId"`
+		RunID          string `json:"runId"`
 	}](c)
 	if !ok {
 		return
 	}
-	if !a.AI.StopChatRun(req.ConversationID) {
-		respErr(c, errBadRequest("该会话没有进行中的任务"))
+	if err := a.AI.StopChat(callerCtx(c), req.ConversationID, req.RunID); err != nil {
+		respErr(c, err)
 		return
 	}
 	respOK(c, struct{}{})
@@ -274,7 +244,7 @@ func (a *AIAPI) ResolveAsk(c *gin.Context) {
 	if !ok {
 		return
 	}
-	if !a.AI.ResolveAsk(id, req.Approve) {
+	if !a.AI.ResolveAsk(id, req.Approve, callerCtx(c)) {
 		respErr(c, errBadRequest("确认请求不存在或已超时"))
 		return
 	}
@@ -300,7 +270,7 @@ func (a *AIAPI) ResolveAskQuestion(c *gin.Context) {
 		respErr(c, errBadRequest("答案格式不合法"))
 		return
 	}
-	if !a.AI.ResolveQuestion(id, string(b)) {
+	if !a.AI.ResolveQuestion(id, string(b), callerCtx(c)) {
 		respErr(c, errBadRequest("提问不存在或已取消"))
 		return
 	}
@@ -331,7 +301,7 @@ func (a *AIAPI) SetMaxToolRounds(c *gin.Context) {
 func (a *AIAPI) ListOperationLogs(c *gin.Context) {
 	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
 	size, _ := strconv.Atoi(c.DefaultQuery("pageSize", "20"))
-	respOK(c, a.AI.ListOperationLogs(page, size))
+	respOK(c, a.AI.ListOperationLogs(page, size, callerCtx(c)))
 }
 
 // GetAskMode GET /api/v1/ai/tools/ask-mode
@@ -382,7 +352,7 @@ func (a *AIAPI) UploadSkillZip(c *gin.Context) {
 
 // ListKnowledgeDocs GET /api/v1/ai/knowledge/docs
 func (a *AIAPI) ListKnowledgeDocs(c *gin.Context) {
-	respOK(c, a.AI.ListKnowledgeDocs())
+	respOK(c, a.AI.ListKnowledgeDocs(callerCtx(c)))
 }
 
 // SaveKnowledgeDoc POST /api/v1/ai/knowledge/doc {title?, filename, content}
@@ -395,7 +365,7 @@ func (a *AIAPI) SaveKnowledgeDoc(c *gin.Context) {
 	if !ok {
 		return
 	}
-	doc, err := a.AI.SaveKnowledgeDoc(req.Title, req.Filename, req.Content)
+	doc, err := a.AI.SaveKnowledgeDoc(req.Title, req.Filename, req.Content, callerCtx(c))
 	if err != nil {
 		respErr(c, err)
 		return
@@ -410,7 +380,7 @@ func (a *AIAPI) GetKnowledgeDoc(c *gin.Context) {
 		respErr(c, errBadRequest("文档 ID 不合法"))
 		return
 	}
-	out, err := a.AI.GetKnowledgeDoc(uint(id))
+	out, err := a.AI.GetKnowledgeDoc(uint(id), callerCtx(c))
 	if err != nil {
 		respErr(c, err)
 		return
@@ -425,7 +395,7 @@ func (a *AIAPI) DeleteKnowledgeDoc(c *gin.Context) {
 		respErr(c, errBadRequest("文档 ID 不合法"))
 		return
 	}
-	if err := a.AI.DeleteKnowledgeDoc(uint(id)); err != nil {
+	if err := a.AI.DeleteKnowledgeDoc(uint(id), callerCtx(c)); err != nil {
 		respErr(c, err)
 		return
 	}
@@ -434,10 +404,7 @@ func (a *AIAPI) DeleteKnowledgeDoc(c *gin.Context) {
 
 // WorkspaceList GET /api/v1/ai/workspace（B18：工作空间文件列表）
 func (a *AIAPI) WorkspaceList(c *gin.Context) {
-	node, _ := a.AI.NodeLocal()
-	ac := agentclient.New(fmt.Sprint(node["baseURL"]), fmt.Sprint(node["token"]))
-	out, err := agentclient.GetJSON[json.RawMessage](ac, c.Request.Context(),
-		"/agent/v1/files/list?path="+escape("/opt/ypanel/ai-workspace"))
+	out, err := a.AI.WorkspaceFiles(callerCtx(c))
 	if err != nil {
 		respErr(c, err)
 		return
@@ -445,7 +412,7 @@ func (a *AIAPI) WorkspaceList(c *gin.Context) {
 	respOK(c, out)
 }
 
-// WorkspaceRun POST /api/v1/ai/workspace/run {command}（B18：沙箱内执行）
+// WorkspaceRun executes a host command with terminal permission, danger lock and audit.
 func (a *AIAPI) WorkspaceRun(c *gin.Context) {
 	req, ok := bind[struct {
 		Command string `json:"command" binding:"required"`
@@ -453,10 +420,7 @@ func (a *AIAPI) WorkspaceRun(c *gin.Context) {
 	if !ok {
 		return
 	}
-	node, _ := a.AI.NodeLocal()
-	ac := agentclient.New(fmt.Sprint(node["baseURL"]), fmt.Sprint(node["token"]))
-	out, err := agentclient.DoJSON[dto.ExecReq, dto.ExecResp](ac, c.Request.Context(), http.MethodPost, "/agent/v1/exec",
-		&dto.ExecReq{Command: fmt.Sprintf("mkdir -p /opt/ypanel/ai-workspace && cd /opt/ypanel/ai-workspace && %s", req.Command), TimeoutSecs: 120})
+	out, err := a.AI.RunWorkspace(callerCtx(c), req.Command)
 	if err != nil {
 		respErr(c, err)
 		return
@@ -466,7 +430,7 @@ func (a *AIAPI) WorkspaceRun(c *gin.Context) {
 
 // ListKnowledge GET /api/v1/ai/knowledge
 func (a *AIAPI) ListKnowledge(c *gin.Context) {
-	respOK(c, a.AI.ListKnowledge())
+	respOK(c, a.AI.ListKnowledge(callerCtx(c)))
 }
 
 // SaveKnowledge POST /api/v1/ai/knowledge
@@ -475,11 +439,11 @@ func (a *AIAPI) SaveKnowledge(c *gin.Context) {
 	if !ok {
 		return
 	}
-	if err := a.AI.SaveKnowledge(req); err != nil {
+	if err := a.AI.SaveKnowledge(req, callerCtx(c)); err != nil {
 		respErr(c, err)
 		return
 	}
-	respOK(c, a.AI.ListKnowledge())
+	respOK(c, a.AI.ListKnowledge(callerCtx(c)))
 }
 
 // DeleteKnowledge DELETE /api/v1/ai/knowledge/:id
@@ -489,16 +453,23 @@ func (a *AIAPI) DeleteKnowledge(c *gin.Context) {
 		respErr(c, errBadRequest("知识条目 ID 不合法"))
 		return
 	}
-	if err := a.AI.DeleteKnowledge(id); err != nil {
+	if err := a.AI.DeleteKnowledge(id, callerCtx(c)); err != nil {
 		respErr(c, err)
 		return
 	}
-	respOK(c, a.AI.ListKnowledge())
+	respOK(c, a.AI.ListKnowledge(callerCtx(c)))
 }
 
 // ListConversations GET /api/v1/ai/conversations
 func (a *AIAPI) ListConversations(c *gin.Context) {
-	respOK(c, a.AI.ListConversations())
+	page, _ := strconv.Atoi(c.Query("page"))
+	size, _ := strconv.Atoi(c.Query("pageSize"))
+	out, err := a.AI.ConversationPage(callerCtx(c), service.AIConversationQuery{Search: c.Query("search"), Page: page, PageSize: size, Archived: c.Query("archived") == "true"})
+	if err != nil {
+		respErr(c, err)
+		return
+	}
+	respOK(c, out)
 }
 
 // GetConversation GET /api/v1/ai/conversations/:id
@@ -506,7 +477,7 @@ func (a *AIAPI) GetConversation(c *gin.Context) {
 	if id := aiIDParam(c); id == 0 {
 		respErr(c, errBadRequest("会话 ID 不合法"))
 		return
-	} else if out, err := a.AI.GetConversation(id); err != nil {
+	} else if out, err := a.AI.ConversationSnapshot(callerCtx(c), id, aiQueryInt(c, "before"), aiQueryInt(c, "limit")); err != nil {
 		respErr(c, err)
 		return
 	} else {
@@ -537,7 +508,7 @@ func (a *AIAPI) DeleteConversation(c *gin.Context) {
 	if id := aiIDParam(c); id == 0 {
 		respErr(c, errBadRequest("会话 ID 不合法"))
 		return
-	} else if err := a.AI.DeleteConversation(id); err != nil {
+	} else if err := a.AI.RemoveConversation(callerCtx(c), id); err != nil {
 		respErr(c, err)
 		return
 	}
@@ -546,12 +517,17 @@ func (a *AIAPI) DeleteConversation(c *gin.Context) {
 
 // ListMemories GET /api/v1/ai/memories
 func (a *AIAPI) ListMemories(c *gin.Context) {
-	respOK(c, a.AI.RecallMemories(""))
+	out, err := a.AI.MemoryPage(callerCtx(c), c.Query("search"), aiQueryInt(c, "page"), aiQueryInt(c, "pageSize"))
+	if err != nil {
+		respErr(c, err)
+		return
+	}
+	respOK(c, out)
 }
 
 // ClearMemories DELETE /api/v1/ai/memories（清空全部记忆）
 func (a *AIAPI) ClearMemories(c *gin.Context) {
-	if err := a.AI.DeleteAllMemories(); err != nil {
+	if err := a.AI.DeleteAllMemories(callerCtx(c)); err != nil {
 		respErr(c, err)
 		return
 	}

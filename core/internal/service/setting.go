@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"golang.org/x/crypto/bcrypt"
@@ -42,6 +43,7 @@ func randomHexBytes(targetLen int) int {
 
 // SettingService 键值设置（带进程内缓存）。
 type SettingService struct {
+	mu  sync.Mutex
 	db  *gorm.DB
 	mem map[string]string
 }
@@ -53,6 +55,8 @@ func NewSettingService(db *gorm.DB) *SettingService {
 
 // Get 读取设置，不存在返回默认值。
 func (s *SettingService) Get(key, def string) string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	if v, ok := s.mem[key]; ok {
 		return v
 	}
@@ -68,6 +72,8 @@ func (s *SettingService) Get(key, def string) string {
 // 注意：不能用 Assign(struct).FirstOrCreate —— GORM struct 更新会忽略零值字段，
 // 导致 Set(key, "") 静默不落库（重启后旧值回魂）。
 func (s *SettingService) Set(key, value string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	var row model.Setting
 	err := s.db.Where("`key` = ?", key).First(&row).Error
 	switch {

@@ -73,7 +73,7 @@ func (s *AIService) aiToolsSystem(ctx context.Context) []aiToolDef {
 		},
 		{
 			Name: "list_nodes", Module: aiModSystem, Risk: aiRiskRead,
-			Desc: "列出面板纳管的服务器节点（名称/地址/在线状态）。input 传 {}。",
+			Desc:       "列出面板纳管的服务器节点（名称/地址/在线状态）。input 传 {}。",
 			Parameters: schObj(map[string]any{}),
 			Fn: func(_ context.Context, _ string) (string, error) {
 				rows := s.nodes.ListNodes()
@@ -144,8 +144,8 @@ func (s *AIService) aiToolsProc(ctx context.Context) []aiToolDef {
 		},
 		{
 			Name: "list_services", Module: aiModProc, Risk: aiRiskRead,
-			Desc: "列出 systemd 服务（加载/活动状态）。input 可选 JSON：{\"search\":\"服务名关键词\"}",
-			Parameters: schObj(map[string]any{"search": schStr("服务名关键词"), "node": schStr("目标节点 ID（list_nodes 返回数组项的 id；local=本机；不要传节点名）"),}),
+			Desc:       "列出 systemd 服务（加载/活动状态）。input 可选 JSON：{\"search\":\"服务名关键词\"}",
+			Parameters: schObj(map[string]any{"search": schStr("服务名关键词"), "node": schStr("目标节点 ID（list_nodes 返回数组项的 id；local=本机；不要传节点名）")}),
 			Fn: func(_ context.Context, input string) (string, error) {
 				p, err := parseToolArgs[struct {
 					Search string `json:"search"`
@@ -174,8 +174,8 @@ func (s *AIService) aiToolsProc(ctx context.Context) []aiToolDef {
 		},
 		{
 			Name: "kill_process", Module: aiModProc, Risk: aiRiskDanger,
-			Desc: "终止进程（SIGKILL，可能造成服务中断/数据丢失，会先向用户确认）。input JSON：{\"pid\":1234}",
-			Parameters: schObj(map[string]any{"pid": schInt("进程 PID"), "node": schStr("目标节点 ID（list_nodes 返回数组项的 id；local=本机；不要传节点名）"),}, "pid", "node"),
+			Desc:       "终止进程（SIGKILL，可能造成服务中断/数据丢失，会先向用户确认）。input JSON：{\"pid\":1234}",
+			Parameters: schObj(map[string]any{"pid": schInt("进程 PID"), "node": schStr("目标节点 ID（list_nodes 返回数组项的 id；local=本机；不要传节点名）")}, "pid", "node"),
 			Fn: func(_ context.Context, input string) (string, error) {
 				p, err := parseToolArgs[struct {
 					Pid  int32  `json:"pid"`
@@ -259,8 +259,8 @@ func (s *AIService) aiToolsExec(ctx context.Context) []aiToolDef {
 		},
 		{
 			Name: "run_in_workspace", Module: aiModExec, Risk: aiRiskDanger,
-			Desc: "在 AI 工作空间目录（" + workspaceDir + "）中执行 shell 命令（写临时脚本/代码实验；每次执行都会请求用户确认）。input JSON：{\"command\":\"shell 命令\"}",
-			Parameters: schObj(map[string]any{"command": schStr("shell 命令"), "node": schStr("目标节点 ID（list_nodes 返回数组项的 id；local=本机；不要传节点名）"),}, "command"),
+			Desc:       "在 AI 工作空间目录（" + workspaceDir + "）中执行 shell 命令（写临时脚本/代码实验；每次执行都会请求用户确认）。input JSON：{\"command\":\"shell 命令\"}",
+			Parameters: schObj(map[string]any{"command": schStr("shell 命令"), "node": schStr("目标节点 ID（list_nodes 返回数组项的 id；local=本机；不要传节点名）")}, "command"),
 			Fn: func(_ context.Context, input string) (string, error) {
 				p, err := parseToolArgs[struct {
 					Command string `json:"command"`
@@ -273,7 +273,11 @@ func (s *AIService) aiToolsExec(ctx context.Context) []aiToolDef {
 					return "", fmt.Errorf("命令为空")
 				}
 				ctx = withAINode(ctx, p.Node)
-				return s.hostExec(ctx, fmt.Sprintf("mkdir -p '%s' && cd '%s' && %s", workspaceDir, workspaceDir, p.Command))
+				out, err := s.RunWorkspace(ctx, p.Command)
+				if err != nil {
+					return "", err
+				}
+				return toolOut(out)
 			},
 		},
 	}

@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"unicode"
 
 	"gorm.io/gorm"
 
@@ -61,106 +62,45 @@ func (s *AIService) listDatabaseInstances(ctx context.Context) (string, error) {
 // ---- 长期记忆（AI 自动沉淀的运维经验/用户偏好，与手动知识库区分） ----
 
 // RememberMemory AI 调用沉淀记忆。
-func (s *AIService) RememberMemory(content string) error {
+func (s *AIService) RememberMemory(content string, scopes ...context.Context) error {
 	content = strings.TrimSpace(content)
 	if content == "" {
 		return errs.Wrap(errs.ErrBadRequest, "记忆内容为空")
 	}
-	row := &model.AIMemory{Content: content}
+	var n int64
+	if err := s.db.Model(&model.AIMemory{}).Where("owner_id = ? AND content = ?", aiOwner(aiContext(scopes)), maskSensitive(content)).Count(&n).Error; err != nil {
+		return err
+	}
+	if n > 0 {
+		return nil
+	}
+	row := &model.AIMemory{OwnerID: aiOwner(aiContext(scopes)), Content: maskSensitive(content)}
 	return s.db.Create(row).Error
 }
 
-// RecallMemories 检索与 query 相关的记忆（最近 20 条中关键词命中前 5）。
-func (s *AIService) RecallMemories(query string) []model.AIMemory {
+// RecallMemories scores the authorized memory corpus in the database and returns five bounded candidates.
+func (s *AIService) RecallMemories(query string, scopes ...context.Context) []model.AIMemory {
+	ctx := aiContext(scopes)
 	rows := []model.AIMemory{}
-	_ = s.db.Order("id desc").Limit(200).Find(&rows).Error
-	if query == "" {
-		return rows[:min5(len(rows))]
+	q := aiResourceScope(ctx, s.db.WithContext(ctx).Model(&model.AIMemory{}))
+	words := tokenizeKnowledgeQuery(query)
+	if len(words) > 32 {
+		words = words[:32]
 	}
-	words := strings.FieldsFunc(strings.ToLower(query), func(r rune) bool {
-		return !((r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') || r > 127)
-	})
-	var hits []model.AIMemory
-	for _, r := range rows {
-		low := strings.ToLower(r.Content)
-		for _, w := range words {
-			if w != "" && strings.Contains(low, w) {
-				hits = append(hits, r)
-				break
-			}
-		}
+	if len(words) == 0 {
+		_ = q.Order("id DESC").Limit(5).Find(&rows).Error
+		return rows
 	}
-	if len(hits) > 5 {
-		hits = hits[:5]
-	}
-	return hits
-}
-
-func min5(n int) int {
-	if n > 5 {
-		return 5
-	}
-	return n
+	score, args := aiKnowledgeScoreSQL(words, "content")
+	_ = q.Select("ai_memories.*,("+score+") AS ai_score", args...).Where("("+score+") > 0", args...).Order("ai_score DESC,id DESC").Limit(5).Scan(&rows).Error
+	return rows
 }
 
 // ---- 会话持久化（LobeHub 式多会话） ----
 
 // SaveConversation 保存会话（upsert：有 ID 更新标题与消息；ID 不存在时落为新建）。
 func (s *AIService) SaveConversation(ctx context.Context, id uint, title string, messages []ChatMessage) (uint, error) {
-	b, _ := json.Marshal(messages)
-	if id > 0 {
-		var row model.AIConversation
-		if err := s.db.First(&row, id).Error; err == nil {
-			// title 为空表示沿用原标题（前端自动保存不传标题）
-			updates := map[string]any{"messages": string(b)}
-			if title != "" {
-				updates["title"] = title
-			}
-			_ = s.db.Model(&row).Updates(updates).Error
-			return id, nil
-		}
-		// 会话已不存在（如被其他端删除）：落为新建
-	}
-	if title == "" {
-		title = firstUserSnippet(messages)
-	}
-	row := &model.AIConversation{Title: title, Messages: string(b)}
-	if err := s.db.Create(row).Error; err != nil {
-		return 0, err
-	}
-	return row.ID, nil
-}
-
-// ListConversations 会话列表（不含消息体）。
-func (s *AIService) ListConversations() []map[string]any {
-	rows := []model.AIConversation{}
-	_ = s.db.Order("updated_at desc").Limit(50).Find(&rows).Error
-	out := []map[string]any{}
-	for _, r := range rows {
-		item := map[string]any{"id": r.ID, "title": r.Title, "updatedAt": r.UpdatedAt}
-		// M62：运行态标注（running/waiting_confirm/waiting_answer，无任务为空）
-		if st := s.ConversationRunStatus(r.ID); st != "" {
-			item["runStatus"] = st
-		}
-		out = append(out, item)
-	}
-	return out
-}
-
-// GetConversation 读取会话消息。
-func (s *AIService) GetConversation(id uint) (map[string]any, error) {
-	var row model.AIConversation
-	if err := s.db.First(&row, id).Error; err != nil {
-		return nil, errs.Wrap(errs.ErrNotFound, "会话不存在")
-	}
-	var msgs []ChatMessage
-	_ = json.Unmarshal([]byte(row.Messages), &msgs)
-	return map[string]any{"id": row.ID, "title": row.Title, "messages": msgs}, nil
-}
-
-// DeleteConversation 删除会话。
-func (s *AIService) DeleteConversation(id uint) error {
-	return s.db.Delete(&model.AIConversation{}, id).Error
+	return s.saveConversation(ctx, id, title, messages)
 }
 
 // tokenizeKnowledgeQuery 检索分词：ASCII 字母数字成词，CJK 逐字（去重）。
@@ -183,7 +123,7 @@ func tokenizeKnowledgeQuery(query string) []string {
 		switch {
 		case (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9'):
 			ascii.WriteRune(r)
-		case r > 127:
+		case unicode.IsLetter(r) || unicode.IsDigit(r):
 			flush()
 			w := string(r)
 			if !seen[w] {
@@ -203,7 +143,7 @@ func firstUserSnippet(messages []ChatMessage) string {
 		if m.Role == "user" {
 			t := strings.TrimSpace(m.Content)
 			if len(t) > 30 {
-				t = t[:30]
+				t = truncText(t, 30)
 			}
 			return t
 		}
@@ -212,15 +152,15 @@ func firstUserSnippet(messages []ChatMessage) string {
 }
 
 // DeleteAllMemories 清空全部记忆。
-func (s *AIService) DeleteAllMemories() error {
+func (s *AIService) DeleteAllMemories(scopes ...context.Context) error {
 	// GORM v2 拦截无 WHERE 的全表 Delete（ErrMissingWhereClause），清空须显式条件
-	return s.db.Where("1 = 1").Delete(&model.AIMemory{}).Error
+	return aiScope(aiContext(scopes), s.db).Where("1 = 1").Delete(&model.AIMemory{}).Error
 }
 
 // ---- 知识文档（用户注入 md/txt → 分块检索 + read_knowledge 按需深读） ----
 
 // SaveKnowledgeDoc 保存知识文档并切分入库（utf-8，≤2MB）。
-func (s *AIService) SaveKnowledgeDoc(title, filename, content string) (*model.AIKnowledgeDoc, error) {
+func (s *AIService) SaveKnowledgeDoc(title, filename, content string, scopes ...context.Context) (*model.AIKnowledgeDoc, error) {
 	content = strings.TrimSpace(content)
 	if content == "" {
 		return nil, errWrapAI("文档内容为空")
@@ -234,7 +174,7 @@ func (s *AIService) SaveKnowledgeDoc(title, filename, content string) (*model.AI
 			title = title[:i]
 		}
 	}
-	doc := &model.AIKnowledgeDoc{Title: title, Filename: filename, Content: content}
+	doc := &model.AIKnowledgeDoc{OwnerID: aiOwner(aiContext(scopes)), Title: title, Filename: filename, Content: content}
 	chunks := chunkKnowledgeDoc(content)
 	err := s.db.Transaction(func(tx *gorm.DB) error {
 		if err := tx.Create(doc).Error; err != nil {
@@ -256,32 +196,36 @@ func (s *AIService) SaveKnowledgeDoc(title, filename, content string) (*model.AI
 }
 
 // ListKnowledgeDocs 文档列表（不含正文）。
-func (s *AIService) ListKnowledgeDocs() []map[string]any {
+func (s *AIService) ListKnowledgeDocs(scopes ...context.Context) []map[string]any {
 	rows := []model.AIKnowledgeDoc{}
-	_ = s.db.Order("id desc").Find(&rows).Error
+	_ = aiResourceScope(aiContext(scopes), s.db).Omit("content").Order("id desc").Find(&rows).Error
 	out := make([]map[string]any, 0, len(rows))
 	for _, r := range rows {
 		var cnt int64
 		_ = s.db.Model(&model.AIKnowledgeChunk{}).Where("doc_id = ?", r.ID).Count(&cnt).Error
 		out = append(out, map[string]any{
 			"id": r.ID, "title": r.Title, "filename": r.Filename,
-			"chunks": cnt, "createdAt": r.CreatedAt,
+			"chunks": cnt, "createdAt": r.CreatedAt, "shared": r.Shared, "ownerId": r.OwnerID,
 		})
 	}
 	return out
 }
 
 // GetKnowledgeDoc 文档全文。
-func (s *AIService) GetKnowledgeDoc(id uint) (*model.AIKnowledgeDoc, error) {
+func (s *AIService) GetKnowledgeDoc(id uint, scopes ...context.Context) (*model.AIKnowledgeDoc, error) {
 	var row model.AIKnowledgeDoc
-	if err := s.db.First(&row, id).Error; err != nil {
+	if err := aiResourceScope(aiContext(scopes), s.db).First(&row, id).Error; err != nil {
 		return nil, errs.Wrap(errs.ErrNotFound, "文档不存在")
 	}
 	return &row, nil
 }
 
 // DeleteKnowledgeDoc 删除文档（级联分块）。
-func (s *AIService) DeleteKnowledgeDoc(id uint) error {
+func (s *AIService) DeleteKnowledgeDoc(id uint, scopes ...context.Context) error {
+	var row model.AIKnowledgeDoc
+	if err := aiScope(aiContext(scopes), s.db).First(&row, id).Error; err != nil {
+		return aiNotFound()
+	}
 	return s.db.Transaction(func(tx *gorm.DB) error {
 		if err := tx.Where("doc_id = ?", id).Delete(&model.AIKnowledgeChunk{}).Error; err != nil {
 			return err

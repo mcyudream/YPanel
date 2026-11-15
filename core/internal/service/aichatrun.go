@@ -1,17 +1,17 @@
-// AI 聊天任务运行体（M62）：任务脱离 HTTP 连接在后端 goroutine 运行，
-// 事件帧进内存总线（回放 buffer + 多订阅者广播）——换窗口/强刷新可重连介入。
-// 生命周期：POST /ai/chat/start 创建 → goroutine 跑 RunAgentChat → 结束统一落库
-// → 保留 10min 供迟订阅回放 → 惰性清理；面板重启则运行中任务随进程终止（内存态）。
 package service
 
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"log/slog"
+	"strings"
 	"sync"
 	"time"
 
 	"github.com/ypanel/core/internal/model"
+	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 const (
@@ -19,369 +19,529 @@ const (
 	aiRunStatusDone    = "done"
 	aiRunStatusStopped = "stopped"
 	aiRunStatusError   = "error"
-
-	aiRunMaxEvents    = 8000            // 单任务事件帧回放上限保险丝（超限截半）
-	aiRunTTL          = 10 * time.Minute // 结束后保留时长（迟订阅回放窗口）
-	aiRunTotalTimeout = 60 * time.Minute // 单任务总上限（防泄漏；GitLab 升级类长任务+用户介入间隔需富余）
+	aiRunMaxEvents     = 8000
+	aiRunTTL           = 10 * time.Minute
+	aiRunTotalTimeout  = 60 * time.Minute
 )
 
-// chatRun 一轮对话任务的运行体。emit 仅由任务 goroutine 单线程调用。
+type aiRunEvent struct {
+	ID   int
+	Data []byte
+}
 type chatRun struct {
-	id      string
-	convoID uint
-	cancel  context.CancelFunc
-
-	mu     sync.Mutex
-	base   int        // events 已截掉的帧数（客户端 offset = 全局序号）
-	events [][]byte   // 事件帧（JSON 原文，不含 SSE 信封）
-	subs   map[chan []byte]struct{}
-	status string
-	pending string      // 挂起类型："" 无 / "ask" 待确认 / "question" 待回答（M62 会话列表徽标）
-	doneCh chan struct{} // finish 时关闭（订阅端感知收尾，避免悬挂）
-
-	builder *aiMsgBuilder
-	startAt time.Time
+	id        string
+	convoID   uint
+	userID    uint
+	requestID string
+	cancel    context.CancelFunc
+	mu        sync.Mutex
+	base      int
+	seq       int
+	events    []aiRunEvent
+	subs      map[chan aiRunEvent]struct{}
+	status    string
+	pending   string
+	doneCh    chan struct{}
+	builder   *aiMsgBuilder
+	startAt   time.Time
+	title     string
+	version   uint
+	settings  AIChatSettings
+	usage     AIContextUsage
 }
 
-// emit 记录并广播一帧事件（帧同时喂给消息重建器）。
+// emit 与快照使用同一把锁，快照内容和 lastEventID 永远来自同一时刻。
 func (r *chatRun) emit(v any) {
-	b, err := json.Marshal(v)
+	raw, err := json.Marshal(v)
 	if err != nil {
 		return
 	}
-	r.trackPending(v)
-	r.builder.feed(b)
-	r.mu.Lock()
-	r.events = append(r.events, b)
-	if len(r.events) > aiRunMaxEvents {
-		drop := len(r.events) / 2
-		r.events = append([][]byte(nil), r.events[drop:]...)
-		r.base += drop
-	}
-	for ch := range r.subs {
-		select {
-		case ch <- b:
-		default: // 慢订阅丢帧：渲染容错，任务不受影响
-		}
-	}
-	r.mu.Unlock()
-}
-
-// ping 心跳帧只推订阅者（注释帧不入回放、不参与 offset 计数）。
-func (r *chatRun) ping() {
-	b := []byte(": ping\n\n")
-	r.mu.Lock()
-	for ch := range r.subs {
-		select {
-		case ch <- b:
-		default:
-		}
-	}
-	r.mu.Unlock()
-}
-
-// subscribe 注册订阅者并回放 events[offset:]（同锁内快照，不丢注册间隙的帧）。
-func (r *chatRun) subscribe(offset int) (replay [][]byte, ch chan []byte) {
-	ch = make(chan []byte, 1024)
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	from := offset - r.base
-	if from < 0 {
-		from = 0
-	}
-	if from <= len(r.events) {
-		replay = append([][]byte(nil), r.events[from:]...)
-	}
-	r.subs[ch] = struct{}{}
-	return replay, ch
-}
-
-func (r *chatRun) unsubscribe(ch chan []byte) {
-	r.mu.Lock()
-	delete(r.subs, ch)
-	r.mu.Unlock()
-}
-
-// trackPending 从帧类型跟踪挂起状态（会话列表「待确认/待回答」徽标数据源）。
-func (r *chatRun) trackPending(v any) {
-	m, ok := v.(map[string]any)
-	if !ok {
-		return
-	}
-	if _, has := m["ask"]; has {
-		r.setPending("ask")
-	}
-	if _, has := m["ask_result"]; has {
-		r.setPending("")
-	}
-	if _, has := m["ask_user"]; has {
-		r.setPending("question")
-	}
-	if _, has := m["ask_user_result"]; has {
-		r.setPending("")
-	}
-}
-
-func (r *chatRun) setPending(p string) {
-	r.mu.Lock()
-	r.pending = p
-	r.mu.Unlock()
-}
-
-func (r *chatRun) finish(status string) {
-	r.mu.Lock()
-	if r.status == AIRunStatusRunning {
-		r.status = status
-		close(r.doneCh)
-	}
-	r.mu.Unlock()
-}
-
-// ---- 消息重建器：从事件帧流重建可持久化的消息链（与前端 useAiChat 帧处理同构） ----
-
-type aiMsgBuilder struct {
-	msgs    []ChatMessage
-	cur     *ChatMessage
-	askIdx  map[string]int // askID → cur.Steps 下标
-	quesIdx map[string]int // questionID → cur.Steps 下标
-}
-
-func newAiMsgBuilder(history []ChatMessage) *aiMsgBuilder {
-	msgs := append([]ChatMessage(nil), history...)
-	return &aiMsgBuilder{
-		msgs:    msgs,
-		cur:     &ChatMessage{Role: "assistant"},
-		askIdx:  map[string]int{},
-		quesIdx: map[string]int{},
-	}
-}
-
-// feed 处理一帧事件（JSON 原文）。
-func (b *aiMsgBuilder) feed(raw []byte) {
 	var ev map[string]any
 	if json.Unmarshal(raw, &ev) != nil {
 		return
 	}
-	cur := b.cur
-	if v, ok := ev["scene"].(map[string]any); ok {
-		page, _ := v["page"].(string)
-		cur.Steps = append(cur.Steps, ChatStep{Type: "scene", Name: "读取页面数据", Detail: page, Done: true})
+	if _, ok := ev["done"]; ok {
+		return
+	} // 终态帧只在持久化完成后发出
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.status != AIRunStatusRunning {
+		return
 	}
-	if v, ok := ev["reasoning"].(string); ok {
-		cur.Reasoning += v
+	r.builder.feed(ev)
+	if _, ok := ev["ask"]; ok {
+		r.pending = "ask"
 	}
-	if v, ok := ev["step"].(map[string]any); ok {
-		if t, _ := v["type"].(string); t == "tool" {
-			name, _ := v["name"].(string)
-			detail, _ := v["detail"].(string)
-			cur.Steps = append(cur.Steps, ChatStep{Type: "tool", Name: name, Detail: detail})
+	if _, ok := ev["ask_result"]; ok {
+		r.pending = ""
+	}
+	if _, ok := ev["ask_user"]; ok {
+		r.pending = "question"
+	}
+	if _, ok := ev["ask_user_result"]; ok {
+		r.pending = ""
+	}
+	if value, ok := ev["context"]; ok {
+		b, _ := json.Marshal(value)
+		_ = json.Unmarshal(b, &r.usage)
+	}
+	r.seq++
+	ev["eventId"] = r.seq
+	ev["runId"] = r.id
+	raw, err = json.Marshal(ev)
+	if err != nil {
+		return
+	}
+	frame := aiRunEvent{ID: r.seq, Data: raw}
+	r.events = append(r.events, frame)
+	if len(r.events) > aiRunMaxEvents {
+		drop := len(r.events) / 2
+		r.base = r.events[drop-1].ID
+		r.events = append([]aiRunEvent(nil), r.events[drop:]...)
+	}
+	for ch := range r.subs {
+		select {
+		case ch <- frame:
+		default:
+			close(ch)
+			delete(r.subs, ch)
 		}
 	}
+}
+
+func (r *chatRun) ping() {} // HTTP 订阅独立发送心跳，不占业务事件序号
+func (r *chatRun) snapshotLocked() *AIChatSnapshot {
+	all := r.builder.snapshot()
+	start := max(0, len(all)-50)
+	out := &AIChatSnapshot{ConversationID: r.convoID, Title: r.title, Version: r.version,
+		RunID: r.id, Status: r.status, LastEventID: r.seq, Messages: all[start:], Total: len(all),
+		HasMore: start > 0, Settings: r.settings, Context: r.usage}
+	// 防止解锁后切片/段对象被后续 delta 修改。
+	b, _ := json.Marshal(out)
+	var cp AIChatSnapshot
+	_ = json.Unmarshal(b, &cp)
+	return &cp
+}
+func (r *chatRun) snapshot() *AIChatSnapshot {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.snapshotLocked()
+}
+
+// AIChatSubscription 的 Close 捕获准确运行体，避免新运行替换后清理错订阅。
+type AIChatSubscription struct {
+	Snapshot *AIChatSnapshot
+	Replay   []aiRunEvent
+	Events   <-chan aiRunEvent
+	Done     <-chan struct{}
+	Close    func()
+}
+
+func (s *AIService) SubscribeChatRun(ctx context.Context, id uint, runID string, offset int) (*AIChatSubscription, error) {
+	if _, err := s.ownedConversation(ctx, id); err != nil {
+		return nil, err
+	}
+	v, ok := s.runs.Load(id)
+	if !ok {
+		snap, err := s.ConversationSnapshot(ctx, id, 0, 50)
+		return &AIChatSubscription{Snapshot: snap, Close: func() {}}, err
+	}
+	r := v.(*chatRun)
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	out := &AIChatSubscription{Done: r.doneCh, Close: func() {}}
+	if runID != r.id || offset < r.base || offset > r.seq || offset < 0 {
+		out.Snapshot = r.snapshotLocked()
+	} else {
+		for _, frame := range r.events {
+			if frame.ID > offset {
+				out.Replay = append(out.Replay, frame)
+			}
+		}
+	}
+	if r.status != AIRunStatusRunning {
+		out.Snapshot = r.snapshotLocked()
+		out.Replay = nil
+		return out, nil
+	}
+	ch := make(chan aiRunEvent, 256)
+	r.subs[ch] = struct{}{}
+	out.Events = ch
+	var once sync.Once
+	out.Close = func() {
+		once.Do(func() {
+			r.mu.Lock()
+			if _, exists := r.subs[ch]; exists {
+				delete(r.subs, ch)
+				close(ch)
+			}
+			r.mu.Unlock()
+		})
+	}
+	return out, nil
+}
+
+type aiMsgBuilder struct {
+	msgs      []ChatMessage
+	cur       *ChatMessage
+	content   strings.Builder
+	reasoning strings.Builder
+	text      strings.Builder
+}
+
+func newAiMsgBuilder(history []ChatMessage) *aiMsgBuilder {
+	return &aiMsgBuilder{msgs: append([]ChatMessage(nil), history...), cur: &ChatMessage{ID: "msg-" + randAskID(), Role: "assistant", Pending: true, Steps: []ChatStep{}, CreatedAt: time.Now()}}
+}
+func str(m map[string]any, k string) string { v, _ := m[k].(string); return v }
+func (b *aiMsgBuilder) feed(ev map[string]any) {
+	cur := b.cur
+	if v, ok := ev["content"].(string); ok {
+		b.content.WriteString(v)
+		cur.Content = b.content.String()
+		n := len(cur.Segments)
+		if n == 0 || cur.Segments[n-1].Type != "text" {
+			b.text.Reset()
+			cur.Segments = append(cur.Segments, ChatSegment{Type: "text"})
+		}
+		b.text.WriteString(v)
+		cur.Segments[len(cur.Segments)-1].Text = b.text.String()
+	}
+	if v, ok := ev["reasoning"].(string); ok {
+		b.reasoning.WriteString(v)
+		cur.Reasoning = b.reasoning.String()
+	}
+	if v, ok := ev["scene"].(map[string]any); ok {
+		cur.Steps = append(cur.Steps, ChatStep{Type: "scene", Name: "读取页面数据", Detail: str(v, "page"), Done: true})
+	}
+	if v, ok := ev["step"].(map[string]any); ok && str(v, "type") == "tool" {
+		cur.Segments = append(cur.Segments, ChatSegment{Type: "tool", ID: str(v, "id"), Name: str(v, "name"), Args: str(v, "detail"), Status: "running"})
+	}
 	if v, ok := ev["step_result"].(map[string]any); ok {
-		name, _ := v["name"].(string)
-		status, _ := v["status"].(string)
-		for i := len(cur.Steps) - 1; i >= 0; i-- {
-			st := &cur.Steps[i]
-			if st.Type == "tool" && st.Name == name && !st.Done {
-				st.Done = true
-				st.Status = status
+		for i := len(cur.Segments) - 1; i >= 0; i-- {
+			seg := &cur.Segments[i]
+			if seg.Type == "tool" && seg.Name == str(v, "name") && (str(v, "id") == "" || seg.ID == str(v, "id")) {
+				seg.Summary = str(v, "detail")
+				seg.Output = str(v, "output")
+				seg.OutputID = str(v, "outputId")
+				seg.Status = str(v, "status")
+				seg.Done = true
 				break
 			}
 		}
 	}
 	if v, ok := ev["ask"].(map[string]any); ok {
-		id, _ := v["id"].(string)
-		tool, _ := v["tool"].(string)
-		args, _ := v["args"].(string)
-		b.askIdx[id] = len(cur.Steps)
-		cur.Steps = append(cur.Steps, ChatStep{Type: "ask", Name: tool, Detail: args})
+		for i := len(cur.Segments) - 1; i >= 0; i-- {
+			seg := &cur.Segments[i]
+			if seg.Type == "tool" && !seg.Done {
+				seg.AskID = str(v, "id")
+				seg.Risk = str(v, "risk")
+				seg.Status = "waiting"
+				break
+			}
+		}
 	}
 	if v, ok := ev["ask_result"].(map[string]any); ok {
-		id, _ := v["id"].(string)
-		approved, _ := v["approved"].(bool)
-		if i, has := b.askIdx[id]; has && i < len(cur.Steps) {
-			cur.Steps[i].Done = true
-			if approved {
-				cur.Steps[i].Status = "已确认"
-			} else if reason, _ := v["reason"].(string); reason == "timeout" {
-				cur.Steps[i].Status = "已超时"
-			} else {
-				cur.Steps[i].Status = "已拒绝"
+		for i := range cur.Segments {
+			seg := &cur.Segments[i]
+			if seg.AskID == str(v, "id") {
+				seg.Done = true
+				seg.Status = "已拒绝"
+				if approved, _ := v["approved"].(bool); approved {
+					seg.Status = "running"
+					seg.Done = false
+				}
 			}
 		}
 	}
 	if v, ok := ev["ask_user"].(map[string]any); ok {
-		id, _ := v["id"].(string)
-		detail := ""
-		if qs, ok := v["questions"].([]any); ok {
-			for i, q := range qs {
-				if qm, ok := q.(map[string]any); ok {
-					if i > 0 {
-						detail += "；"
-					}
-					q, _ := qm["question"].(string)
-					detail += q
+		var qs []map[string]any
+		bts, _ := json.Marshal(v["questions"])
+		_ = json.Unmarshal(bts, &qs)
+		cur.Segments = append(cur.Segments, ChatSegment{Type: "question", Name: "ask_user", AskID: str(v, "id"), Questions: qs, Status: "waiting"})
+	}
+	if v, ok := ev["ask_user_result"].(map[string]any); ok {
+		for i := range cur.Segments {
+			seg := &cur.Segments[i]
+			if seg.AskID == str(v, "id") {
+				seg.Done = true
+				seg.Status = "已回答"
+				seg.Summary = str(v, "answer")
+				if cancelled, _ := v["cancelled"].(bool); cancelled {
+					seg.Status = "已取消"
 				}
 			}
 		}
-		b.quesIdx[id] = len(cur.Steps)
-		cur.Steps = append(cur.Steps, ChatStep{Type: "question", Name: "询问用户", Detail: detail})
 	}
-	if v, ok := ev["ask_user_result"].(map[string]any); ok {
-		id, _ := v["id"].(string)
-		if i, has := b.quesIdx[id]; has && i < len(cur.Steps) {
-			cur.Steps[i].Done = true
-			cur.Steps[i].Status = "已取消"
-		}
-	}
-	if v, ok := ev["knowledge"].([]any); ok {
-		for _, item := range v {
-			if m, ok := item.(map[string]any); ok {
-				t, _ := m["title"].(string)
-				body, _ := m["body"].(string)
-				cur.Knowledge = append(cur.Knowledge, ChatKnowledge{Title: t, Body: body})
-			}
-		}
-	}
-	if v, ok := ev["content"].(string); ok {
-		cur.Content += v
+	if v, ok := ev["knowledge"]; ok {
+		raw, _ := json.Marshal(v)
+		_ = json.Unmarshal(raw, &cur.Knowledge)
 	}
 	if v, ok := ev["error"].(string); ok {
+		cur.Error = true
 		cur.Content += "\n\n" + v
+		cur.Segments = append(cur.Segments, ChatSegment{Type: "text", Text: "\n\n" + v})
 	}
 }
-
-// finalize 收尾：assistant 有产出才追加，返回完整消息链。
-func (b *aiMsgBuilder) finalize() []ChatMessage {
-	if b.cur.Content != "" || len(b.cur.Steps) > 0 || b.cur.Reasoning != "" {
-		b.msgs = append(b.msgs, *b.cur)
-		b.cur = &ChatMessage{Role: "assistant"}
-	}
-	return b.msgs
+func (b *aiMsgBuilder) snapshot() []ChatMessage {
+	out := append([]ChatMessage(nil), b.msgs...)
+	return append(out, *b.cur)
 }
+func (b *aiMsgBuilder) finalize() []ChatMessage { b.cur.Pending = false; return b.snapshot() }
 
-// ---- 服务侧：注册表 / 启动 / 停止 / 订阅 ----
-
-// StartChatRun 启动一轮后台对话任务，立即返回会话 ID。
-// caller 携带 RBAC 身份（WithoutCancel 派生：HTTP 连接断开不影响任务）。
-func (s *AIService) StartChatRun(
-	caller context.Context,
-	convoID uint,
-	provider *model.AIProvider,
-	history []ChatMessage,
-	scenePath, focus, mode string,
-	maxRoundsOverride int,
-) (uint, error) {
-	// 同会话并发拒绝（运行体结束后 10min TTL 内仍可回放，但状态非 running 可再次发起）
-	if v, ok := s.runs.Load(convoID); ok && convoID != 0 {
-		if r, ok := v.(*chatRun); ok && r != nil {
-			r.mu.Lock()
-			st := r.status
-			r.mu.Unlock()
-			if st == AIRunStatusRunning {
-				return convoID, errWrapAI("该会话有 AI 任务进行中，请等待完成或停止后再发送")
-			}
+func (s *AIService) StartChat(ctx context.Context, in AIChatStart) (*AIChatSnapshot, error) {
+	if strings.TrimSpace(in.Content) == "" && len(in.AttachmentIDs) == 0 {
+		return nil, errWrapAI("消息不能为空")
+	}
+	if len(in.Scene) > 1000 || len(in.Focus) > 4000 || len(in.Content) > 1<<20 || len(in.AttachmentIDs) > 10 || len(in.RequestID) < 8 || len(in.RequestID) > 80 {
+		return nil, errWrapAI("消息过长、附件过多或请求标识无效")
+	}
+	if err := validateAISettings(in.Settings); err != nil {
+		return nil, err
+	}
+	in.Settings.Mode = normalizeAIMode(in.Settings.Mode)
+	s.runMu.Lock()
+	defer s.runMu.Unlock()
+	requestKey := fmt.Sprintf("%d:%s", aiOwner(ctx), in.RequestID)
+	var old model.AIRun
+	if err := s.db.Where("request_id = ?", requestKey).First(&old).Error; err == nil {
+		if old.UserID != aiOwner(ctx) {
+			return nil, aiNotFound()
 		}
-	}
-
-	if convoID == 0 && s.db != nil {
-		row := &model.AIConversation{Title: firstUserSnippet(history)}
-		if err := s.db.Create(row).Error; err != nil {
-			return 0, errWrapAI("创建会话失败: " + err.Error())
+		if in.ConversationID != 0 && in.ConversationID != old.ConversationID {
+			return nil, errWrapAI("请求标识已用于其他会话")
 		}
-		convoID = row.ID
+		return s.ConversationSnapshot(ctx, old.ConversationID, 0, 50)
+	} else if err != gorm.ErrRecordNotFound {
+		return nil, err
 	}
-
-	ctx, cancel := context.WithTimeout(context.WithoutCancel(caller), aiRunTotalTimeout)
-	run := &chatRun{
-		id:      randAskID(),
-		convoID: convoID,
-		cancel:  cancel,
-		subs:    map[chan []byte]struct{}{},
-		status:  AIRunStatusRunning,
-		doneCh:  make(chan struct{}),
-		builder: newAiMsgBuilder(history),
-		startAt: time.Now(),
-	}
-	s.runs.Store(convoID, run)
-	slog.Info("ai chat run started", "convo", convoID, "run", run.id, "mode", mode)
-
-	go func() {
-		defer func() {
-			if p := recover(); p != nil {
-				slog.Error("ai chat run panic", "convo", convoID, "panic", p)
-				run.emit(map[string]string{"error": "任务异常终止"})
-				run.emit(map[string]string{"done": "1"})
-				run.finish(aiRunStatusError)
-			}
-		}()
-		err := s.RunAgentChat(ctx, run.emit, run.ping, provider, history, scenePath, focus, mode, maxRoundsOverride)
-		status := aiRunStatusDone
+	var row *model.AIConversation
+	var err error
+	if in.ConversationID > 0 {
+		row, err = s.ownedConversation(ctx, in.ConversationID)
 		if err != nil {
-			if ctx.Err() != nil {
-				status = aiRunStatusStopped
-			} else {
-				status = aiRunStatusError
-				run.emit(map[string]string{"error": err.Error()})
-			}
-			run.emit(map[string]string{"done": "1"})
+			return nil, err
 		}
-		// 统一落库（停止/出错半截也算，与前端旧 abort 语义一致）
-		if msgs := run.builder.finalize(); len(msgs) > 0 && s.db != nil {
-			if _, err := s.SaveConversation(context.Background(), convoID, "", msgs); err != nil {
-				slog.Warn("ai chat run persist failed", "convo", convoID, "err", err)
+		if s.ChatRunStatus(row.ID) == AIRunStatusRunning {
+			return nil, errWrapAI("该会话有任务正在进行")
+		}
+		if in.Version != nil && row.Version != *in.Version {
+			return nil, errWrapAI("会话已更新，请重新载入后发送")
+		}
+	} else {
+		row = &model.AIConversation{OwnerID: aiOwner(ctx), Title: truncText(strings.TrimSpace(in.Content), 60)}
+	}
+	var provider *model.AIProvider
+	if in.Settings.ProviderID > 0 {
+		provider, err = s.ProviderByID(in.Settings.ProviderID)
+	} else {
+		provider, err = s.DefaultProvider()
+	}
+	if err != nil {
+		return nil, err
+	}
+	cp := *provider
+	provider = &cp
+	if in.Settings.Model != "" {
+		provider.Model = in.Settings.Model
+	}
+	in.Settings.ProviderID = provider.ID
+	in.Settings.Model = provider.Model
+	cap := modelCapabilities(provider)
+	if cap.ContextLimit > 0 && in.Settings.ContextLimit > cap.ContextLimit {
+		return nil, errWrapAI("会话窗口超过已配置的模型上限，请调整会话设置")
+	}
+	if cap.MaxOutputTokens > 0 && in.Settings.MaxOutputTokens > cap.MaxOutputTokens {
+		return nil, errWrapAI("输出预算超过已配置的模型上限")
+	}
+	if in.Settings.Temperature != nil && !cap.Temperature {
+		return nil, errWrapAI("当前模型未声明支持温度参数")
+	}
+	history := []ChatMessage{}
+	if row.ID > 0 {
+		history, err = s.conversationMessages(ctx, row)
+		if err != nil {
+			return nil, err
+		}
+	}
+	if !modelCapabilities(provider).Vision {
+		for _, m := range history {
+			for _, a := range m.Attachments {
+				if a.Kind == "image" {
+					return nil, errWrapAI("历史含图片，当前模型未声明视觉能力。请选择视觉模型或从图片之前分叉。")
+				}
 			}
 		}
-		run.finish(status)
-		slog.Info("ai chat run finished", "convo", convoID, "run", run.id, "status", status, "events", len(run.events))
-		time.AfterFunc(aiRunTTL, func() {
-			if cur, ok := s.runs.Load(convoID); ok && cur.(*chatRun) == run {
-				s.runs.Delete(convoID)
+	}
+	attachments, err := s.chatAttachments(ctx, row.ID, in.AttachmentIDs, provider)
+	if err != nil {
+		return nil, err
+	}
+	user := ChatMessage{ID: "msg-" + randAskID(), Role: "user", Content: strings.TrimSpace(in.Content), Attachments: attachments, Steps: []ChatStep{}, CreatedAt: time.Now()}
+	history = append(history, user)
+	runCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), aiRunTotalTimeout)
+	r := &chatRun{id: randAskID(), userID: aiOwner(ctx), requestID: requestKey, cancel: cancel, subs: map[chan aiRunEvent]struct{}{}, status: AIRunStatusRunning, doneCh: make(chan struct{}), builder: newAiMsgBuilder(history), startAt: time.Now(), settings: in.Settings}
+	rawSettings, _ := json.Marshal(in.Settings)
+	err = s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if row.ID == 0 {
+			if row.Title == "" {
+				row.Title = "新对话"
 			}
-		})
-	}()
-	return convoID, nil
+			if err := tx.Create(row).Error; err != nil {
+				return err
+			}
+		}
+		row.Version++
+		row.Settings = string(rawSettings)
+		if err := tx.Model(row).Updates(map[string]any{"version": row.Version, "settings": row.Settings, "updated_at": time.Now()}).Error; err != nil {
+			return err
+		}
+		r.convoID = row.ID
+		r.title = row.Title
+		r.version = row.Version
+		if err := saveAIMessage(tx, row.ID, len(history)-1, user); err != nil {
+			return err
+		}
+		if err := saveAIMessage(tx, row.ID, len(history), *r.builder.cur); err != nil {
+			return err
+		}
+		if len(in.AttachmentIDs) > 0 {
+			if err := tx.Model(&model.AIAttachment{}).Where("id IN ? AND conversation_id = 0", in.AttachmentIDs).Update("conversation_id", row.ID).Error; err != nil {
+				return err
+			}
+		}
+		for _, id := range in.AttachmentIDs {
+			if err := tx.Clauses(clause.OnConflict{DoNothing: true}).Create(&model.AIAttachmentRef{AttachmentID: id, ConversationID: row.ID}).Error; err != nil {
+				return err
+			}
+		}
+		b, _ := json.Marshal(r.builder.cur)
+		return tx.Create(&model.AIRun{ID: r.id, ConversationID: row.ID, UserID: r.userID, RequestID: requestKey, Status: AIRunStatusRunning, Snapshot: string(b)}).Error
+	})
+	if err != nil {
+		cancel()
+		return nil, err
+	}
+	s.runs.Store(row.ID, r)
+	snap := r.snapshot()
+	go s.executeChatRun(runCtx, r, provider, history, in.Scene, in.Focus)
+	return snap, nil
 }
 
-// StopChatRun 停止会话的运行中任务。返回是否找到。
-func (s *AIService) StopChatRun(convoID uint) bool {
-	v, ok := s.runs.Load(convoID)
-	if !ok {
-		return false
-	}
-	v.(*chatRun).cancel()
-	return true
-}
-
-// SubscribeChatRun 订阅任务事件流。ok=false 表示该会话当前没有任务运行体。
-func (s *AIService) SubscribeChatRun(convoID uint, offset int) (replay [][]byte, ch chan []byte, doneCh chan struct{}, status string, ok bool) {
-	v, loaded := s.runs.Load(convoID)
-	if !loaded {
-		return nil, nil, nil, "", false
-	}
-	r, ok := v.(*chatRun)
-	if !ok {
-		return nil, nil, nil, "", false
-	}
-	replay, ch = r.subscribe(offset)
+func (s *AIService) checkpointRun(r *chatRun, status string) error {
 	r.mu.Lock()
-	status = r.status
-	doneCh = r.doneCh
+	b, err := json.Marshal(r.builder.cur)
+	usage, _ := json.Marshal(r.usage)
+	record := model.AIMessage{ID: r.builder.cur.ID, ConversationID: r.convoID, Position: len(r.builder.msgs), Body: string(b), CreatedAt: r.builder.cur.CreatedAt}
 	r.mu.Unlock()
-	return replay, ch, doneCh, status, true
+	if err != nil {
+		return err
+	}
+	return s.db.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Model(&model.AIMessage{}).Where("id = ? AND conversation_id = ?", record.ID, record.ConversationID).Update("body", record.Body).Error; err != nil {
+			return err
+		}
+		if err := tx.Model(&model.AIConversation{}).Where("id = ?", r.convoID).Update("updated_at", time.Now()).Error; err != nil {
+			return err
+		}
+		return tx.Model(&model.AIRun{}).Where("id = ?", r.id).Updates(map[string]any{"status": status, "snapshot": string(b), "context": string(usage)}).Error
+	})
 }
 
-// ConversationRunStatus 会话的运行态标注（会话列表徽标用）：
-// running / waiting_confirm / waiting_answer；无运行体或已结束返回空串。
-func (s *AIService) ConversationRunStatus(convoID uint) string {
-	v, ok := s.runs.Load(convoID)
+func (s *AIService) executeChatRun(ctx context.Context, r *chatRun, provider *model.AIProvider, history []ChatMessage, scene, focus string) {
+	ctx = context.WithValue(ctx, aiRunContextKey{}, aiRunIdentity{UserID: r.userID, ConversationID: r.convoID, RunID: r.id})
+	status := aiRunStatusDone
+	checkpointStop := make(chan struct{})
+	checkpointDone := make(chan struct{})
+	go func() {
+		defer close(checkpointDone)
+		tick := time.NewTicker(time.Second)
+		defer tick.Stop()
+		for {
+			select {
+			case <-tick.C:
+				if err := s.checkpointRun(r, AIRunStatusRunning); err != nil {
+					slog.Error("ai checkpoint failed", "run", r.id, "err", err)
+				}
+			case <-checkpointStop:
+				return
+			}
+		}
+	}()
+	defer func() {
+		if p := recover(); p != nil {
+			status = aiRunStatusError
+			slog.Error("ai run panic", "run", r.id, "type", fmt.Sprintf("%T", p))
+			r.emit(map[string]string{"error": "任务异常终止，已保留当前进度"})
+		}
+		close(checkpointStop)
+		<-checkpointDone
+		r.mu.Lock()
+		r.builder.cur.Pending = false
+		r.builder.cur.DurationMS = time.Since(r.startAt).Milliseconds()
+		for i := range r.builder.cur.Segments {
+			seg := &r.builder.cur.Segments[i]
+			if !seg.Done && (seg.Type == "tool" || seg.Type == "question") {
+				seg.Done = true
+				seg.Status = "已中断"
+			}
+		}
+		r.mu.Unlock()
+		if err := s.checkpointRun(r, status); err != nil {
+			status = aiRunStatusError
+			r.emit(map[string]string{"error": "保存失败，请导出当前回答后重试"})
+			slog.Error("ai final persistence failed", "run", r.id, "err", err)
+		}
+		r.mu.Lock()
+		r.status = status
+		r.pending = ""
+		r.seq++
+		raw, _ := json.Marshal(map[string]any{"done": true, "status": status, "runId": r.id, "eventId": r.seq, "durationMs": r.builder.cur.DurationMS})
+		frame := aiRunEvent{ID: r.seq, Data: raw}
+		r.events = append(r.events, frame)
+		for ch := range r.subs {
+			select {
+			case ch <- frame:
+			default:
+			}
+			close(ch)
+			delete(r.subs, ch)
+		}
+		close(r.doneCh)
+		r.mu.Unlock()
+		r.cancel()
+		time.AfterFunc(aiRunTTL, func() { s.runs.CompareAndDelete(r.convoID, r) })
+		slog.Info("ai run finished", "conversation", r.convoID, "run", r.id, "status", status)
+	}()
+	if err := s.RunAgentChat(ctx, r.emit, r.ping, provider, history, scene, focus, r.settings.Mode, r.settings.MaxRounds, r.settings); err != nil {
+		status = aiRunStatusError
+		if ctx.Err() != nil {
+			status = aiRunStatusStopped
+		} else {
+			r.emit(map[string]string{"error": maskSensitive(err.Error())})
+		}
+	}
+}
+
+func (s *AIService) StopChat(ctx context.Context, id uint, expectedRun ...string) error {
+	if _, err := s.ownedConversation(ctx, id); err != nil {
+		return err
+	}
+	if v, ok := s.runs.Load(id); ok {
+		r := v.(*chatRun)
+		if len(expectedRun) > 0 && expectedRun[0] != "" && expectedRun[0] != r.id {
+			return errWrapAI("会话运行已变更，请重新载入当前任务")
+		}
+		r.cancel()
+		return nil
+	}
+	return errWrapAI("没有进行中的任务")
+}
+func (s *AIService) ConversationRunStatus(id uint) string {
+	v, ok := s.runs.Load(id)
 	if !ok {
 		return ""
 	}
-	r, ok := v.(*chatRun)
-	if !ok {
-		return ""
-	}
+	r := v.(*chatRun)
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if r.status != AIRunStatusRunning {
@@ -396,18 +556,47 @@ func (s *AIService) ConversationRunStatus(convoID uint) string {
 		return "running"
 	}
 }
-
-// ChatRunStatus 查询会话任务状态（无运行体返回空串）。
-func (s *AIService) ChatRunStatus(convoID uint) string {
-	v, ok := s.runs.Load(convoID)
+func (s *AIService) ChatRunStatus(id uint) string {
+	v, ok := s.runs.Load(id)
 	if !ok {
 		return ""
 	}
-	r, ok := v.(*chatRun)
-	if !ok {
-		return ""
-	}
+	r := v.(*chatRun)
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	return r.status
+}
+
+func (s *AIService) RecoverChatRuns() error {
+	var rows []model.AIRun
+	if err := s.db.Where("status = ?", AIRunStatusRunning).Find(&rows).Error; err != nil {
+		return err
+	}
+	for _, row := range rows {
+		if err := s.db.Transaction(func(tx *gorm.DB) error {
+			var m ChatMessage
+			if err := json.Unmarshal([]byte(row.Snapshot), &m); err != nil {
+				return err
+			}
+			m.Pending = false
+			m.Interrupted = true
+			for i := range m.Segments {
+				if !m.Segments[i].Done {
+					m.Segments[i].Done = true
+					m.Segments[i].Status = "已中断"
+				}
+			}
+			raw, err := json.Marshal(m)
+			if err != nil {
+				return err
+			}
+			if err := tx.Model(&model.AIMessage{}).Where("id = ? AND conversation_id = ?", m.ID, row.ConversationID).Update("body", string(raw)).Error; err != nil {
+				return err
+			}
+			return tx.Model(&model.AIRun{}).Where("id = ?", row.ID).Updates(map[string]any{"status": "interrupted", "snapshot": string(raw)}).Error
+		}); err != nil {
+			return err
+		}
+	}
+	return s.cleanupAttachments()
 }

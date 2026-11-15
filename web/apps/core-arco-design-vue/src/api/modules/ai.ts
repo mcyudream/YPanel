@@ -1,14 +1,39 @@
+import anthropicSvg from '@lobehub/icons-static-svg/icons/anthropic.svg'
+
+import azureSvg from '@lobehub/icons-static-svg/icons/azure.svg'
+import baichuanSvg from '@lobehub/icons-static-svg/icons/baichuan.svg'
+import cohereSvg from '@lobehub/icons-static-svg/icons/cohere.svg'
+import deepseekSvg from '@lobehub/icons-static-svg/icons/deepseek.svg'
+import geminiSvg from '@lobehub/icons-static-svg/icons/gemini.svg'
+import grokSvg from '@lobehub/icons-static-svg/icons/grok.svg'
+import groqSvg from '@lobehub/icons-static-svg/icons/groq.svg'
+import minimaxSvg from '@lobehub/icons-static-svg/icons/minimax.svg'
+import mistralSvg from '@lobehub/icons-static-svg/icons/mistral.svg'
+import moonshotSvg from '@lobehub/icons-static-svg/icons/moonshot.svg'
+import ollamaSvg from '@lobehub/icons-static-svg/icons/ollama.svg'
+// 静态 SVG 导入（vite 处理为 url）
+import openaiSvg from '@lobehub/icons-static-svg/icons/openai.svg'
+import openrouterSvg from '@lobehub/icons-static-svg/icons/openrouter.svg'
+import qwenSvg from '@lobehub/icons-static-svg/icons/qwen.svg'
+import siliconcloudSvg from '@lobehub/icons-static-svg/icons/siliconcloud.svg'
+import sparkSvg from '@lobehub/icons-static-svg/icons/spark.svg'
+import togetherSvg from '@lobehub/icons-static-svg/icons/together.svg'
+import wenxinSvg from '@lobehub/icons-static-svg/icons/wenxin.svg'
+import yiSvg from '@lobehub/icons-static-svg/icons/yi.svg'
+import zhipuSvg from '@lobehub/icons-static-svg/icons/zhipu.svg'
 import api from '../index'
 
 export interface AIProvider {
   id: number
   name: string
-  apiType: 'openai' | 'anthropic' | 'response'
+  apiType: 'openai' | 'anthropic' | 'response' | 'responses'
   baseURL: string
   apiKey?: string
   model: string
   /** 可用模型列表（逗号分隔）；空 = 仅 model 一个 */
   models?: string
+  capabilities?: string
+  allowPrivate?: boolean
   isDefault: boolean
 }
 
@@ -138,29 +163,6 @@ export interface ProviderPreset extends AIProvider {
   icon?: string
 }
 
-// 静态 SVG 导入（vite 处理为 url）
-import openaiSvg from '@lobehub/icons-static-svg/icons/openai.svg'
-import anthropicSvg from '@lobehub/icons-static-svg/icons/anthropic.svg'
-import geminiSvg from '@lobehub/icons-static-svg/icons/gemini.svg'
-import deepseekSvg from '@lobehub/icons-static-svg/icons/deepseek.svg'
-import zhipuSvg from '@lobehub/icons-static-svg/icons/zhipu.svg'
-import moonshotSvg from '@lobehub/icons-static-svg/icons/moonshot.svg'
-import qwenSvg from '@lobehub/icons-static-svg/icons/qwen.svg'
-import minimaxSvg from '@lobehub/icons-static-svg/icons/minimax.svg'
-import yiSvg from '@lobehub/icons-static-svg/icons/yi.svg'
-import wenxinSvg from '@lobehub/icons-static-svg/icons/wenxin.svg'
-import sparkSvg from '@lobehub/icons-static-svg/icons/spark.svg'
-import siliconcloudSvg from '@lobehub/icons-static-svg/icons/siliconcloud.svg'
-import grokSvg from '@lobehub/icons-static-svg/icons/grok.svg'
-import mistralSvg from '@lobehub/icons-static-svg/icons/mistral.svg'
-import groqSvg from '@lobehub/icons-static-svg/icons/groq.svg'
-import togetherSvg from '@lobehub/icons-static-svg/icons/together.svg'
-import openrouterSvg from '@lobehub/icons-static-svg/icons/openrouter.svg'
-import baichuanSvg from '@lobehub/icons-static-svg/icons/baichuan.svg'
-import cohereSvg from '@lobehub/icons-static-svg/icons/cohere.svg'
-import ollamaSvg from '@lobehub/icons-static-svg/icons/ollama.svg'
-import azureSvg from '@lobehub/icons-static-svg/icons/azure.svg'
-
 export const providerPresets: ProviderPreset[] = [
   { id: 0, name: 'OpenAI', apiType: 'openai', baseURL: 'https://api.openai.com/v1', model: 'gpt-4o', isDefault: false, icon: openaiSvg },
   { id: 0, name: 'Anthropic Claude', apiType: 'anthropic', baseURL: 'https://api.anthropic.com', model: 'claude-sonnet-4-20250514', isDefault: false, icon: anthropicSvg },
@@ -183,7 +185,7 @@ export const providerPresets: ProviderPreset[] = [
   { id: 0, name: '百川 Baichuan', apiType: 'openai', baseURL: 'https://api.baichuan-ai.com/v1', model: 'Baichuan4', isDefault: false, icon: baichuanSvg },
   { id: 0, name: 'Cohere', apiType: 'openai', baseURL: 'https://api.cohere.com/compatibility/v1', model: 'command-r-plus', isDefault: false, icon: cohereSvg },
   { id: 0, name: 'Azure OpenAI', apiType: 'openai', baseURL: 'https://<resource>.openai.azure.com', model: 'gpt-4o', isDefault: false, icon: azureSvg },
-  { id: 0, name: 'Ollama 本地', apiType: 'openai', baseURL: 'http://127.0.0.1:11434/v1', model: 'llama3.1', isDefault: false, icon: ollamaSvg },
+  { id: 0, name: 'Ollama 本地', apiType: 'openai', baseURL: 'http://127.0.0.1:11434/v1', model: 'llama3.1', isDefault: false, allowPrivate: true, icon: ollamaSvg },
 ]
 
 /** 供应商名称 → 图标 URL（用于已配置项显示） */
@@ -199,9 +201,10 @@ export interface AIConversationMeta {
 }
 
 // 知识文档（注入的 md/txt，分块检索）
-export interface AIKnowledgeDocMeta { id: number, title: string, filename: string, chunks: number, createdAt: string }
+export interface AIKnowledgeDocMeta { shared?: boolean, ownerId?: number, id: number, title: string, filename: string, chunks: number, createdAt: string }
 
 export const knowledgeDocApi = {
+  share: (id: number, shared: boolean) => api.patch(`api/v1/ai/knowledge/doc/${id}`, { shared }),
   list: async () => {
     const res = await api.get('api/v1/ai/knowledge/docs', { silent: true })
     return res.data as AIKnowledgeDocMeta[]
@@ -215,26 +218,18 @@ export const knowledgeDocApi = {
   remove: (id: number) => api.delete(`api/v1/ai/knowledge/doc/${id}`),
 }
 
-export const conversationApi = {
-  list: async () => {
-    const res = await api.get('api/v1/ai/conversations', { silent: true })
-    return res.data as AIConversationMeta[]
-  },
-  get: async (id: number) => {
-    const res = await api.get(`api/v1/ai/conversations/${id}`, { silent: true })
-    return res.data as { id: number, title: string, messages: ChatMsg[] }
-  },
-  save: (id: number, title: string, messages: ChatMsg[]) =>
-    api.post('api/v1/ai/conversations', { id, title, messages }),
-  remove: (id: number) => api.delete(`api/v1/ai/conversations/${id}`),
-}
+// One canonical conversation contract for every view.
+export { aiChatApi as conversationApi } from './aiChat'
 
 // B18：长期记忆
+export interface AIMemory { id: number, content: string, shared: boolean, ownerId: number, createdAt: string }
 export const memoryApi = {
-  list: async () => {
-    const res = await api.get('api/v1/ai/memories', { silent: true })
-    return res.data as { id: number, content: string, createdAt: string }[]
+  list: async (search = '', page = 1) => {
+    const res = await api.get('api/v1/ai/memories', { params: { search, page, pageSize: 40 }, silent: true })
+    return res.data as { items: AIMemory[], total: number }
   },
+  save: (memory: { id?: number, content: string, shared: boolean }) => api.post('api/v1/ai/memories', memory),
+  remove: (id: number) => api.delete(`api/v1/ai/memories/${id}`),
   clear: () => api.delete('api/v1/ai/memories'),
 }
 
@@ -266,6 +261,7 @@ export const skillApi = {
 // B18+：MCP 服务器
 export interface MCPServer {
   name: string
+  allowPrivate?: boolean
   transport: 'stdio' | 'streamable-http'
   command?: string
   args?: string[]

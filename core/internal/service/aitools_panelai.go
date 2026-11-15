@@ -13,6 +13,7 @@ import (
 // aiToolsPanelAI AI 自身域工具集。
 func (s *AIService) aiToolsPanelAI(ctx context.Context) []aiToolDef {
 	return []aiToolDef{
+		s.aiAttachmentTool(),
 		{
 			Name: "ask_user", Module: aiModAI, Risk: aiRiskRead,
 			Desc: "向用户提出澄清问题（需求有歧义或存在多种做法需要用户拍板时使用；一次 1-4 个问题，每题 2-4 个选项）。用户回答前会挂起等待，回答随结果返回；label 简短（≤12 字），description 一句话说明差异；不要在无歧义时滥用。input JSON：{\"questions\":[{\"question\":\"完整问题？\",\"header\":\"短标签\",\"multiSelect\":false,\"options\":[{\"label\":\"选项A\",\"description\":\"差异说明\"},{\"label\":\"选项B\",\"description\":\"...\"}]}]}",
@@ -21,7 +22,7 @@ func (s *AIService) aiToolsPanelAI(ctx context.Context) []aiToolDef {
 					"question":    schStr("完整问题文本"),
 					"header":      schStr("短标签（≤12 字，如 部署方式）"),
 					"multiSelect": schBool("是否多选，默认单选"),
-					"options":     schArr("2-4 个选项", schObj(map[string]any{
+					"options": schArr("2-4 个选项", schObj(map[string]any{
 						"label":       schStr("选项短文本"),
 						"description": schStr("该选项含义/影响"),
 					})),
@@ -33,9 +34,9 @@ func (s *AIService) aiToolsPanelAI(ctx context.Context) []aiToolDef {
 		},
 		{
 			Name: "save_memory", Module: aiModAI, Risk: aiRiskWrite,
-			Desc: "把本次对话中值得长期记住的**可复用运维事实**沉淀为记忆（下次对话自动可用）。只允许沉淀：服务器特性（拓扑/版本/路径/端口）、踩坑结论（根因与解法）、用户偏好。**禁止**沉淀：任务完成状态、工具调用统计、会话过程记录、一次性临时信息。input 为一句话记忆内容（纯文本或 {\"content\":\"...\"}），相同内容自动去重。",
+			Desc:       "把本次对话中值得长期记住的**可复用运维事实**沉淀为记忆（下次对话自动可用）。只允许沉淀：服务器特性（拓扑/版本/路径/端口）、踩坑结论（根因与解法）、用户偏好。**禁止**沉淀：任务完成状态、工具调用统计、会话过程记录、一次性临时信息。input 为一句话记忆内容（纯文本或 {\"content\":\"...\"}），相同内容自动去重。",
 			Parameters: schObj(map[string]any{"content": schStr("记忆内容一句话")}),
-			Fn: func(_ context.Context, input string) (string, error) {
+			Fn: func(ctx context.Context, input string) (string, error) {
 				content := strings.TrimSpace(input)
 				// 兼容 {"content":"..."} / {"input":"..."} 包装，取内层纯文本
 				var probe struct {
@@ -52,12 +53,7 @@ func (s *AIService) aiToolsPanelAI(ctx context.Context) []aiToolDef {
 				if content == "" {
 					return "", fmt.Errorf("记忆内容为空")
 				}
-				var n int64
-				_ = s.db.Model(&model.AIMemory{}).Where("content = ?", content).Count(&n).Error
-				if n > 0 {
-					return "该记忆已存在，跳过", nil
-				}
-				if err := s.db.Create(&model.AIMemory{Content: truncText(content, 500)}).Error; err != nil {
+				if err := s.RememberMemory(content, ctx); err != nil {
 					return "", err
 				}
 				return "已记住", nil
@@ -69,7 +65,7 @@ func (s *AIService) aiToolsPanelAI(ctx context.Context) []aiToolDef {
 			Parameters: schObj(map[string]any{
 				"search": schStr("关键词检索"), "doc": schStr("文档标题关键词，返回全文"),
 			}),
-			Fn: func(_ context.Context, input string) (string, error) {
+			Fn: func(ctx context.Context, input string) (string, error) {
 				p, err := parseToolArgs[struct {
 					Search string `json:"search"`
 					Doc    string `json:"doc"`
@@ -79,7 +75,7 @@ func (s *AIService) aiToolsPanelAI(ctx context.Context) []aiToolDef {
 				}
 				if p.Doc != "" {
 					docs := []model.AIKnowledgeDoc{}
-					if err := s.db.Where("title LIKE ? OR filename LIKE ?", "%"+p.Doc+"%", "%"+p.Doc+"%").Order("id desc").Find(&docs).Error; err != nil {
+					if err := aiResourceScope(ctx, s.db).Where("(title LIKE ? OR filename LIKE ?)", "%"+p.Doc+"%", "%"+p.Doc+"%").Order("id desc").Find(&docs).Error; err != nil {
 						return "", err
 					}
 					if len(docs) == 0 {
@@ -94,7 +90,7 @@ func (s *AIService) aiToolsPanelAI(ctx context.Context) []aiToolDef {
 				if p.Search == "" {
 					return "需提供 search 或 doc 参数", nil
 				}
-				hits := s.searchKnowledge(p.Search)
+				hits := s.searchKnowledge(p.Search, ctx)
 				if len(hits) == 0 {
 					return "知识库无命中：" + p.Search, nil
 				}

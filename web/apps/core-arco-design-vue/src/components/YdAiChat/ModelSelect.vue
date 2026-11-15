@@ -1,22 +1,25 @@
 <script setup lang="ts">
+import type { AIProvider } from '@/api/modules/ai'
 // YdAiModelSelect：供应商+模型合并单选（M60，对话页/浮层共用）。
 // 各供应商模型平铺为「模型名」（重名自动追加「 · 供应商」），选中一次回写 providerId+model。
 import { computed } from 'vue'
-import type { AIProvider } from '@/api/modules/ai'
 
 const props = defineProps<{
   providers: AIProvider[]
   providerId: number
   model: string
   /** 裸形态：分段工具条内 ghost 触发器 */
+  disabled?: boolean
   bare?: boolean
 }>()
-
 const emit = defineEmits<{
-  'update:providerId': [number]
-  'update:model': [string]
+  'update:providerId': [
+    number,
+  ]
+  'update:model': [
+    string,
+  ]
 }>()
-
 function modelsOf(p: AIProvider) {
   const list = (p.models || '').split(',').map(m => m.trim()).filter(Boolean)
   if (p.model && !list.includes(p.model)) {
@@ -24,15 +27,16 @@ function modelsOf(p: AIProvider) {
   }
   return list
 }
-
 function providerName(pid: number) {
   return props.providers.find(p => p.id === pid)?.name || `#${pid}`
 }
-
 // 平铺所有 (供应商 × 模型) 组合；同名模型出现在多个供应商时以「 · 供应商」消歧
 const options = computed(() => {
   const count = new Map<string, number>()
-  const pairs: Array<{ pid: number, m: string }> = []
+  const pairs: Array<{
+    pid: number
+    m: string
+  }> = []
   for (const p of props.providers) {
     for (const m of modelsOf(p)) {
       count.set(m, (count.get(m) || 0) + 1)
@@ -44,11 +48,7 @@ const options = computed(() => {
     label: count.get(m)! > 1 ? `${m} · ${providerName(pid)}` : m,
   }))
 })
-
-const current = computed(() =>
-  props.providerId > 0 && props.model ? `${props.providerId}:${props.model}` : '',
-)
-
+const current = computed(() => props.providerId > 0 && props.model ? `${props.providerId}:${props.model}` : '')
 function onSelect(v: string | number) {
   const s = String(v)
   const i = s.indexOf(':')
@@ -66,9 +66,10 @@ function onSelect(v: string | number) {
     :options="options"
     size="sm"
     :bare="bare"
+    :disabled="disabled"
     :placeholder="$t('components.ydAiChat.selectModel')"
     button-class="max-w-45 font-mono text-[11px]"
-    icon="i-lucide:cpu"
+    :icon="bare ? 'i-lucide:cpu' : undefined"
     @update:model-value="onSelect"
   />
 </template>

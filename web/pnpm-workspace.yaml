@@ -23,6 +23,7 @@ catalog:
   '@faker-js/faker': ^10.6.0
   '@iconify/json': ^2.2.534
   '@iconify/vue': ^5.0.3
+  '@lobehub/icons-static-svg': ^1.95.1
   '@lucide/vue': ^1.48.0
   '@spiriit/vite-plugin-svg-spritemap': ^7.2.0
   '@stylistic/stylelint-config': ^5.0.0
@@ -45,6 +46,7 @@ catalog:
   '@xterm/addon-fit': ^0.11.0
   '@xterm/xterm': ^6.0.0
   '@zumer/snapdom': ^3.1.1
+  ajv: ^8.20.0
   autoprefixer: ^10.6.1
   axios: ^1.20.0
   boxen: ^9.0.0
@@ -54,6 +56,7 @@ catalog:
   cz-git: ^1.14.0
   dayjs: ^1.11.23
   defu: ^6.1.7
+  dompurify: 3.4.17
   echarts: ^6.1.0
   eruda: ^3.4.3
   es-toolkit: ^1.52.0
@@ -64,6 +67,7 @@ catalog:
   http-server: ^14.1.1
   lint-staged: ^17.6.0
   lucide-static: ^1.52.0
+  marked: ^18.1.0
   mitt: ^3.0.1
   monaco-editor: ^0.57.0
   morphicons: ^1.7.1
@@ -111,16 +115,14 @@ catalog:
   vite-plugin-fake-server: ^2.2.4
   vite-plugin-vue-devtools: ^8.2.1
   vue: ^3.5.43
+  vue-i18n: ^10.0.8
+
   vue-input-otp: ^0.4.0
   vue-router: ^5.3.1
   vue-sonner: ^2.0.9
   vue-tsc: ^3.3.11
-  zod: ^4.6.5
-  marked: ^18.1.0
-  '@lobehub/icons-static-svg': ^1.95.1
-  ajv: ^8.20.0
   yaml: ^2.9.1
-  vue-i18n: ^10.0.8
+  zod: ^4.6.5
 
 catalogs:
   arco-design-vue:

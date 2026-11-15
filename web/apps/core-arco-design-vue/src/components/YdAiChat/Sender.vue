@@ -1,128 +1,125 @@
 <script setup lang="ts">
-// YdAiSender：Kimi/ZCode 风格输入发送器（M60.1 参考 YuDream-Admin 形态）——
-// 20px 大圆角输入区 + 框内分段工具条（权限档位/模型/用量）+ 右下角圆形墨色发送键（↑）/停止（■）；
-// Enter 发送 / Shift+Enter 换行 / 建议 chips / 免责声明；内容宽度约束 920px 居中，窄屏自适应。
-const props = withDefaults(defineProps<{
+import type { DraftAttachment } from '@/store/modules/aiChat'
+
+const props = defineProps<{
   loading?: boolean
+  sending?: boolean
   disabled?: boolean
-  placeholder?: string
-  suggestions?: string[]
-  disclaimer?: string
-}>(), {
-  loading: false,
-  disabled: false,
-  placeholder: undefined,
-  suggestions: () => [],
-  disclaimer: undefined,
-})
-
-const emit = defineEmits<{
-  send: [text: string]
-  stop: []
-  suggestionClick: [text: string]
+  uploads?: DraftAttachment[]
+  vision?: boolean
 }>()
-
-const text = ref('')
-const focused = ref(false)
-
-const canSend = computed(() => !!text.value.trim() && !props.loading && !props.disabled)
-
-function doSend() {
-  const t = text.value.trim()
-  if (!t || props.loading || props.disabled) {
-    return
+const emit = defineEmits<{
+  send: [
+  ]
+  stop: [
+  ]
+  files: [
+    File[],
+  ]
+  remove: [
+    string,
+  ]
+  retry: [
+    string,
+  ]
+}>()
+const text = defineModel<string>({ default: '' })
+const fileInput = ref<HTMLInputElement>()
+const textarea = ref<HTMLTextAreaElement>()
+const dragging = ref(false)
+const composing = ref(false)
+const ready = computed(() => !props.loading && !props.sending && !props.disabled && (text.value.trim() || props.uploads?.length) && !props.uploads?.some(u => !u.attachment || u.error) && (props.vision || !props.uploads?.some(u => u.attachment?.kind === 'image')))
+function send() {
+  if (ready.value) {
+    emit('send')
   }
-  text.value = ''
-  emit('send', t)
 }
-
-function onKeydown(e: KeyboardEvent) {
-  if (e.key === 'Enter' && !e.shiftKey) {
+function keydown(e: KeyboardEvent) {
+  if (e.key === 'Enter' && !e.shiftKey && !e.isComposing && !composing.value && e.keyCode !== 229) {
     e.preventDefault()
-    doSend()
+    send()
   }
 }
-
-// 工具条自适应：底栏实测放不下（<520px）时根挂 yd-sender-compact，YdSelect 图标形态随之生效。
-// 容器宽 ≠ 视口宽（桌面悬浮窗 520px 同样放不下文字标签），媒体查询管不到，必须实测容器。
-const barRef = useTemplateRef<HTMLDivElement>('bar')
-const compactBar = ref(false)
-let barRo: ResizeObserver | null = null
-onMounted(() => {
-  barRo = new ResizeObserver((entries) => {
-    compactBar.value = (entries[0]?.contentRect.width ?? 9999) < 520
-  })
-  if (barRef.value) {
-    barRo.observe(barRef.value)
+function files(list: FileList | null) {
+  if (list) {
+    emit('files', Array.from(list))
   }
-})
-onBeforeUnmount(() => {
-  barRo?.disconnect()
-  barRo = null
-})
+}
+function drop(e: DragEvent) {
+  dragging.value = false
+  if (!props.loading && !props.sending) {
+    files(e.dataTransfer?.files || null)
+  }
+}
+function paste(e: ClipboardEvent) {
+  const images = Array.from(e.clipboardData?.files || []).filter(f => f.type.startsWith('image/'))
+  if (images.length) {
+    e.preventDefault()
+    emit('files', images)
+  }
+}
+watch(text, () => nextTick(() => {
+  if (textarea.value) {
+    textarea.value.style.height = 'auto'
+    textarea.value.style.height = `${Math.min(220, textarea.value.scrollHeight)}px`
+  }
+}))
 </script>
 
 <template>
-  <div class="shrink-0 border-t px-3 pb-3 pt-2 sm:px-4">
-    <!-- 建议 chips -->
-    <div v-if="suggestions.length && !loading" class="mx-auto mb-2 flex w-full max-w-[920px] flex-wrap gap-1.5">
-      <button
-        v-for="s in suggestions"
-        :key="s"
-        type="button"
-        class="cursor-pointer rounded-full border bg-background/60 px-3 py-1 text-xs text-muted-foreground transition-colors hover:bg-accent/50 hover:text-foreground"
-        @click="emit('suggestionClick', s)"
-      >
-        {{ s }}
-      </button>
-    </div>
-    <!-- Kimi 风发送框：20px 大圆角 + 柔和阴影，聚焦阴影加深；窄容器挂 compact（YdSelect 图标形态） -->
-    <div
-      ref="bar"
-      class="mx-auto w-full max-w-[920px] rounded-[20px] border bg-background shadow-sm transition-all"
-      :class="[focused ? 'border-primary/30 shadow-md' : '', compactBar ? 'yd-sender-compact' : '']"
-    >
-      <textarea
-        v-model="text"
-        rows="3"
-        :disabled="disabled"
-        :placeholder="placeholder ?? $t('components.ydAiChat.inputPlaceholder')"
-        class="block w-full resize-none bg-transparent px-4 pb-1 pt-3.5 text-[15px] leading-7 outline-none placeholder:text-muted-foreground/60 max-sm:min-h-[72px] max-sm:px-3.5 max-sm:text-sm"
-        @keydown="onKeydown"
-        @focus="focused = true"
-        @blur="focused = false"
-      />
-      <!-- 底栏：外层禁 wrap（发送/停止键恒居右下），工具条在自身弹性空间内换行 -->
-      <div class="flex items-end justify-between gap-2 px-2.5 pb-2.5">
-        <span class="flex min-w-0 flex-1 flex-wrap items-center gap-2">
-          <!-- 分段工具条：权限档位 / 模型选择 / 上下文用量（由调用方注入） -->
-          <slot name="toolbar" />
-          <span class="hidden truncate text-[11px] text-muted-foreground/60 lg:inline">{{ disclaimer ?? $t('components.ydAiChat.disclaimer') }}</span>
-          <!-- 左侧扩展操作（如清空对话） -->
-          <slot name="actions" />
-        </span>
-        <!-- 圆形按钮：生成中 = 停止（■），否则 = 发送（↑，墨色实底） -->
-        <FaButton
-          v-if="loading"
-          size="icon-sm"
-          variant="outline"
-          class="shrink-0 rounded-full transition-colors hover:border-red-500/50 hover:bg-red-500/10 hover:text-red-500"
-          :title="$t('components.ydAiChat.stopGenerating')"
-          @click="emit('stop')"
+  <div class="px-3 pb-3 pt-2 border-t bg-background/80 shrink-0 sm:px-4" @dragover.prevent="dragging = true" @dragleave.prevent="dragging = false" @drop.prevent="drop">
+    <div class="mx-auto border rounded-2xl bg-background max-w-[920px] w-full shadow-sm transition-colors focus-within:border-primary/50" :class="dragging ? 'border-primary ring-2 ring-primary/20' : ''">
+      <div v-if="dragging" class="text-sm text-primary p-4 text-center">
+        {{ $t('aiAssistant.drop') }}
+      </div>
+      <div v-if="uploads?.length" class="p-3 pb-0 flex gap-2 overflow-x-auto">
+        <div v-for="u in uploads" :key="u.key" class="text-xs p-2 border rounded-xl flex shrink-0 gap-2 w-52 items-center relative" :class="u.error ? 'border-red-500/50' : ''">
+          <img v-if="u.preview" :src="u.preview" alt="" class="rounded-lg size-10 object-cover">
+          <FaIcon v-else name="i-lucide:file-text" class="text-muted-foreground shrink-0 size-8" />
+          <div class="flex-1 min-w-0">
+            <div class="truncate" :title="u.file?.name || u.attachment?.name">
+              {{ u.file?.name || u.attachment?.name }}
+            </div><div v-if="u.error" class="text-red-500 mt-1" :title="u.error">
+              {{ u.error }}
+            </div><div v-else-if="u.progress < 100" class="text-muted-foreground mt-1">
+              {{ $t('aiAssistant.parsing') }} {{ u.progress }}%
+            </div><div v-else class="text-muted-foreground mt-1">
+              {{ Math.ceil((u.file?.size || u.attachment?.size || 0) / 1024) }} KB
+            </div>
+          </div>
+          <FaButton v-if="u.error && u.file" size="icon-sm" variant="ghost" :title="$t('aiAssistant.retry')" @click="emit('retry', u.key)">
+            <FaIcon name="i-lucide:refresh-cw" />
+          </FaButton>
+          <FaButton size="icon-sm" variant="ghost" :disabled="sending" :title="$t('common.delete')" @click="emit('remove', u.key)">
+            <FaIcon name="i-lucide:x" />
+          </FaButton>
+        </div>
+      </div>
+      <div v-if="!vision && uploads?.some(u => u.attachment?.kind === 'image')" class="text-xs text-amber-600 px-3 pt-2">
+        {{ $t('aiAssistant.visionOff') }}
+      </div>
+      <textarea ref="textarea" v-model="text" :disabled="disabled || sending" rows="2" :placeholder="$t('ai.chat.inputPlaceholder')" class="text-sm leading-6 px-4 py-3 outline-none bg-transparent max-h-56 min-h-20 w-full block resize-none placeholder:text-muted-foreground/60" @keydown="keydown" @compositionstart="composing = true" @compositionend="composing = false" @paste="paste" />
+      <div class="px-2 pb-2 flex gap-1 min-w-0 items-end">
+        <input
+          ref="fileInput" type="file" multiple class="hidden" accept=".png,.jpg,.jpeg,.webp,.txt,.md,.log,.json,.yaml,.yml,.toml,.csv,.go,.ts,.tsx,.js,.jsx,.vue,.py,.sh,.sql,.html,.css,.scss,.xml,.conf,.ini,.rs,.java,.c,.cpp,.h,.rb,.php,.pdf,.docx" @change="files(($event.target as HTMLInputElement).files);
+                                                                                                                                                                                                                                                                  ($event.target as HTMLInputElement).value = ''"
         >
-          <FaIcon name="i-lucide:square" class="fill-current text-[10px]!" />
+        <FaButton size="icon-sm" variant="ghost" :disabled="loading || sending || disabled" :title="$t('aiAssistant.uploadHint')" :aria-label="$t('aiAssistant.upload')" @click="fileInput?.click()">
+          <FaIcon name="i-lucide:paperclip" />
         </FaButton>
-        <FaButton
-          v-else
-          size="icon-sm"
-          class="shrink-0 rounded-full bg-foreground text-background transition-colors hover:bg-foreground/80"
-          :disabled="!canSend"
-          :title="$t('components.ydAiChat.send')"
-          @click="doSend"
-        >
-          <FaIcon name="i-lucide:arrow-up" class="text-base!" />
+        <div class="flex flex-1 flex-wrap gap-1 min-w-0 items-center">
+          <slot name="toolbar" />
+        </div>
+        <FaButton v-if="loading" size="icon-sm" variant="outline" class="text-red-500 rounded-full shrink-0" :title="$t('components.ydAiChat.stopGenerating')" @click="emit('stop')">
+          <FaIcon name="i-lucide:square" />
+        </FaButton>
+        <FaButton v-else size="icon-sm" class="rounded-full shrink-0" :disabled="!ready" :loading="sending" :title="$t('aiAssistant.send')" @click="send">
+          <FaIcon name="i-lucide:arrow-up" />
         </FaButton>
       </div>
     </div>
+    <p class="text-[10px] text-muted-foreground mx-auto mt-1.5 text-center max-w-[920px]">
+      {{ $t('aiAssistant.background') }}
+    </p>
   </div>
 </template>
