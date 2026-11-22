@@ -5,6 +5,7 @@ import { markRaw, reactive, ref, watch } from 'vue'
 import aiApi from '@/api/modules/ai'
 import { aiChatApi, defaultChatSettings, readChatStream } from '@/api/modules/aiChat'
 import { useAppAccountStore } from '@/store/modules/app/account'
+import { createUuid } from '@/utils/uuid'
 
 export interface DraftAttachment {
   key: string
@@ -340,7 +341,7 @@ export const useAiChatStore = defineStore('aiChat', () => {
     if (e.uploads.some(u => !u.attachment || u.error)) {
       throw new Error('附件尚未就绪')
     }
-    const body: ChatStart = { conversationId: Math.max(0, e.id), requestId: crypto.randomUUID(), version: e.id > 0 ? e.version : undefined, content: e.draft, attachmentIds: e.uploads.map(u => u.attachment!.id), settings: clone(e.settings), scene, focus }
+    const body: ChatStart = { conversationId: Math.max(0, e.id), requestId: createUuid(), version: e.id > 0 ? e.version : undefined, content: e.draft, attachmentIds: e.uploads.map(u => u.attachment!.id), settings: clone(e.settings), scene, focus }
     if (e.request && (e.request.content !== body.content || JSON.stringify(e.request.attachmentIds) !== JSON.stringify(body.attachmentIds))) {
       throw new Error('请先重试上一次发送以确认结果')
     }
@@ -410,7 +411,7 @@ export const useAiChatStore = defineStore('aiChat', () => {
   }
   function upload(e: ChatEntry, files: File[]) {
     for (const file of files.slice(0, Math.max(0, 10 - e.uploads.length))) {
-      const item: DraftAttachment = { key: crypto.randomUUID(), file: markRaw(file), progress: 0, preview: file.type.startsWith('image/') ? URL.createObjectURL(file) : undefined }
+      const item: DraftAttachment = { key: createUuid(), file: markRaw(file), progress: 0, preview: file.type.startsWith('image/') ? URL.createObjectURL(file) : undefined }
       e.uploads.push(item)
       void retryUpload(e, item.key)
     }

@@ -1,5 +1,12 @@
 # 经验之谈：AI 会话、流恢复与上下文
 
+### 普通 HTTP 访问时 crypto.randomUUID 不可用，聊天会在请求发出前失败
+
+- **现象**：AI 聊天发送、上传附件或带附件编辑重发时报 `crypto.randomUUID is not a function`；发送链路尚未调用后端启动接口。
+- **根因**：`crypto.randomUUID()` 受安全上下文限制，普通 HTTP IP/域名访问可能不提供该方法；`crypto.getRandomValues()` 仍可用。聊天请求幂等键、草稿附件和分支附件原先三处直接调用原生 UUID API；既有 Node 回归注入了完整 crypto，未覆盖浏览器缺少 randomUUID 的环境。
+- **规避/解决**：三处统一使用 `utils/uuid.ts` 的 `createUuid()`：先检测原生 randomUUID，缺失时用 getRandomValues 生成 UUID v4，保持随机源、版本和变体位正确，不使用 Math.random。回归用仅提供 getRandomValues 的 crypto 运行真实 Pinia store，覆盖附件上传/发送及网络失败后复用同一请求幂等键；原生分支同时验证方法接收者。
+- **来源**：2026-11-22，用户反馈 AI 聊天报错；`web/apps/core-arco-design-vue/src/store/modules/aiChat.ts`、`src/components/YdAiChat/Panel.vue`、`web/tests/ai-chat.test.mjs`。修复前受控复现发送/上传失败，发送后端调用次数为 0。API 行为依据 [W3C Web Cryptography](https://www.w3.org/TR/webcrypto/#Crypto-interface)。
+
 ### 用 SSE 探测状态后再次订阅，会留下未消费连接并阻塞接入函数
 
 - **现象**：进入运行中的会话时存在两次 stream 请求；接入 Promise 一直等到生成结束，返回状态提示延后；旧连接还占用订阅资源。

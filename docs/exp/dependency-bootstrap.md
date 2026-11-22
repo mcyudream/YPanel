@@ -1,5 +1,12 @@
 # 经验之谈：临时验证环境与依赖准备
 
+### pnpm 启动器缺少宿主原生文件时，可直接运行已安装的项目验证工具
+
+- **现象**：`pnpm exec eslint` / `pnpm exec vue-tsc` 立即报 `no @pnpm/exe.linux-x64 native binary was found for this host`，项目工具尚未启动。
+- **根因**：当前 pnpm 启动器无法找到宿主平台的原生可执行文件；这与应用代码检查失败不同，已安装的项目工具仍可能可用。
+- **规避/解决**：仅需验证且 node_modules 已齐备时，直接使用对应工作目录的 `./node_modules/.bin/eslint`、`stylelint`、`vue-tsc`、`vite`；仍使用项目安装的版本，不修改 packageManager、锁文件或全局工具。依赖安装、升级仍须先修好 pnpm，本次不能替代这些包管理操作。
+- **来源**：2026-11-22，AI 聊天 UUID 兼容修复；pnpm 启动失败后，直接执行项目工具完成类型、ESLint/Stylelint 与生产构建验证。
+
 ### 新版 pnpm 自动切换项目版本时，卡住可能发生在安装依赖之前
 
 - **现象**：宿主 pnpm 与 packageManager 声明版本不同，执行安装后长时间没有项目依赖进度；旧版的 manage-package-manager-versions 参数也不被识别。

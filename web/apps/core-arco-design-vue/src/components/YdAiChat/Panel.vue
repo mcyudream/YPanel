@@ -4,6 +4,7 @@ import { useI18n } from 'vue-i18n'
 import { aiChatApi } from '@/api/modules/aiChat'
 import YdAiBubble from '@/components/YdAiBubble/index.vue'
 import { useAiChat } from '@/composables/useAiChat'
+import { createUuid } from '@/utils/uuid'
 import Attachment from './Attachment.vue'
 import Interaction from './Interaction.vue'
 import MessageList from './MessageList.vue'
@@ -154,7 +155,7 @@ async function branch(message: ChatMessage, include = true, text?: string) {
     await store.refresh(store.entry(id))
     if (!include) {
       e.value.draft = text ?? message.content
-      e.value.uploads = (message.attachments || []).map(a => ({ key: crypto.randomUUID(), attachment: a, progress: 100 }))
+      e.value.uploads = (message.attachments || []).map(a => ({ key: createUuid(), attachment: a, progress: 100 }))
     }
     await load()
   }
